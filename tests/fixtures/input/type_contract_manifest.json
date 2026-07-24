@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "current_phase": 4,
+  "current_phase": 5,
   "activation_history": [
     {
       "phase": 0,
@@ -47,6 +47,18 @@
         "execution-state-positive",
         "execution-context-interchange-negative",
         "synchronous-execution-id-factory-negative"
+      ]
+    },
+    {
+      "phase": 5,
+      "fixture_ids": [
+        "portable-continuation-positive",
+        "continuation-store-cas-negative",
+        "provider-snapshot-identity-interchange-negative",
+        "synchronous-continuation-runtime-resolver-negative",
+        "task-target-outcome-positive",
+        "task-target-outcome-raw-negative",
+        "task-target-suspension-as-success-negative"
       ]
     }
   ],
@@ -140,6 +152,40 @@
         "synchronous-execution-id-factory-negative"
       ],
       "sha256": "56536229b94c33269c53007e32e87fdf1c6950f4595a38e3c5f2d3d3d1c07a21"
+    },
+    {
+      "phase": 5,
+      "fixture_ids": [
+        "deterministic-fixtures-positive",
+        "canonical-answers-positive",
+        "async-handler-positive",
+        "synchronous-handler-negative",
+        "untyped-handler-result-negative",
+        "broker-identity-interchange-negative",
+        "store-revision-interchange-negative",
+        "controller-identity-interchange-negative",
+        "synchronous-resumer-negative",
+        "candidate-resolution-variants-negative",
+        "strict-resolution-variants-negative",
+        "typed-resolution-payload-negative",
+        "input-required-identity-negative",
+        "unchecked-any-leak-negative",
+        "model-capability-catalog-positive",
+        "tool-catalog-interchange-negative",
+        "capability-binding-identity-interchange-negative",
+        "capability-payload-result-shape-negative",
+        "execution-state-positive",
+        "execution-context-interchange-negative",
+        "synchronous-execution-id-factory-negative",
+        "portable-continuation-positive",
+        "continuation-store-cas-negative",
+        "provider-snapshot-identity-interchange-negative",
+        "synchronous-continuation-runtime-resolver-negative",
+        "task-target-outcome-positive",
+        "task-target-outcome-raw-negative",
+        "task-target-suspension-as-success-negative"
+      ],
+      "sha256": "2ff2cbaf2c6bb74a0191a15cdd7427b15d02e71b6ec353b7adfa059ce398b8e2"
     }
   ],
   "planned_replacements": [
@@ -419,10 +465,10 @@
       "expected_diagnostics": [
         "tests/input_type_contracts/execution_context_interchange_negative.py:19:19: error: Argument \"execution\" to \"ModelCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"AgentExecution | None\"  [arg-type]",
         "tests/input_type_contracts/execution_context_interchange_negative.py:20:26: error: Argument \"execution_origin\" to \"ModelCallContext\" has incompatible type \"AgentExecution\"; expected \"ExecutionOrigin | None\"  [arg-type]",
-      "tests/input_type_contracts/execution_context_interchange_negative.py:21:28: error: Argument \"interaction_broker\" to \"ModelCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]",
+        "tests/input_type_contracts/execution_context_interchange_negative.py:21:28: error: Argument \"interaction_broker\" to \"ModelCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]",
         "tests/input_type_contracts/execution_context_interchange_negative.py:24:19: error: Argument \"execution\" to \"ToolCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"AgentExecution | None\"  [arg-type]",
         "tests/input_type_contracts/execution_context_interchange_negative.py:25:26: error: Argument \"execution_origin\" to \"ToolCallContext\" has incompatible type \"AgentExecution\"; expected \"ExecutionOrigin | None\"  [arg-type]",
-      "tests/input_type_contracts/execution_context_interchange_negative.py:26:28: error: Argument \"interaction_broker\" to \"ToolCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]"
+        "tests/input_type_contracts/execution_context_interchange_negative.py:26:28: error: Argument \"interaction_broker\" to \"ToolCallContext\" has incompatible type \"ExecutionOrigin\"; expected \"BranchInteractionBroker | None\"  [arg-type]"
       ]
     },
     {
@@ -433,6 +479,84 @@
       "path": "tests/input_type_contracts/synchronous_execution_id_factory_negative.py",
       "expected_diagnostics": [
         "tests/input_type_contracts/synchronous_execution_id_factory_negative.py:32:31: error: Incompatible types in assignment (expression has type \"SynchronousExecutionIdFactory\", variable has type \"ExecutionIdFactory\")  [assignment]"
+      ]
+    },
+    {
+      "id": "portable-continuation-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/portable_continuation_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "continuation-store-cas-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/continuation_store_cas_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/continuation_store_cas_negative.py:23:33: error: Argument \"expected_store_revision\" to \"claim\" of \"PgsqlInteractionStore\" has incompatible type \"ContinuationFencingToken\"; expected \"ContinuationStoreRevision\"  [arg-type]",
+        "tests/input_type_contracts/continuation_store_cas_negative.py:34:23: error: Argument \"fencing_token\" to \"mark_dispatching\" of \"PgsqlInteractionStore\" has incompatible type \"ContinuationStoreRevision\"; expected \"ContinuationFencingToken\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "provider-snapshot-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:19:39: error: Incompatible types in assignment (expression has type \"ModelId\", variable has type \"ProviderFamilyName\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:20:21: error: Incompatible types in assignment (expression has type \"ProviderFamilyName\", variable has type \"ModelId\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:21:45: error: Incompatible types in assignment (expression has type \"ModelConfigRevision\", variable has type \"ProviderConfigRevision\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:22:39: error: Incompatible types in assignment (expression has type \"CapabilityRevision\", variable has type \"ModelConfigRevision\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:23:43: error: Incompatible types in assignment (expression has type \"ProviderConfigRevision\", variable has type \"CapabilityRevision\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:24:33: error: Incompatible types in assignment (expression has type \"ContinuationStoreRevision\", variable has type \"StateRevision\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:25:45: error: Incompatible types in assignment (expression has type \"ContinuationFencingToken\", variable has type \"ContinuationStoreRevision\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:26:43: error: Incompatible types in assignment (expression has type \"StateRevision\", variable has type \"ContinuationFencingToken\")  [assignment]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:38:19: error: Argument \"model_call_id\" to \"ContinuationSnapshot\" has incompatible type \"ContinuationId\"; expected \"ModelCallId\"  [arg-type]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:39:30: error: Argument \"provider_idempotency_key\" to \"ContinuationSnapshot\" has incompatible type \"ModelCallId\"; expected \"ProviderIdempotencyKey\"  [arg-type]",
+        "tests/input_type_contracts/provider_snapshot_identity_interchange_negative.py:42:40: error: Incompatible types in assignment (expression has type \"ContinuationId\", variable has type \"ProviderIdempotencyKey\")  [assignment]"
+      ]
+    },
+    {
+      "id": "synchronous-continuation-runtime-resolver-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/synchronous_continuation_runtime_resolver_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/synchronous_continuation_runtime_resolver_negative.py:33:44: error: Incompatible types in assignment (expression has type \"SynchronousRuntimeLoader\", variable has type \"TrustedContinuationRuntimeLoader\")  [assignment]"
+      ]
+    },
+    {
+      "id": "task-target-outcome-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/task_target_outcome_positive.py",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "task-target-outcome-raw-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/task_target_outcome_raw_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/task_target_outcome_raw_negative.py:4:30: error: Incompatible types in assignment (expression has type \"object\", variable has type \"TaskTargetCompleted | TaskTargetSuspended\")  [assignment]"
+      ]
+    },
+    {
+      "id": "task-target-suspension-as-success-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/input_type_contracts/task_target_suspension_as_success_negative.py",
+      "expected_diagnostics": [
+        "tests/input_type_contracts/task_target_suspension_as_success_negative.py:18:34: error: Incompatible types in assignment (expression has type \"TaskTargetSuspended\", variable has type \"TaskTargetCompleted\")  [assignment]",
+        "tests/input_type_contracts/task_target_suspension_as_success_negative.py:19:29: error: \"TaskTargetSuspended\" has no attribute \"output\"  [attr-defined]"
       ]
     }
   ]

@@ -129,6 +129,42 @@ class TaskEventCategory(StrEnum):
     UNKNOWN = "unknown"
 
 
+class TaskInteractionEventType(StrEnum):
+    INPUT_REQUIRED = "task_input_required"
+    INPUT_RESUMED = "task_input_resumed"
+    INPUT_CANCELLED = "task_input_cancelled"
+    INPUT_EXPIRED = "task_input_expired"
+    INPUT_SUPERSEDED = "task_input_superseded"
+
+
+def task_interaction_event_payload(
+    *,
+    event_type: TaskInteractionEventType,
+    request_id: str,
+    continuation_id: str,
+    segment_id: str,
+    next_segment_id: str | None = None,
+) -> TaskEventValue:
+    assert isinstance(event_type, TaskInteractionEventType)
+    _assert_non_empty_string(request_id, "request_id")
+    _assert_non_empty_string(continuation_id, "continuation_id")
+    _assert_non_empty_string(segment_id, "segment_id")
+    if next_segment_id is not None:
+        _assert_non_empty_string(next_segment_id, "next_segment_id")
+        assert event_type in {
+            TaskInteractionEventType.INPUT_RESUMED,
+            TaskInteractionEventType.INPUT_SUPERSEDED,
+        }
+    value: dict[str, object] = {
+        "request_id": request_id,
+        "continuation_id": continuation_id,
+        "segment_id": segment_id,
+    }
+    if next_segment_id is not None:
+        value["next_segment_id"] = next_segment_id
+    return freeze_task_event_value(value)
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SanitizedTaskEventDraft:
     event_type: str
@@ -180,6 +216,7 @@ class SanitizedTaskUsageEvent:
     source: UsageSource
     totals: UsageTotals
     attempt_id: str | None = None
+    segment_id: str | None = None
     metadata: Mapping[str, object] | None = None
     event_type: str = _USAGE_OBSERVED_EVENT_TYPE
     category: TaskEventCategory = TaskEventCategory.USAGE
@@ -189,6 +226,11 @@ class SanitizedTaskUsageEvent:
         _assert_non_empty_string(self.run_id, "run_id")
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        if self.segment_id is not None:
+            _assert_non_empty_string(self.segment_id, "segment_id")
+            assert (
+                self.attempt_id is not None
+            ), "segment usage requires an attempt"
         assert isinstance(self.source, UsageSource)
         assert isinstance(self.totals, UsageTotals)
         assert self.totals.has_observations

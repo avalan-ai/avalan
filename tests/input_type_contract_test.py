@@ -205,16 +205,16 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=4,
+        through_phase=5,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 4
+    assert loaded.current_phase == 5
     active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures
         if fixture.lifecycle == "active"
     ]
-    assert len(active_fixture_ids) == 21
+    assert len(active_fixture_ids) == 28
     assert active_fixture_ids == [
         "deterministic-fixtures-positive",
         "canonical-answers-positive",
@@ -237,6 +237,13 @@ def test_type_contract_manifest_and_runner_are_strict(
         "execution-state-positive",
         "execution-context-interchange-negative",
         "synchronous-execution-id-factory-negative",
+        "portable-continuation-positive",
+        "continuation-store-cas-negative",
+        "provider-snapshot-identity-interchange-negative",
+        "synchronous-continuation-runtime-resolver-negative",
+        "task-target-outcome-positive",
+        "task-target-outcome-raw-negative",
+        "task-target-suspension-as-success-negative",
     ]
 
     invalid = deepcopy(manifest)
@@ -338,12 +345,12 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
     ]
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
-        match="current type fixture inventory changed",
+        match="reviewed type fixture inventory changed",
     ):
         _VERIFIER._validate_current_fixture_inventory(
             fixtures,
             raw_fixtures,
-            4,
+            5,
         )
 
     changed_descriptors = deepcopy(raw_manifest["fixtures"])
@@ -357,16 +364,19 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
     )
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
-        match="current type fixture inventory changed",
+        match="reviewed type fixture inventory changed",
     ):
         _VERIFIER._validate_current_fixture_inventory(
             loaded.fixtures,
             changed_descriptors,
-            4,
+            5,
         )
 
     for fixture in loaded.fixtures:
-        if fixture.active_from_phase != 4:
+        if fixture.active_from_phase not in {
+            *_VERIFIER._FROZEN_FIXTURE_INVENTORIES,
+            _VERIFIER._CURRENT_BOUNDARY_PHASE,
+        }:
             continue
         source = _ROOT / fixture.path
         destination = tmp_path / fixture.path
@@ -379,7 +389,7 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
     changed_source = tmp_path / next(
         fixture.path
         for fixture in loaded.fixtures
-        if fixture.active_from_phase == 4
+        if fixture.active_from_phase == _VERIFIER._CURRENT_BOUNDARY_PHASE
     )
     changed_source.write_text(
         changed_source.read_text(encoding="utf-8") + "# source drift\n",
@@ -387,7 +397,7 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
     )
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
-        match="current type fixture sources changed",
+        match="reviewed type fixture sources changed",
     ):
         _VERIFIER._validate_current_fixture_sources(loaded, tmp_path)
 

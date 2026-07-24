@@ -11,6 +11,7 @@ from avalan.task import (
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskArtifactState,
+    TaskAttemptSegmentState,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionPayload,
@@ -26,10 +27,14 @@ from avalan.task import (
     TaskStoreNotFoundError,
     freeze_snapshot_metadata,
     freeze_snapshot_value,
+    validate_attempt_segment_transition_request,
     validate_attempt_transition_request,
     validate_run_transition_request,
 )
-from avalan.task.store import ensure_run_is_mutable
+from avalan.task.store import (
+    ensure_attempt_segment_is_mutable,
+    ensure_run_is_mutable,
+)
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -613,6 +618,35 @@ class StoreContractTest(StoreContractAssertions, IsolatedAsyncioTestCase):
 
 
 class StoreHelperTest(TestCase):
+    def test_segment_transition_helpers_reject_stale_invalid_and_terminal(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "task attempt segment state did not match",
+        ):
+            validate_attempt_segment_transition_request(
+                current_state=TaskAttemptSegmentState.CREATED,
+                from_states={TaskAttemptSegmentState.RUNNING},
+                to_state=TaskAttemptSegmentState.ABANDONED,
+            )
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "task attempt segment transition is not valid",
+        ):
+            validate_attempt_segment_transition_request(
+                current_state=TaskAttemptSegmentState.CREATED,
+                from_states={TaskAttemptSegmentState.CREATED},
+                to_state=TaskAttemptSegmentState.SUCCEEDED,
+            )
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "terminal task attempt segment cannot be changed",
+        ):
+            ensure_attempt_segment_is_mutable(
+                TaskAttemptSegmentState.SUCCEEDED
+            )
+
     def test_transition_request_helpers_reject_stale_and_invalid_states(
         self,
     ) -> None:

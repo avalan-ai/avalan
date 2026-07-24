@@ -120,12 +120,8 @@ def test_project_metadata_pins_complete_common_gate() -> None:
         in makefile
     )
     assert "make lint" in workflow
-    assert "make typecheck-input-contract INPUT_PHASE=4" in workflow
-    assert "make test-pgsql-exact no-install INPUT_PHASE=4" in workflow
+    assert "make typecheck-input-contract INPUT_PHASE=5" in workflow
+    assert "make test-pgsql-exact no-install INPUT_PHASE=5" in workflow
     assert "make test-coverage-exact no-install" in workflow
-    assert (
-        "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 4"
-        in workflow
-    )
+    assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow

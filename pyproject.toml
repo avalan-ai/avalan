@@ -99,8 +99,10 @@ task-pdf-images = [
   "pypdfium2>=5.1.0,<6.0.0",
 ]
 task-pgsql = [
+  "alembic>=1.14.0,<2.0.0",
   "psycopg[pool]>=3.2.9,<4.0.0",
   "psycopg-binary>=3.2.9,<4.0.0 ; python_version < '3.14'",
+  "sqlalchemy>=2.0.0,<3.0.0",
 ]
 task-prometheus = [
   "prometheus-client>=0.23.0,<1.0.0",

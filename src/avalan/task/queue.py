@@ -1,3 +1,9 @@
+from ..interaction import (
+    ContinuationCompletionCommand,
+    ContinuationRejectionCommand,
+    CreateInteractionCommand,
+    PortableContinuation,
+)
 from ..types import (
     assert_int as _assert_int,
 )
@@ -19,9 +25,15 @@ from .idempotency import (
     TaskIdempotencyIdentity,
     TaskIdempotencyReservationResult,
 )
-from .state import TaskAttemptState, TaskRunState
+from .settlement import (
+    TaskDurableResumeCancellation,
+    TaskDurableResumeFailure,
+    TaskDurableResumeSettlement,
+)
+from .state import TaskAttemptSegmentState, TaskAttemptState, TaskRunState
 from .store import (
     TaskAttempt,
+    TaskAttemptSegment,
     TaskClaim,
     TaskExecutionRequest,
     TaskExecutionResult,
@@ -53,6 +65,7 @@ class TaskQueueNotFoundError(TaskQueueError):
 class TaskQueueItemState(StrEnum):
     AVAILABLE = "available"
     CLAIMED = "claimed"
+    SUSPENDED = "suspended"
     DONE = "done"
     DEAD = "dead"
 
@@ -238,7 +251,10 @@ class TaskQueueClaim:
         assert self.run.state == TaskRunState.CLAIMED
         assert self.run.claim is not None
         assert isinstance(self.run.claim, TaskClaim)
-        assert self.attempt.state == TaskAttemptState.CREATED
+        assert self.attempt.state in {
+            TaskAttemptState.CREATED,
+            TaskAttemptState.SUSPENDED,
+        }
         assert self.queue_item.run_id == self.run.run_id
         assert self.attempt.run_id == self.run.run_id
         assert self.queue_item.claim_token == self.run.claim.claim_token
@@ -248,6 +264,235 @@ class TaskQueueClaim:
             self.queue_item.lease_expires_at == self.run.claim.lease_expires_at
         )
         assert self.attempt.context.claim == self.run.claim
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueSuspension:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+    segment: TaskAttemptSegment
+    request_id: str
+    continuation_id: str
+    checkpoint_id: str | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert isinstance(self.segment, TaskAttemptSegment)
+        _assert_non_empty_string(self.request_id, "request_id")
+        _assert_non_empty_string(self.continuation_id, "continuation_id")
+        if self.checkpoint_id is not None:
+            _assert_non_empty_string(self.checkpoint_id, "checkpoint_id")
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.segment.run_id == self.run.run_id
+        assert self.segment.attempt_id == self.attempt.attempt_id
+        assert self.queue_item.state == TaskQueueItemState.SUSPENDED
+        assert self.run.state == TaskRunState.INPUT_REQUIRED
+        assert self.attempt.state == TaskAttemptState.SUSPENDED
+        assert self.segment.state == TaskAttemptSegmentState.SUSPENDED
+        assert self.segment.request_id == self.request_id
+        assert self.segment.continuation_id == self.continuation_id
+        assert self.segment.checkpoint_id == self.checkpoint_id
+        assert self.queue_item.claimed_at is None
+        assert self.queue_item.lease_expires_at is None
+        assert self.queue_item.worker_id is None
+        assert self.queue_item.claim_token is None
+        assert self.run.claim is None
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskQueueReentry:
+    queue_item: TaskQueueItem
+    run: TaskRun
+    attempt: TaskAttempt
+    previous_segment: TaskAttemptSegment
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.queue_item, TaskQueueItem)
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        assert isinstance(self.previous_segment, TaskAttemptSegment)
+        assert self.queue_item.run_id == self.run.run_id
+        assert self.attempt.run_id == self.run.run_id
+        assert self.previous_segment.run_id == self.run.run_id
+        assert self.previous_segment.attempt_id == self.attempt.attempt_id
+        assert self.queue_item.state == TaskQueueItemState.AVAILABLE
+        assert self.run.state == TaskRunState.QUEUED
+        assert self.attempt.state == TaskAttemptState.SUSPENDED
+        assert self.previous_segment.state == TaskAttemptSegmentState.SUSPENDED
+        assert self.queue_item.claimed_at is None
+        assert self.queue_item.lease_expires_at is None
+        assert self.queue_item.worker_id is None
+        assert self.queue_item.claim_token is None
+        assert self.run.claim is None
+
+
+class TaskDurableSuspensionCommit(Protocol):
+    @property
+    def suspension(self) -> TaskQueueSuspension: ...
+
+
+class TaskDurableResuspensionCommit(Protocol):
+    @property
+    def suspension(self) -> TaskQueueSuspension: ...
+
+
+class TaskDurableSettlementCommit(Protocol):
+    @property
+    def completion(self) -> "TaskQueueCompletion": ...
+
+
+class TaskDurableAmbiguityCommit(Protocol):
+    @property
+    def completion(self) -> "TaskQueueCompletion": ...
+
+
+class TaskDurableRejectionCommit(Protocol):
+    @property
+    def completion(self) -> "TaskQueueCompletion": ...
+
+
+class TaskDurableSuspensionCoordinator(Protocol):
+    async def create_and_suspend(
+        self,
+        command: CreateInteractionCommand,
+        continuation: PortableContinuation,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableSuspensionCommit: ...
+
+    async def complete_and_resuspend(
+        self,
+        completion: ContinuationCompletionCommand,
+        command: CreateInteractionCommand,
+        continuation: PortableContinuation,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableResuspensionCommit: ...
+
+    async def settle_resume(
+        self,
+        completion: ContinuationCompletionCommand,
+        settlement: TaskDurableResumeSettlement,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableSettlementCommit: ...
+
+    async def terminalize_completed_resume(
+        self,
+        completion: ContinuationCompletionCommand,
+        settlement: TaskDurableResumeFailure | TaskDurableResumeCancellation,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        request_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableSettlementCommit: ...
+
+    async def release_claimed_reentry(
+        self,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry: ...
+
+    async def mark_resume_ambiguous(
+        self,
+        completion: ContinuationCompletionCommand,
+        failure: TaskDurableResumeFailure,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableAmbiguityCommit: ...
+
+    async def release_running_reentry(
+        self,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry: ...
+
+    async def fail_claimed_reentry(
+        self,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        task_run_id: str,
+        request_id: str | None,
+        continuation_id: str | None,
+        checkpoint_id: str | None,
+        result: TaskExecutionResult,
+        reason: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> "TaskQueueCompletion": ...
+
+    async def fail_admitted_reentry(
+        self,
+        rejection: ContinuationRejectionCommand,
+        failure: TaskDurableResumeFailure,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableRejectionCommit: ...
+
+    async def reconcile_expired_reentry(
+        self,
+        *,
+        queue_item_id: str,
+        expected_claim_token: str,
+        task_run_id: str,
+        result: TaskExecutionResult,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> "TaskDurableExpiredReentryCommit": ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -275,7 +520,26 @@ class TaskQueueCompletion:
         assert self.attempt.state in {
             TaskAttemptState.SUCCEEDED,
             TaskAttemptState.FAILED,
+            TaskAttemptState.ABANDONED,
         }
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskDurableExpiredReentryCommit:
+    """Carry one atomic expired durable-reentry reconciliation."""
+
+    reentry: TaskQueueReentry | None = None
+    completion: TaskQueueCompletion | None = None
+
+    def __post_init__(self) -> None:
+        if (self.reentry is None) == (self.completion is None):
+            raise AssertionError(
+                "expired reentry must be restored or terminalized"
+            )
+        if self.reentry is not None:
+            assert isinstance(self.reentry, TaskQueueReentry)
+        if self.completion is not None:
+            assert isinstance(self.completion, TaskQueueCompletion)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -379,6 +643,30 @@ class TaskQueue(Protocol):
         lease_expires_at: datetime,
         now: datetime | None = None,
     ) -> TaskQueueItem: ...
+
+    async def suspend_claim(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        segment_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSuspension: ...
+
+    async def requeue_suspended(
+        self,
+        run_id: str,
+        *,
+        request_id: str,
+        continuation_id: str,
+        resolution_revision: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry: ...
 
     async def complete(
         self,

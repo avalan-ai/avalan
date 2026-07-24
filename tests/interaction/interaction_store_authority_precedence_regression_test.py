@@ -657,10 +657,10 @@ def test_requestless_scope_has_no_mutation_or_disclosure() -> None:
         )
 
     assert raised.value.code is InputErrorCode.FORBIDDEN
-    assert raised.value.path == "branch_records"
+    assert raised.value.path == "scope"
     assert (
         raised.value.safe_message
-        == "scope branch ownership differs from the scope actor"
+        == "matching scope ownership belongs to another principal"
     )
     assert branch_records == before
     safe_error = str(raised.value)

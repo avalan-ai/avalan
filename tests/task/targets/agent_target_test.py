@@ -1,4 +1,5 @@
-from asyncio import CancelledError
+from asyncio import CancelledError, create_task
+from asyncio import Event as AsyncEvent
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
@@ -6,11 +7,19 @@ from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
-from unittest.mock import patch
+from unittest.mock import AsyncMock, Mock, patch
 from uuid import UUID, uuid4
 
+from avalan.agent.execution import (
+    AgentExecution,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+    ExecutionCorrelationError,
+    ExecutionInputRequiredError,
+)
 from avalan.agent.orchestrator.orchestrators.json import JsonOrchestratorOutput
 from avalan.entities import (
     Message,
@@ -20,6 +29,20 @@ from avalan.entities import (
     MessageRole,
 )
 from avalan.event import Event, EventType
+from avalan.interaction import (
+    ContinuationCompletionCommand,
+    ContinuationId,
+    ContinuationRejectionCommand,
+    DurableContinuationResumeState,
+    DurableInteractionSuspension,
+    InputRequestId,
+    InputRequiredResult,
+    InteractionActor,
+    InteractionBrokerRequest,
+    PrincipalScope,
+    RunId,
+    TaskId,
+)
 from avalan.model import (
     FileDeliveryDecision,
     FileDeliveryLimit,
@@ -59,12 +82,24 @@ from avalan.task import (
     TaskRetryPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskTargetSuspended,
+    TaskTargetType,
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
     UsageSource,
+    completed_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.context import (
+    TaskDurableResumeHandle,
+    TaskEventListener,
+    TaskEventListenerRegistration,
+)
+from avalan.task.settlement import (
+    TaskDurableResumeFailure,
+    TaskDurableResumeSettlement,
+)
 from avalan.task.store import TaskExecutionContext
 from avalan.task.stores import InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
@@ -131,6 +166,37 @@ class BareResponse:
     pass
 
 
+class SuspendingResponse(FakeResponse):
+    def __init__(self, error: ExecutionInputRequiredError) -> None:
+        super().__init__("unreachable")
+        self.error = error
+
+    async def to_str(self) -> str:
+        raise self.error
+
+    async def to_json(self) -> str:
+        raise self.error
+
+
+async def _unexpected_durable_stager(
+    request: InteractionBrokerRequest,
+    *,
+    execution: AgentExecution,
+    response: object,
+    stream_sequence: int,
+    staging: DurableInteractionStagingContext,
+) -> DurableInteractionSuspension:
+    del request, execution, response, stream_sequence, staging
+    raise AssertionError("fake orchestrator must not invoke the stager")
+
+
+def _unexpected_runtime_factory(
+    context: TaskTargetContext,
+) -> DurableInteractionRuntime:
+    del context
+    raise AssertionError("durable runtime factory must not run during resume")
+
+
 class FakeEventManager:
     def __init__(self) -> None:
         self.listeners: list[Callable[[Event], Awaitable[None] | None]] = []
@@ -154,6 +220,139 @@ class FakeEventManager:
                 await result
 
 
+class _ResumeEventRegistration:
+    def __init__(
+        self,
+        handle: "_EventfulDurableResumeHandle",
+        listener: TaskEventListener,
+    ) -> None:
+        self._handle = handle
+        self._listener = listener
+        self.closed = False
+        self.close_calls = 0
+
+    def close(self) -> None:
+        self.close_calls += 1
+        if self.closed:
+            return
+        self.closed = True
+        assert self._handle.listener is self._listener
+        self._handle.listener = None
+
+
+class _EventfulDurableResumeHandle:
+    def __init__(
+        self,
+        *,
+        response: object,
+        dispatch_error: BaseException | None = None,
+        registration_error: BaseException | None = None,
+        dispatch_started: AsyncEvent | None = None,
+        dispatch_proceed: AsyncEvent | None = None,
+    ) -> None:
+        self.response = response
+        self.dispatch_error = dispatch_error
+        self.registration_error = registration_error
+        self.dispatch_started = dispatch_started
+        self.dispatch_proceed = dispatch_proceed
+        self.listener: TaskEventListener | None = None
+        self.registration: _ResumeEventRegistration | None = None
+        self.dispatch_calls = 0
+        self.dispatch_active = False
+
+    def register_event_listener(
+        self,
+        listener: TaskEventListener,
+    ) -> TaskEventListenerRegistration:
+        if self.registration_error is not None:
+            raise self.registration_error
+        assert self.listener is None
+        assert self.registration is None
+        self.listener = listener
+        self.registration = _ResumeEventRegistration(self, listener)
+        return self.registration
+
+    async def dispatch(self) -> object:
+        self.dispatch_calls += 1
+        self.dispatch_active = True
+        try:
+            await self._emit(EventType.ENGINE_RUN_BEFORE)
+            if self.dispatch_started is not None:
+                self.dispatch_started.set()
+            if self.dispatch_proceed is not None:
+                await self.dispatch_proceed.wait()
+            if self.dispatch_error is not None:
+                raise self.dispatch_error
+            await self._emit(EventType.ENGINE_RUN_AFTER)
+            return self.response
+        finally:
+            self.dispatch_active = False
+
+    async def wait_dispatch_settled(
+        self,
+    ) -> DurableContinuationResumeState:
+        raise AssertionError("unexpected dispatch settlement wait")
+
+    async def interrupt_dispatch(self) -> DurableContinuationResumeState:
+        raise AssertionError("unexpected dispatch interruption")
+
+    async def complete_output(self, output: object) -> None:
+        del output
+        raise AssertionError("unexpected output completion")
+
+    def completion_command_for_output(
+        self,
+        output: object,
+    ) -> ContinuationCompletionCommand:
+        del output
+        raise AssertionError("unexpected output completion command")
+
+    def completion_command_for_settlement(
+        self,
+        settlement: TaskDurableResumeSettlement,
+    ) -> ContinuationCompletionCommand:
+        del settlement
+        raise AssertionError("unexpected settlement completion command")
+
+    def completed_completion_command(
+        self,
+    ) -> ContinuationCompletionCommand:
+        raise AssertionError("unexpected completed command")
+
+    def completion_command_for_suspension(
+        self,
+        *,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+    ) -> ContinuationCompletionCommand:
+        del request_id, continuation_id, checkpoint_id
+        raise AssertionError("unexpected suspension completion command")
+
+    def rejection_command_for_settlement(
+        self,
+        failure: TaskDurableResumeFailure,
+    ) -> ContinuationRejectionCommand:
+        del failure
+        raise AssertionError("unexpected rejection command")
+
+    async def release(self) -> None:
+        raise AssertionError("unexpected release")
+
+    async def release_if_pre_dispatch(self) -> bool:
+        raise AssertionError("unexpected safe release")
+
+    async def close(self) -> None:
+        """Close the fake durable resume handle."""
+
+    async def _emit(self, event_type: EventType) -> None:
+        listener = self.listener
+        assert listener is not None
+        result = listener(Event(type=event_type))
+        if result is not None:
+            await result
+
+
 class FakeOrchestrator:
     def __init__(self, loader: "FakeLoader") -> None:
         self._loader = loader
@@ -172,8 +371,14 @@ class FakeOrchestrator:
         self._loader.exited += 1
         return None
 
-    async def __call__(self, input: object) -> FakeResponse:
+    async def __call__(
+        self,
+        input: object,
+        *,
+        interaction_runtime: object | None = None,
+    ) -> FakeResponse:
         self._loader.inputs.append(input)
+        self._loader.interaction_runtimes.append(interaction_runtime)
         trigger = getattr(self.event_manager, "trigger", None)
         if self._loader.emit_event and callable(trigger):
             await trigger(
@@ -216,6 +421,7 @@ class FakeLoader:
         self.entered = 0
         self.exited = 0
         self.tool_settings: list[object | None] = []
+        self.interaction_runtimes: list[object | None] = []
 
     def next_response(self) -> object | None:
         if self.responses:
@@ -1221,8 +1427,14 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
                 )
             )
 
-        self.assertEqual(output, "short summary")
-        self.assertEqual(second_output, "short summary")
+        self.assertEqual(
+            output,
+            completed_task_target_outcome("short summary"),
+        )
+        self.assertEqual(
+            second_output,
+            completed_task_target_outcome("short summary"),
+        )
         self.assertEqual(loader.entered, 2)
         self.assertEqual(loader.exited, 2)
         self.assertEqual(loader.agent_ids, [agent_id, agent_id])
@@ -1249,7 +1461,7 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, "ok")
+        self.assertEqual(output, completed_task_target_outcome("ok"))
         self.assertEqual(loader.tool_settings, [tool_settings])
 
     async def test_run_maps_json_input_and_structured_output(self) -> None:
@@ -1270,7 +1482,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, {"answer": "ok"})
+        self.assertEqual(
+            output,
+            completed_task_target_outcome({"answer": "ok"}),
+        )
         self.assertEqual(loader.inputs, ['{"question":"status"}'])
 
     async def test_structured_output_rejects_provider_failure_safely(
@@ -1344,7 +1559,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, "short summary")
+        self.assertEqual(
+            output,
+            completed_task_target_outcome("short summary"),
+        )
         self.assertIsNotNone(response.cancellation_checker)
         self.assertEqual(checks, 4)
 
@@ -1378,7 +1596,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, {"items": [1]})
+        self.assertEqual(
+            output,
+            completed_task_target_outcome({"items": [1]}),
+        )
 
     async def test_plain_output_without_text_method_returns_type_name(
         self,
@@ -1393,7 +1614,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, "BareResponse")
+        self.assertEqual(
+            output,
+            completed_task_target_outcome("BareResponse"),
+        )
 
     async def test_plain_string_response_is_returned(self) -> None:
         loader = FakeLoader(response="plain response")
@@ -1406,7 +1630,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, "plain response")
+        self.assertEqual(
+            output,
+            completed_task_target_outcome("plain response"),
+        )
 
     async def test_run_maps_provider_file_reference_at_execution_time(
         self,
@@ -1440,7 +1667,10 @@ class AgentTaskTargetRunnerTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(output, "accepted")
+        self.assertEqual(
+            output,
+            completed_task_target_outcome("accepted"),
+        )
         message = loader.inputs[0]
         self.assertIsInstance(message, Message)
         content = cast(Message, message).content
@@ -2929,7 +3159,10 @@ file_delivery_profile = "multimodal"
             )
         )
 
-        self.assertEqual(result, "final summary")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("final summary"),
+        )
         self.assertEqual(len(loader.inputs), 3)
         self.assertEqual(
             [
@@ -2949,6 +3182,64 @@ file_delivery_profile = "multimodal"
             ],
         )
         self.assertEqual(observed, list(responses))
+
+    async def test_durable_runtime_rejects_map_reduce_before_provider_work(
+        self,
+    ) -> None:
+        loader = FakeLoader(
+            responses=(
+                FakeResponse("one"),
+                FakeResponse("two"),
+                FakeResponse("final summary"),
+            )
+        )
+        runtime_contexts: list[TaskTargetContext] = []
+
+        def runtime_factory(
+            context: TaskTargetContext,
+        ) -> DurableInteractionRuntime:
+            runtime_contexts.append(context)
+            raise AssertionError("durable runtime must not be constructed")
+
+        runner = AgentTaskTargetRunner(
+            loader,
+            durable_interaction_runtime_factory=runtime_factory,
+            uri="ai://local/model",
+        )
+        artifact_ref = TaskArtifactRef(
+            artifact_id="artifact-1",
+            store="local",
+            storage_key="ar/artifact-1",
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(
+                self._context(
+                    self._definition(limits=TaskLimitsPolicy(total_tokens=4)),
+                    "summarize",
+                    files=(
+                        TaskInputFile(
+                            logical_path="artifact:artifact-1",
+                            artifact_ref=artifact_ref,
+                            media_type="text/plain",
+                            size_bytes=36,
+                        ),
+                    ),
+                    artifact_store=FakeArtifactStore(
+                        b"alpha beta gamma delta epsilon zeta"
+                    ),
+                )
+            )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("task.file_delivery.unsupported", "input.files")],
+        )
+        self.assertEqual(runtime_contexts, [])
+        self.assertEqual(loader.paths, [])
+        self.assertEqual(loader.inputs, [])
+        self.assertEqual(loader.interaction_runtimes, [])
+        self.assertEqual(len(loader.responses), 3)
 
     async def test_run_checks_cancellation_between_map_calls(self) -> None:
         loader = FakeLoader(
@@ -3760,8 +4051,11 @@ file_delivery_profile = "multimodal"
                 )
             )
 
-        self.assertEqual(structured, {"answer": "ok"})
-        self.assertEqual(text, "plain")
+        self.assertEqual(
+            structured,
+            completed_task_target_outcome({"answer": "ok"}),
+        )
+        self.assertEqual(text, completed_task_target_outcome("plain"))
 
     async def test_direct_runner_records_sanitized_events_and_usage(
         self,
@@ -4321,6 +4615,456 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         self.assertEqual(result.output, "short summary")
         self.assertEqual(usage, ())
 
+    async def test_durable_runtime_rejects_attached_consumption_suspension(
+        self,
+    ) -> None:
+        required = InputRequiredResult(
+            request_id=InputRequestId("agent-target-request"),
+            continuation_id=ContinuationId("agent-target-continuation"),
+            detached_resumption_available=False,
+        )
+        failure = ExecutionInputRequiredError(required)
+        loader = FakeLoader(response=SuspendingResponse(failure))
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unexpected_durable_stager,
+            run_id=RunId("run-1"),
+        )
+        contexts: list[TaskTargetContext] = []
+
+        def runtime_factory(
+            context: TaskTargetContext,
+        ) -> DurableInteractionRuntime:
+            contexts.append(context)
+            return runtime
+
+        with TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_valid_agent(root / "agents" / "valid.toml")
+            runner = AgentTaskTargetRunner(
+                loader,
+                ref_base=root,
+                durable_interaction_runtime_factory=runtime_factory,
+            )
+            context = self._context(
+                self._definition(output=TaskOutputContract.text()),
+                "private prompt",
+            )
+            with self.assertRaises(ExecutionCorrelationError):
+                await runner.run(context)
+
+        self.assertEqual(contexts, [context])
+        self.assertEqual(loader.interaction_runtimes, [runtime])
+
+    async def test_simple_agent_durable_resume_remains_supported(
+        self,
+    ) -> None:
+        loader = FakeLoader()
+        runner = AgentTaskTargetRunner(
+            loader,
+            durable_interaction_runtime_factory=_unexpected_runtime_factory,
+        )
+        listener_registration = SimpleNamespace(close=Mock())
+        handle = SimpleNamespace(
+            register_event_listener=Mock(return_value=listener_registration),
+            dispatch=AsyncMock(return_value=FakeResponse("resumed output")),
+            wait_dispatch_settled=AsyncMock(),
+            interrupt_dispatch=AsyncMock(),
+            complete_output=AsyncMock(),
+            completion_command_for_output=Mock(),
+            completion_command_for_settlement=Mock(),
+            completion_command_for_suspension=Mock(),
+            rejection_command_for_settlement=Mock(),
+            release=AsyncMock(),
+            release_if_pre_dispatch=AsyncMock(),
+            close=AsyncMock(),
+        )
+        typed_handle = cast(TaskDurableResumeHandle, handle)
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=typed_handle,
+        )
+
+        result = await runner.resume(context, typed_handle)
+
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("resumed output"),
+        )
+        self.assertTrue(
+            runner.supports_durable_suspension(TaskTargetType.AGENT)
+        )
+        self.assertTrue(runner.supports_durable_resume(TaskTargetType.AGENT))
+        handle.dispatch.assert_awaited_once_with()
+        handle.register_event_listener.assert_not_called()
+
+    async def test_resume_registers_exact_provider_events_before_dispatch(
+        self,
+    ) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+        handle = _EventfulDurableResumeHandle(
+            response=FakeResponse("resumed output")
+        )
+        event_types: list[EventType] = []
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=handle,
+            event_listener=lambda event: event_types.append(event.type),
+        )
+
+        result = await runner.resume(context, handle)
+
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("resumed output"),
+        )
+        self.assertEqual(
+            event_types,
+            [
+                EventType.ENGINE_RUN_BEFORE,
+                EventType.ENGINE_RUN_AFTER,
+            ],
+        )
+        self.assertEqual(handle.dispatch_calls, 1)
+        self.assertIsNone(handle.listener)
+        assert handle.registration is not None
+        self.assertTrue(handle.registration.closed)
+        self.assertEqual(handle.registration.close_calls, 1)
+
+    async def test_resume_dispatch_error_removes_listener_once(self) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+        handle = _EventfulDurableResumeHandle(
+            response=FakeResponse("unreachable"),
+            dispatch_error=RuntimeError("provider unavailable"),
+        )
+        event_types: list[EventType] = []
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=handle,
+            event_listener=lambda event: event_types.append(event.type),
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "provider unavailable"):
+            await runner.resume(context, handle)
+
+        self.assertEqual(event_types, [EventType.ENGINE_RUN_BEFORE])
+        self.assertFalse(handle.dispatch_active)
+        self.assertIsNone(handle.listener)
+        assert handle.registration is not None
+        self.assertEqual(handle.registration.close_calls, 1)
+
+    async def test_resume_cancellation_removes_listener_without_task_leak(
+        self,
+    ) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+        dispatch_started = AsyncEvent()
+        handle = _EventfulDurableResumeHandle(
+            response=FakeResponse("unreachable"),
+            dispatch_started=dispatch_started,
+            dispatch_proceed=AsyncEvent(),
+        )
+        event_types: list[EventType] = []
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=handle,
+            event_listener=lambda event: event_types.append(event.type),
+        )
+        running = create_task(runner.resume(context, handle))
+        await dispatch_started.wait()
+
+        running.cancel()
+        with self.assertRaises(CancelledError):
+            await running
+
+        self.assertTrue(running.done())
+        self.assertFalse(handle.dispatch_active)
+        self.assertEqual(event_types, [EventType.ENGINE_RUN_BEFORE])
+        self.assertIsNone(handle.listener)
+        assert handle.registration is not None
+        self.assertEqual(handle.registration.close_calls, 1)
+
+    async def test_resume_listener_failure_prevents_provider_dispatch(
+        self,
+    ) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+        handle = _EventfulDurableResumeHandle(
+            response=FakeResponse("unreachable"),
+            registration_error=RuntimeError("listener registration failed"),
+        )
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=handle,
+            event_listener=lambda event: None,
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "listener registration failed",
+        ):
+            await runner.resume(context, handle)
+
+        self.assertEqual(handle.dispatch_calls, 0)
+        self.assertFalse(handle.dispatch_active)
+        self.assertIsNone(handle.listener)
+        self.assertIsNone(handle.registration)
+
+    async def test_durable_map_reduce_rejection_uses_planned_strategy(
+        self,
+    ) -> None:
+        runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            durable_interaction_runtime_factory=_unexpected_runtime_factory,
+        )
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            "summarize",
+        )
+        profile = Mock(spec=FileDeliveryProfile)
+
+        with (
+            patch.object(
+                runner,
+                "_agent_file_profile",
+                AsyncMock(return_value=profile),
+            ),
+            patch.object(
+                runner,
+                "_agent_prompt",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                agent_module,
+                "_agent_input",
+                AsyncMock(return_value="summarize"),
+            ),
+            patch.object(
+                agent_module,
+                "_plan_local_text_delivery",
+                return_value=(
+                    "summarize",
+                    SimpleNamespace(
+                        kind=agent_module.TextStrategyKind.MAP_REDUCE
+                    ),
+                ),
+            ),
+            self.assertRaises(TaskValidationError) as error,
+        ):
+            await runner.run(context)
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("task.file_delivery.unsupported", "input.files")],
+        )
+
+    async def test_run_converts_invocation_suspension_to_target_outcome(
+        self,
+    ) -> None:
+        required = InputRequiredResult(
+            request_id=InputRequestId("invocation-request"),
+            continuation_id=ContinuationId("invocation-continuation"),
+            detached_resumption_available=False,
+        )
+        runner = AgentTaskTargetRunner(
+            FakeLoader(response=ExecutionInputRequiredError(required))
+        )
+        profile = Mock(spec=FileDeliveryProfile)
+
+        with (
+            patch.object(
+                runner,
+                "_agent_file_profile",
+                AsyncMock(return_value=profile),
+            ),
+            patch.object(
+                runner,
+                "_agent_prompt",
+                AsyncMock(return_value=None),
+            ),
+            patch.object(
+                agent_module,
+                "_agent_input",
+                AsyncMock(return_value="private prompt"),
+            ),
+            patch.object(
+                agent_module,
+                "_plan_local_text_delivery",
+                return_value=("private prompt", None),
+            ),
+        ):
+            result = await runner.run(
+                self._context(
+                    self._definition(output=TaskOutputContract.text()),
+                    "private prompt",
+                )
+            )
+
+        self.assertIsInstance(result, TaskTargetSuspended)
+        self.assertEqual(result.input_required, required)
+
+    async def test_resume_rejects_different_context_handle(self) -> None:
+        runner = AgentTaskTargetRunner(FakeLoader())
+        bound = _EventfulDurableResumeHandle(
+            response=FakeResponse("unreachable")
+        )
+        different = _EventfulDurableResumeHandle(
+            response=FakeResponse("unreachable")
+        )
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            None,
+            durable_resume=bound,
+        )
+
+        with self.assertRaises(ExecutionCorrelationError):
+            await runner.resume(context, different)
+
+        self.assertEqual(bound.dispatch_calls, 0)
+        self.assertEqual(different.dispatch_calls, 0)
+
+    async def test_resume_converts_dispatch_and_output_suspensions(
+        self,
+    ) -> None:
+        required = InputRequiredResult(
+            request_id=InputRequestId("resume-request"),
+            continuation_id=ContinuationId("resume-continuation"),
+            detached_resumption_available=True,
+        )
+        failure = ExecutionInputRequiredError(required)
+        expected = completed_task_target_outcome("suspended")
+        cases = (
+            _EventfulDurableResumeHandle(
+                response=FakeResponse("unreachable"),
+                dispatch_error=failure,
+            ),
+            _EventfulDurableResumeHandle(response=SuspendingResponse(failure)),
+        )
+
+        for handle in cases:
+            with self.subTest(
+                dispatch_error=handle.dispatch_error is not None
+            ):
+                runner = AgentTaskTargetRunner(FakeLoader())
+                context = self._context(
+                    self._definition(output=TaskOutputContract.text()),
+                    None,
+                    event_listener=lambda event: None,
+                    durable_resume=handle,
+                )
+                with patch.object(
+                    agent_module,
+                    "_suspended_agent_target_outcome",
+                    return_value=expected,
+                ) as suspended:
+                    result = await runner.resume(context, handle)
+
+                self.assertEqual(result, expected)
+                suspended.assert_called_once_with(
+                    failure,
+                    interaction_runtime=None,
+                    resumed=True,
+                )
+
+    async def test_interaction_runtime_factory_is_awaited_and_fenced(
+        self,
+    ) -> None:
+        context = self._context(
+            self._definition(output=TaskOutputContract.text()),
+            "ready",
+        )
+
+        def runtime(
+            *,
+            run_id: str,
+            task_id: str | None = None,
+        ) -> DurableInteractionRuntime:
+            return DurableInteractionRuntime(
+                actor=InteractionActor(principal=PrincipalScope()),
+                stager=_unexpected_durable_stager,
+                run_id=RunId(run_id),
+                task_id=TaskId(task_id) if task_id is not None else None,
+            )
+
+        valid_runtime = runtime(run_id="run-1", task_id="run-1")
+
+        async def valid_factory(
+            received: TaskTargetContext,
+        ) -> DurableInteractionRuntime:
+            self.assertIs(received, context)
+            return valid_runtime
+
+        valid_runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            durable_interaction_runtime_factory=valid_factory,
+        )
+        expected = await valid_runner._interaction_runtime(context)
+        self.assertIs(expected, valid_runtime)
+
+        async def invalid_factory(received: TaskTargetContext) -> object:
+            self.assertIs(received, context)
+            return object()
+
+        invalid_runner = AgentTaskTargetRunner(
+            FakeLoader(),
+            durable_interaction_runtime_factory=cast(
+                Any,
+                invalid_factory,
+            ),
+        )
+        with self.assertRaisesRegex(TypeError, "returned invalid state"):
+            await invalid_runner._interaction_runtime(context)
+
+        for mismatched in (
+            runtime(run_id="other-run"),
+            runtime(run_id="run-1", task_id="other-task"),
+        ):
+            with self.subTest(
+                run_id=mismatched.run_id,
+                task_id=mismatched.task_id,
+            ):
+                runner = AgentTaskTargetRunner(
+                    FakeLoader(),
+                    durable_interaction_runtime_factory=(
+                        lambda received, value=mismatched: value
+                    ),
+                )
+                with self.assertRaises(ExecutionCorrelationError):
+                    await runner._interaction_runtime(context)
+
+    async def test_private_resume_helpers_preserve_control_flow(
+        self,
+    ) -> None:
+        required = InputRequiredResult(
+            request_id=InputRequestId("helper-request"),
+            continuation_id=ContinuationId("helper-continuation"),
+            detached_resumption_available=True,
+        )
+        failure = ExecutionInputRequiredError(required)
+        fake_durable_error = ExecutionInputRequiredError(required)
+        fake_durable_error.durable = cast(
+            DurableInteractionSuspension,
+            object(),
+        )
+
+        with self.assertRaises(ExecutionCorrelationError):
+            agent_module._suspended_agent_target_outcome(
+                fake_durable_error,
+                interaction_runtime=None,
+            )
+
+        response = SuspendingResponse(failure)
+        with self.assertRaises(ExecutionInputRequiredError) as raised:
+            await agent_module._response_json_payload(response)
+        self.assertIs(raised.exception, failure)
+
+        close = AsyncMock()
+        await agent_module._close_agent_response(SimpleNamespace(aclose=close))
+        close.assert_awaited_once_with()
+
     def _context(
         self,
         definition: TaskDefinition,
@@ -4332,6 +5076,8 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
         usage_observer: (
             Callable[[object], Awaitable[None] | None] | None
         ) = None,
+        event_listener: TaskEventListener | None = None,
+        durable_resume: TaskDurableResumeHandle | None = None,
     ) -> TaskTargetContext:
         return TaskTargetContext(
             definition=definition,
@@ -4345,6 +5091,8 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             artifact_store=artifact_store,
             cancellation_checker=cancellation_checker,
             usage_observer=usage_observer,
+            event_listener=event_listener,
+            durable_resume=durable_resume,
         )
 
     def _definition(

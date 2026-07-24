@@ -872,6 +872,7 @@ def validate_interaction_admission(
         record
         for record in unresolved
         if record.request.origin.run_id == origin.run_id
+        and record.request.origin.principal == origin.principal
     )
     if len(unresolved_run) >= policy.maximum_unresolved_interactions_per_run:
         raise InputValidationError(
@@ -899,6 +900,7 @@ def validate_interaction_admission(
         record
         for record in snapshot_records
         if record.request.origin.run_id == origin.run_id
+        and record.request.origin.principal == origin.principal
         and record.request.origin.branch_id == origin.branch_id
         and record.semantic_fingerprint == fingerprint
     )
@@ -1977,12 +1979,127 @@ InteractionExternalMutationCommand: TypeAlias = (
 InteractionScopeMutationCommand: TypeAlias = (
     TerminalizeInteractionScopeCommand | SupersedeInteractionScopeCommand
 )
+_InteractionBranchOwnershipKey: TypeAlias = tuple[
+    RunId,
+    PrincipalScope,
+    BranchId,
+]
 
 
 _STORE_BACKING_TOKEN = object()
+_PARTIAL_STORE_BACKING_TOKEN = object()
 _STORE_BACKING_MUTATION_TOKEN = object()
+_BRANCH_CLOSURE_ATTESTATION_TOKEN = object()
+_SCOPE_OWNERSHIP_ATTESTATION_TOKEN = object()
 _SCOPE_SELECTION_TOKEN = object()
 _SCOPE_RESULT_TOKEN = object()
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False)
+class _InteractionBranchClosureAttestation:
+    """Seal authoritative roots for one exact partial branch closure."""
+
+    authoritative_branch_roots: frozenset[_InteractionBranchOwnershipKey]
+
+    def __init__(
+        self,
+        authoritative_branch_roots: frozenset[_InteractionBranchOwnershipKey],
+        *,
+        _token: object,
+    ) -> None:
+        if _token is not _BRANCH_CLOSURE_ATTESTATION_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "branch_closure_attestation",
+                "branch closure attestations are store-internal",
+            )
+        object.__setattr__(
+            self,
+            "authoritative_branch_roots",
+            authoritative_branch_roots,
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False)
+class _InteractionScopeOwnershipAttestation:
+    """Seal content-free ownership presence for one exact scope."""
+
+    scope: InteractionExecutionScope
+    principal: PrincipalScope
+    actor_owned_record_match: bool
+    foreign_owned_record_match: bool
+    actor_owned_branch_match: bool
+    foreign_owned_branch_match: bool
+
+    def __init__(
+        self,
+        *,
+        scope: InteractionExecutionScope,
+        principal: PrincipalScope,
+        actor_owned_record_match: bool,
+        foreign_owned_record_match: bool,
+        actor_owned_branch_match: bool,
+        foreign_owned_branch_match: bool,
+        _token: object,
+    ) -> None:
+        if _token is not _SCOPE_OWNERSHIP_ATTESTATION_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "scope_ownership_attestation",
+                "scope ownership attestations are store-internal",
+            )
+        if not isinstance(scope, InteractionExecutionScope):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "scope_ownership_attestation.scope",
+                "value must be an interaction execution scope",
+            )
+        if not isinstance(principal, PrincipalScope):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "scope_ownership_attestation.principal",
+                "value must be a principal scope",
+            )
+        validate_bool(
+            actor_owned_record_match,
+            "scope_ownership_attestation.actor_owned_record_match",
+        )
+        validate_bool(
+            foreign_owned_record_match,
+            "scope_ownership_attestation.foreign_owned_record_match",
+        )
+        validate_bool(
+            actor_owned_branch_match,
+            "scope_ownership_attestation.actor_owned_branch_match",
+        )
+        validate_bool(
+            foreign_owned_branch_match,
+            "scope_ownership_attestation.foreign_owned_branch_match",
+        )
+        object.__setattr__(self, "scope", scope)
+        object.__setattr__(self, "principal", principal)
+        object.__setattr__(
+            self,
+            "actor_owned_record_match",
+            actor_owned_record_match,
+        )
+        object.__setattr__(
+            self,
+            "foreign_owned_record_match",
+            foreign_owned_record_match,
+        )
+        object.__setattr__(
+            self,
+            "actor_owned_branch_match",
+            actor_owned_branch_match,
+        )
+        object.__setattr__(
+            self,
+            "foreign_owned_branch_match",
+            foreign_owned_branch_match,
+        )
 
 
 @final
@@ -1993,6 +2110,12 @@ class _InteractionStoreBackingSnapshot:
     records: tuple[InteractionRecord, ...] = field(repr=False)
     branch_records: tuple[InteractionBranchRecord, ...] = field(repr=False)
     store_generation: InteractionStoreGeneration
+    branch_closure_attestation: _InteractionBranchClosureAttestation | None = (
+        field(default=None, repr=False)
+    )
+    scope_ownership_attestation: (
+        _InteractionScopeOwnershipAttestation | None
+    ) = field(default=None, repr=False)
 
 
 @final
@@ -2009,9 +2132,15 @@ class _InteractionStoreBacking:
         records: tuple[InteractionRecord, ...],
         branch_records: tuple[InteractionBranchRecord, ...],
         store_generation: InteractionStoreGeneration,
+        scope_ownership_attestation: (
+            _InteractionScopeOwnershipAttestation | None
+        ) = None,
         _token: object,
     ) -> None:
-        if _token is not _STORE_BACKING_TOKEN:
+        if (
+            _token is not _STORE_BACKING_TOKEN
+            and _token is not _PARTIAL_STORE_BACKING_TOKEN
+        ):
             raise InputValidationError(
                 InputErrorCode.FORBIDDEN,
                 "backing",
@@ -2021,6 +2150,28 @@ class _InteractionStoreBacking:
             records,
             branch_records,
         )
+        branch_closure_attestation = (
+            _mint_interaction_branch_closure_attestation(
+                normalized_records,
+                normalized_branches,
+            )
+            if _token is _PARTIAL_STORE_BACKING_TOKEN
+            else None
+        )
+        if scope_ownership_attestation is not None:
+            _validate_interaction_scope_ownership_attestation(
+                scope_ownership_attestation
+            )
+        if (
+            branch_closure_attestation is not None
+            and scope_ownership_attestation is not None
+        ):
+            raise InputValidationError(
+                InputErrorCode.INVALID_FORMAT,
+                "backing",
+                "one partial backing cannot combine task and scope "
+                "attestations",
+            )
         object.__setattr__(self, "_capability", object())
         object.__setattr__(
             self,
@@ -2029,6 +2180,8 @@ class _InteractionStoreBacking:
                 records=normalized_records,
                 branch_records=normalized_branches,
                 store_generation=_validate_store_generation(store_generation),
+                branch_closure_attestation=branch_closure_attestation,
+                scope_ownership_attestation=scope_ownership_attestation,
             ),
         )
 
@@ -2050,6 +2203,16 @@ class _InteractionStoreBacking:
             records,
             branch_records,
         )
+        branch_closure_attestation = self._snapshot.branch_closure_attestation
+        scope_ownership_attestation = (
+            self._snapshot.scope_ownership_attestation
+        )
+        if branch_closure_attestation is not None:
+            _validate_interaction_branch_closure_attestation(
+                branch_closure_attestation,
+                normalized_records,
+                normalized_branches,
+            )
         next_generation = InteractionStoreGeneration(
             validate_state_revision(
                 self._snapshot.store_generation + 1,
@@ -2060,6 +2223,8 @@ class _InteractionStoreBacking:
             records=normalized_records,
             branch_records=normalized_branches,
             store_generation=next_generation,
+            branch_closure_attestation=branch_closure_attestation,
+            scope_ownership_attestation=scope_ownership_attestation,
         )
         object.__setattr__(self, "_snapshot", snapshot)
         return snapshot
@@ -2078,6 +2243,54 @@ def _new_interaction_store_backing(
         records=records,
         branch_records=branch_records,
         store_generation=store_generation,
+        scope_ownership_attestation=None,
+        _token=_STORE_BACKING_TOKEN,
+    )
+
+
+def _new_partial_interaction_store_backing(
+    *,
+    records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+    store_generation: InteractionStoreGeneration,
+) -> _InteractionStoreBacking:
+    """Create one sealed backing from an exact persisted branch closure."""
+    return _InteractionStoreBacking(
+        records=records,
+        branch_records=branch_records,
+        store_generation=store_generation,
+        scope_ownership_attestation=None,
+        _token=_PARTIAL_STORE_BACKING_TOKEN,
+    )
+
+
+def _new_scoped_interaction_store_backing(
+    *,
+    records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+    store_generation: InteractionStoreGeneration,
+    scope: InteractionExecutionScope,
+    principal: PrincipalScope,
+    actor_owned_record_match: bool,
+    foreign_owned_record_match: bool,
+    actor_owned_branch_match: bool,
+    foreign_owned_branch_match: bool,
+) -> _InteractionStoreBacking:
+    """Create one actor-only backing with exact global scope presence."""
+    attestation = _InteractionScopeOwnershipAttestation(
+        scope=scope,
+        principal=principal,
+        actor_owned_record_match=actor_owned_record_match,
+        foreign_owned_record_match=foreign_owned_record_match,
+        actor_owned_branch_match=actor_owned_branch_match,
+        foreign_owned_branch_match=foreign_owned_branch_match,
+        _token=_SCOPE_OWNERSHIP_ATTESTATION_TOKEN,
+    )
+    return _InteractionStoreBacking(
+        records=records,
+        branch_records=branch_records,
+        store_generation=store_generation,
+        scope_ownership_attestation=attestation,
         _token=_STORE_BACKING_TOKEN,
     )
 
@@ -2177,13 +2390,9 @@ def _insert_interaction_store_backing_branch_record(
     snapshot = _snapshot_interaction_store_backing(backing)
     _validate_branch_record(branch_record, "branch_record")
     registration = branch_record.registration
-    key = (registration.run_id, registration.branch_id)
+    key = _branch_identity_key(registration)
     if any(
-        (
-            item.registration.run_id,
-            item.registration.branch_id,
-        )
-        == key
+        _branch_identity_key(item.registration) == key
         for item in snapshot.branch_records
     ):
         raise InputValidationError(
@@ -2208,10 +2417,7 @@ def _replace_interaction_store_backing_branch_record(
     _validate_branch_record(previous, "previous")
     _validate_branch_record(branch_record, "branch_record")
     previous_registration = previous.registration
-    key = (
-        previous_registration.run_id,
-        previous_registration.branch_id,
-    )
+    key = _branch_identity_key(previous_registration)
     registration = branch_record.registration
     if registration.principal != previous_registration.principal:
         raise InputValidationError(
@@ -2229,10 +2435,7 @@ def _replace_interaction_store_backing_branch_record(
     branch_records: list[InteractionBranchRecord] = []
     for current in snapshot.branch_records:
         current_registration = current.registration
-        if (
-            current_registration.run_id,
-            current_registration.branch_id,
-        ) != key:
+        if _branch_identity_key(current_registration) != key:
             branch_records.append(current)
             continue
         if current != previous:
@@ -3905,10 +4108,23 @@ def _begin_scope_transaction(
         snapshot.records,
         command.scope,
         snapshot.branch_records,
+        command.actor.principal,
+    )
+    _validate_scope_ownership_presence(
+        snapshot,
+        command.scope,
+        command.actor.principal,
+        selected,
+    )
+    authoritative_branch_roots = (
+        frozenset()
+        if snapshot.branch_closure_attestation is None
+        else (snapshot.branch_closure_attestation.authoritative_branch_roots)
     )
     _validate_scope_ownership(
         snapshot.records,
         snapshot.branch_records,
+        authoritative_branch_roots,
         command.scope,
         command.actor.principal,
         selected,
@@ -3921,6 +4137,8 @@ def _begin_scope_transaction(
         snapshot_digest=_canonical_scope_snapshot_digest(
             snapshot.records,
             snapshot.branch_records,
+            authoritative_branch_roots,
+            snapshot.scope_ownership_attestation,
         ),
         selected_records=selected,
         backing=backing,
@@ -5193,12 +5411,51 @@ def _record_selection_key(record: InteractionRecord) -> tuple[str, ...]:
 
 def _branch_selection_key(
     record: InteractionBranchRecord,
-) -> tuple[str, str, str]:
+) -> tuple[str, ...]:
     registration = record.registration
+    principal = registration.principal
     return (
         str(registration.run_id),
+        "" if principal.user_id is None else str(principal.user_id),
+        "" if principal.tenant_id is None else str(principal.tenant_id),
+        (
+            ""
+            if principal.participant_id is None
+            else str(principal.participant_id)
+        ),
+        "" if principal.session_id is None else str(principal.session_id),
         str(registration.parent_branch_id),
         str(registration.branch_id),
+    )
+
+
+def _branch_ownership_selection_key(
+    key: _InteractionBranchOwnershipKey,
+) -> tuple[str, ...]:
+    """Return a deterministic ordering key for one branch owner."""
+    run_id, principal, branch_id = key
+    return (
+        str(run_id),
+        "" if principal.user_id is None else str(principal.user_id),
+        "" if principal.tenant_id is None else str(principal.tenant_id),
+        (
+            ""
+            if principal.participant_id is None
+            else str(principal.participant_id)
+        ),
+        "" if principal.session_id is None else str(principal.session_id),
+        str(branch_id),
+    )
+
+
+def _branch_identity_key(
+    registration: InteractionBranchRegistration,
+) -> tuple[RunId, PrincipalScope, BranchId]:
+    """Return one principal-scoped branch identity."""
+    return (
+        registration.run_id,
+        registration.principal,
+        registration.branch_id,
     )
 
 
@@ -5220,22 +5477,24 @@ def _resolve_interaction_branch_root(
             "branch-root lookup requires an immutable branch snapshot",
         )
     registrations: dict[
-        tuple[RunId, BranchId], InteractionBranchRegistration
+        tuple[RunId, PrincipalScope, BranchId],
+        InteractionBranchRegistration,
     ] = {}
     for record in branch_records:
         _validate_branch_record(record, "branch_records")
         registration = record.registration
-        key = (registration.run_id, registration.branch_id)
+        key = _branch_identity_key(registration)
         if key in registrations:
             return None
         registrations[key] = registration
 
     current = query.branch_id
-    if (query.run_id, current) not in registrations:
+    principal = query.actor.principal
+    if (query.run_id, principal, current) not in registrations:
         return None
-    seen: set[tuple[RunId, BranchId]] = set()
+    seen: set[tuple[RunId, PrincipalScope, BranchId]] = set()
     while True:
-        key = (query.run_id, current)
+        key = (query.run_id, principal, current)
         if key in seen:
             return None
         current_registration = registrations.get(key)
@@ -5245,10 +5504,158 @@ def _resolve_interaction_branch_root(
                 branch_id=query.branch_id,
                 root_branch_id=current,
             )
-        if current_registration.principal != query.actor.principal:
-            return None
         seen.add(key)
         current = current_registration.parent_branch_id
+
+
+def _derive_interaction_branch_closure_roots(
+    snapshot_records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+) -> frozenset[_InteractionBranchOwnershipKey]:
+    """Derive only terminal roots proven by one exact branch closure."""
+    registrations = {
+        _branch_identity_key(record.registration): record.registration
+        for record in branch_records
+    }
+    if len(registrations) != len(branch_records):
+        raise InputValidationError(
+            InputErrorCode.DUPLICATE,
+            "branch_records",
+            "an exact branch closure cannot contain duplicate edges",
+        )
+    record_owners = {
+        (
+            record.request.origin.run_id,
+            record.request.origin.principal,
+            record.request.origin.branch_id,
+        )
+        for record in snapshot_records
+    }
+    visited: set[_InteractionBranchOwnershipKey] = set()
+    authoritative_roots: set[_InteractionBranchOwnershipKey] = set()
+    for record in snapshot_records:
+        origin = record.request.origin
+        if origin.parent_branch_id is None:
+            continue
+        current = (
+            origin.run_id,
+            origin.principal,
+            origin.branch_id,
+        )
+        direct = registrations.get(current)
+        if (
+            direct is None
+            or direct.parent_branch_id != origin.parent_branch_id
+        ):
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "branch_records",
+                "an exact branch closure lacks its selected record edge",
+            )
+        seen: set[_InteractionBranchOwnershipKey] = set()
+        while current in registrations:
+            if current in seen:
+                raise InputValidationError(
+                    InputErrorCode.INVALID_FORMAT,
+                    "branch_records",
+                    "an exact branch closure cannot contain an ancestry cycle",
+                )
+            seen.add(current)
+            visited.add(current)
+            registration = registrations[current]
+            current = (
+                registration.run_id,
+                registration.principal,
+                registration.parent_branch_id,
+            )
+        if current not in record_owners:
+            authoritative_roots.add(current)
+    if visited != set(registrations):
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "branch_records",
+            "an exact branch closure contains an unrelated edge",
+        )
+    return frozenset(authoritative_roots)
+
+
+def _mint_interaction_branch_closure_attestation(
+    snapshot_records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+) -> _InteractionBranchClosureAttestation:
+    """Mint one sealed ownership attestation for an exact branch closure."""
+    return _InteractionBranchClosureAttestation(
+        _derive_interaction_branch_closure_roots(
+            snapshot_records,
+            branch_records,
+        ),
+        _token=_BRANCH_CLOSURE_ATTESTATION_TOKEN,
+    )
+
+
+def _validate_interaction_branch_closure_attestation(
+    attestation: _InteractionBranchClosureAttestation,
+    snapshot_records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+) -> None:
+    """Validate that a sealed closure attestation remains exact."""
+    if type(attestation) is not _InteractionBranchClosureAttestation:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "branch_closure_attestation",
+            "value must be a sealed branch closure attestation",
+        )
+    if attestation.authoritative_branch_roots != (
+        _derive_interaction_branch_closure_roots(
+            snapshot_records,
+            branch_records,
+        )
+    ):
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "branch_closure_attestation",
+            "branch closure roots changed within the sealed backing",
+        )
+
+
+def _validate_interaction_scope_ownership_attestation(
+    attestation: _InteractionScopeOwnershipAttestation,
+) -> None:
+    """Validate one exact constructor-sealed ownership attestation."""
+    if type(attestation) is not _InteractionScopeOwnershipAttestation:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "scope_ownership_attestation",
+            "value must be a sealed scope ownership attestation",
+        )
+    if not isinstance(attestation.scope, InteractionExecutionScope):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "scope_ownership_attestation.scope",
+            "value must be an interaction execution scope",
+        )
+    if not isinstance(attestation.principal, PrincipalScope):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "scope_ownership_attestation.principal",
+            "value must be a principal scope",
+        )
+    validate_bool(
+        attestation.actor_owned_record_match,
+        "scope_ownership_attestation.actor_owned_record_match",
+    )
+    validate_bool(
+        attestation.foreign_owned_record_match,
+        "scope_ownership_attestation.foreign_owned_record_match",
+    )
+    validate_bool(
+        attestation.actor_owned_branch_match,
+        "scope_ownership_attestation.actor_owned_branch_match",
+    )
+    validate_bool(
+        attestation.foreign_owned_branch_match,
+        "scope_ownership_attestation.foreign_owned_branch_match",
+    )
 
 
 def _validate_scope_snapshot(
@@ -5282,12 +5689,13 @@ def _validate_scope_snapshot(
             )
         request_ids.add(request_id)
     branch_by_child: dict[
-        tuple[RunId, BranchId], InteractionBranchRegistration
+        tuple[RunId, PrincipalScope, BranchId],
+        InteractionBranchRegistration,
     ] = {}
     for branch_record in branch_records:
         _validate_branch_record(branch_record, "branch_records")
         registration = branch_record.registration
-        key = (registration.run_id, registration.branch_id)
+        key = _branch_identity_key(registration)
         if key in branch_by_child:
             raise InputValidationError(
                 InputErrorCode.DUPLICATE,
@@ -5296,7 +5704,7 @@ def _validate_scope_snapshot(
             )
         branch_by_child[key] = registration
     for key in branch_by_child:
-        seen: set[tuple[RunId, BranchId]] = set()
+        seen: set[tuple[RunId, PrincipalScope, BranchId]] = set()
         current = key
         while current in branch_by_child:
             if current in seen:
@@ -5309,6 +5717,7 @@ def _validate_scope_snapshot(
             registration = branch_by_child[current]
             current = (
                 registration.run_id,
+                registration.principal,
                 registration.parent_branch_id,
             )
     for record in snapshot_records:
@@ -5316,6 +5725,7 @@ def _validate_scope_snapshot(
         record_registration = branch_by_child.get(
             (
                 origin.run_id,
+                origin.principal,
                 origin.branch_id,
             )
         )
@@ -5336,12 +5746,6 @@ def _validate_scope_snapshot(
                 "snapshot_records",
                 "request ancestry lacks its exact same-run branch edge",
             )
-        if record_registration.principal != origin.principal:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "snapshot_records",
-                "request ownership differs from its registered branch",
-            )
     return (
         tuple(sorted(snapshot_records, key=_record_selection_key)),
         tuple(sorted(branch_records, key=_branch_selection_key)),
@@ -5352,6 +5756,7 @@ def _select_scope_records(
     snapshot_records: tuple[InteractionRecord, ...],
     scope: InteractionExecutionScope,
     branch_records: tuple[InteractionBranchRecord, ...],
+    principal: PrincipalScope,
 ) -> tuple[InteractionRecord, ...]:
     if not isinstance(scope, InteractionExecutionScope):
         raise InputValidationError(
@@ -5359,83 +5764,201 @@ def _select_scope_records(
             "scope",
             "value must be an interaction execution scope",
         )
-    descendants = _scope_descendant_branches(scope, branch_records)
+    descendants = _scope_descendant_branches(
+        scope,
+        branch_records,
+        principal,
+    )
     selected: list[InteractionRecord] = []
     for record in snapshot_records:
         origin = record.request.origin
-        if (
-            record.request.state is not RequestState.PENDING
-            or record.request.resolution is not None
-            or origin.run_id != scope.run_id
-            or (scope.turn_id is not None and origin.turn_id != scope.turn_id)
-            or (scope.task_id is not None and origin.task_id != scope.task_id)
-            or (
-                scope.agent_id is not None
-                and origin.agent_id != scope.agent_id
-            )
-            or (
-                scope.branch_id is not None
-                and origin.branch_id not in descendants
-            )
+        if origin.principal != principal or not _record_matches_scope(
+            record,
+            scope,
+            descendants,
+            pending_only=True,
         ):
             continue
         selected.append(record)
     return tuple(selected)
 
 
-def _validate_scope_ownership(
+def _record_matches_scope(
+    record: InteractionRecord,
+    scope: InteractionExecutionScope,
+    descendants: frozenset[BranchId],
+    *,
+    pending_only: bool,
+) -> bool:
+    """Return whether one record matches exact execution-scope semantics."""
+    origin = record.request.origin
+    return not (
+        (
+            pending_only
+            and (
+                record.request.state is not RequestState.PENDING
+                or record.request.resolution is not None
+            )
+        )
+        or origin.run_id != scope.run_id
+        or (scope.turn_id is not None and origin.turn_id != scope.turn_id)
+        or (scope.task_id is not None and origin.task_id != scope.task_id)
+        or (scope.agent_id is not None and origin.agent_id != scope.agent_id)
+        or (
+            scope.branch_id is not None and origin.branch_id not in descendants
+        )
+    )
+
+
+def _scope_ownership_presence(
     snapshot_records: tuple[InteractionRecord, ...],
     branch_records: tuple[InteractionBranchRecord, ...],
     scope: InteractionExecutionScope,
     principal: PrincipalScope,
+) -> tuple[bool, bool, bool, bool]:
+    """Return content-free record and branch ownership for one scope."""
+    descendants_by_principal: dict[PrincipalScope, frozenset[BranchId]] = {}
+    actor_owned_record_match = False
+    foreign_owned_record_match = False
+    actor_owned_branch_match = False
+    foreign_owned_branch_match = False
+    for record in snapshot_records:
+        owner = record.request.origin.principal
+        descendants = descendants_by_principal.get(owner)
+        if descendants is None:
+            descendants = _scope_descendant_branches(
+                scope,
+                branch_records,
+                owner,
+            )
+            descendants_by_principal[owner] = descendants
+        if not _record_matches_scope(
+            record,
+            scope,
+            descendants,
+            pending_only=False,
+        ):
+            continue
+        if owner == principal:
+            actor_owned_record_match = True
+        else:
+            foreign_owned_record_match = True
+    if scope.branch_id is not None:
+        for branch_record in branch_records:
+            registration = branch_record.registration
+            owner = registration.principal
+            descendants = descendants_by_principal.get(owner)
+            if descendants is None:
+                descendants = _scope_descendant_branches(
+                    scope,
+                    branch_records,
+                    owner,
+                )
+                descendants_by_principal[owner] = descendants
+            if (
+                registration.run_id != scope.run_id
+                or registration.branch_id not in descendants
+            ):
+                continue
+            if owner == principal:
+                actor_owned_branch_match = True
+            else:
+                foreign_owned_branch_match = True
+    return (
+        actor_owned_record_match,
+        foreign_owned_record_match,
+        actor_owned_branch_match,
+        foreign_owned_branch_match,
+    )
+
+
+def _validate_scope_ownership_presence(
+    snapshot: _InteractionStoreBackingSnapshot,
+    scope: InteractionExecutionScope,
+    principal: PrincipalScope,
     selected_records: tuple[InteractionRecord, ...],
 ) -> None:
-    owners: dict[tuple[RunId, BranchId], PrincipalScope] = {}
+    """Reject a foreign-only scope while preserving empty-scope replay."""
+    attestation = snapshot.scope_ownership_attestation
+    if attestation is None:
+        (
+            actor_owned_record_match,
+            foreign_owned_record_match,
+            actor_owned_branch_match,
+            foreign_owned_branch_match,
+        ) = _scope_ownership_presence(
+            snapshot.records,
+            snapshot.branch_records,
+            scope,
+            principal,
+        )
+    else:
+        _validate_interaction_scope_ownership_attestation(attestation)
+        if attestation.scope != scope or attestation.principal != principal:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "scope_ownership_attestation",
+                "scope ownership attestation does not match the command",
+            )
+        actor_owned_record_match = attestation.actor_owned_record_match
+        foreign_owned_record_match = attestation.foreign_owned_record_match
+        actor_owned_branch_match = attestation.actor_owned_branch_match
+        foreign_owned_branch_match = attestation.foreign_owned_branch_match
+    if selected_records and not actor_owned_record_match:
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "scope_ownership_attestation",
+            "scope ownership presence differs from selected records",
+        )
+    foreign_only_record_match = (
+        not actor_owned_record_match and foreign_owned_record_match
+    )
+    foreign_only_branch_match = (
+        not actor_owned_record_match
+        and not foreign_owned_record_match
+        and not actor_owned_branch_match
+        and foreign_owned_branch_match
+    )
+    if not selected_records and (
+        foreign_only_record_match or foreign_only_branch_match
+    ):
+        raise InputValidationError(
+            InputErrorCode.FORBIDDEN,
+            "scope",
+            "matching scope ownership belongs to another principal",
+        )
+
+
+def _validate_scope_ownership(
+    snapshot_records: tuple[InteractionRecord, ...],
+    branch_records: tuple[InteractionBranchRecord, ...],
+    authoritative_branch_roots: frozenset[_InteractionBranchOwnershipKey],
+    scope: InteractionExecutionScope,
+    principal: PrincipalScope,
+    selected_records: tuple[InteractionRecord, ...],
+) -> None:
+    owners: set[tuple[RunId, PrincipalScope, BranchId]] = set()
     registrations: dict[
-        tuple[RunId, BranchId], InteractionBranchRegistration
+        tuple[RunId, PrincipalScope, BranchId],
+        InteractionBranchRegistration,
     ] = {}
     for record in snapshot_records:
         origin = record.request.origin
-        key = (origin.run_id, origin.branch_id)
-        existing = owners.get(key)
-        if existing is not None and existing != origin.principal:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "snapshot_records",
-                "one branch cannot contain records from multiple principals",
-            )
-        owners[key] = origin.principal
+        owners.add((origin.run_id, origin.principal, origin.branch_id))
     for branch_record in branch_records:
         registration = branch_record.registration
-        key = (registration.run_id, registration.branch_id)
+        key = _branch_identity_key(registration)
         registrations[key] = registration
-        existing = owners.get(key)
-        if existing is not None and existing != registration.principal:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "branch_records",
-                "registered branch ownership differs from its records",
-            )
-        owners[key] = registration.principal
-    for registration in registrations.values():
-        parent_key = (
-            registration.run_id,
-            registration.parent_branch_id,
-        )
-        parent_owner = owners.get(parent_key)
-        if parent_owner is not None and parent_owner != registration.principal:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "branch_records",
-                "parent and child branch ownership must be continuous",
-            )
-    relevant: set[tuple[RunId, BranchId]] = set()
+        owners.add(key)
+    owners.update(authoritative_branch_roots)
+    relevant: set[tuple[RunId, PrincipalScope, BranchId]] = set()
     if scope.branch_id is not None:
         relevant.update(
-            (scope.run_id, branch_id)
+            (scope.run_id, principal, branch_id)
             for branch_id in _scope_descendant_branches(
                 scope,
                 branch_records,
+                principal,
             )
         )
     for record in selected_records:
@@ -5446,32 +5969,35 @@ def _validate_scope_ownership(
                 "selected_records",
                 "every selected record must belong to the scope actor",
             )
-        current = (origin.run_id, origin.branch_id)
-        while current not in relevant:
+        current = (origin.run_id, principal, origin.branch_id)
+        seen: set[_InteractionBranchOwnershipKey] = set()
+        selected_branch = True
+        while current not in seen:
+            seen.add(current)
             relevant.add(current)
             current_registration = registrations.get(current)
             if current_registration is None:
+                if selected_branch and origin.parent_branch_id is not None:
+                    raise InputValidationError(
+                        InputErrorCode.FORBIDDEN,
+                        "branch_records",
+                        "selected ancestry lacks its exact owner-bound edge",
+                    )
                 break
+            selected_branch = False
             current = (
                 current_registration.run_id,
+                current_registration.principal,
                 current_registration.parent_branch_id,
             )
     for key in relevant:
-        owner = owners.get(key)
-        if owner is None:
+        if key not in owners:
             if selected_records:
                 raise InputValidationError(
                     InputErrorCode.FORBIDDEN,
                     "branch_records",
                     "selected ancestry lacks authoritative ownership",
                 )
-            continue
-        if owner != principal:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "branch_records",
-                "scope branch ownership differs from the scope actor",
-            )
 
 
 def _validate_scope_transaction_commit(
@@ -5506,9 +6032,16 @@ def _validate_scope_transaction_commit(
             "store_generation",
             "scope transaction is stale for the commit store generation",
         )
+    authoritative_branch_roots = (
+        frozenset()
+        if snapshot.branch_closure_attestation is None
+        else (snapshot.branch_closure_attestation.authoritative_branch_roots)
+    )
     current_digest = _canonical_scope_snapshot_digest(
         snapshot.records,
         snapshot.branch_records,
+        authoritative_branch_roots,
+        snapshot.scope_ownership_attestation,
     )
     if transaction.snapshot_digest != current_digest:
         raise InputValidationError(
@@ -5520,10 +6053,18 @@ def _validate_scope_transaction_commit(
         snapshot.records,
         command.scope,
         snapshot.branch_records,
+        command.actor.principal,
+    )
+    _validate_scope_ownership_presence(
+        snapshot,
+        command.scope,
+        command.actor.principal,
+        expected,
     )
     _validate_scope_ownership(
         snapshot.records,
         snapshot.branch_records,
+        authoritative_branch_roots,
         command.scope,
         command.actor.principal,
         expected,
@@ -5552,9 +6093,22 @@ def _validate_store_backing(backing: object) -> None:
 def _canonical_scope_snapshot_digest(
     snapshot_records: tuple[InteractionRecord, ...],
     branch_records: tuple[InteractionBranchRecord, ...],
+    authoritative_branch_roots: frozenset[_InteractionBranchOwnershipKey],
+    scope_ownership_attestation: _InteractionScopeOwnershipAttestation | None,
 ) -> str:
     payload = {
+        "authoritative_branch_roots": _canonical_scope_snapshot_value(
+            tuple(
+                sorted(
+                    authoritative_branch_roots,
+                    key=_branch_ownership_selection_key,
+                )
+            )
+        ),
         "branch_records": _canonical_scope_snapshot_value(branch_records),
+        "scope_ownership_attestation": _canonical_scope_snapshot_value(
+            scope_ownership_attestation
+        ),
         "snapshot_records": _canonical_scope_snapshot_value(snapshot_records),
     }
     encoded = dumps(
@@ -5622,6 +6176,7 @@ def _canonical_scope_snapshot_value(value: object) -> object:
 def _scope_descendant_branches(
     scope: InteractionExecutionScope,
     branch_records: tuple[InteractionBranchRecord, ...],
+    principal: PrincipalScope,
 ) -> frozenset[BranchId]:
     if scope.branch_id is None:
         return frozenset()
@@ -5635,6 +6190,7 @@ def _scope_descendant_branches(
             registration = record.registration
             if (
                 registration.run_id == scope.run_id
+                and registration.principal == principal
                 and registration.parent_branch_id in allowed
                 and registration.branch_id not in allowed
             ):

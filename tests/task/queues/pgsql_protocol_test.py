@@ -1,14 +1,17 @@
 from asyncio import CancelledError
+from collections.abc import Mapping
 from copy import deepcopy
 from datetime import UTC, datetime, timedelta
 from json import loads
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock, patch
 
 from avalan.pgsql import (
     PgsqlFailure,
     PgsqlFailureCategory,
     PgsqlOperationError,
+    PgsqlUnitOfWork,
 )
 from avalan.task import (
     IdempotencyMode,
@@ -16,6 +19,8 @@ from avalan.task import (
     TaskArtifactRef,
     TaskArtifactRetention,
     TaskAttemptState,
+    TaskDurableExpiredReentryCommit,
+    TaskDurableSuspensionCoordinator,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskIdempotencyDigest,
@@ -27,8 +32,10 @@ from avalan.task import (
     TaskQueueItemState,
     TaskQueueNotFoundError,
     TaskRunState,
+    TaskStoreConflictError,
 )
 from avalan.task.queues import PgsqlTaskQueue
+from avalan.task.queues import pgsql as queue_pgsql
 from avalan.task.queues.pgsql import _json
 
 
@@ -50,6 +57,36 @@ class SequenceIds:
         value = f"id-{self._next}"
         self._next = self._next + 1
         return value
+
+
+class ExpiredReentryCoordinator:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+        self.conflict = False
+
+    async def reconcile_expired_reentry(
+        self,
+        *,
+        queue_item_id: str,
+        expected_claim_token: str,
+        task_run_id: str,
+        result: TaskExecutionResult,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskDurableExpiredReentryCommit:
+        self.calls.append(
+            {
+                "queue_item_id": queue_item_id,
+                "expected_claim_token": expected_claim_token,
+                "task_run_id": task_run_id,
+                "result": result,
+                "now": now,
+                "metadata": metadata,
+            }
+        )
+        if self.conflict:
+            raise TaskStoreConflictError("claim changed")
+        return cast(TaskDurableExpiredReentryCommit, object())
 
 
 class FakePgsqlQueueDatabase:
@@ -243,6 +280,11 @@ class FakeCursor:
             self.row = self._transition_run(params)
         elif 'INSERT INTO "task_run_transitions"' in query:
             self.row = self._insert_run_transition(params)
+        elif (
+            'UPDATE "task_attempts" a' in query
+            and '"context" = jsonb_set' in query
+        ):
+            self.row = self._reuse_claimed_suspended_attempt(params)
         elif 'UPDATE "task_attempts" a' in query:
             self.row = self._transition_claimed_attempt(params)
         elif 'INSERT INTO "task_attempt_transitions"' in query:
@@ -263,12 +305,10 @@ class FakeCursor:
             self.row = self.database.runs.get(cast(str, params[0]))
         elif 'INSERT INTO "task_queue_items"' in query:
             self.row = self._insert_queue_item(params)
-        elif (
-            'SELECT q.*, r."state" AS "run_state", r."last_attempt_id"'
-            in query
-            and 'lease_expires_at" <= %s' in query
-        ):
-            self.rows = self._expired_claims(params)
+        elif query == queue_pgsql._SELECT_EXPIRED_DURABLE_REENTRIES_SQL:
+            self.rows = self._expired_claims(params, durable=True)
+        elif query == queue_pgsql._SELECT_EXPIRED_CLAIMS_SQL:
+            self.rows = self._expired_claims(params, durable=False)
         elif (
             'SELECT q.*, r."state" AS "run_state", r."last_attempt_id"'
             in query
@@ -538,6 +578,29 @@ class FakeCursor:
         attempt["updated_at"] = params[5]
         return {**attempt, "from_state": from_state}
 
+    def _reuse_claimed_suspended_attempt(
+        self,
+        params: tuple[object, ...],
+    ) -> dict[str, object] | None:
+        attempt = self.database.attempts.get(cast(str, params[2]))
+        if attempt is None or (
+            attempt["state"] != TaskAttemptState.SUSPENDED.value
+        ):
+            return None
+        run = self.database.runs[cast(str, attempt["run_id"])]
+        claim = cast(dict[str, object] | None, run.get("claim"))
+        if (
+            run["state"] != TaskRunState.CLAIMED.value
+            or run["last_attempt_id"] != attempt["attempt_id"]
+            or claim is None
+            or claim.get("claim_token") != params[3]
+        ):
+            return None
+        context = cast(dict[str, object], attempt["context"])
+        context["claim"] = loads(cast(str, params[0]))
+        attempt["updated_at"] = params[1]
+        return attempt
+
     def _insert_attempt_transition(
         self,
         params: tuple[object, ...],
@@ -730,6 +793,17 @@ class FakeCursor:
         if not ordered:
             return None
         row = self.database.queue_items[cast(str, ordered[0]["queue_item_id"])]
+        run = self.database.runs[cast(str, row["run_id"])]
+        last_attempt_id = cast(str | None, run["last_attempt_id"])
+        previous_attempt = (
+            self.database.attempts.get(last_attempt_id)
+            if last_attempt_id is not None
+            else None
+        )
+        is_reentry = (
+            previous_attempt is not None
+            and previous_attempt["state"] == TaskAttemptState.SUSPENDED.value
+        )
         row.update(
             {
                 "state": TaskQueueItemState.CLAIMED.value,
@@ -738,11 +812,19 @@ class FakeCursor:
                 "worker_id": params[4],
                 "claim_token": params[5],
                 "heartbeat_at": params[6],
-                "attempts": cast(int, row["attempts"]) + 1,
+                "attempts": (
+                    cast(int, row["attempts"])
+                    if is_reentry
+                    else cast(int, row["attempts"]) + 1
+                ),
                 "updated_at": params[7],
             }
         )
-        return self._with_run_state(row)
+        return {
+            **self._with_run_state(row),
+            "last_attempt_id": last_attempt_id,
+            "is_reentry": is_reentry,
+        }
 
     def _queue_item_for_run(
         self,
@@ -880,6 +962,8 @@ class FakeCursor:
     def _expired_claims(
         self,
         params: tuple[object, ...],
+        *,
+        durable: bool,
     ) -> tuple[dict[str, object], ...]:
         queue_name = cast(str, params[0])
         checked_at = cast(datetime, params[1])
@@ -900,6 +984,11 @@ class FakeCursor:
                 }
                 and claim is not None
                 and claim.get("claim_token") == row["claim_token"]
+                and (
+                    row.get("request_id") is not None
+                    or row.get("continuation_id") is not None
+                )
+                is durable
             ):
                 rows.append(
                     {
@@ -1134,6 +1223,61 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(self.database.open_count, 1)
         self.assertEqual(self.database.close_count, 1)
+
+    async def test_durable_operations_delegate_to_transactional_store(
+        self,
+    ) -> None:
+        suspension = cast(Any, object())
+        reentry = cast(Any, object())
+        coordinator = AsyncMock()
+        coordinator.suspend_claim.return_value = suspension
+        coordinator.requeue_suspended.return_value = reentry
+
+        with patch.object(
+            queue_pgsql,
+            "PgsqlTaskStore",
+            return_value=coordinator,
+        ) as store_factory:
+            suspended = await self.queue.suspend_claim(
+                "queue-item-1",
+                claim_token="claim-1",
+                segment_id="segment-1",
+                request_id="request-1",
+                continuation_id="continuation-1",
+                checkpoint_id="checkpoint-1",
+                now=self.now,
+                metadata={"source": "test"},
+            )
+            resumed = await self.queue.requeue_suspended(
+                "run-1",
+                request_id="request-1",
+                continuation_id="continuation-1",
+                resolution_revision=2,
+                now=self.now,
+                metadata={"source": "test"},
+            )
+
+        self.assertIs(suspended, suspension)
+        self.assertIs(resumed, reentry)
+        self.assertEqual(store_factory.call_count, 2)
+        coordinator.suspend_claim.assert_awaited_once_with(
+            "queue-item-1",
+            claim_token="claim-1",
+            segment_id="segment-1",
+            request_id="request-1",
+            continuation_id="continuation-1",
+            checkpoint_id="checkpoint-1",
+            now=self.now,
+            metadata={"source": "test"},
+        )
+        coordinator.requeue_suspended.assert_awaited_once_with(
+            "run-1",
+            request_id="request-1",
+            continuation_id="continuation-1",
+            resolution_revision=2,
+            now=self.now,
+            metadata={"source": "test"},
+        )
 
     async def test_open_and_close_support_minimal_database_objects(
         self,
@@ -1714,6 +1858,113 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             )
         )
         self.assertNotIn("request", self.database.queue_items["manual-ready"])
+
+    async def test_claim_reuses_suspended_attempt_without_retry_increment(
+        self,
+    ) -> None:
+        attempt_id = "attempt-suspended"
+        self.database.runs["run-queued"]["last_attempt_id"] = attempt_id
+        self.database.attempts[attempt_id] = {
+            "attempt_id": attempt_id,
+            "run_id": "run-queued",
+            "attempt_number": 1,
+            "state": TaskAttemptState.SUSPENDED.value,
+            "context": {
+                "run_id": "run-queued",
+                "attempt_id": attempt_id,
+                "attempt_number": 1,
+                "claim": None,
+                "metadata": {},
+            },
+            "result": None,
+            "metadata": {},
+            "created_at": self.now,
+            "updated_at": self.now,
+        }
+        self._add_queue_item(
+            "manual-reentry",
+            run_id="run-queued",
+            available_at=self.now,
+        )
+        self.database.queue_items["manual-reentry"]["attempts"] = 1
+
+        claim = await self.queue.claim(
+            "default",
+            worker_id="worker-2",
+            lease_expires_at=self.now + timedelta(minutes=5),
+            now=self.now,
+        )
+
+        self.assertIsNotNone(claim)
+        assert claim is not None
+        self.assertEqual(claim.attempt.attempt_id, attempt_id)
+        self.assertEqual(claim.attempt.attempt_number, 1)
+        self.assertEqual(claim.attempt.state, TaskAttemptState.SUSPENDED)
+        self.assertEqual(claim.attempt.context.claim, claim.run.claim)
+        self.assertEqual(claim.queue_item.attempts, 1)
+        self.assertEqual(tuple(self.database.attempts), (attempt_id,))
+        self.assertEqual(
+            self.database.queue_items["manual-reentry"]["attempts"],
+            1,
+        )
+
+    async def test_reentry_claim_requires_a_suspended_attempt(self) -> None:
+        run = queue_pgsql._run_from_row(self.database.runs["run-queued"])
+        unit = PgsqlUnitOfWork(
+            connection=cast(Any, FakeConnection(self.database)),
+            cursor=cast(Any, FakeCursor(self.database)),
+        )
+        with self.assertRaisesRegex(
+            TaskQueueConflictError,
+            "task reentry lacks a suspended claimed attempt",
+        ):
+            await queue_pgsql._reuse_claimed_suspended_attempt(
+                unit,
+                run=run,
+                now=self.now,
+            )
+
+        attempt_id = "attempt-suspended"
+        self.database.runs["run-queued"]["last_attempt_id"] = attempt_id
+        self.database.attempts[attempt_id] = {
+            "attempt_id": attempt_id,
+            "run_id": "run-queued",
+            "attempt_number": 1,
+            "state": TaskAttemptState.SUSPENDED.value,
+            "context": {
+                "run_id": "run-queued",
+                "attempt_id": attempt_id,
+                "attempt_number": 1,
+                "claim": None,
+                "metadata": {},
+            },
+            "result": None,
+            "metadata": {},
+            "created_at": self.now,
+            "updated_at": self.now,
+        }
+        self._add_queue_item(
+            "manual-reentry",
+            run_id="run-queued",
+            available_at=self.now,
+        )
+        self.database.queue_items["manual-reentry"]["attempts"] = 1
+
+        with patch.object(
+            FakeCursor,
+            "_reuse_claimed_suspended_attempt",
+            return_value=None,
+        ):
+            with self.assertRaisesRegex(
+                TaskQueueConflictError,
+                "task reentry suspended attempt did not match",
+            ):
+                await self.queue.claim(
+                    "default",
+                    worker_id="worker-2",
+                    lease_expires_at=self.now + timedelta(minutes=5),
+                    now=self.now,
+                )
 
     async def test_claim_returns_none_when_no_uncancelled_item_exists(
         self,
@@ -2539,6 +2790,149 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             self.database.attempt_transitions["id-4"]["metadata"]["source"],
             "reaper",
         )
+
+    async def test_abandon_expired_fails_closed_for_durable_reentry(
+        self,
+    ) -> None:
+        self._add_claimed_row(
+            queue_item_id="durable-expired",
+            run_id="run-durable-expired",
+            attempt_id="attempt-durable-expired",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
+        self.database.queue_items["durable-expired"].update(
+            segment_id="segment-durable",
+            request_id="request-durable",
+            continuation_id="continuation-durable",
+        )
+
+        with self.assertRaises(TaskQueueConflictError):
+            await self.queue.abandon_expired(
+                "default",
+                max_attempts=2,
+                limit=10,
+                now=self.now,
+            )
+
+        self.assertEqual(
+            self.database.queue_items["durable-expired"]["state"],
+            TaskQueueItemState.CLAIMED.value,
+        )
+        self.assertEqual(
+            self.database.runs["run-durable-expired"]["state"],
+            TaskRunState.CLAIMED.value,
+        )
+
+    async def test_abandon_expired_routes_durable_before_generic_work(
+        self,
+    ) -> None:
+        self._add_claimed_row(
+            queue_item_id="durable-expired",
+            run_id="run-durable-expired",
+            attempt_id="attempt-durable-expired",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=2),
+        )
+        self.database.queue_items["durable-expired"].update(
+            segment_id="segment-durable",
+            request_id="request-durable",
+            continuation_id="continuation-durable",
+        )
+        self._add_claimed_row(
+            queue_item_id="generic-expired",
+            run_id="run-generic-expired",
+            attempt_id="attempt-generic-expired",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
+        coordinator = ExpiredReentryCoordinator()
+        queue = PgsqlTaskQueue(
+            self.database,
+            clock=self.clock,
+            id_factory=SequenceIds(),
+            durable_reentry_coordinator=cast(
+                TaskDurableSuspensionCoordinator,
+                coordinator,
+            ),
+        )
+
+        abandoned = await queue.abandon_expired(
+            "default",
+            max_attempts=2,
+            limit=2,
+            now=self.now,
+            metadata={"source": "durable-reaper"},
+        )
+
+        self.assertEqual(len(coordinator.calls), 1)
+        self.assertEqual(
+            coordinator.calls[0]["queue_item_id"],
+            "durable-expired",
+        )
+        self.assertEqual(
+            coordinator.calls[0]["expected_claim_token"],
+            "durable-expired-token",
+        )
+        self.assertEqual(
+            coordinator.calls[0]["task_run_id"],
+            "run-durable-expired",
+        )
+        result = cast(TaskExecutionResult, coordinator.calls[0]["result"])
+        self.assertEqual(
+            result.error,
+            {"code": "expired_durable_reentry_claim"},
+        )
+        self.assertEqual(
+            coordinator.calls[0]["metadata"],
+            {"source": "durable-reaper"},
+        )
+        self.assertEqual(len(abandoned), 1)
+        self.assertEqual(
+            abandoned[0].queue_item.queue_item_id,
+            "generic-expired",
+        )
+        self.assertEqual(
+            self.database.queue_items["durable-expired"]["state"],
+            TaskQueueItemState.CLAIMED.value,
+        )
+
+    async def test_durable_expiry_conflict_consumes_the_requested_limit(
+        self,
+    ) -> None:
+        self._add_claimed_row(
+            queue_item_id="durable-expired",
+            run_id="run-durable-expired",
+            attempt_id="attempt-durable-expired",
+            attempts=1,
+            lease_expires_at=self.now - timedelta(seconds=1),
+        )
+        self.database.queue_items["durable-expired"].update(
+            segment_id="segment-durable",
+            request_id="request-durable",
+            continuation_id="continuation-durable",
+        )
+        coordinator = ExpiredReentryCoordinator()
+        coordinator.conflict = True
+        queue = PgsqlTaskQueue(
+            self.database,
+            clock=self.clock,
+            id_factory=SequenceIds(),
+            durable_reentry_coordinator=cast(
+                TaskDurableSuspensionCoordinator,
+                coordinator,
+            ),
+        )
+
+        abandoned = await queue.abandon_expired(
+            "default",
+            max_attempts=2,
+            limit=1,
+            now=self.now,
+        )
+
+        self.assertEqual(abandoned, ())
+        self.assertEqual(len(coordinator.calls), 1)
 
     async def test_abandon_expired_started_claim_requeues_run(self) -> None:
         self._add_claimed_row(

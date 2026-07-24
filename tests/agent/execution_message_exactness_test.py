@@ -189,7 +189,7 @@ def _correlated_messages(
     )
     return (
         _assistant_message(assistant_content),
-        correlated.local_message(),
+        correlated.tool_result_message(call),
     )
 
 
@@ -254,6 +254,34 @@ class CorrelatedInteractionMessagesTest(IsolatedAsyncioTestCase):
     ) -> None:
         _, _, result = await self._pending_execution()
         assistant, tool = _correlated_messages(result)
+        outcome = tool.tool_call_result
+        assert outcome is not None
+        tampered_outcomes = (
+            replace(outcome, id="forged-result"),
+            replace(
+                outcome,
+                call=replace(outcome.call, id="forged-call"),
+            ),
+            replace(
+                outcome,
+                call=replace(outcome.call, name="forged-name"),
+            ),
+            replace(
+                outcome,
+                call=replace(
+                    outcome.call,
+                    provider_name="forged-provider-name",
+                ),
+            ),
+            replace(
+                outcome,
+                call=replace(
+                    outcome.call,
+                    arguments={"mode": "optional"},
+                ),
+            ),
+            replace(outcome, result={"kind": "forged"}),
+        )
         invalid_messages = (
             (tool, assistant),
             (replace(assistant, content="forged preamble"), tool),
@@ -271,6 +299,13 @@ class CorrelatedInteractionMessagesTest(IsolatedAsyncioTestCase):
                     ],
                 ),
                 tool,
+            ),
+            *(
+                (
+                    assistant,
+                    replace(tool, tool_call_result=tampered_outcome),
+                )
+                for tampered_outcome in tampered_outcomes
             ),
         )
         for messages in invalid_messages:

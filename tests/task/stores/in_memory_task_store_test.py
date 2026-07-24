@@ -6,6 +6,7 @@ from avalan.task import (
     IdempotencyMode,
     TaskArtifactPurpose,
     TaskArtifactRef,
+    TaskAttemptSegmentState,
     TaskAttemptState,
     TaskDefinition,
     TaskExecutionRequest,
@@ -94,6 +95,125 @@ class InMemoryTaskStoreTest(IsolatedAsyncioTestCase):
             await self.store.get_artifact("missing")
         with self.assertRaises(TaskStoreNotFoundError):
             await self.store.list_artifacts("missing")
+        with self.assertRaises(TaskStoreNotFoundError):
+            await self.store.get_attempt_segment("missing")
+        with self.assertRaises(TaskStoreNotFoundError):
+            await self.store.list_attempt_segment_transitions("missing")
+
+    async def test_attempt_segments_enforce_lineage_and_correlation(
+        self,
+    ) -> None:
+        first_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        first_attempt = await self.store.create_attempt(first_run.run_id)
+
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "initial segment cannot resume another segment",
+        ):
+            await self.store.create_attempt_segment(
+                first_attempt.attempt_id,
+                resumed_from_segment_id="missing-segment",
+            )
+        first_segment = await self.store.create_attempt_segment(
+            first_attempt.attempt_id,
+            metadata={"phase": "initial"},
+        )
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "task attempt already has an active segment",
+        ):
+            await self.store.create_attempt_segment(first_attempt.attempt_id)
+
+        running_segment = await self.store.transition_attempt_segment(
+            first_segment.segment_id,
+            from_states={TaskAttemptSegmentState.CREATED},
+            to_state=TaskAttemptSegmentState.RUNNING,
+            reason="started",
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "only suspended segments have request correlation",
+        ):
+            await self.store.transition_attempt_segment(
+                running_segment.segment_id,
+                from_states={TaskAttemptSegmentState.RUNNING},
+                to_state=TaskAttemptSegmentState.SUCCEEDED,
+                reason="invalid-correlation",
+                request_id="request-1",
+                continuation_id="continuation-1",
+            )
+        suspended_segment = await self.store.transition_attempt_segment(
+            running_segment.segment_id,
+            from_states={TaskAttemptSegmentState.RUNNING},
+            to_state=TaskAttemptSegmentState.SUSPENDED,
+            reason="input-required",
+            request_id="request-1",
+            continuation_id="continuation-1",
+            checkpoint_id="checkpoint-1",
+        )
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "resumed segment must link the prior segment",
+        ):
+            await self.store.create_attempt_segment(
+                first_attempt.attempt_id,
+                resumed_from_segment_id="wrong-segment",
+            )
+        resumed_segment = await self.store.create_attempt_segment(
+            first_attempt.attempt_id,
+            resumed_from_segment_id=suspended_segment.segment_id,
+        )
+        self.assertEqual(
+            await self.store.get_attempt_segment(resumed_segment.segment_id),
+            resumed_segment,
+        )
+        self.assertEqual(
+            await self.store.list_attempt_segments(first_attempt.attempt_id),
+            (suspended_segment, resumed_segment),
+        )
+        transitions = await self.store.list_attempt_segment_transitions(
+            first_segment.segment_id
+        )
+        self.assertEqual(
+            [transition.to_state for transition in transitions],
+            [
+                TaskAttemptSegmentState.RUNNING,
+                TaskAttemptSegmentState.SUSPENDED,
+            ],
+        )
+
+        await self.store.transition_attempt(
+            first_attempt.attempt_id,
+            from_states={TaskAttemptState.CREATED},
+            to_state=TaskAttemptState.ABANDONED,
+            reason="test-terminal",
+        )
+        with self.assertRaisesRegex(
+            TaskStoreConflictError,
+            "task attempt cannot start a segment",
+        ):
+            await self.store.create_attempt_segment(first_attempt.attempt_id)
+
+        second_run = await self.store.create_run(
+            TaskExecutionRequest(definition_id="hash-classify")
+        )
+        second_attempt = await self.store.create_attempt(second_run.run_id)
+        second_segment = await self.store.create_attempt_segment(
+            second_attempt.attempt_id
+        )
+        with self.assertRaisesRegex(
+            TaskStoreNotFoundError,
+            "task attempt segment was not found for run",
+        ):
+            await self.store.append_usage(
+                first_run.run_id,
+                attempt_id=first_attempt.attempt_id,
+                segment_id=second_segment.segment_id,
+                source=UsageSource.EXACT,
+                totals=UsageTotals(input_tokens=1),
+            )
 
     async def test_usage_list_and_totals_filter_by_source(self) -> None:
         run = await self.store.create_run(

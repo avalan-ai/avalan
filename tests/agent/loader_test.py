@@ -19,6 +19,7 @@ from avalan.agent.execution import AgentExecution
 from avalan.agent.loader import (
     OrchestratorLoader,
     _merge_shell_tool_settings,
+    _normalize_file_run_reasoning,
     _shell_tool_runtime_settings,
 )
 from avalan.cli.commands import agent as agent_cmds
@@ -2247,17 +2248,25 @@ required = true
     ) -> None:
         image = "ghcr.io/example/tools@sha256:" + "4" * 64
 
+        class FakeEnvelopedAgent:
+            def __init__(self) -> None:
+                self.definition_locators = []
+
+            def bind_execution_definition_locator(self, locator) -> None:
+                self.definition_locators.append(locator)
+
         class FakeAgentEnvelopeLoader:
             trusted_runtime_envelope_runner = True
 
             def __init__(self) -> None:
                 self.plan = None
                 self.kwargs = None
+                self.agent = FakeEnvelopedAgent()
 
             async def load_agent_runtime_envelope(self, plan, **kwargs):
                 self.plan = plan
                 self.kwargs = kwargs
-                return "enveloped"
+                return self.agent
 
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + f"""
@@ -2298,9 +2307,13 @@ readiness_timeout_seconds = 12
                 tool_settings=ToolSettingsContext(extra={"caller": "ok"}),
             )
 
-            self.assertEqual(result, "enveloped")
+            self.assertIs(result, envelope_loader.agent)
             assert envelope_loader.plan is not None
             assert envelope_loader.kwargs is not None
+            self.assertEqual(
+                envelope_loader.agent.definition_locators,
+                [Path(tmp.name).resolve(strict=True).as_uri()],
+            )
             self.assertEqual(
                 envelope_loader.kwargs["call_options_override"],
                 {
@@ -5120,6 +5133,19 @@ uri = "ai://local/model"
                 "engine": {"uri": "ai://local/model"},
                 "run": {"reasoning": {"summary": "auto"}},
             }
+        )
+        OrchestratorLoader.validate_agent_config(
+            {
+                "agent": {"role": "assistant"},
+                "engine": {"uri": "ai://local/model"},
+                "run": {"reasoning": {"effort": "high"}},
+            }
+        )
+        reasoning_without_summary = {"run": {"reasoning": {"effort": "high"}}}
+        _normalize_file_run_reasoning(reasoning_without_summary)
+        self.assertEqual(
+            reasoning_without_summary,
+            {"run": {"reasoning": {"effort": "high"}}},
         )
 
     async def test_permanent_memory_from_file(self):

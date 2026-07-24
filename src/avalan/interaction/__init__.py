@@ -90,6 +90,75 @@ from .codec import (
 from .codec import (
     semantic_request_fingerprint as semantic_request_fingerprint,
 )
+from .continuation import (
+    PORTABLE_CONTINUATION_MAX_UTF8_BYTES as PORTABLE_CONTINUATION_MAX_UTF8_BYTES,  # noqa: E501
+)
+from .continuation import (
+    PORTABLE_CONTINUATION_VERSION as PORTABLE_CONTINUATION_VERSION,
+)
+from .continuation import (
+    ContinuationClaim as ContinuationClaim,
+)
+from .continuation import (
+    ContinuationClaimOwnerId as ContinuationClaimOwnerId,
+)
+from .continuation import (
+    ContinuationClaimState as ContinuationClaimState,
+)
+from .continuation import (
+    ContinuationCompletion as ContinuationCompletion,
+)
+from .continuation import (
+    ContinuationCompletionCommand as ContinuationCompletionCommand,
+)
+from .continuation import (
+    ContinuationDispatch as ContinuationDispatch,
+)
+from .continuation import (
+    ContinuationDispatchId as ContinuationDispatchId,
+)
+from .continuation import (
+    ContinuationFencingToken as ContinuationFencingToken,
+)
+from .continuation import (
+    ContinuationRejectionCommand as ContinuationRejectionCommand,
+)
+from .continuation import (
+    ContinuationRuntimeResolver as ContinuationRuntimeResolver,
+)
+from .continuation import (
+    ContinuationStoreRevision as ContinuationStoreRevision,
+)
+from .continuation import (
+    DurableContinuationResumeState as DurableContinuationResumeState,
+)
+from .continuation import (
+    PortableContinuation as PortableContinuation,
+)
+from .continuation import (
+    ProviderContinuationSnapshot as ProviderContinuationSnapshot,
+)
+from .continuation import (
+    ProviderContinuationSnapshotAdapter as ProviderContinuationSnapshotAdapter,
+)
+from .continuation import (
+    ResolvedContinuationRuntime as ResolvedContinuationRuntime,
+)
+from .continuation import (
+    TrustedContinuationRuntimeLoader as TrustedContinuationRuntimeLoader,
+)
+from .continuation import (
+    decode_portable_continuation as decode_portable_continuation,
+)
+from .continuation import (
+    encode_portable_continuation as encode_portable_continuation,
+)
+from .continuation import (
+    portable_continuation_digest as portable_continuation_digest,
+)
+from .durable import (
+    DurableInteractionSuspension as DurableInteractionSuspension,
+)
 from .entities import (
     REQUEST_AGGREGATE_CONTENT_MEMBERS as REQUEST_AGGREGATE_CONTENT_MEMBERS,
 )

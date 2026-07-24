@@ -7528,6 +7528,23 @@
           }
         }
       },
+      "task.interaction_answered_queued.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "answered"
+          },
+          "task_state": {
+            "const": "queued"
+          }
+        }
+      },
       "task.interaction_cancelled.v1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -7562,6 +7579,23 @@
           }
         }
       },
+      "task.interaction_expired_attached.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "expired"
+          },
+          "task_state": {
+            "const": "failed"
+          }
+        }
+      },
       "task.interaction_pending.v1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -7579,6 +7613,23 @@
           }
         }
       },
+      "task.interaction_pending_attached.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "pending"
+          },
+          "task_state": {
+            "const": "running"
+          }
+        }
+      },
       "task.interaction_superseded.v1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -7593,6 +7644,40 @@
           },
           "task_state": {
             "const": "running"
+          }
+        }
+      },
+      "task.interaction_superseded_attached.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "superseded"
+          },
+          "task_state": {
+            "const": "failed"
+          }
+        }
+      },
+      "task.interaction_superseded_cancelled.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "superseded"
+          },
+          "task_state": {
+            "const": "cancelled"
           }
         }
       },
@@ -7627,6 +7712,23 @@
           },
           "task_state": {
             "const": "running"
+          }
+        }
+      },
+      "task.interaction_unavailable_completed.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "interaction_state",
+          "task_state"
+        ],
+        "properties": {
+          "interaction_state": {
+            "const": "unavailable"
+          },
+          "task_state": {
+            "const": "succeeded"
           }
         }
       },
@@ -8449,6 +8551,10 @@
         "interaction_state": "answered",
         "task_state": "running"
       },
+      "task.interaction_answered_queued.v1": {
+        "interaction_state": "answered",
+        "task_state": "queued"
+      },
       "task.interaction_cancelled.v1": {
         "interaction_state": "cancelled",
         "task_state": "cancelled"
@@ -8457,13 +8563,29 @@
         "interaction_state": "expired",
         "task_state": "expired"
       },
+      "task.interaction_expired_attached.v1": {
+        "interaction_state": "expired",
+        "task_state": "failed"
+      },
       "task.interaction_pending.v1": {
         "interaction_state": "pending",
         "task_state": "input_required"
       },
+      "task.interaction_pending_attached.v1": {
+        "interaction_state": "pending",
+        "task_state": "running"
+      },
       "task.interaction_superseded.v1": {
         "interaction_state": "superseded",
         "task_state": "running"
+      },
+      "task.interaction_superseded_attached.v1": {
+        "interaction_state": "superseded",
+        "task_state": "failed"
+      },
+      "task.interaction_superseded_cancelled.v1": {
+        "interaction_state": "superseded",
+        "task_state": "cancelled"
       },
       "task.interaction_timed_out.v1": {
         "interaction_state": "timed_out",
@@ -8472,6 +8594,10 @@
       "task.interaction_unavailable.v1": {
         "interaction_state": "unavailable",
         "task_state": "running"
+      },
+      "task.interaction_unavailable_completed.v1": {
+        "interaction_state": "unavailable",
+        "task_state": "succeeded"
       },
       "task.observation_answered.v1": {
         "interaction_state": "answered",
@@ -8737,5 +8863,5 @@
     },
     "measurement": "barriers, queues, local peers, call_soon callbacks, and real monotonic loop time; no timing sleeps or network"
   },
-  "contract_sha256": "c13bcff64c0b28905c64c8e92b040d56e2312a99b45303b4e3a5d4d4490c882d"
+  "contract_sha256": "55f46cb67350be867b3b7b0a5194dc8f534cfed2f35f69a9859d3a8dd71bc740"
 }

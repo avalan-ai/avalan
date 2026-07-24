@@ -23,6 +23,7 @@ from avalan.task import (
     TaskExecutionRequest,
     TaskExecutionTarget,
     TaskInputContract,
+    TaskInteractionEventType,
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
@@ -34,6 +35,11 @@ from avalan.task import (
     sanitize_raw_task_event,
     sanitize_raw_task_event_closed,
     task_event_category,
+    task_interaction_event_payload,
+)
+from avalan.task.event import (
+    _is_safe_correlation_value,
+    _restore_reasoning_observability,
 )
 from avalan.task.stores import InMemoryTaskStore
 
@@ -68,6 +74,36 @@ def definition() -> TaskDefinition:
 
 
 class SanitizedTaskEventTest(TestCase):
+    def test_raw_correlation_identifier_is_not_safe(self) -> None:
+        self.assertFalse(_is_safe_correlation_value("raw-correlation"))
+
+    def test_interaction_event_payload_tracks_resumed_segment(self) -> None:
+        payload = task_interaction_event_payload(
+            event_type=TaskInteractionEventType.INPUT_RESUMED,
+            request_id="request-1",
+            continuation_id="continuation-1",
+            segment_id="segment-1",
+            next_segment_id="segment-2",
+        )
+
+        self.assertEqual(
+            payload,
+            {
+                "request_id": "request-1",
+                "continuation_id": "continuation-1",
+                "segment_id": "segment-1",
+                "next_segment_id": "segment-2",
+            },
+        )
+        with self.assertRaises(AssertionError):
+            task_interaction_event_payload(
+                event_type=TaskInteractionEventType.INPUT_REQUIRED,
+                request_id="request-1",
+                continuation_id="continuation-1",
+                segment_id="segment-1",
+                next_segment_id="segment-2",
+            )
+
     def test_token_event_drops_raw_token_text_and_ids(self) -> None:
         draft = sanitize_raw_task_event(
             Event(
@@ -143,6 +179,83 @@ class SanitizedTaskEventTest(TestCase):
             },
         )
         self.assertNotIn("private reasoning", str(payload))
+
+        correlation_id = "sha256:" + ("a" * 64)
+        complete_observability = sanitize_raw_task_event(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        {
+                            "kind": "reasoning.delta",
+                            "provider_family": "openai",
+                            "provider_event_type": "response.reasoning.delta",
+                            "terminal_outcome": "completed",
+                            "correlation": {
+                                "model_continuation_id": correlation_id,
+                                "protocol_item_id": correlation_id,
+                                "provider_output_index": 2,
+                                "provider_summary_index": 3,
+                            },
+                            "summary": {
+                                "text_delta_length": 17,
+                                "reasoning_representation": "native_text",
+                                "segment_instance_ordinal": 1,
+                            },
+                            "usage": {
+                                "input_tokens": 5,
+                                "output_tokens": 7,
+                                "total_tokens": 12,
+                            },
+                        }
+                    )
+                ),
+            ),
+            PrivacySanitizer(),
+        )
+        complete_payload = cast(
+            dict[str, object],
+            complete_observability.payload,
+        )
+        complete_canonical = cast(
+            dict[str, object],
+            complete_payload["canonical_stream"],
+        )
+        self.assertEqual(complete_canonical["provider_family"], "openai")
+        self.assertEqual(
+            complete_canonical["provider_event_type"],
+            "response.reasoning.delta",
+        )
+        self.assertEqual(complete_canonical["terminal_outcome"], "completed")
+        self.assertEqual(
+            complete_canonical["correlation"],
+            {
+                "model_continuation_id": correlation_id,
+                "protocol_item_id": correlation_id,
+                "provider_output_index": 2,
+                "provider_summary_index": 3,
+            },
+        )
+        self.assertEqual(
+            complete_canonical["usage"],
+            {
+                "input_tokens": 5,
+                "output_tokens": 7,
+                "total_tokens": 12,
+            },
+        )
+
+        _restore_reasoning_observability(
+            Event(
+                type=EventType.TOKEN_GENERATED,
+                observability_payload=(
+                    EventObservabilityPayload.canonical_stream(
+                        {"kind": "reasoning.delta"}
+                    )
+                ),
+            ),
+            {"canonical_stream": "not-a-mapping"},
+        )
 
         invalid_summary = sanitize_raw_task_event(
             Event(

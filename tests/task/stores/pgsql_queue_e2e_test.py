@@ -40,10 +40,12 @@ from avalan.task import (
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationContext,
     TaskValidationIssue,
     TaskWorker,
+    completed_task_target_outcome,
 )
 from avalan.task.queues import PgsqlTaskQueue
 from avalan.task.stores import (
@@ -102,7 +104,10 @@ class RecordingTarget(TaskTargetRunner):
         assert isinstance(context, TaskValidationContext)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         if self.failures:
@@ -115,7 +120,7 @@ class RecordingTarget(TaskTargetRunner):
                 total_token_count=8,
             )
         )
-        return "safe output"
+        return completed_task_target_outcome("safe output")
 
 
 class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):

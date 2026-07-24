@@ -10,10 +10,13 @@ from ..types import (
 from .definition import TaskDefinition
 from .event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
 from .state import (
+    TaskAttemptSegmentState,
     TaskAttemptState,
     TaskRunState,
+    is_terminal_attempt_segment_state,
     is_terminal_attempt_state,
     is_terminal_run_state,
+    is_valid_attempt_segment_transition,
     is_valid_attempt_transition,
     is_valid_run_transition,
 )
@@ -366,6 +369,98 @@ class TaskAttemptTransition:
         )
 
 
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskAttemptSegment:
+    segment_id: str
+    attempt_id: str
+    run_id: str
+    segment_number: int
+    state: TaskAttemptSegmentState
+    created_at: datetime
+    updated_at: datetime
+    claim: TaskClaim | None = None
+    resumed_from_segment_id: str | None = None
+    request_id: str | None = None
+    continuation_id: str | None = None
+    checkpoint_id: str | None = None
+    metadata: TaskSnapshotMetadata = field(
+        default_factory=empty_snapshot_metadata
+    )
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.segment_id, "segment_id")
+        _assert_non_empty_string(self.attempt_id, "attempt_id")
+        _assert_non_empty_string(self.run_id, "run_id")
+        _assert_positive_int(self.segment_number, "segment_number")
+        assert isinstance(self.state, TaskAttemptSegmentState)
+        _assert_datetime(self.created_at, "created_at")
+        _assert_datetime(self.updated_at, "updated_at")
+        assert self.updated_at >= self.created_at
+        if self.claim is not None:
+            assert isinstance(self.claim, TaskClaim)
+        if self.resumed_from_segment_id is not None:
+            _assert_non_empty_string(
+                self.resumed_from_segment_id,
+                "resumed_from_segment_id",
+            )
+            assert (
+                self.resumed_from_segment_id != self.segment_id
+            ), "segment cannot resume from itself"
+        if self.request_id is not None:
+            _assert_non_empty_string(self.request_id, "request_id")
+        if self.continuation_id is not None:
+            _assert_non_empty_string(
+                self.continuation_id,
+                "continuation_id",
+            )
+        if self.checkpoint_id is not None:
+            _assert_non_empty_string(self.checkpoint_id, "checkpoint_id")
+        assert (self.request_id is None) == (
+            self.continuation_id is None
+        ), "request and continuation identifiers must be paired"
+        if self.checkpoint_id is not None:
+            assert (
+                self.request_id is not None
+            ), "checkpoint identifiers require interaction correlation"
+        if self.state == TaskAttemptSegmentState.SUSPENDED:
+            assert self.request_id is not None
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_snapshot_metadata(self.metadata),
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TaskAttemptSegmentTransition:
+    transition_id: str
+    segment_id: str
+    attempt_id: str
+    run_id: str
+    from_state: TaskAttemptSegmentState
+    to_state: TaskAttemptSegmentState
+    reason: str
+    created_at: datetime
+    metadata: TaskSnapshotMetadata = field(
+        default_factory=empty_snapshot_metadata
+    )
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.transition_id, "transition_id")
+        _assert_non_empty_string(self.segment_id, "segment_id")
+        _assert_non_empty_string(self.attempt_id, "attempt_id")
+        _assert_non_empty_string(self.run_id, "run_id")
+        assert isinstance(self.from_state, TaskAttemptSegmentState)
+        assert isinstance(self.to_state, TaskAttemptSegmentState)
+        _assert_non_empty_string(self.reason, "reason")
+        _assert_datetime(self.created_at, "created_at")
+        object.__setattr__(
+            self,
+            "metadata",
+            freeze_snapshot_metadata(self.metadata),
+        )
+
+
 class TaskStore(Protocol):
     async def register_definition(
         self,
@@ -446,6 +541,44 @@ class TaskStore(Protocol):
         attempt_id: str,
     ) -> tuple[TaskAttemptTransition, ...]: ...
 
+    async def create_attempt_segment(
+        self,
+        attempt_id: str,
+        *,
+        claim_token: str | None = None,
+        resumed_from_segment_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment: ...
+
+    async def get_attempt_segment(
+        self,
+        segment_id: str,
+    ) -> TaskAttemptSegment: ...
+
+    async def list_attempt_segments(
+        self,
+        attempt_id: str,
+    ) -> tuple[TaskAttemptSegment, ...]: ...
+
+    async def transition_attempt_segment(
+        self,
+        segment_id: str,
+        *,
+        from_states: Collection[TaskAttemptSegmentState],
+        to_state: TaskAttemptSegmentState,
+        reason: str,
+        request_id: str | None = None,
+        continuation_id: str | None = None,
+        checkpoint_id: str | None = None,
+        claim_token: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment: ...
+
+    async def list_attempt_segment_transitions(
+        self,
+        segment_id: str,
+    ) -> tuple[TaskAttemptSegmentTransition, ...]: ...
+
     async def append_event(
         self,
         run_id: str,
@@ -471,6 +604,7 @@ class TaskStore(Protocol):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord: ...
@@ -602,6 +736,38 @@ def ensure_attempt_is_mutable(state: TaskAttemptState) -> None:
         raise TaskStoreConflictError("terminal task attempt cannot be changed")
 
 
+def validate_attempt_segment_transition_request(
+    *,
+    current_state: TaskAttemptSegmentState,
+    from_states: Collection[TaskAttemptSegmentState],
+    to_state: TaskAttemptSegmentState,
+) -> None:
+    assert isinstance(current_state, TaskAttemptSegmentState)
+    _assert_state_collection(
+        from_states,
+        TaskAttemptSegmentState,
+        "from_states",
+    )
+    assert isinstance(to_state, TaskAttemptSegmentState)
+    if current_state not in from_states:
+        raise TaskStoreConflictError(
+            "task attempt segment state did not match"
+        )
+    if not is_valid_attempt_segment_transition(current_state, to_state):
+        raise TaskStoreConflictError(
+            "task attempt segment transition is not valid"
+        )
+
+
+def ensure_attempt_segment_is_mutable(
+    state: TaskAttemptSegmentState,
+) -> None:
+    if is_terminal_attempt_segment_state(state):
+        raise TaskStoreConflictError(
+            "terminal task attempt segment cannot be changed"
+        )
+
+
 def _freeze_snapshot_value(value: object) -> TaskSnapshotValue:
     if value is None or isinstance(value, bool | str):
         return value
@@ -628,7 +794,11 @@ def _assert_datetime(value: datetime, field_name: str) -> None:
 
 def _assert_state_collection(
     values: Collection[object],
-    state_type: type[TaskAttemptState] | type[TaskRunState],
+    state_type: (
+        type[TaskAttemptSegmentState]
+        | type[TaskAttemptState]
+        | type[TaskRunState]
+    ),
     field_name: str,
 ) -> None:
     assert isinstance(values, Collection), f"{field_name} must be a collection"

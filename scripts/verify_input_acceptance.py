@@ -75,7 +75,7 @@ from ast import (
 from ast import (
     stmt as AstStatement,
 )
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass
 from hashlib import sha256
@@ -104,6 +104,7 @@ from verify_src_coverage import (
 _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
+_CURRENT_BOUNDARY_PHASE = 5
 _CATEGORIES = frozenset(
     (
         "unit",
@@ -301,7 +302,7 @@ _PUBLIC_CROSS_FIELD_INVARIANTS = {
 _COLLECT_SENTINEL = "__INPUT_ACCEPTANCE_COLLECT__"
 _EXECUTE_SENTINEL = "__INPUT_ACCEPTANCE_EXECUTE__"
 _PROCESS_TIMEOUT_SECONDS = 300
-_EXPECTED_CURRENT_RUNTIME_FILES = (
+_FROZEN_RUNTIME_FILES = (
     "tests/agent/execution_attached_boundaries_test.py",
     "tests/agent/execution_cancellation_integration_test.py",
     "tests/agent/execution_direct_iteration_cancellation_test.py",
@@ -331,13 +332,103 @@ _EXPECTED_CURRENT_RUNTIME_FILES = (
     "tests/model/engine_test.py",
     "tests/model/model_stream_interaction_test.py",
 )
-_EXPECTED_CURRENT_RUNTIME_NODE_COUNT = 249
-_EXPECTED_CURRENT_RUNTIME_NODE_SHA256 = (
+_FROZEN_RUNTIME_NODE_COUNT = 249
+_FROZEN_RUNTIME_NODE_SHA256 = (
     "41ec33710c3a014309798077e3ef75484d315e0781309aa4f62756253c5e0be4"
 )
+_EXPECTED_CURRENT_RUNTIME_FILES = (
+    "tests/agent/durable_continuation_resume_test.py",
+    "tests/agent/durable_runtime_test.py",
+    "tests/agent/execution_coverage_regression_test.py",
+    "tests/agent/execution_wrapper_input_required_test.py",
+    "tests/agent/orchestrator_contract_coverage_test.py",
+    "tests/agent/orchestrator_response_contract_coverage_test.py",
+    "tests/input/broker_contract_test.py",
+    "tests/input/failure_matrix_task_e2e_test.py",
+    "tests/input/public_interaction_e2e_test.py",
+    "tests/interaction/continuation_import_test.py",
+    "tests/interaction/continuation_test.py",
+    "tests/interaction/interaction_store_authority_precedence_regression_test.py",
+    "tests/interaction/interaction_store_conformance_test.py",
+    "tests/interaction/interaction_store_contract_test.py",
+    "tests/interaction/interaction_store_validation_coverage_test.py",
+    "tests/interaction/stores/interaction_pgsql_e2e.py",
+    "tests/interaction/stores/interaction_pgsql_store_test.py",
+    "tests/model/model_capability_test.py",
+    "tests/model/nlp/vendor_openai_continuation_test.py",
+    "tests/model/text_generation_response_additional_test.py",
+    "tests/task/client_test.py",
+    "tests/task/event_test.py",
+    "tests/task/queue_test.py",
+    "tests/task/queues/pgsql_protocol_test.py",
+    "tests/task/runner_test.py",
+    "tests/task/state_test.py",
+    "tests/task/store_contract_test.py",
+    "tests/task/stores/in_memory_task_store_test.py",
+    "tests/task/stores/pgsql_migration_test.py",
+    "tests/task/stores/pgsql_store_coverage_test.py",
+    "tests/task/suspension_test.py",
+    "tests/task/target_registry_test.py",
+    "tests/task/targets/agent_target_test.py",
+    "tests/task/targets/flow_target_test.py",
+    "tests/task/worker_continuation_coverage_test.py",
+    "tests/task/worker_test.py",
+)
+_EXPECTED_CURRENT_RUNTIME_NODE_COUNT = 436
+_EXPECTED_CURRENT_RUNTIME_NODE_SHA256 = (
+    "5ecf8718bfdc7e3fbcb5fdeb8b3f110556568e7d2d2234e2cea13c73538deb2a"
+)
 _EXPECTED_CURRENT_FOCUSED_COMMAND = (
-    "poetry run python scripts/verify_input_acceptance.py --through-phase 4"
-    " --runtime-only"
+    "make test-pgsql-exact no-install INPUT_PHASE=5"
+)
+_EXPECTED_TASK_FAILURE_NODES = frozenset(
+    (
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
+    )
+)
+_EXPECTED_TASK_FAILURE_SHA256 = (
+    "0c513eeef6debbd1d31760cdbc95d914aeb3f902f8e1a28bd8fb50419fe4e1a9"
+)
+_EXPECTED_NONCONVENTION_TEST_PATHS = frozenset(
+    ("tests/interaction/stores/interaction_pgsql_e2e.py",)
+)
+_EXPECTED_INHERITED_COLLECTION_METHODS = (
+    "test_artifact_metadata_is_appended_and_filtered_by_store",
+    "test_artifact_state_transitions_are_compare_and_swap",
+    "test_attempts_are_ordered_and_one_active_attempt_is_allowed",
+    "test_claim_token_fences_queued_run_updates",
+    "test_create_run_requires_registered_definition",
+    "test_execution_payload_is_durable_and_immutable",
+    "test_registers_definitions_immutably",
+    "test_retention_artifact_discovery_filters_ready_expired_records",
+    "test_run_lifecycle_uses_compare_and_swap_transitions",
+)
+_EXPECTED_INHERITED_COLLECTION_OWNERS = {
+    f"{path}::{class_name}::{method}": (
+        f"tests/task/store_contract_test.py::StoreContractAssertions::{method}"
+    )
+    for path, class_name in (
+        ("tests/task/store_contract_test.py", "StoreContractTest"),
+        (
+            "tests/task/stores/pgsql_contract_test.py",
+            "PgsqlStoreContractTest",
+        ),
+    )
+    for method in _EXPECTED_INHERITED_COLLECTION_METHODS
+}
+_EXPECTED_INHERITED_COLLECTIONS = frozenset(
+    _EXPECTED_INHERITED_COLLECTION_OWNERS
+)
+_EXPECTED_INHERITED_COLLECTION_SHA256 = (
+    "f0d41d2a7888657aef5046cc56f17a949508f96c87ec40701ab8b3c59fc04a79"
 )
 _COVERAGE_EXCLUSION_PATTERN = compile_regex(
     r"#\s*(?:pragma\s*:?\s*no\s*cover|coverage\s*:?\s*ignore)",
@@ -389,6 +480,34 @@ _EXPECTED_REQUIREMENT_IDS = _BEHAVIOR_REQUIREMENT_IDS | _GATE_REQUIREMENT_IDS
 _EXPECTED_FAILURE_CONDITIONS = frozenset(
     f"INPUT-F-{index:02d}" for index in range(1, 16)
 )
+_EXPECTED_FAILURE_SCHEDULE_CORRECTIONS = {
+    **{
+        (f"INPUT-F-{condition:02d}", surface): 7
+        for condition in range(4, 12)
+        for surface in ("cli-task-inspect", "cli-task-events")
+    },
+    **{
+        (f"INPUT-F-{condition:02d}", surface): 6
+        for condition in range(4, 12)
+        for surface in ("task-client-inspect", "task-client-events")
+    },
+    **{
+        (condition, surface): 9
+        for condition in (
+            "INPUT-F-01",
+            *(f"INPUT-F-{index:02d}" for index in range(4, 12)),
+        )
+        for surface in (
+            "task-target-flow-direct",
+            "task-target-flow-queue",
+        )
+    },
+    **{
+        ("INPUT-F-01", f"task-target-{target}-{mode}"): 12
+        for target in ("task", "model", "callable", "tool")
+        for mode in ("direct", "queue")
+    },
+}
 _EXPECTED_NO_BC_IDS = frozenset(
     {
         "tool-manager-provider-coupling",
@@ -410,25 +529,25 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "f333a13de1678a7d139acc384d673df15f861c66cfbbffbcd77b8dcc2dc79c80"
+    "0e4bc53885cbe24ee6fc6ad34f16aaf9220f59918615b348fa582987c3f3e74c"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
-    "e5ce3aac0d441897b80a09d6a693853c65d4a446ed7e4c0184b3e3bc0b212c08"
+    "a87657b19615f2f5064eec8e73d6d3856fb2eb64934fc1cbe9b7a71733b3226d"
 )
 _EXPECTED_DECISIONS_SHA256 = (
-    "c13bcff64c0b28905c64c8e92b040d56e2312a99b45303b4e3a5d4d4490c882d"
+    "55f46cb67350be867b3b7b0a5194dc8f534cfed2f35f69a9859d3a8dd71bc740"
 )
 _EXPECTED_NO_BC_SHA256 = (
     "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "51c73d84e7292cff0dbc0698708ae0a8d162309c41d77b79d5880b72decbc2a2"
+    "edd3cfd2721fef0159d53f07f6b5b83c27c8dd7c1e975084f01e7917c8def19e"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
+    "97987b255baca02760ec1d3701db4ff7fcf92316abac6ab399b518cdb48f68f1"
 )
 _EXPECTED_REVIEW_HISTORY_SHA256 = (
-    "ce375482081e5180ba4904bf4d7517af8069cd21f82a1e7771c5077c7ba0cfdd"
+    "901b758b01325b0eae2ed2cbbc23a24d27d768852f56208e05297bc2b3ecddea"
 )
 _EXPECTED_PHASE0_REVIEW_SHA256 = (
     "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
@@ -464,7 +583,13 @@ _EXPECTED_PRIOR_EVIDENCE_SHA256 = (
     "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
 )
 _EXPECTED_QUALITY_HISTORY_SHA256 = (
-    "c1798ede412d1b56848dede3f7d242b1067ced5a871e60bbb9a4f9098df5b875"
+    "0f44c34f7b4d34074204769f97290070ade00d44ae89e875feef8598dc5f32e5"
+)
+_EXPECTED_FROZEN_QUALITY_SHA256 = (
+    "07d5de78f45684af480d428d17ea8fef29565581e37c20fbd8e97a46c3fb30d0"
+)
+_EXPECTED_FROZEN_EVIDENCE_SHA256 = (
+    "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
 )
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
@@ -497,16 +622,20 @@ _EXPECTED_REVIEW_OCCURRENCES = (
     (3, "gate", "/root/terminal_review", "approved"),
     (4, "semantic", "/root/execution_runtime_review", "approved"),
     (4, "gate", "/root/execution_gate_review", "approved"),
+    (5, "semantic", "/root/durable_lifecycle_corrections", "pending"),
+    (5, "gate", "/root/continuation_r5_review", "pending"),
+    (5, "semantic", "/root/durable_lifecycle_corrections", "approved"),
+    (5, "gate", "/root/continuation_r5_review", "approved"),
 )
 _EXPECTED_CURRENT_SEMANTIC_REVIEW_STATUS = "approved"
 _EXPECTED_CURRENT_GATE_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
-_EXPECTED_CURRENT_BASELINE_HEAD = "d538fba47d9721755675fa8752403203e08fe025"
-_EXPECTED_CURRENT_REGRESSION_NODE_COUNT = 26
-_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT = 43
-_EXPECTED_CURRENT_TEST_FILE_COUNT = 51
-_EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT = 8
+_EXPECTED_CURRENT_BASELINE_HEAD = "a455e6817557305fa27bb7052366d851e4eb0342"
+_EXPECTED_CURRENT_REGRESSION_NODE_COUNT = 53
+_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT = 47
+_EXPECTED_CURRENT_TEST_FILE_COUNT = 54
+_EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT = 7
 _ABSENT_TEST_DEFINITION_SHA256 = (
     "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479"
 )
@@ -515,49 +644,53 @@ _ABSENT_TEST_SUPPORT_SHA256 = (
 )
 _EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS = frozenset(
     (
-        "tests/agent/additional_coverage_test.py",
-        "tests/agent/default_orchestrator_test.py",
-        "tests/agent/execution_attached_boundaries_test.py",
-        "tests/agent/execution_cancellation_integration_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/agent/durable_runtime_test.py",
         "tests/agent/execution_coverage_regression_test.py",
-        "tests/agent/execution_direct_iteration_cancellation_test.py",
-        "tests/agent/execution_isolation_integration_test.py",
-        "tests/agent/execution_memory_idempotency_test.py",
         "tests/agent/execution_message_exactness_test.py",
-        "tests/agent/execution_response_ownership_adversarial_test.py",
-        "tests/agent/execution_sequential_response_sync_test.py",
-        "tests/agent/execution_strict_invariants_test.py",
-        "tests/agent/execution_suspension_adversarial_test.py",
         "tests/agent/execution_test.py",
-        "tests/agent/execution_transcript_adversarial_test.py",
         "tests/agent/execution_wrapper_input_required_test.py",
-        "tests/agent/json_orchestrator_test.py",
         "tests/agent/loader_test.py",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py",
-        "tests/agent/orchestrator_cleanup_ownership_test.py",
-        "tests/agent/orchestrator_convergence_coverage_test.py",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py",
+        "tests/agent/orchestrator_contract_coverage_test.py",
+        "tests/agent/orchestrator_response_contract_coverage_test.py",
         "tests/agent/orchestrator_response_convergence_coverage_test.py",
-        "tests/agent/orchestrator_response_test.py",
-        "tests/agent/orchestrator_test.py",
-        "tests/input/attached_runtime_e2e_test.py",
-        "tests/input/attached_runtime_matrix_test.py",
         "tests/input/broker_contract_test.py",
+        "tests/input/failure_matrix_task_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py",
         "tests/input_acceptance_verifier_test.py",
         "tests/input_contract_test.py",
-        "tests/memory/permanent/elasticsearch_message_memory_test.py",
-        "tests/memory/permanent/pgsql_test.py",
-        "tests/memory/permanent/s3vectors_message_memory_test.py",
-        "tests/memory/permanent/structured_message_codec_test.py",
-        "tests/model/model_stream_interaction_test.py",
-        "tests/model/text_generation_response_additional_test.py",
+        "tests/interaction/continuation_import_test.py",
+        "tests/interaction/continuation_test.py",
+        "tests/interaction/interaction_store_conformance_test.py",
+        "tests/interaction/interaction_store_validation_coverage_test.py",
+        "tests/interaction/stores/interaction_pgsql_e2e.py",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/model/model_capability_test.py",
+        "tests/model/nlp/vendor_openai_continuation_test.py",
         "tests/project_metadata_test.py",
-        "tests/server/protocol_streaming_e2e_test.py",
-        "tests/server/reasoning_summary_protocol_test.py",
-        "tests/server/responses_test.py",
-        "tests/server/streaming_conformance_test.py",
         "tests/src_coverage_verifier_test.py",
-        "tests/tool/a2a_tool_test.py",
+        "tests/task/client_test.py",
+        "tests/task/container_execution_test.py",
+        "tests/task/direct_client_e2e_test.py",
+        "tests/task/event_test.py",
+        "tests/task/full_e2e_matrix_test.py",
+        "tests/task/queue_test.py",
+        "tests/task/queue_worker_e2e_test.py",
+        "tests/task/queues/pgsql_protocol_test.py",
+        "tests/task/runner_test.py",
+        "tests/task/state_test.py",
+        "tests/task/store_contract_test.py",
+        "tests/task/stores/in_memory_task_store_test.py",
+        "tests/task/stores/pgsql_contract_test.py",
+        "tests/task/stores/pgsql_migration_test.py",
+        "tests/task/stores/pgsql_queue_e2e_test.py",
+        "tests/task/stores/pgsql_store_coverage_test.py",
+        "tests/task/suspension_test.py",
+        "tests/task/target_registry_test.py",
+        "tests/task/targets/agent_target_test.py",
+        "tests/task/targets/flow_target_test.py",
+        "tests/task/worker_continuation_coverage_test.py",
+        "tests/task/worker_test.py",
     )
 )
 _CURRENT_DUPLICATE_PGSQL_NODE = (
@@ -572,56 +705,43 @@ _EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS = {
     ),
 }
 _EXPECTED_CURRENT_REGRESSION_SHA256 = (
-    "e7e18a868cdda568f185b8620cf1460cb51916dd1c6bc14080398c63fd08c24a"
+    "7280d26cd84a941c2f063d10027615db20ff2b125298dc858a3ef0c2d77c5566"
 )
-_EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT = 10
+_EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT = 23
 _EXPECTED_CURRENT_ACTIVE_LEGACY_SHA256 = (
-    "9d54e8c0522016cb357d2042553297d1e0022b23e0928ea1fafe5ba1e98b625c"
+    "2f1b6d7b76f8fd6b714a0fabd4b8f24ea45f05c6b2b56dfeed17003b1851a69c"
 )
-_EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES = frozenset(
+_EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES: frozenset[str] = frozenset()
+_EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS: tuple[
+    tuple[str, str, str, str], ...
+] = (
     (
         (
-            "tests/input_acceptance_verifier_test.py::"
-            "test_evidence_state_and_review_history_fail_closed"
+            "tests/agent/orchestrator_response_convergence_coverage_test.py::"
+            "OrchestratorResponseInteractionCoverageTest::"
+            "test_start_task_input_requires_attached_runtime"
         ),
-    )
-)
-_EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS = (
-    (
+        "cd8ca832e93833ddc5590abbca97b341a522f34f3ca5dff743c738f94e7c6495",
         (
-            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
-            "test_aexit_skips_message_sync_on_keyboard_interrupt"
+            "tests/agent/orchestrator_response_convergence_coverage_test.py::"
+            "OrchestratorResponseInteractionCoverageTest::"
+            "test_start_task_input_requires_interaction_runtime"
         ),
-        "811e85fdb87372d567e68dc4c10d81b1732fc520bb98b763aea4e279713ff12e",
-        (
-            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
-            "test_aexit_runs_all_cleanup_on_keyboard_interrupt"
-        ),
-        "835f38e34bc443fbd1a5388c2f9299cbb9bf71565c49673f759f11ad16628d71",
-    ),
-    (
-        (
-            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
-            "test_aexit_skips_message_sync_on_cancelled_error"
-        ),
-        "d2a0ff40f479e33ce7a75e1cbf5aa095a3f4308d41d05a7fad549fa0807abbc0",
-        (
-            "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::"
-            "test_aexit_runs_response_cleanup_on_cancelled_error"
-        ),
-        "fd4c2a19fd5c30d826e5ca4a392ede1bb23c2c3b0718614c4f70469cfdf3f4e7",
+        "fbed1866fcf219f6ac03c60840c9e466d8cd47850030212ce680630e18d1c94b",
     ),
 )
 _EXPECTED_PENDING_SOURCE_INVENTORY = (
-    "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563",
-    426,
-    111511,
-    1356,
+    "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23",
+    435,
+    118256,
+    1736,
 )
 _EXPECTED_BOUNDARY_PATHS = frozenset(
     {
         ".github/workflows/test.yml",
         "Makefile",
+        "poetry.lock",
+        "pyproject.toml",
         "scripts/input_contract_json.py",
         "scripts/run_input_contract_gate.py",
         "scripts/task_pgsql_test_database.py",
@@ -641,7 +761,7 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "src/avalan/server/routers/chat.py",
         "src/avalan/server/routers/mcp.py",
         "src/avalan/server/routers/responses.py",
-        "src/avalan/task/event.py",
+        "src/avalan/task/",
         "src/avalan/tool/",
         "tests/agent/",
         "tests/cli/",
@@ -683,20 +803,14 @@ _EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
         "src/avalan/server/routers/chat.py",
         "src/avalan/server/routers/mcp.py",
         "src/avalan/server/routers/responses.py",
-        "src/avalan/task/event.py",
+        "src/avalan/task/",
         "src/avalan/tool/",
     }
 )
 _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
-    "poetry run pytest --verbose -s",
-    "make test-coverage -- -100 src/",
-    "make test-coverage-exact no-install",
-    (
-        "poetry run python scripts/verify_input_acceptance.py"
-        + " --through-phase 4"
-    ),
-    "make typecheck-input-contract INPUT_PHASE=4",
     "make lint",
+    "make typecheck-input-contract INPUT_PHASE=5",
+    "make test-pgsql-exact no-install INPUT_PHASE=5",
     "git diff --check",
 )
 _EXPECTED_COMMON_GATE_COMMANDS = frozenset(
@@ -796,6 +910,7 @@ class Probe:
                 if report.failed or report.skipped
                 else ""
             ),
+            "user_properties": list(report.user_properties),
         }})
 
 probe = Probe()
@@ -815,6 +930,22 @@ print("{_EXECUTE_SENTINEL}" + dumps({{
 
 class AcceptanceVerificationError(RuntimeError):
     """Report an invalid or non-passing acceptance inventory."""
+
+
+@dataclass(frozen=True, slots=True)
+class _FailureMatrixEvidenceExpectation:
+    """Describe one active matrix cell's required dynamic postconditions."""
+
+    node_id: str
+    condition_id: str
+    surface_id: str
+    expected_transition: str
+    public_result_id: str
+    public_result_schema: dict[str, object]
+    status_key: str
+    status_value: str
+    provider_call_count: int
+    domain_side_effect_count: int
 
 
 class _JsonSchemaValidator(Protocol):
@@ -1026,8 +1157,9 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         nodes,
         current_phase,
     )
-    if current_phase >= 4:
+    if current_phase >= _CURRENT_BOUNDARY_PHASE:
         _validate_current_manifest_inventory(nodes)
+        _validate_task_failure_schedule(nodes)
     return AcceptanceManifest(
         path=path,
         current_phase=current_phase,
@@ -1044,7 +1176,7 @@ def _current_runtime_node_ids(
     return tuple(
         node.node_id
         for node in nodes
-        if node.active_from_phase == 4
+        if node.active_from_phase == _CURRENT_BOUNDARY_PHASE
         and any(
             requirement_id in _BEHAVIOR_REQUIREMENT_IDS
             for requirement_id in node.requirement_ids
@@ -1056,11 +1188,46 @@ def _validate_current_manifest_inventory(
     nodes: tuple[AcceptanceNode, ...],
 ) -> None:
     """Require the reviewed current behavioral files and node digest."""
-    runtime_files = frozenset(_EXPECTED_CURRENT_RUNTIME_FILES)
+    _validate_runtime_inventory(
+        nodes,
+        boundary=4,
+        expected_files=frozenset(_FROZEN_RUNTIME_FILES),
+        expected_count=_FROZEN_RUNTIME_NODE_COUNT,
+        expected_digest=_FROZEN_RUNTIME_NODE_SHA256,
+        historical_node_ids={
+            replacement_id: removed_id
+            for (
+                removed_id,
+                _baseline_digest,
+                replacement_id,
+                _current_digest,
+            ) in _EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS
+        },
+    )
+    _validate_runtime_inventory(
+        nodes,
+        boundary=_CURRENT_BOUNDARY_PHASE,
+        expected_files=frozenset(_EXPECTED_CURRENT_RUNTIME_FILES),
+        expected_count=_EXPECTED_CURRENT_RUNTIME_NODE_COUNT,
+        expected_digest=_EXPECTED_CURRENT_RUNTIME_NODE_SHA256,
+    )
+
+
+def _validate_runtime_inventory(
+    nodes: tuple[AcceptanceNode, ...],
+    *,
+    boundary: int,
+    expected_files: frozenset[str],
+    expected_count: int,
+    expected_digest: str,
+    historical_node_ids: Mapping[str, str] | None = None,
+) -> None:
+    """Require one exact reviewed behavioral inventory."""
+    resolved_historical_node_ids = historical_node_ids or {}
     runtime_nodes = tuple(
         node
         for node in nodes
-        if node.active_from_phase == 4
+        if node.active_from_phase == boundary
         and any(
             requirement_id in _BEHAVIOR_REQUIREMENT_IDS
             for requirement_id in node.requirement_ids
@@ -1070,29 +1237,61 @@ def _validate_current_manifest_inventory(
         node.node_id
         for node in runtime_nodes
         if node.lifecycle != "active"
-        or node.category == "public_e2e"
         or any(
             requirement_id in _GATE_REQUIREMENT_IDS
             for requirement_id in node.requirement_ids
         )
     )
     observed_files = frozenset(
-        node.node_id.split("::", 1)[0] for node in runtime_nodes
+        resolved_historical_node_ids.get(node.node_id, node.node_id).split(
+            "::",
+            1,
+        )[0]
+        for node in runtime_nodes
     )
-    node_ids = tuple(node.node_id for node in runtime_nodes)
+    node_ids = tuple(
+        resolved_historical_node_ids.get(node.node_id, node.node_id)
+        for node in runtime_nodes
+    )
     digest = sha256("\n".join(sorted(node_ids)).encode("utf-8")).hexdigest()
     if (
         invalid
-        or observed_files != runtime_files
-        or len(node_ids) != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
-        or digest != _EXPECTED_CURRENT_RUNTIME_NODE_SHA256
+        or observed_files != expected_files
+        or len(node_ids) != expected_count
+        or digest != expected_digest
     ):
         raise AcceptanceVerificationError(
-            "current runtime acceptance inventory changed:"
+            "reviewed runtime acceptance inventory changed:"
+            f" boundary={boundary},"
             f" invalid={list(invalid)},"
-            f" missing_files={sorted(runtime_files - observed_files)},"
-            f" unexpected_files={sorted(observed_files - runtime_files)},"
+            f" missing_files={sorted(expected_files - observed_files)},"
+            f" unexpected_files={sorted(observed_files - expected_files)},"
             f" nodes={len(node_ids)}, digest={digest}"
+        )
+
+
+def _validate_task_failure_schedule(
+    nodes: tuple[AcceptanceNode, ...],
+) -> None:
+    """Require the exact scheduled task failure-node inventory."""
+    scheduled = frozenset(
+        node.node_id
+        for node in nodes
+        if node.node_id in _EXPECTED_TASK_FAILURE_NODES
+        and node.lifecycle == "active"
+        and node.active_from_phase == _CURRENT_BOUNDARY_PHASE
+        and node.category == "public_e2e"
+    )
+    digest = sha256("\n".join(sorted(scheduled)).encode("utf-8")).hexdigest()
+    if (
+        scheduled != _EXPECTED_TASK_FAILURE_NODES
+        or digest != _EXPECTED_TASK_FAILURE_SHA256
+    ):
+        raise AcceptanceVerificationError(
+            "scheduled task failure-node inventory changed:"
+            f" missing={sorted(_EXPECTED_TASK_FAILURE_NODES - scheduled)},"
+            f" unexpected={sorted(scheduled - _EXPECTED_TASK_FAILURE_NODES)},"
+            f" digest={digest}"
         )
 
 
@@ -1111,14 +1310,15 @@ def _validate_current_runtime_collection(
             "current runtime test-file inventory changed:"
             f" missing={list(missing_files)}"
         )
-    expected = _current_runtime_node_ids(manifest.nodes)
+    node_ids = _current_runtime_node_ids(manifest.nodes)
+    expected_instances = _current_runtime_instance_ids(manifest)
     collection = _run_probe(
         _COLLECT_DRIVER,
         _COLLECT_SENTINEL,
-        expected,
+        node_ids,
         root,
     )
-    _verify_collection(expected, collection)
+    _verify_collection(expected_instances, collection)
 
 
 def _current_runtime_instance_ids(
@@ -1145,12 +1345,17 @@ def verify_current_runtime(
     root = (repo_root or repository_root()).resolve()
     path = manifest_path or default_manifest_path()
     manifest = load_manifest(path)
-    if manifest.current_phase < 4:
+    if manifest.current_phase < _CURRENT_BOUNDARY_PHASE:
         raise AcceptanceVerificationError(
             "current runtime verification requires an implemented current"
             " manifest"
         )
+    _require_database_harness()
     _validate_current_runtime_collection(manifest, root)
+    failure_expectations = _failure_evidence_expectations(
+        path.parent,
+        manifest.current_phase,
+    )
     node_ids = _current_runtime_node_ids(manifest.nodes)
     instance_node_ids = _current_runtime_instance_ids(manifest)
     _validate_execution_scope(path, node_ids, root)
@@ -1169,7 +1374,12 @@ def verify_current_runtime(
         node_ids,
         root,
     )
-    _verify_execution(instance_node_ids, execution, collected_node_ids)
+    _verify_execution(
+        instance_node_ids,
+        execution,
+        collected_node_ids,
+        failure_expectations=failure_expectations,
+    )
     return manifest
 
 
@@ -1189,10 +1399,16 @@ def verify_acceptance(
             "through-phase must be implemented by the current manifest: "
             f"requested={through_phase}, current={manifest.current_phase}"
         )
+    if through_phase >= _CURRENT_BOUNDARY_PHASE:
+        _require_database_harness()
     fixtures = contract_fixture_root or path.parent
-    if through_phase >= 4:
+    if through_phase >= _CURRENT_BOUNDARY_PHASE:
         _validate_current_runtime_collection(manifest, root)
     _validate_contract_fixtures(manifest, fixtures, root)
+    failure_expectations = _failure_evidence_expectations(
+        fixtures,
+        through_phase,
+    )
     active = manifest.active_nodes(through_phase)
     if not active:
         raise AcceptanceVerificationError(
@@ -1216,8 +1432,22 @@ def verify_acceptance(
         node_ids,
         root,
     )
-    _verify_execution(instance_node_ids, execution, collected_node_ids)
+    _verify_execution(
+        instance_node_ids,
+        execution,
+        collected_node_ids,
+        failure_expectations=failure_expectations,
+    )
     return manifest
+
+
+def _require_database_harness() -> None:
+    """Require the exact PostgreSQL harness for the current inventory."""
+    if not environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN"):
+        raise AcceptanceVerificationError(
+            "current acceptance inventory requires the exact PostgreSQL"
+            " harness"
+        )
 
 
 def _strict_mapping(path: Path, label: str) -> dict[str, object]:
@@ -1596,6 +1826,7 @@ def _activation_snapshots(
     replacement_phases: dict[str, int] = {}
     replacement_requirements: dict[str, frozenset[str]] = {}
     replacement_targets: set[str] = set()
+    replacement_sources: dict[str, str] = {}
     node_by_id = {node.node_id: node for node in nodes}
     for raw in raw_replacements:
         if not isinstance(raw, dict):
@@ -1637,6 +1868,7 @@ def _activation_snapshots(
                     f"replacement target is reused: {node_id}"
                 )
             replacement_targets.add(node_id)
+            replacement_sources[node_id] = old_node_id
         requirement_ids = _string_list(
             replacement.get("requirement_ids"),
             "replacement requirement_ids",
@@ -1733,7 +1965,13 @@ def _activation_snapshots(
                 f" phase={phase}, missing={sorted(missing_targets)}"
             )
         expected_current_additions = {
-            node.node_id
+            (
+                replacement_sources[node.node_id]
+                if node.node_id in replacement_sources
+                and node.active_from_phase
+                < replacement_phases[replacement_sources[node.node_id]]
+                else node.node_id
+            )
             for node in nodes
             if node.lifecycle == "active" and node.active_from_phase == phase
         }
@@ -1746,9 +1984,10 @@ def _activation_snapshots(
         for node_id in added:
             node = node_by_id.get(node_id)
             if node is not None:
-                if (
-                    node.lifecycle != "active"
-                    or node.active_from_phase != phase
+                if node.lifecycle != "active" or (
+                    node.active_from_phase != phase
+                    and replacement_sources.get(node_id)
+                    not in replacements_by_phase[phase]
                 ):
                     raise AcceptanceVerificationError(
                         "snapshot node was added outside its activation phase:"
@@ -1782,9 +2021,9 @@ def _activation_snapshots(
         for target_id in replacement_ids:
             target = node_by_id.get(target_id)
             if target is not None:
-                if target.active_from_phase != phase:
+                if target.active_from_phase > phase:
                     raise AcceptanceVerificationError(
-                        "replacement target activated in another phase:"
+                        "replacement target activated after its replacement:"
                         f" {target_id}"
                     )
                 target_requirements.update(target.requirement_ids)
@@ -1836,6 +2075,105 @@ def _validate_contract_fixtures(
     )
     _validate_no_bc(fixtures / "no_bc_removals.json")
     _validate_evidence(fixtures / "baseline_evidence.json", manifest, root)
+
+
+def _failure_evidence_expectations(
+    fixtures: Path,
+    through_phase: int,
+) -> dict[str, tuple[_FailureMatrixEvidenceExpectation, ...]]:
+    matrix = _strict_mapping(
+        fixtures / "failure_matrix.json",
+        "failure matrix",
+    )
+    decisions = _strict_mapping(
+        fixtures / "contract_decisions.json",
+        "contract decisions",
+    )
+    error_status = _decision_mapping(
+        decisions.get("error_status"),
+        "error status",
+    )
+    catalog = _decision_mapping(
+        error_status.get("public_envelope_catalog"),
+        "public envelope catalog",
+    )
+    raw_cells = matrix.get("cells")
+    if not isinstance(raw_cells, list):
+        raise AcceptanceVerificationError("failure cells must be a list")
+    expectations: dict[
+        str,
+        list[_FailureMatrixEvidenceExpectation],
+    ] = {}
+    for raw in raw_cells:
+        if not isinstance(raw, dict):
+            raise AcceptanceVerificationError("failure cell must be an object")
+        cell = cast(dict[str, object], raw)
+        if cell.get("applicable") is not True:
+            continue
+        active_from_phase = _phase(
+            cell.get("active_from_phase"),
+            "failure active_from_phase",
+        )
+        if active_from_phase > through_phase:
+            continue
+        node_id = _node_id(cell.get("negative_e2e_node"))
+        public_result = _nonempty_string(
+            cell.get("public_result"),
+            "failure public_result",
+        )
+        public_match = _PUBLIC_RESULT_PATTERN.fullmatch(public_result)
+        if public_match is None:
+            raise AcceptanceVerificationError(
+                "active failure public result is not a literal envelope"
+            )
+        public_result_id = public_match.group(1)
+        raw_schema = catalog.get(public_result_id)
+        if not isinstance(raw_schema, dict):
+            raise AcceptanceVerificationError(
+                "active failure public result has no schema:"
+                f" {public_result_id}"
+            )
+        status_or_exit = _nonempty_string(
+            cell.get("status_or_exit"),
+            "failure status_or_exit",
+        )
+        status_match = _STATUS_OR_EXIT_PATTERN.fullmatch(status_or_exit)
+        if status_match is None:
+            raise AcceptanceVerificationError(
+                "active failure status is not one machine literal"
+            )
+        expectation = _FailureMatrixEvidenceExpectation(
+            node_id=node_id,
+            condition_id=_nonempty_string(
+                cell.get("condition_id"),
+                "failure condition_id",
+            ),
+            surface_id=_nonempty_string(
+                cell.get("surface_id"),
+                "failure surface_id",
+            ),
+            expected_transition=_nonempty_string(
+                cell.get("expected_transition"),
+                "failure expected_transition",
+            ),
+            public_result_id=public_result_id,
+            public_result_schema=cast(dict[str, object], raw_schema),
+            status_key=status_match.group(1),
+            status_value=status_match.group(2),
+            provider_call_count=_nonnegative_int(
+                cell.get("provider_call_count"),
+                "failure provider_call_count",
+            ),
+            domain_side_effect_count=_nonnegative_int(
+                cell.get("domain_side_effect_count"),
+                "failure domain_side_effect_count",
+            ),
+        )
+        expectations.setdefault(node_id, []).append(expectation)
+    return {
+        node_id: tuple(node_expectations)
+        for node_id, node_expectations in expectations.items()
+    }
 
 
 def _validate_requirements(
@@ -1961,6 +2299,137 @@ def _validate_requirements(
     return frozenset(observed_ids)
 
 
+def _failure_schedule_corrections(
+    raw_corrections: object,
+    *,
+    expected_cells: set[tuple[str, str]],
+    natural_phases: Mapping[tuple[str, str], int],
+) -> dict[tuple[str, str], int]:
+    if not isinstance(raw_corrections, list) or not raw_corrections:
+        raise AcceptanceVerificationError(
+            "failure activation schedule corrections must be populated"
+        )
+    observed: dict[tuple[str, str], int] = {}
+    for raw in raw_corrections:
+        if not isinstance(raw, dict):
+            raise AcceptanceVerificationError(
+                "failure activation schedule correction must be an object"
+            )
+        correction = cast(dict[str, object], raw)
+        _exact_keys(
+            correction,
+            {
+                "reviewed_in_phase",
+                "previous_active_from_phase",
+                "corrected_active_from_phase",
+                "condition_ids",
+                "surface_ids",
+                "corrected_cell_count",
+                "rationale",
+                "reviewed_by",
+            },
+            "failure activation schedule correction",
+        )
+        reviewed_in_phase = _phase(
+            correction.get("reviewed_in_phase"),
+            "failure schedule reviewed_in_phase",
+        )
+        previous_phase = _phase(
+            correction.get("previous_active_from_phase"),
+            "failure schedule previous_active_from_phase",
+        )
+        corrected_phase = _phase(
+            correction.get("corrected_active_from_phase"),
+            "failure schedule corrected_active_from_phase",
+        )
+        if (
+            reviewed_in_phase != _CURRENT_BOUNDARY_PHASE
+            or previous_phase != _CURRENT_BOUNDARY_PHASE
+            or corrected_phase <= previous_phase
+        ):
+            raise AcceptanceVerificationError(
+                "failure schedule correction must move forward from the"
+                " current implemented boundary for evidence fidelity"
+            )
+        condition_ids = _string_list(
+            correction.get("condition_ids"),
+            "failure schedule condition_ids",
+        )
+        surface_ids = _string_list(
+            correction.get("surface_ids"),
+            "failure schedule surface_ids",
+        )
+        _unique(condition_ids, "failure schedule condition ID")
+        _unique(surface_ids, "failure schedule surface ID")
+        corrected_count = _nonnegative_int(
+            correction.get("corrected_cell_count"),
+            "failure schedule corrected_cell_count",
+        )
+        if corrected_count != len(condition_ids) * len(surface_ids):
+            raise AcceptanceVerificationError(
+                "failure schedule corrected count differs from its exact"
+                " Cartesian cell selector"
+            )
+        rationale = _nonempty_string(
+            correction.get("rationale"),
+            "failure schedule rationale",
+        )
+        reviewer = _nonempty_string(
+            correction.get("reviewed_by"),
+            "failure schedule reviewed_by",
+        )
+        normalized = f"{rationale} {reviewer}".lower()
+        if (
+            len(rationale) < 100
+            or "planned" not in normalized
+            or any(
+                claim in normalized
+                for claim in ("waiver", "not applicable", "independent")
+            )
+        ):
+            raise AcceptanceVerificationError(
+                "failure schedule correction lacks a concrete planned-surface"
+                " evidence rationale"
+            )
+        for condition_id in condition_ids:
+            for surface_id in surface_ids:
+                key = (condition_id, surface_id)
+                if key not in expected_cells:
+                    raise AcceptanceVerificationError(
+                        f"failure schedule correction owns unknown cell: {key}"
+                    )
+                if key in observed:
+                    raise AcceptanceVerificationError(
+                        f"failure schedule correction overlaps cell: {key}"
+                    )
+                if natural_phases[key] != previous_phase:
+                    raise AcceptanceVerificationError(
+                        "failure schedule correction previous phase differs"
+                        f" from its frozen natural phase: {key}"
+                    )
+                observed[key] = corrected_phase
+    if observed != _EXPECTED_FAILURE_SCHEDULE_CORRECTIONS:
+        missing = sorted(
+            set(_EXPECTED_FAILURE_SCHEDULE_CORRECTIONS) - set(observed)
+        )
+        unexpected = sorted(
+            set(observed) - set(_EXPECTED_FAILURE_SCHEDULE_CORRECTIONS)
+        )
+        wrong_phase = sorted(
+            key
+            for key in set(observed) & set(
+                _EXPECTED_FAILURE_SCHEDULE_CORRECTIONS
+            )
+            if observed[key] != _EXPECTED_FAILURE_SCHEDULE_CORRECTIONS[key]
+        )
+        raise AcceptanceVerificationError(
+            "failure activation schedule corrections differ from the frozen"
+            f" 58-cell review: missing={missing}, unexpected={unexpected},"
+            f" wrong_phase={wrong_phase}"
+        )
+    return observed
+
+
 def _validate_failure_matrix(
     path: Path,
     manifest: AcceptanceManifest,
@@ -1979,6 +2448,7 @@ def _validate_failure_matrix(
             "domain_side_effect_scope",
             "surfaces",
             "conditions",
+            "activation_schedule_corrections",
             "cells",
         },
         "failure matrix",
@@ -2042,7 +2512,20 @@ def _validate_failure_matrix(
         for condition in conditions
         for surface in surfaces
     }
+    natural_phases = {
+        (condition_id, surface_id): max(
+            condition_phases[condition_id],
+            surface_phases[surface_id],
+        )
+        for condition_id, surface_id in expected_cells
+    }
+    schedule_corrections = _failure_schedule_corrections(
+        payload.get("activation_schedule_corrections"),
+        expected_cells=expected_cells,
+        natural_phases=natural_phases,
+    )
     observed_cells: set[tuple[str, str]] = set()
+    applicable_cells: set[tuple[str, str]] = set()
     manifest_nodes = {node.node_id: node for node in manifest.nodes}
     for raw in raw_cells:
         if not isinstance(raw, dict):
@@ -2079,13 +2562,14 @@ def _validate_failure_matrix(
         active_from_phase = _phase(
             cell.get("active_from_phase"), "failure active_from_phase"
         )
-        expected_phase = max(
-            surface_phases[surface_id],
-            condition_phases[condition_id],
+        expected_phase = schedule_corrections.get(
+            key,
+            natural_phases[key],
         )
         if active_from_phase != expected_phase:
             raise AcceptanceVerificationError(
-                f"failure cell activation differs from its surface: {key}"
+                "failure cell activation differs from its frozen natural or"
+                f" reviewed corrected phase: {key}"
             )
         applicable = cell.get("applicable")
         if type(applicable) is not bool:
@@ -2131,6 +2615,7 @@ def _validate_failure_matrix(
                 " execution"
             )
         if applicable:
+            applicable_cells.add(key)
             for label, value in (
                 ("expected_transition", transition),
                 ("public_result", public_result),
@@ -2175,6 +2660,28 @@ def _validate_failure_matrix(
                 raise AcceptanceVerificationError(
                     f"failure cell lacks an owned negative E2E node: {key}"
                 )
+            if key in schedule_corrections:
+                corrected_phase = schedule_corrections[key]
+                owner_kind = {
+                    6: "sdk",
+                    7: "cli",
+                    9: "flow",
+                    12: "task",
+                }[corrected_phase]
+                condition_suffix = (
+                    condition_id.removeprefix("INPUT-")
+                    .lower()
+                    .replace("-", "_")
+                )
+                expected_owner = (
+                    f"tests/input/failure_matrix_{owner_kind}_e2e_test.py::"
+                    f"test_input_{condition_suffix}"
+                )
+                if exact_node != expected_owner:
+                    raise AcceptanceVerificationError(
+                        "reviewed failure schedule correction has the wrong"
+                        f" planned E2E owner: {key}"
+                    )
             if (
                 condition_requirements[condition_id]
                 not in manifest_node.requirement_ids
@@ -2182,10 +2689,24 @@ def _validate_failure_matrix(
                 raise AcceptanceVerificationError(
                     f"failure cell node does not own its requirement: {key}"
                 )
-            if manifest_node.active_from_phase != active_from_phase:
+            if manifest_node.active_from_phase > active_from_phase:
                 raise AcceptanceVerificationError(
-                    "failure cell node activation does not match its cell:"
-                    f" {key}"
+                    f"failure cell node activates after its cell: {key}"
+                )
+            if manifest_node.active_from_phase != active_from_phase and (
+                key not in schedule_corrections
+                or manifest_node.active_from_phase != natural_phases[key]
+            ):
+                raise AcceptanceVerificationError(
+                    "failure cell node activation differs without an exact"
+                    f" reviewed schedule correction: {key}"
+                )
+            if (
+                active_from_phase <= manifest.current_phase
+                and manifest_node.lifecycle != "active"
+            ):
+                raise AcceptanceVerificationError(
+                    f"active failure cell has a planned E2E owner: {key}"
                 )
             if reason is not None:
                 raise AcceptanceVerificationError(
@@ -2246,12 +2767,21 @@ def _validate_failure_matrix(
         raise AcceptanceVerificationError(
             f"failure matrix is incomplete: missing={missing}"
         )
+    if not set(schedule_corrections) <= applicable_cells:
+        invalid = sorted(set(schedule_corrections) - applicable_cells)
+        raise AcceptanceVerificationError(
+            "failure schedule correction targets non-applicable cells:"
+            f" {invalid}"
+        )
     _verify_digest(
         {
             "observation_window": payload["observation_window"],
             "domain_side_effect_scope": payload["domain_side_effect_scope"],
             "surfaces": payload["surfaces"],
             "conditions": payload["conditions"],
+            "activation_schedule_corrections": payload[
+                "activation_schedule_corrections"
+            ],
             "cells": payload["cells"],
         },
         payload.get("matrix_sha256"),
@@ -4069,8 +4599,17 @@ def _current_changed_test_definitions(
         )
     )
     paths = frozenset(
-        relative for relative in changed if _is_default_pytest_path(relative)
+        relative
+        for relative in changed
+        if _is_default_pytest_path(relative)
+        or relative in _EXPECTED_NONCONVENTION_TEST_PATHS
     )
+    missing_nonconvention = _EXPECTED_NONCONVENTION_TEST_PATHS - paths
+    if missing_nonconvention:
+        raise AcceptanceVerificationError(
+            "reviewed non-convention test inventory changed:"
+            f" missing={sorted(missing_nonconvention)}"
+        )
     baseline: dict[str, str] = {}
     current: dict[str, str] = {}
     live_paths: list[str] = []
@@ -4112,6 +4651,8 @@ def _current_changed_test_definitions(
             root,
         )
         collected_bases: set[str] = set()
+        inherited_collections: set[str] = set()
+        inherited_owners: dict[str, str] = {}
         for node_id in _collection_node_ids(
             payload,
             reject_disallowed_markers=False,
@@ -4122,11 +4663,50 @@ def _current_changed_test_definitions(
                 if node_id == base or node_id.startswith(f"{base}[")
             )
             if len(matches) != 1:
+                static_owner = _EXPECTED_INHERITED_COLLECTION_OWNERS.get(
+                    node_id
+                )
+                if (
+                    "[" not in node_id
+                    and node_id in _EXPECTED_INHERITED_COLLECTIONS
+                    and static_owner is not None
+                ):
+                    if static_owner not in current:
+                        raise AcceptanceVerificationError(
+                            "reviewed inherited collection lacks its exact"
+                            f" static owner: {node_id} -> {static_owner}"
+                        )
+                    inherited_collections.add(node_id)
+                    inherited_owners[node_id] = static_owner
+                    collected_bases.add(static_owner)
+                    continue
                 raise AcceptanceVerificationError(
                     "collected changed test does not map to one static"
                     f" definition: {node_id}"
                 )
             collected_bases.add(matches[0])
+        inherited_digest = sha256(
+            "\n".join(
+                f"{node_id}->{inherited_owners[node_id]}"
+                for node_id in sorted(inherited_collections)
+            ).encode("utf-8")
+        ).hexdigest()
+        missing_inherited = sorted(
+            _EXPECTED_INHERITED_COLLECTIONS - inherited_collections
+        )
+        unexpected_inherited = sorted(
+            inherited_collections - _EXPECTED_INHERITED_COLLECTIONS
+        )
+        if (
+            inherited_collections != _EXPECTED_INHERITED_COLLECTIONS
+            or inherited_digest != _EXPECTED_INHERITED_COLLECTION_SHA256
+        ):
+            raise AcceptanceVerificationError(
+                "reviewed inherited collection inventory changed:"
+                f" missing={missing_inherited},"
+                f" unexpected={unexpected_inherited},"
+                f" digest={inherited_digest}"
+            )
         if collected_bases != current.keys():
             raise AcceptanceVerificationError(
                 "collected changed test definitions differ from static"
@@ -4168,6 +4748,8 @@ def _validate_frozen_duplicate_test_definitions(
         baseline_digest,
         current_digest,
     ) in _EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS.items():
+        if node_id not in baseline and node_id not in current:
+            continue
         if (
             baseline.get(node_id) != baseline_digest
             or current.get(node_id) != current_digest
@@ -4210,6 +4792,39 @@ def _current_changed_test_support_surfaces(
             relative,
         )
     return baseline, current
+
+
+def _current_semantic_definition_partition(
+    current_semantic: frozenset[str],
+    baseline: Mapping[str, str],
+    current: Mapping[str, str],
+) -> tuple[frozenset[str], frozenset[str], frozenset[str]]:
+    """Partition current semantic definitions by live structural change."""
+    baseline_ids = frozenset(baseline)
+    current_ids = frozenset(current)
+    new_definitions = current_ids - baseline_ids
+    modified_definitions = frozenset(
+        node_id
+        for node_id in baseline_ids & current_ids
+        if baseline[node_id] != current[node_id]
+    )
+    semantic_new = current_semantic & new_definitions
+    semantic_modified = current_semantic & modified_definitions
+    semantic_equal = (
+        current_semantic & (baseline_ids & current_ids) - modified_definitions
+    )
+    missing_semantic = current_semantic - current_ids
+    if (
+        missing_semantic
+        or current_semantic
+        != semantic_new | semantic_modified | semantic_equal
+    ):
+        raise AcceptanceVerificationError(
+            "current semantic definitions do not partition across the live"
+            " test inventory:"
+            f" missing={sorted(missing_semantic)}"
+        )
+    return semantic_new, semantic_modified, semantic_equal
 
 
 def _validate_current_regression_classification(
@@ -4462,11 +5077,39 @@ def _validate_current_regression_classification(
         for node_id in baseline_ids & current_ids
         if baseline[node_id] != current[node_id]
     )
-    semantic_new = frozenset(
+    current_semantic = frozenset(
         node.node_id
         for node in manifest.nodes
-        if node.lifecycle == "active" and node.active_from_phase == 4
+        if node.lifecycle == "active"
+        and node.active_from_phase == _CURRENT_BOUNDARY_PHASE
+    ) | frozenset(
+        replacement_id
+        for (
+            _removed_id,
+            _baseline_digest,
+            replacement_id,
+            _current_digest,
+        ) in _EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS
+        if replacement_id in active_manifest_ids
     )
+    semantic_new, _, _ = _current_semantic_definition_partition(
+        current_semantic,
+        baseline,
+        current,
+    )
+    scheduled_new = frozenset(
+        node_id
+        for node_id in _EXPECTED_TASK_FAILURE_NODES
+        if node_id in new_definitions
+    )
+    if (
+        scheduled_new != _EXPECTED_TASK_FAILURE_NODES
+        or not scheduled_new <= semantic_new
+    ):
+        raise AcceptanceVerificationError(
+            "scheduled task failure definitions changed:"
+            f" missing={sorted(_EXPECTED_TASK_FAILURE_NODES - scheduled_new)}"
+        )
     reviewed_new = frozenset(
         node_id for node_id in reviewed_ids if node_id in new_definitions
     )
@@ -4735,17 +5378,36 @@ def _validate_review_history(
                 and role in {"semantic", "gate"}
                 and status == "approved"
             )
-            preserved_prior_semantic_approval = (
-                phase == 3
-                and role == "semantic"
-                and reviewer == "/root/acceptance_review"
-                and status == "approved"
-            )
+            preserved_prior_direct_approval = phase < current_phase and (
+                phase,
+                role,
+                reviewer,
+                status,
+            ) in {
+                (
+                    3,
+                    "semantic",
+                    "/root/acceptance_review",
+                    "approved",
+                ),
+                (
+                    4,
+                    "semantic",
+                    "/root/execution_runtime_review",
+                    "approved",
+                ),
+                (
+                    4,
+                    "gate",
+                    "/root/execution_gate_review",
+                    "approved",
+                ),
+            }
             if (
                 phase > 0
                 and status != "pending"
                 and not direct_current_approval
-                and not preserved_prior_semantic_approval
+                and not preserved_prior_direct_approval
             ):
                 raise AcceptanceVerificationError(
                     "new review roles must begin pending"
@@ -4831,6 +5493,10 @@ def _validate_quality_history(
                 _EXPECTED_PRIOR_QUALITY_SHA256,
                 _EXPECTED_PRIOR_EVIDENCE_SHA256,
             ),
+            4: (
+                _EXPECTED_FROZEN_QUALITY_SHA256,
+                _EXPECTED_FROZEN_EVIDENCE_SHA256,
+            ),
         }
         expected_digests = expected_historical_digests.get(phase)
         if (
@@ -4893,23 +5559,19 @@ def _validate_quality_gate_evidence(
         "required quality commands",
     )
     _unique(required_commands, "required quality command")
-    if len(required_commands) != 8:
+    if required_commands != _EXPECTED_ORDERED_COMMON_GATE_COMMANDS:
         raise AcceptanceVerificationError(
-            "implementation evidence must require eight exact gate commands"
-        )
-    if required_commands[:7] != _EXPECTED_ORDERED_COMMON_GATE_COMMANDS:
-        raise AcceptanceVerificationError(
-            "required common quality commands changed order or identity"
+            "implementation evidence must require the exact ordered common"
+            " gate commands"
         )
     required = frozenset(required_commands)
-    if not _EXPECTED_COMMON_GATE_COMMANDS <= required:
+    if required != _EXPECTED_COMMON_GATE_COMMANDS:
         raise AcceptanceVerificationError(
             "implementation evidence omits a common gate command"
         )
-    focused = required - _EXPECTED_COMMON_GATE_COMMANDS
-    if focused != frozenset((_EXPECTED_CURRENT_FOCUSED_COMMAND,)):
+    if _EXPECTED_CURRENT_FOCUSED_COMMAND not in required:
         raise AcceptanceVerificationError(
-            "implementation evidence lacks the exact current focused pytest"
+            "implementation evidence lacks the exact PostgreSQL acceptance"
             " command"
         )
     raw_results = quality_gate.get("results")
@@ -4982,14 +5644,19 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "completed quality results must preserve required command order"
         )
-    focused_command = next(iter(focused))
-    test_command = "poetry run pytest --verbose -s"
-    test_result = results[test_command]
+    exact_result = results[_EXPECTED_CURRENT_FOCUSED_COMMAND]
     _exact_keys(
-        test_result,
+        exact_result,
         {
             "command",
             "exit_code",
+            "active_nodes",
+            "active_instances",
+            "covered_statements",
+            "total_statements",
+            "source_files",
+            "missing_lines",
+            "missing_files",
             "passed",
             "skipped",
             "subtests_passed",
@@ -4998,10 +5665,13 @@ def _validate_quality_gate_evidence(
             "xfail",
             "xpass",
         },
-        "test quality-gate evidence",
+        "exact PostgreSQL acceptance evidence",
     )
-    test_counts = {
-        name: _nonnegative_int(test_result.get(name), f"quality {name}")
+    exact_test_counts = {
+        name: _nonnegative_int(
+            exact_result.get(name),
+            f"exact coverage {name}",
+        )
         for name in (
             "passed",
             "skipped",
@@ -5012,76 +5682,19 @@ def _validate_quality_gate_evidence(
         )
     }
     _positive_number(
-        test_result.get("seconds"),
-        f"quality seconds: {test_command}",
-    )
-    if (
-        test_counts["passed"] == 0
-        or test_counts["deselected"] != 0
-        or test_counts["xfail"] != 0
-        or test_counts["xpass"] != 0
-    ):
-        raise AcceptanceVerificationError(
-            f"test quality-gate evidence is incomplete: {test_command}"
-        )
-    focused_result = results[focused_command]
-    _exact_keys(
-        focused_result,
-        {"command", "exit_code", "active_nodes", "active_instances"},
-        "focused runtime acceptance evidence",
-    )
-    if (
-        focused_result.get("active_nodes")
-        != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
-        or focused_result.get("active_instances")
-        != _EXPECTED_CURRENT_RUNTIME_NODE_COUNT
-    ):
-        raise AcceptanceVerificationError(
-            "current focused result differs from the exact collected and"
-            " passing runtime inventory"
-        )
-    legacy_coverage = results["make test-coverage -- -100 src/"]
-    _exact_keys(
-        legacy_coverage,
-        {"command", "exit_code", "output_lines"},
-        "legacy coverage evidence",
-    )
-    if legacy_coverage.get("output_lines") != []:
-        raise AcceptanceVerificationError(
-            "the legacy exact-coverage audit must have zero output lines"
-        )
-    exact_coverage = results["make test-coverage-exact no-install"]
-    _exact_keys(
-        exact_coverage,
-        {
-            "command",
-            "exit_code",
-            "covered_statements",
-            "total_statements",
-            "source_files",
-            "missing_lines",
-            "missing_files",
-            "passed",
-            "skipped",
-            "subtests_passed",
-            "seconds",
-        },
-        "exact coverage evidence",
-    )
-    exact_test_counts = {
-        name: _nonnegative_int(
-            exact_coverage.get(name),
-            f"exact coverage {name}",
-        )
-        for name in ("passed", "skipped", "subtests_passed")
-    }
-    _positive_number(
-        exact_coverage.get("seconds"),
+        exact_result.get("seconds"),
         "exact coverage seconds",
     )
-    if exact_test_counts["passed"] == 0:
+    if (
+        exact_test_counts["passed"] == 0
+        or exact_test_counts["deselected"] != 0
+        or exact_test_counts["xfail"] != 0
+        or exact_test_counts["xpass"] != 0
+        or exact_result.get("active_nodes") != active_acceptance_nodes
+        or exact_result.get("active_instances") != active_pytest_instances
+    ):
         raise AcceptanceVerificationError(
-            "exact coverage evidence has no passing tests"
+            "exact PostgreSQL acceptance evidence is incomplete"
         )
     try:
         verified_coverage = verify_src_coverage(
@@ -5100,30 +5713,14 @@ def _validate_quality_gate_evidence(
         "missing_files": 0,
     }
     observed_coverage_result = {
-        key: exact_coverage.get(key) for key in derived_coverage
+        key: exact_result.get(key) for key in derived_coverage
     }
     if observed_coverage_result != derived_coverage:
         raise AcceptanceVerificationError(
             "exact source-coverage evidence differs from the validated live"
             " report"
         )
-    acceptance = results[
-        "poetry run python scripts/verify_input_acceptance.py"
-        " --through-phase 4"
-    ]
-    _exact_keys(
-        acceptance,
-        {"command", "exit_code", "active_nodes", "active_instances"},
-        "acceptance evidence",
-    )
-    if (
-        acceptance.get("active_nodes") != active_acceptance_nodes
-        or acceptance.get("active_instances") != active_pytest_instances
-    ):
-        raise AcceptanceVerificationError(
-            "acceptance gate evidence has stale node or instance counts"
-        )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=4"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=5"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},
@@ -5226,7 +5823,7 @@ def _validate_quality_gate_evidence(
         raise AcceptanceVerificationError(
             "coverage source inventory does not match the live source tree"
         )
-    if exact_coverage.get("total_statements") != live_inventory[2]:
+    if exact_result.get("total_statements") != live_inventory[2]:
         raise AcceptanceVerificationError(
             "exact coverage statement count differs from its source inventory"
         )
@@ -5795,10 +6392,193 @@ def _verify_collection(
     return collected
 
 
+def _failure_evidence_properties(
+    report: dict[str, object],
+) -> list[object]:
+    raw_properties = report.get("user_properties")
+    if not isinstance(raw_properties, list):
+        raise AcceptanceVerificationError(
+            "execution report user_properties must be a list"
+        )
+    values: list[object] = []
+    for raw in raw_properties:
+        if (
+            not isinstance(raw, list)
+            or len(raw) != 2
+            or not isinstance(raw[0], str)
+        ):
+            raise AcceptanceVerificationError(
+                "execution report user property must be a name-value pair"
+            )
+        if raw[0] == "failure_matrix_evidence":
+            values.append(raw[1])
+    return values
+
+
+def _verify_failure_matrix_evidence(
+    node_id: str,
+    reports: list[dict[str, object]],
+    expectations: tuple[_FailureMatrixEvidenceExpectation, ...],
+) -> None:
+    setup = next(report for report in reports if report.get("when") == "setup")
+    teardown = next(
+        report for report in reports if report.get("when") == "teardown"
+    )
+    calls = [report for report in reports if report.get("when") == "call"]
+    setup_values = _failure_evidence_properties(setup)
+    teardown_values = _failure_evidence_properties(teardown)
+    call_values = [
+        value
+        for report in calls
+        for value in _failure_evidence_properties(report)
+    ]
+    if not expectations:
+        if setup_values or call_values or teardown_values:
+            raise AcceptanceVerificationError(
+                f"{node_id} emitted unexpected failure-matrix evidence"
+            )
+        return
+    if (
+        len(calls) != 1
+        or setup_values
+        or len(call_values) != 1
+        or teardown_values != call_values
+    ):
+        raise AcceptanceVerificationError(
+            f"{node_id} did not emit exactly one stable dynamic"
+            " failure-matrix evidence property"
+        )
+    raw_evidence = call_values[0]
+    if not isinstance(raw_evidence, list) or not raw_evidence:
+        raise AcceptanceVerificationError(
+            f"{node_id} failure-matrix evidence must be a populated list"
+        )
+    expected_by_key = {
+        (expectation.condition_id, expectation.surface_id): expectation
+        for expectation in expectations
+    }
+    if len(expected_by_key) != len(expectations):
+        raise AcceptanceVerificationError(
+            f"{node_id} owns duplicate expected failure-matrix cells"
+        )
+    observed_keys: set[tuple[str, str]] = set()
+    validator_factory = _draft202012_validator()
+    for raw in raw_evidence:
+        if not isinstance(raw, dict):
+            raise AcceptanceVerificationError(
+                f"{node_id} failure-matrix evidence item must be an object"
+            )
+        evidence = cast(dict[str, object], raw)
+        _exact_keys(
+            evidence,
+            {
+                "condition_id",
+                "surface_id",
+                "transition_from",
+                "transition_to",
+                "public_result_id",
+                "public_result",
+                "status_key",
+                "status_value",
+                "provider_call_count",
+                "domain_side_effect_count",
+            },
+            "dynamic failure-matrix evidence",
+        )
+        key = (
+            _nonempty_string(
+                evidence.get("condition_id"),
+                "dynamic failure condition_id",
+            ),
+            _nonempty_string(
+                evidence.get("surface_id"),
+                "dynamic failure surface_id",
+            ),
+        )
+        if key in observed_keys:
+            raise AcceptanceVerificationError(
+                f"{node_id} emitted duplicate failure-matrix evidence: {key}"
+            )
+        observed_keys.add(key)
+        expectation = expected_by_key.get(key)
+        if expectation is None:
+            raise AcceptanceVerificationError(
+                f"{node_id} emitted unowned failure-matrix evidence: {key}"
+            )
+        transition_from = _nonempty_string(
+            evidence.get("transition_from"),
+            "dynamic failure transition_from",
+        )
+        transition_to = _nonempty_string(
+            evidence.get("transition_to"),
+            "dynamic failure transition_to",
+        )
+        transition = f"{transition_from}->{transition_to}"
+        if transition != expectation.expected_transition:
+            raise AcceptanceVerificationError(
+                f"{node_id} dynamic failure transition drifted for {key}:"
+                f" {transition}"
+            )
+        public_result_id = _nonempty_string(
+            evidence.get("public_result_id"),
+            "dynamic failure public_result_id",
+        )
+        public_result = evidence.get("public_result")
+        if (
+            public_result_id != expectation.public_result_id
+            or not isinstance(public_result, dict)
+            or not validator_factory(
+                expectation.public_result_schema
+            ).is_valid(public_result)
+        ):
+            raise AcceptanceVerificationError(
+                f"{node_id} dynamic public envelope drifted for {key}"
+            )
+        status_key = _nonempty_string(
+            evidence.get("status_key"),
+            "dynamic failure status_key",
+        )
+        status_value = _nonempty_string(
+            evidence.get("status_value"),
+            "dynamic failure status_value",
+        )
+        status = f"{status_key}={status_value}"
+        if status != f"{expectation.status_key}={expectation.status_value}":
+            raise AcceptanceVerificationError(
+                f"{node_id} dynamic failure status drifted for {key}: {status}"
+            )
+        provider_calls = _nonnegative_int(
+            evidence.get("provider_call_count"),
+            "dynamic failure provider_call_count",
+        )
+        side_effects = _nonnegative_int(
+            evidence.get("domain_side_effect_count"),
+            "dynamic failure domain_side_effect_count",
+        )
+        if (
+            provider_calls != expectation.provider_call_count
+            or side_effects != expectation.domain_side_effect_count
+        ):
+            raise AcceptanceVerificationError(
+                f"{node_id} dynamic failure counts drifted for {key}:"
+                f" provider_calls={provider_calls},"
+                f" side_effects={side_effects}"
+            )
+    if observed_keys != set(expected_by_key):
+        missing = sorted(set(expected_by_key) - observed_keys)
+        raise AcceptanceVerificationError(
+            f"{node_id} omitted active failure-matrix evidence: {missing}"
+        )
+
+
 def _verify_execution(
     expected: tuple[str, ...],
     payload: dict[str, object],
     collected: tuple[str, ...],
+    *,
+    failure_expectations: (
+        Mapping[str, tuple[_FailureMatrixEvidenceExpectation, ...]] | None
+    ) = None,
 ) -> None:
     _exact_keys(
         payload,
@@ -5831,9 +6611,17 @@ def _verify_execution(
         report = cast(dict[str, object], raw)
         _exact_keys(
             report,
-            {"nodeid", "when", "outcome", "wasxfail", "detail"},
+            {
+                "nodeid",
+                "when",
+                "outcome",
+                "wasxfail",
+                "detail",
+                "user_properties",
+            },
             "execution report",
         )
+        _failure_evidence_properties(report)
         node_id = report.get("nodeid")
         if not isinstance(node_id, str) or node_id not in by_node:
             raise AcceptanceVerificationError(
@@ -5863,6 +6651,19 @@ def _verify_execution(
                     f"{node_id} {report.get('when')} outcome was "
                     f"{report.get('outcome')}: {report.get('detail')}"
                 )
+    if failure_expectations is not None:
+        unexpected_nodes = sorted(set(failure_expectations) - set(by_node))
+        if unexpected_nodes:
+            raise AcceptanceVerificationError(
+                "active failure-matrix evidence owners were not executed:"
+                f" {unexpected_nodes}"
+            )
+        for node_id, reports in by_node.items():
+            _verify_failure_matrix_evidence(
+                node_id,
+                reports,
+                failure_expectations.get(node_id, ()),
+            )
     if (
         payload.get("exit_code") != 0
         or type(payload.get("exit_code")) is not int
@@ -8292,9 +9093,9 @@ def main() -> int:
     args = _parse_args()
     try:
         if args.runtime_only:
-            if args.through_phase != 4:
+            if args.through_phase != _CURRENT_BOUNDARY_PHASE:
                 raise AcceptanceVerificationError(
-                    "--runtime-only requires --through-phase 4"
+                    "--runtime-only requires the current implemented boundary"
                 )
             manifest = verify_current_runtime(
                 args.manifest,

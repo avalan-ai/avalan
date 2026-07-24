@@ -52,7 +52,14 @@ from ..definition import (
     TaskRunPolicy,
     TaskTargetType,
 )
-from ..event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
+from ..error import TaskError
+from ..event import (
+    SanitizedTaskEvent,
+    TaskEventCategory,
+    TaskEventValue,
+    TaskInteractionEventType,
+    task_interaction_event_payload,
+)
 from ..feature_gate import ModuleFinder, TaskFeature, require_features
 from ..idempotency import (
     TaskIdempotencyDigest,
@@ -60,9 +67,30 @@ from ..idempotency import (
     TaskIdempotencyReservation,
     TaskIdempotencyReservationResult,
 )
-from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
+from ..queue import (
+    TaskQueueCompletion,
+    TaskQueueItem,
+    TaskQueueItemState,
+    TaskQueueReentry,
+    TaskQueueSuspension,
+)
+from ..settlement import (
+    TaskDurableResumeCancellation,
+    TaskDurableResumeFailure,
+    TaskDurableResumeSettlement,
+    TaskDurableResumeSuccess,
+    task_durable_resume_settlement_digest,
+)
+from ..state import (
+    TaskAttemptSegmentState,
+    TaskAttemptState,
+    TaskRunState,
+    is_terminal_run_state,
+)
 from ..store import (
     TaskAttempt,
+    TaskAttemptSegment,
+    TaskAttemptSegmentTransition,
     TaskAttemptTransition,
     TaskClaim,
     TaskDefinitionRecord,
@@ -78,9 +106,11 @@ from ..store import (
     TaskTransition,
     allows_cancel_request_without_claim_token,
     ensure_attempt_is_mutable,
+    ensure_attempt_segment_is_mutable,
     ensure_run_is_mutable,
     freeze_snapshot_metadata,
     freeze_snapshot_value,
+    validate_attempt_segment_transition_request,
     validate_attempt_transition_request,
     validate_run_transition_request,
 )
@@ -107,10 +137,14 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 TASK_PGSQL_ALEMBIC_VERSION_TABLE = "avalan_task_alembic_version"
-TASK_PGSQL_HEAD_REVISION = "20260530_0001"
+TASK_PGSQL_HEAD_REVISION = "20260723_0002"
 TASK_PGSQL_ADVISORY_LOCK_ID = 8_172_673_911_930_301_927
-_TASK_PGSQL_REVISION_MODULE = (
-    "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema"
+_TASK_PGSQL_REVISION_MODULES = (
+    "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema",
+    (
+        "avalan.task.stores.pgsql_migrations.versions."
+        "v20260723_0002_durable_interactions"
+    ),
 )
 _TASK_PGSQL_ALEMBIC_LOCK = Lock()
 
@@ -168,6 +202,11 @@ class PgsqlTaskStore:
         self._database = database
         self._clock = clock or _utc_now
         self._id_factory = id_factory or _uuid_id
+
+    @property
+    def database(self) -> PgsqlDatabase:
+        """Return the database used for explicit cross-store transactions."""
+        return self._database
 
     async def open(self) -> None:
         open_database = getattr(self._database, "open", None)
@@ -717,6 +756,2292 @@ class PgsqlTaskStore:
             ),
         )
 
+    async def create_attempt_segment(
+        self,
+        attempt_id: str,
+        *,
+        claim_token: str | None = None,
+        resumed_from_segment_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(attempt_id, "attempt_id")
+        if resumed_from_segment_id is not None:
+            _assert_non_empty_string(
+                resumed_from_segment_id,
+                "resumed_from_segment_id",
+            )
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            attempt = await _lock_attempt_or_raise(unit, attempt_id)
+            run = await _lock_run_or_raise(unit, attempt.run_id)
+            _verify_claim_token(run, claim_token)
+            if attempt.state not in {
+                TaskAttemptState.CREATED,
+                TaskAttemptState.RUNNING,
+                TaskAttemptState.SUSPENDED,
+            }:
+                raise TaskStoreConflictError(
+                    "terminal task attempt cannot create a segment"
+                )
+            await unit.cursor.execute(
+                _SELECT_SEGMENTS_FOR_ATTEMPT_SQL,
+                (attempt_id,),
+            )
+            rows = await unit.cursor.fetchall()
+            segments = tuple(_segment_from_row(row) for row in rows)
+            if any(
+                segment.state
+                in {
+                    TaskAttemptSegmentState.CREATED,
+                    TaskAttemptSegmentState.RUNNING,
+                }
+                for segment in segments
+            ):
+                raise TaskStoreConflictError(
+                    "task attempt already has an active segment"
+                )
+            previous = None
+            if resumed_from_segment_id is not None:
+                previous = next(
+                    (
+                        segment
+                        for segment in segments
+                        if segment.segment_id == resumed_from_segment_id
+                    ),
+                    None,
+                )
+                if (
+                    previous is None
+                    or previous.state is not TaskAttemptSegmentState.SUSPENDED
+                ):
+                    raise TaskStoreConflictError(
+                        "resumed task segment was not suspended"
+                    )
+            elif attempt.state is TaskAttemptState.SUSPENDED:
+                raise TaskStoreConflictError(
+                    "suspended attempt requires a previous segment"
+                )
+            now = self._now()
+            segment = TaskAttemptSegment(
+                segment_id=self._new_id(),
+                attempt_id=attempt_id,
+                run_id=attempt.run_id,
+                segment_number=len(segments) + 1,
+                state=TaskAttemptSegmentState.CREATED,
+                claim=run.claim,
+                resumed_from_segment_id=resumed_from_segment_id,
+                created_at=now,
+                updated_at=now,
+                metadata=freeze_snapshot_metadata(metadata),
+            )
+            await unit.cursor.execute(
+                _INSERT_ATTEMPT_SEGMENT_SQL,
+                (
+                    segment.segment_id,
+                    segment.attempt_id,
+                    segment.run_id,
+                    segment.segment_number,
+                    segment.state.value,
+                    (
+                        _json(_claim_to_payload(segment.claim))
+                        if segment.claim is not None
+                        else None
+                    ),
+                    segment.resumed_from_segment_id,
+                    _json(segment.metadata),
+                    now,
+                    now,
+                ),
+            )
+            row = await unit.cursor.fetchone()
+            if row is None:
+                raise TaskStoreConflictError(
+                    "task attempt segment already exists"
+                )
+            return _segment_from_row(row)
+
+        return cast(
+            TaskAttemptSegment,
+            await self._transaction(
+                operation="task_attempt_segment_create",
+                callback=execute,
+            ),
+        )
+
+    async def get_attempt_segment(
+        self,
+        segment_id: str,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(segment_id, "segment_id")
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            return await _segment_or_raise(unit, segment_id)
+
+        return cast(
+            TaskAttemptSegment,
+            await self._transaction(
+                operation="task_attempt_segment_get",
+                callback=execute,
+            ),
+        )
+
+    async def list_attempt_segments(
+        self,
+        attempt_id: str,
+    ) -> tuple[TaskAttemptSegment, ...]:
+        _assert_non_empty_string(attempt_id, "attempt_id")
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await _attempt_or_raise(unit, attempt_id)
+            await unit.cursor.execute(
+                _SELECT_SEGMENTS_FOR_ATTEMPT_SQL,
+                (attempt_id,),
+            )
+            return tuple(
+                _segment_from_row(row) for row in await unit.cursor.fetchall()
+            )
+
+        return cast(
+            tuple[TaskAttemptSegment, ...],
+            await self._transaction(
+                operation="task_attempt_segment_list",
+                callback=execute,
+            ),
+        )
+
+    async def transition_attempt_segment(
+        self,
+        segment_id: str,
+        *,
+        from_states: Collection[TaskAttemptSegmentState],
+        to_state: TaskAttemptSegmentState,
+        reason: str,
+        request_id: str | None = None,
+        continuation_id: str | None = None,
+        checkpoint_id: str | None = None,
+        claim_token: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(segment_id, "segment_id")
+        _assert_non_empty_string(reason, "reason")
+        if request_id is not None:
+            _assert_non_empty_string(request_id, "request_id")
+        if continuation_id is not None:
+            _assert_non_empty_string(continuation_id, "continuation_id")
+        if checkpoint_id is not None:
+            _assert_non_empty_string(checkpoint_id, "checkpoint_id")
+            if request_id is None:
+                raise AssertionError(
+                    "checkpoint identifiers require interaction correlation"
+                )
+        if (
+            to_state is TaskAttemptSegmentState.SUSPENDED
+            and checkpoint_id is None
+        ):
+            raise AssertionError(
+                "suspended segments require a checkpoint identifier"
+            )
+        if (request_id is None) != (continuation_id is None):
+            raise AssertionError(
+                "request and continuation identifiers must be paired"
+            )
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            segment = await _lock_segment_or_raise(unit, segment_id)
+            ensure_attempt_segment_is_mutable(segment.state)
+            run = await _lock_run_or_raise(unit, segment.run_id)
+            _verify_claim_token(run, claim_token)
+            validate_attempt_segment_transition_request(
+                current_state=segment.state,
+                from_states=from_states,
+                to_state=to_state,
+            )
+            if to_state is TaskAttemptSegmentState.SUSPENDED:
+                assert request_id is not None
+                next_claim = None
+            else:
+                if request_id is not None:
+                    raise TaskStoreConflictError(
+                        "only suspended segments retain interactions"
+                    )
+                next_claim = segment.claim
+            now = self._now()
+            await unit.cursor.execute(
+                _UPDATE_ATTEMPT_SEGMENT_SQL,
+                (
+                    to_state.value,
+                    (
+                        _json(_claim_to_payload(next_claim))
+                        if next_claim is not None
+                        else None
+                    ),
+                    request_id,
+                    continuation_id,
+                    checkpoint_id,
+                    _json(metadata) if metadata is not None else None,
+                    now,
+                    segment_id,
+                    segment.state.value,
+                ),
+            )
+            row = await unit.cursor.fetchone()
+            if row is None:
+                raise TaskStoreConflictError(
+                    "task attempt segment state did not match"
+                )
+            await unit.cursor.execute(
+                _INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL,
+                (
+                    self._new_id(),
+                    segment_id,
+                    segment.attempt_id,
+                    segment.run_id,
+                    segment.state.value,
+                    to_state.value,
+                    reason,
+                    _json(metadata or {}),
+                    now,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "task attempt segment transition was not recorded"
+                )
+            return _segment_from_row(row)
+
+        return cast(
+            TaskAttemptSegment,
+            await self._transaction(
+                operation="task_attempt_segment_transition",
+                callback=execute,
+            ),
+        )
+
+    async def list_attempt_segment_transitions(
+        self,
+        segment_id: str,
+    ) -> tuple[TaskAttemptSegmentTransition, ...]:
+        _assert_non_empty_string(segment_id, "segment_id")
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            await _segment_or_raise(unit, segment_id)
+            await unit.cursor.execute(
+                _SELECT_ATTEMPT_SEGMENT_TRANSITIONS_SQL,
+                (segment_id,),
+            )
+            return tuple(
+                _segment_transition_from_row(row)
+                for row in await unit.cursor.fetchall()
+            )
+
+        return cast(
+            tuple[TaskAttemptSegmentTransition, ...],
+            await self._transaction(
+                operation="task_attempt_segment_transition_list",
+                callback=execute,
+            ),
+        )
+
+    async def suspend_claim(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        segment_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSuspension:
+        _assert_non_empty_string(queue_item_id, "queue_item_id")
+        _assert_non_empty_string(claim_token, "claim_token")
+        _assert_non_empty_string(segment_id, "segment_id")
+        _assert_non_empty_string(request_id, "request_id")
+        _assert_non_empty_string(continuation_id, "continuation_id")
+        if checkpoint_id is not None:
+            _assert_non_empty_string(checkpoint_id, "checkpoint_id")
+        else:
+            raise AssertionError(
+                "durable task suspension requires a checkpoint identifier"
+            )
+        observed_at = self._now() if now is None else _ensure_aware_utc(now)
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            return await self._suspend_claim_in_unit(
+                unit,
+                queue_item_id=queue_item_id,
+                claim_token=claim_token,
+                segment_id=segment_id,
+                request_id=request_id,
+                continuation_id=continuation_id,
+                checkpoint_id=checkpoint_id,
+                observed_at=observed_at,
+                metadata=safe_metadata,
+            )
+
+        return cast(
+            TaskQueueSuspension,
+            await self._transaction(
+                operation="task_queue_suspend_claim",
+                callback=execute,
+            ),
+        )
+
+    async def _suspend_claim_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueSuspension:
+        """Suspend a claim inside an existing PostgreSQL transaction."""
+        interaction_result = _input_required_execution_result(
+            request_id=request_id,
+            continuation_id=continuation_id,
+            checkpoint_id=checkpoint_id,
+        )
+        result_payload = _json(_result_to_payload(interaction_result))
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if (
+            queue_row["state"] != TaskQueueItemState.CLAIMED.value
+            or queue_row["claim_token"] != claim_token
+        ):
+            raise TaskStoreConflictError(
+                "task queue claim token did not match"
+            )
+        run = await _lock_run_or_raise(
+            unit,
+            cast(str, queue_row["run_id"]),
+        )
+        _verify_claim_token(run, claim_token)
+        if run.state is not TaskRunState.RUNNING:
+            raise TaskStoreConflictError("task run is not running")
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("running task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        if attempt.state is not TaskAttemptState.RUNNING:
+            raise TaskStoreConflictError("task attempt is not running")
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        if (
+            segment.run_id != run.run_id
+            or segment.attempt_id != attempt.attempt_id
+            or segment.state is not TaskAttemptSegmentState.RUNNING
+        ):
+            raise TaskStoreConflictError(
+                "task attempt segment is not the active running segment"
+            )
+        await unit.cursor.execute(
+            _SELECT_DURABLE_CHECKPOINT_SQL,
+            (
+                request_id,
+                continuation_id,
+                run.run_id,
+                checkpoint_id,
+                checkpoint_id,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "durable interaction checkpoint is not ready"
+            )
+        await unit.cursor.execute(
+            _SUSPEND_RUN_SQL,
+            (
+                TaskRunState.INPUT_REQUIRED.value,
+                result_payload,
+                _json(metadata),
+                observed_at,
+                run.run_id,
+                TaskRunState.RUNNING.value,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task run suspension compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _SUSPEND_ATTEMPT_SQL,
+            (
+                TaskAttemptState.SUSPENDED.value,
+                result_payload,
+                _json(metadata),
+                observed_at,
+                attempt.attempt_id,
+                TaskAttemptState.RUNNING.value,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task attempt suspension compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _SUSPEND_SEGMENT_SQL,
+            (
+                TaskAttemptSegmentState.SUSPENDED.value,
+                request_id,
+                continuation_id,
+                checkpoint_id,
+                _json(metadata),
+                observed_at,
+                segment.segment_id,
+                TaskAttemptSegmentState.RUNNING.value,
+            ),
+        )
+        segment_row = await unit.cursor.fetchone()
+        if segment_row is None:
+            raise TaskStoreConflictError(
+                "task segment suspension compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _SUSPEND_QUEUE_ITEM_SQL,
+            (
+                TaskQueueItemState.SUSPENDED.value,
+                attempt.attempt_id,
+                segment.segment_id,
+                request_id,
+                continuation_id,
+                _json(metadata),
+                observed_at,
+                queue_item_id,
+                TaskQueueItemState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        suspended_queue_row = await unit.cursor.fetchone()
+        if suspended_queue_row is None:
+            raise TaskStoreConflictError(
+                "task queue suspension compare-and-swap failed"
+            )
+        await _insert_suspension_transitions(
+            unit,
+            id_factory=self._new_id,
+            run=run,
+            attempt=attempt,
+            segment=segment,
+            now=observed_at,
+            metadata=metadata,
+        )
+        await _insert_interaction_event(
+            unit,
+            id_factory=self._new_id,
+            run_id=run.run_id,
+            attempt_id=attempt.attempt_id,
+            event_type=TaskInteractionEventType.INPUT_REQUIRED,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            segment_id=segment.segment_id,
+            now=observed_at,
+        )
+        suspended_run = _run_from_row(run_row)
+        suspended_attempt = _attempt_from_row(attempt_row)
+        suspended_segment = _segment_from_row(segment_row)
+        return TaskQueueSuspension(
+            queue_item=_queue_item_from_row(
+                suspended_queue_row,
+                run_state=suspended_run.state,
+            ),
+            run=suspended_run,
+            attempt=suspended_attempt,
+            segment=suspended_segment,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            checkpoint_id=checkpoint_id,
+        )
+
+    async def requeue_suspended(
+        self,
+        run_id: str,
+        *,
+        request_id: str,
+        continuation_id: str,
+        resolution_revision: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry:
+        _assert_non_empty_string(run_id, "run_id")
+        _assert_non_empty_string(request_id, "request_id")
+        _assert_non_empty_string(continuation_id, "continuation_id")
+        _assert_non_negative_int(resolution_revision, "resolution_revision")
+        if resolution_revision == 0:
+            raise AssertionError("resolution_revision must be positive")
+        observed_at = self._now() if now is None else _ensure_aware_utc(now)
+        safe_metadata = freeze_snapshot_metadata(metadata)
+
+        async def execute(unit: PgsqlUnitOfWork) -> object:
+            return await self._requeue_suspended_in_unit(
+                unit,
+                run_id=run_id,
+                request_id=request_id,
+                continuation_id=continuation_id,
+                resolution_revision=resolution_revision,
+                observed_at=observed_at,
+                metadata=safe_metadata,
+            )
+
+        return cast(
+            TaskQueueReentry,
+            await self._transaction(
+                operation="task_queue_requeue_suspended",
+                callback=execute,
+            ),
+        )
+
+    async def _requeue_suspended_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        run_id: str,
+        request_id: str,
+        continuation_id: str,
+        resolution_revision: int,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueReentry:
+        """Requeue suspended work inside an existing transaction."""
+        run = await _lock_run_or_raise(unit, run_id)
+        await unit.cursor.execute(
+            _SELECT_SUSPENDED_QUEUE_FOR_UPDATE_SQL,
+            (run_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError(
+                "suspended task queue item was not found"
+            )
+        attempt_id = cast(str | None, queue_row.get("attempt_id"))
+        segment_id = cast(str | None, queue_row.get("segment_id"))
+        if attempt_id is None or segment_id is None:
+            raise TaskStoreConflictError(
+                "suspended queue provenance is incomplete"
+            )
+        attempt = await _lock_attempt_or_raise(unit, attempt_id)
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        if (
+            attempt.state is not TaskAttemptState.SUSPENDED
+            or segment.state is not TaskAttemptSegmentState.SUSPENDED
+            or segment.request_id != request_id
+            or segment.continuation_id != continuation_id
+        ):
+            raise TaskStoreConflictError(
+                "suspended task provenance did not match"
+            )
+        await unit.cursor.execute(
+            _SELECT_ACCEPTED_RESOLUTION_SQL,
+            (
+                request_id,
+                continuation_id,
+                run_id,
+                resolution_revision,
+            ),
+        )
+        outbox_row = await unit.cursor.fetchone()
+        if outbox_row is None:
+            raise TaskStoreConflictError(
+                "accepted interaction resolution was not found"
+            )
+        if (
+            run.state is TaskRunState.QUEUED
+            and queue_row["state"] == TaskQueueItemState.AVAILABLE.value
+        ):
+            return TaskQueueReentry(
+                queue_item=_queue_item_from_row(
+                    queue_row,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+                previous_segment=segment,
+            )
+        if (
+            run.state is not TaskRunState.INPUT_REQUIRED
+            or queue_row["state"] != TaskQueueItemState.SUSPENDED.value
+        ):
+            raise TaskStoreConflictError(
+                "task is not awaiting interaction input"
+            )
+        await unit.cursor.execute(
+            _REQUEUE_RUN_SQL,
+            (
+                TaskRunState.QUEUED.value,
+                _json(metadata),
+                observed_at,
+                run_id,
+                TaskRunState.INPUT_REQUIRED.value,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task requeue compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _CLEAR_SUSPENDED_ATTEMPT_RESULT_SQL,
+            (
+                observed_at,
+                attempt.attempt_id,
+                TaskAttemptState.SUSPENDED.value,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task attempt reentry compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _REQUEUE_QUEUE_ITEM_SQL,
+            (
+                TaskQueueItemState.AVAILABLE.value,
+                observed_at,
+                _json(metadata),
+                observed_at,
+                queue_row["queue_item_id"],
+                TaskQueueItemState.SUSPENDED.value,
+            ),
+        )
+        available_queue_row = await unit.cursor.fetchone()
+        if available_queue_row is None:
+            raise TaskStoreConflictError(
+                "task queue reentry compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                run_id,
+                TaskRunState.INPUT_REQUIRED.value,
+                TaskRunState.QUEUED.value,
+                "interaction resolved",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task requeue transition was not recorded"
+            )
+        await _insert_interaction_event(
+            unit,
+            id_factory=self._new_id,
+            run_id=run_id,
+            attempt_id=attempt.attempt_id,
+            event_type=TaskInteractionEventType.INPUT_RESUMED,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            segment_id=segment.segment_id,
+            now=observed_at,
+        )
+        queued_run = _run_from_row(run_row)
+        return TaskQueueReentry(
+            queue_item=_queue_item_from_row(
+                available_queue_row,
+                run_state=queued_run.state,
+            ),
+            run=queued_run,
+            attempt=_attempt_from_row(attempt_row),
+            previous_segment=segment,
+        )
+
+    async def _terminalize_suspended_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        task_run_id: str,
+        correlations: tuple[tuple[str, str], ...],
+        run_state: TaskRunState,
+        attempt_state: TaskAttemptState,
+        event_type: TaskInteractionEventType,
+        reason: str,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+        replay_only: bool = False,
+    ) -> TaskQueueCompletion | None:
+        """Terminalize or replay one suspended task lifecycle."""
+        if event_type in {
+            TaskInteractionEventType.INPUT_CANCELLED,
+            TaskInteractionEventType.INPUT_SUPERSEDED,
+        }:
+            if (
+                run_state is not TaskRunState.CANCELLED
+                or attempt_state is not TaskAttemptState.ABANDONED
+            ):
+                raise AssertionError(
+                    "cancelled input requires cancelled run and "
+                    "abandoned attempt"
+                )
+            error = TaskError.cancellation()
+        elif event_type is TaskInteractionEventType.INPUT_EXPIRED:
+            if (
+                run_state is not TaskRunState.EXPIRED
+                or attempt_state is not TaskAttemptState.FAILED
+            ):
+                raise AssertionError(
+                    "expired input requires expired run and failed attempt"
+                )
+            error = TaskError.timeout()
+        else:
+            raise AssertionError(
+                "event type must terminalize suspended task input"
+            )
+        if any(
+            not request_id or not continuation_id
+            for request_id, continuation_id in correlations
+        ):
+            raise AssertionError("task correlations must be non-empty")
+        if len(set(correlations)) != len(correlations):
+            raise AssertionError("task correlations must be unique")
+        _assert_non_empty_string(task_run_id, "task_run_id")
+        _assert_non_empty_string(reason, "reason")
+        error_payload: dict[str, TaskSnapshotValue] = {
+            "category": error.category.value,
+            "code": error.code.value,
+            "message": error.message,
+            "retryable": error.retryable,
+        }
+        if error.details:
+            error_payload["details"] = error.details
+        result = TaskExecutionResult(
+            error=error_payload,
+            metadata={"interaction_event_type": event_type.value},
+        )
+        result_payload = _json(_result_to_payload(result))
+        run = await _lock_run_or_raise(unit, task_run_id)
+        await unit.cursor.execute(
+            _SELECT_QUEUE_FOR_RUN_FOR_UPDATE_SQL,
+            (task_run_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        attempt_id = cast(str | None, queue_row.get("attempt_id"))
+        segment_id = cast(str | None, queue_row.get("segment_id"))
+        if (
+            run.last_attempt_id is None
+            or attempt_id != run.last_attempt_id
+            or segment_id is None
+        ):
+            raise TaskStoreConflictError(
+                "suspended task provenance is incomplete"
+            )
+        attempt = await _lock_attempt_or_raise(unit, attempt_id)
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        queue_request_id = cast(
+            str | None,
+            queue_row.get("request_id"),
+        )
+        queue_continuation_id = cast(
+            str | None,
+            queue_row.get("continuation_id"),
+        )
+        if run.state is run_state:
+            return _replayed_suspended_task_lifecycle(
+                queue_row=queue_row,
+                run=run,
+                attempt=attempt,
+                attempt_state=attempt_state,
+                segment=segment,
+                result=result,
+                correlations=correlations,
+            )
+        if replay_only:
+            return None
+        if (
+            queue_request_id is None
+            or queue_continuation_id is None
+            or (queue_request_id, queue_continuation_id) not in correlations
+        ):
+            raise TaskStoreConflictError(
+                "no terminal interaction matched the suspended queue"
+            )
+        if (
+            run.state is not TaskRunState.INPUT_REQUIRED
+            or run.claim is not None
+            or queue_row["state"] != TaskQueueItemState.SUSPENDED.value
+            or queue_row.get("claim_token") is not None
+            or queue_row.get("lease_expires_at") is not None
+            or attempt.run_id != task_run_id
+            or attempt.state is not TaskAttemptState.SUSPENDED
+            or attempt.context.claim is not None
+            or segment.run_id != task_run_id
+            or segment.attempt_id != attempt.attempt_id
+            or segment.state is not TaskAttemptSegmentState.SUSPENDED
+            or segment.claim is not None
+            or segment.request_id != queue_request_id
+            or segment.continuation_id != queue_continuation_id
+        ):
+            raise TaskStoreConflictError(
+                "suspended task lifecycle provenance did not match"
+            )
+        await unit.cursor.execute(
+            _UPDATE_ATTEMPT_STATE_SQL,
+            (
+                attempt_state.value,
+                result_payload,
+                observed_at,
+                attempt.attempt_id,
+                TaskAttemptState.SUSPENDED.value,
+                task_run_id,
+                TaskRunState.INPUT_REQUIRED.value,
+                None,
+                None,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task attempt lifecycle compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptState.SUSPENDED.value,
+                attempt_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task attempt lifecycle transition was not recorded"
+            )
+        if run_state is TaskRunState.CANCELLED:
+            await unit.cursor.execute(
+                _UPDATE_RUN_STATE_SQL,
+                (
+                    TaskRunState.CANCEL_REQUESTED.value,
+                    None,
+                    False,
+                    observed_at,
+                    task_run_id,
+                    TaskRunState.INPUT_REQUIRED.value,
+                    None,
+                    None,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "task cancellation request compare-and-swap failed"
+                )
+            await unit.cursor.execute(
+                _INSERT_RUN_TRANSITION_SQL,
+                (
+                    self._new_id(),
+                    task_run_id,
+                    TaskRunState.INPUT_REQUIRED.value,
+                    TaskRunState.CANCEL_REQUESTED.value,
+                    "cancel_requested",
+                    _json(metadata),
+                    observed_at,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "task cancellation request transition was not recorded"
+                )
+            run_from_state = TaskRunState.CANCEL_REQUESTED
+        else:
+            run_from_state = TaskRunState.INPUT_REQUIRED
+        await unit.cursor.execute(
+            _UPDATE_RUN_STATE_SQL,
+            (
+                run_state.value,
+                result_payload,
+                True,
+                observed_at,
+                task_run_id,
+                run_from_state.value,
+                None,
+                None,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task run lifecycle compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                run_from_state.value,
+                run_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task run lifecycle transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _TERMINALIZE_SUSPENDED_QUEUE_SQL,
+            (
+                TaskQueueItemState.DEAD.value,
+                _json(metadata),
+                observed_at,
+                queue_row["queue_item_id"],
+                TaskQueueItemState.SUSPENDED.value,
+            ),
+        )
+        terminal_queue_row = await unit.cursor.fetchone()
+        if terminal_queue_row is None:
+            raise TaskStoreConflictError(
+                "task queue lifecycle compare-and-swap failed"
+            )
+        await _insert_interaction_event(
+            unit,
+            id_factory=self._new_id,
+            run_id=task_run_id,
+            attempt_id=attempt.attempt_id,
+            event_type=event_type,
+            request_id=queue_request_id,
+            continuation_id=queue_continuation_id,
+            segment_id=segment.segment_id,
+            now=observed_at,
+        )
+        terminal_run = _run_from_row(run_row)
+        return TaskQueueCompletion(
+            queue_item=_queue_item_from_row(
+                terminal_queue_row,
+                run_state=terminal_run.state,
+            ),
+            run=terminal_run,
+            attempt=_attempt_from_row(attempt_row),
+        )
+
+    async def _validate_suspended_run_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        task_run_id: str,
+    ) -> None:
+        """Validate one task can accept another durable interaction."""
+        _assert_non_empty_string(task_run_id, "task_run_id")
+        run = await _lock_run_or_raise(unit, task_run_id)
+        await unit.cursor.execute(
+            _SELECT_QUEUE_FOR_RUN_FOR_UPDATE_SQL,
+            (task_run_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        attempt_id = cast(str | None, queue_row.get("attempt_id"))
+        segment_id = cast(str | None, queue_row.get("segment_id"))
+        if (
+            run.state is not TaskRunState.INPUT_REQUIRED
+            or run.claim is not None
+            or run.last_attempt_id is None
+            or attempt_id != run.last_attempt_id
+            or segment_id is None
+            or queue_row["state"] != TaskQueueItemState.SUSPENDED.value
+            or queue_row.get("claim_token") is not None
+            or queue_row.get("lease_expires_at") is not None
+        ):
+            raise TaskStoreConflictError(
+                "task is not at a durable suspended boundary"
+            )
+        attempt = await _lock_attempt_or_raise(unit, attempt_id)
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        if (
+            attempt.run_id != task_run_id
+            or attempt.state is not TaskAttemptState.SUSPENDED
+            or attempt.context.claim is not None
+            or segment.run_id != task_run_id
+            or segment.attempt_id != attempt_id
+            or segment.state is not TaskAttemptSegmentState.SUSPENDED
+            or segment.claim is not None
+        ):
+            raise TaskStoreConflictError(
+                "task suspension provenance did not match"
+            )
+
+    async def _settle_claim_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        settlement: TaskDurableResumeSettlement,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+        replay_only: bool = False,
+        allow_expired_lease: bool = False,
+        terminal_run_state: TaskRunState | None = None,
+        terminal_reason: str | None = None,
+        interaction_event_type: TaskInteractionEventType | None = None,
+        interaction_request_id: str | None = None,
+        interaction_continuation_id: str | None = None,
+    ) -> TaskQueueCompletion:
+        """Settle one resumed task claim inside an existing transaction."""
+        if type(settlement) is TaskDurableResumeSuccess:
+            run_state = TaskRunState.SUCCEEDED
+            attempt_state = TaskAttemptState.SUCCEEDED
+            segment_state = TaskAttemptSegmentState.SUCCEEDED
+            queue_state = TaskQueueItemState.DONE
+            reason = "completed"
+        elif type(settlement) is TaskDurableResumeFailure:
+            run_state = TaskRunState.FAILED
+            attempt_state = TaskAttemptState.FAILED
+            segment_state = TaskAttemptSegmentState.FAILED
+            queue_state = TaskQueueItemState.DEAD
+            reason = "execution_failed"
+        elif type(settlement) is TaskDurableResumeCancellation:
+            run_state = TaskRunState.CANCELLED
+            attempt_state = TaskAttemptState.FAILED
+            segment_state = TaskAttemptSegmentState.ABANDONED
+            queue_state = TaskQueueItemState.DEAD
+            reason = "cancelled"
+        else:
+            raise AssertionError(
+                "settlement must be a durable resume success or failure"
+            )
+        if terminal_run_state is not None:
+            if (
+                type(settlement) is not TaskDurableResumeFailure
+                or terminal_run_state is not TaskRunState.EXPIRED
+                or terminal_reason is None
+            ):
+                raise AssertionError(
+                    "only failed resume settlement may expire a task"
+                )
+            run_state = terminal_run_state
+            reason = terminal_reason
+        correlation = (
+            interaction_request_id,
+            interaction_continuation_id,
+        )
+        if interaction_event_type is None:
+            if any(value is not None for value in correlation):
+                raise AssertionError(
+                    "interaction event correlation requires an event type"
+                )
+        elif (
+            interaction_event_type
+            is not TaskInteractionEventType.INPUT_EXPIRED
+            or any(value is None for value in correlation)
+        ):
+            raise AssertionError(
+                "expired interaction event requires complete correlation"
+            )
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if cast(str, queue_row["run_id"]) != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        if (
+            attempt.run_id != task_run_id
+            or segment.run_id != task_run_id
+            or segment.attempt_id != attempt.attempt_id
+        ):
+            raise TaskStoreConflictError(
+                "resumed task settlement provenance did not match"
+            )
+        cancellation_won = run.state is TaskRunState.CANCEL_REQUESTED or (
+            run.state is TaskRunState.CANCELLED
+            and attempt.state is TaskAttemptState.ABANDONED
+        )
+        if cancellation_won:
+            run_state = TaskRunState.CANCELLED
+            attempt_state = TaskAttemptState.ABANDONED
+            segment_state = TaskAttemptSegmentState.ABANDONED
+            queue_state = TaskQueueItemState.DEAD
+            reason = "cancelled"
+            result = _cancelled_task_settlement_result(settlement)
+        else:
+            result = settlement.result
+        result_payload = _json(_result_to_payload(result))
+        if run.state is run_state:
+            return _replayed_task_settlement(
+                queue_row=queue_row,
+                queue_state=queue_state,
+                run=run,
+                attempt=attempt,
+                attempt_state=attempt_state,
+                segment=segment,
+                segment_state=segment_state,
+                result=result,
+                claim_token=claim_token,
+            )
+        if replay_only:
+            raise TaskStoreConflictError(
+                "completed continuation has no matching terminal task"
+            )
+        if (
+            queue_row["state"] != TaskQueueItemState.CLAIMED.value
+            or queue_row["claim_token"] != claim_token
+        ):
+            raise TaskStoreConflictError(
+                "task queue claim token did not match"
+            )
+        lease_expires_at = queue_row.get("lease_expires_at")
+        if not isinstance(lease_expires_at, datetime) or (
+            lease_expires_at <= observed_at
+            if not allow_expired_lease
+            else lease_expires_at > observed_at
+        ):
+            raise TaskStoreConflictError("task queue claim lease expired")
+        _verify_claim_token(run, claim_token)
+        if run.state not in {
+            TaskRunState.RUNNING,
+            TaskRunState.CANCEL_REQUESTED,
+        }:
+            raise TaskStoreConflictError("resumed task run is not running")
+        if attempt.state is not TaskAttemptState.RUNNING:
+            raise TaskStoreConflictError("resumed task attempt is not running")
+        if segment.state is not TaskAttemptSegmentState.RUNNING:
+            raise TaskStoreConflictError("resumed task segment is not running")
+        if segment.claim is None or segment.claim.claim_token != claim_token:
+            raise TaskStoreConflictError(
+                "resumed task segment claim did not match"
+            )
+        await unit.cursor.execute(
+            _UPDATE_ATTEMPT_SEGMENT_SQL,
+            (
+                segment_state.value,
+                _json(_claim_to_payload(segment.claim)),
+                None,
+                None,
+                None,
+                _json(metadata),
+                observed_at,
+                segment.segment_id,
+                TaskAttemptSegmentState.RUNNING.value,
+            ),
+        )
+        segment_row = await unit.cursor.fetchone()
+        if segment_row is None:
+            raise TaskStoreConflictError(
+                "task segment settlement compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                segment.segment_id,
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptSegmentState.RUNNING.value,
+                segment_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task segment settlement transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _UPDATE_ATTEMPT_STATE_SQL,
+            (
+                attempt_state.value,
+                result_payload,
+                observed_at,
+                attempt.attempt_id,
+                TaskAttemptState.RUNNING.value,
+                task_run_id,
+                run.state.value,
+                claim_token,
+                claim_token,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task attempt settlement compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptState.RUNNING.value,
+                attempt_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task attempt settlement transition was not recorded"
+            )
+        if run.state is TaskRunState.CANCEL_REQUESTED:
+            run_from_state = TaskRunState.CANCEL_REQUESTED
+        elif type(settlement) is TaskDurableResumeCancellation:
+            await unit.cursor.execute(
+                _UPDATE_RUN_STATE_SQL,
+                (
+                    TaskRunState.CANCEL_REQUESTED.value,
+                    None,
+                    False,
+                    observed_at,
+                    task_run_id,
+                    TaskRunState.RUNNING.value,
+                    claim_token,
+                    claim_token,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "task cancellation request compare-and-swap failed"
+                )
+            await unit.cursor.execute(
+                _INSERT_RUN_TRANSITION_SQL,
+                (
+                    self._new_id(),
+                    task_run_id,
+                    TaskRunState.RUNNING.value,
+                    TaskRunState.CANCEL_REQUESTED.value,
+                    "cancel_requested",
+                    _json(metadata),
+                    observed_at,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "task cancellation request transition was not recorded"
+                )
+            run_from_state = TaskRunState.CANCEL_REQUESTED
+        else:
+            run_from_state = TaskRunState.RUNNING
+        await unit.cursor.execute(
+            _UPDATE_RUN_STATE_SQL,
+            (
+                run_state.value,
+                result_payload,
+                True,
+                observed_at,
+                task_run_id,
+                run_from_state.value,
+                claim_token,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task run settlement compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                run_from_state.value,
+                run_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task run settlement transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _SETTLE_QUEUE_ITEM_SQL,
+            (
+                queue_state.value,
+                observed_at,
+                queue_item_id,
+                claim_token,
+            ),
+        )
+        settled_queue_row = await unit.cursor.fetchone()
+        if settled_queue_row is None:
+            raise TaskStoreConflictError(
+                "task queue settlement compare-and-swap failed"
+            )
+        if interaction_event_type is not None and not cancellation_won:
+            assert interaction_request_id is not None
+            assert interaction_continuation_id is not None
+            await _insert_interaction_event(
+                unit,
+                id_factory=self._new_id,
+                run_id=task_run_id,
+                attempt_id=attempt.attempt_id,
+                event_type=interaction_event_type,
+                request_id=interaction_request_id,
+                continuation_id=interaction_continuation_id,
+                segment_id=segment.segment_id,
+                now=observed_at,
+            )
+        settled_run = _run_from_row(run_row)
+        return TaskQueueCompletion(
+            queue_item=_queue_item_from_row(
+                settled_queue_row,
+                run_state=settled_run.state,
+            ),
+            run=settled_run,
+            attempt=_attempt_from_row(attempt_row),
+        )
+
+    async def _terminalize_completed_claim_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        settlement: TaskDurableResumeFailure | TaskDurableResumeCancellation,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueCompletion:
+        """Terminalize one task after its provider continuation completed."""
+        if type(settlement) not in {
+            TaskDurableResumeFailure,
+            TaskDurableResumeCancellation,
+        }:
+            raise AssertionError(
+                "completed provider task settlement must not succeed"
+            )
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if cast(str, queue_row["run_id"]) != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        previous_segment_id = cast(
+            str | None,
+            queue_row.get("segment_id"),
+        )
+        if previous_segment_id is None:
+            raise TaskStoreConflictError(
+                "completed provider task has no suspension provenance"
+            )
+        previous_segment = await _lock_segment_or_raise(
+            unit,
+            previous_segment_id,
+        )
+        if (
+            queue_row.get("attempt_id") != attempt.attempt_id
+            or queue_row.get("request_id") != request_id
+            or queue_row.get("continuation_id") != continuation_id
+            or attempt.run_id != task_run_id
+            or attempt.context.claim is None
+            or attempt.context.claim.claim_token != claim_token
+            or segment.run_id != task_run_id
+            or segment.attempt_id != attempt.attempt_id
+            or segment.resumed_from_segment_id != previous_segment.segment_id
+            or segment.request_id is not None
+            or segment.continuation_id is not None
+            or segment.checkpoint_id is not None
+            or segment.claim is None
+            or segment.claim.claim_token != claim_token
+            or previous_segment.run_id != task_run_id
+            or previous_segment.attempt_id != attempt.attempt_id
+            or previous_segment.state is not TaskAttemptSegmentState.SUSPENDED
+            or previous_segment.claim is not None
+            or previous_segment.request_id != request_id
+            or previous_segment.continuation_id != continuation_id
+            or previous_segment.checkpoint_id != checkpoint_id
+        ):
+            raise TaskStoreConflictError(
+                "completed provider task provenance did not match"
+            )
+        return await self._settle_claim_in_unit(
+            unit,
+            queue_item_id=queue_item_id,
+            claim_token=claim_token,
+            segment_id=segment_id,
+            task_run_id=task_run_id,
+            settlement=settlement,
+            observed_at=observed_at,
+            metadata=metadata,
+        )
+
+    async def _release_claimed_reentry_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueReentry:
+        """Release one exact claimed reentry inside a transaction."""
+        await unit.cursor.execute(
+            _SELECT_RELEASED_CONTINUATION_SQL,
+            (
+                request_id,
+                continuation_id,
+                task_run_id,
+                checkpoint_id,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "durable continuation is not safe to requeue"
+            )
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if cast(str, queue_row["run_id"]) != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        segment_id = cast(str | None, queue_row.get("segment_id"))
+        if segment_id is None:
+            raise TaskStoreConflictError(
+                "claimed reentry has no suspended segment"
+            )
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        _validate_reentry_provenance(
+            queue_row=queue_row,
+            attempt=attempt,
+            segment=segment,
+            task_run_id=task_run_id,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            checkpoint_id=checkpoint_id,
+        )
+        if (
+            run.state is TaskRunState.QUEUED
+            and queue_row["state"] == TaskQueueItemState.AVAILABLE.value
+        ):
+            return TaskQueueReentry(
+                queue_item=_queue_item_from_row(
+                    queue_row,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+                previous_segment=segment,
+            )
+        if (
+            run.state is not TaskRunState.CLAIMED
+            or queue_row["state"] != TaskQueueItemState.CLAIMED.value
+            or queue_row.get("claim_token") != claim_token
+            or attempt.state is not TaskAttemptState.SUSPENDED
+        ):
+            raise TaskStoreConflictError("task reentry claim did not match")
+        _verify_claim_token(run, claim_token)
+        await unit.cursor.execute(
+            _RELEASE_REENTRY_ATTEMPT_SQL,
+            (
+                _json(metadata),
+                observed_at,
+                attempt.attempt_id,
+                task_run_id,
+                claim_token,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task reentry attempt release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _RELEASE_REENTRY_RUN_SQL,
+            (
+                TaskRunState.QUEUED.value,
+                _json(metadata),
+                observed_at,
+                task_run_id,
+                TaskRunState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task reentry run release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _RELEASE_REENTRY_QUEUE_SQL,
+            (
+                TaskQueueItemState.AVAILABLE.value,
+                observed_at,
+                _json(metadata),
+                observed_at,
+                queue_item_id,
+                TaskQueueItemState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        queue_result = await unit.cursor.fetchone()
+        if queue_result is None:
+            raise TaskStoreConflictError(
+                "task reentry queue release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                TaskRunState.CLAIMED.value,
+                TaskRunState.QUEUED.value,
+                "resume_released",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task reentry release transition was not recorded"
+            )
+        queued_run = _run_from_row(run_row)
+        return TaskQueueReentry(
+            queue_item=_queue_item_from_row(
+                queue_result,
+                run_state=queued_run.state,
+            ),
+            run=queued_run,
+            attempt=_attempt_from_row(attempt_row),
+            previous_segment=segment,
+        )
+
+    async def _fail_claimed_reentry_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        task_run_id: str,
+        request_id: str | None,
+        continuation_id: str | None,
+        checkpoint_id: str | None,
+        result: TaskExecutionResult,
+        reason: str,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+        replay_only: bool = False,
+        terminal_run_state: TaskRunState = TaskRunState.FAILED,
+        interaction_event_type: TaskInteractionEventType | None = None,
+    ) -> TaskQueueCompletion:
+        """Fail one claimed or malformed reentry inside a transaction."""
+        if terminal_run_state not in {
+            TaskRunState.FAILED,
+            TaskRunState.EXPIRED,
+        }:
+            raise AssertionError("failed reentry must fail or expire its task")
+        if interaction_event_type is not None and (
+            interaction_event_type
+            is not TaskInteractionEventType.INPUT_EXPIRED
+            or terminal_run_state is not TaskRunState.EXPIRED
+        ):
+            raise AssertionError(
+                "expired reentry event requires an expired task"
+            )
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if cast(str, queue_row["run_id"]) != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        exact_provenance = request_id is not None
+        segment: TaskAttemptSegment | None = None
+        if exact_provenance:
+            assert continuation_id is not None
+            assert checkpoint_id is not None
+            segment_id = cast(str | None, queue_row.get("segment_id"))
+            if segment_id is None:
+                raise TaskStoreConflictError(
+                    "claimed reentry has no suspended segment"
+                )
+            segment = await _lock_segment_or_raise(unit, segment_id)
+            _validate_reentry_provenance(
+                queue_row=queue_row,
+                attempt=attempt,
+                segment=segment,
+                task_run_id=task_run_id,
+                request_id=cast(str, request_id),
+                continuation_id=continuation_id,
+                checkpoint_id=checkpoint_id,
+            )
+        if run.state is terminal_run_state:
+            return _replayed_failed_reentry(
+                queue_row=queue_row,
+                run=run,
+                attempt=attempt,
+                result=result,
+            )
+        if replay_only:
+            raise TaskStoreConflictError(
+                "invalidated continuation has no matching failed task"
+            )
+        if (
+            run.state is not TaskRunState.CLAIMED
+            or queue_row["state"] != TaskQueueItemState.CLAIMED.value
+            or queue_row.get("claim_token") != claim_token
+            or attempt.state is not TaskAttemptState.SUSPENDED
+        ):
+            raise TaskStoreConflictError("task reentry claim did not match")
+        _verify_claim_token(run, claim_token)
+        result_payload = _json(_result_to_payload(result))
+        await unit.cursor.execute(
+            _FAIL_REENTRY_ATTEMPT_SQL,
+            (
+                TaskAttemptState.FAILED.value,
+                result_payload,
+                _json(metadata),
+                observed_at,
+                attempt.attempt_id,
+                task_run_id,
+                claim_token,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "task reentry failure attempt compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptState.SUSPENDED.value,
+                TaskAttemptState.FAILED.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task reentry failure transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _FAIL_REENTRY_RUN_SQL,
+            (
+                terminal_run_state.value,
+                result_payload,
+                _json(metadata),
+                observed_at,
+                task_run_id,
+                TaskRunState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "task reentry failure run compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                TaskRunState.CLAIMED.value,
+                terminal_run_state.value,
+                reason,
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task reentry failure run transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _FAIL_REENTRY_QUEUE_SQL,
+            (
+                TaskQueueItemState.DEAD.value,
+                _json(metadata),
+                observed_at,
+                queue_item_id,
+                TaskQueueItemState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        queue_result = await unit.cursor.fetchone()
+        if queue_result is None:
+            raise TaskStoreConflictError(
+                "task reentry failure queue compare-and-swap failed"
+            )
+        if interaction_event_type is not None:
+            if (
+                request_id is None
+                or continuation_id is None
+                or segment is None
+            ):
+                raise AssertionError(
+                    "expired reentry event requires exact provenance"
+                )
+            await _insert_interaction_event(
+                unit,
+                id_factory=self._new_id,
+                run_id=task_run_id,
+                attempt_id=attempt.attempt_id,
+                event_type=interaction_event_type,
+                request_id=request_id,
+                continuation_id=continuation_id,
+                segment_id=segment.segment_id,
+                now=observed_at,
+            )
+        failed_run = _run_from_row(run_row)
+        return TaskQueueCompletion(
+            queue_item=_queue_item_from_row(
+                queue_result,
+                run_state=failed_run.state,
+            ),
+            run=failed_run,
+            attempt=_attempt_from_row(attempt_row),
+        )
+
+    async def _release_running_reentry_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        segment_id: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueReentry:
+        """Release one running pre-dispatch reentry inside a transaction."""
+        await unit.cursor.execute(
+            _SELECT_RELEASED_CONTINUATION_SQL,
+            (
+                request_id,
+                continuation_id,
+                task_run_id,
+                checkpoint_id,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "durable continuation is not safe to requeue"
+            )
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if cast(str, queue_row["run_id"]) != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        segment = await _lock_segment_or_raise(unit, segment_id)
+        if (
+            attempt.run_id != task_run_id
+            or segment.run_id != task_run_id
+            or segment.attempt_id != attempt.attempt_id
+        ):
+            raise TaskStoreConflictError(
+                "running task reentry provenance did not match"
+            )
+        if (
+            run.state is TaskRunState.QUEUED
+            and queue_row["state"] == TaskQueueItemState.AVAILABLE.value
+        ):
+            _validate_released_running_reentry(
+                queue_row=queue_row,
+                attempt=attempt,
+                segment=segment,
+                request_id=request_id,
+                continuation_id=continuation_id,
+                checkpoint_id=checkpoint_id,
+            )
+            return TaskQueueReentry(
+                queue_item=_queue_item_from_row(
+                    queue_row,
+                    run_state=run.state,
+                ),
+                run=run,
+                attempt=attempt,
+                previous_segment=segment,
+            )
+        if (
+            run.state is not TaskRunState.RUNNING
+            or queue_row["state"] != TaskQueueItemState.CLAIMED.value
+            or queue_row.get("claim_token") != claim_token
+            or attempt.state is not TaskAttemptState.RUNNING
+            or segment.state is not TaskAttemptSegmentState.RUNNING
+            or segment.claim is None
+            or segment.claim.claim_token != claim_token
+        ):
+            raise TaskStoreConflictError(
+                "running task reentry claim did not match"
+            )
+        _verify_claim_token(run, claim_token)
+        await unit.cursor.execute(
+            _RELEASE_RUNNING_SEGMENT_SQL,
+            (
+                TaskAttemptSegmentState.SUSPENDED.value,
+                request_id,
+                continuation_id,
+                checkpoint_id,
+                _json(metadata),
+                observed_at,
+                segment_id,
+                TaskAttemptSegmentState.RUNNING.value,
+            ),
+        )
+        segment_row = await unit.cursor.fetchone()
+        if segment_row is None:
+            raise TaskStoreConflictError(
+                "running task segment release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                segment_id,
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptSegmentState.RUNNING.value,
+                TaskAttemptSegmentState.SUSPENDED.value,
+                "resume_released",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "running task segment release transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _RELEASE_RUNNING_ATTEMPT_SQL,
+            (
+                TaskAttemptState.SUSPENDED.value,
+                _json(metadata),
+                observed_at,
+                attempt.attempt_id,
+                task_run_id,
+                claim_token,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "running task attempt release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                attempt.attempt_id,
+                task_run_id,
+                TaskAttemptState.RUNNING.value,
+                TaskAttemptState.SUSPENDED.value,
+                "resume_released",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "running task attempt release transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _RELEASE_RUNNING_RUN_SQL,
+            (
+                TaskRunState.QUEUED.value,
+                _json(metadata),
+                observed_at,
+                task_run_id,
+                TaskRunState.RUNNING.value,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "running task run release compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                TaskRunState.RUNNING.value,
+                TaskRunState.QUEUED.value,
+                "resume_released",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "running task run release transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _RELEASE_RUNNING_QUEUE_SQL,
+            (
+                TaskQueueItemState.AVAILABLE.value,
+                observed_at,
+                attempt.attempt_id,
+                segment_id,
+                request_id,
+                continuation_id,
+                _json(metadata),
+                observed_at,
+                queue_item_id,
+                TaskQueueItemState.CLAIMED.value,
+                claim_token,
+            ),
+        )
+        queue_result = await unit.cursor.fetchone()
+        if queue_result is None:
+            raise TaskStoreConflictError(
+                "running task queue release compare-and-swap failed"
+            )
+        queued_run = _run_from_row(run_row)
+        return TaskQueueReentry(
+            queue_item=_queue_item_from_row(
+                queue_result,
+                run_state=queued_run.state,
+            ),
+            run=queued_run,
+            attempt=_attempt_from_row(attempt_row),
+            previous_segment=_segment_from_row(segment_row),
+        )
+
+    async def _cancel_partial_reentry_in_unit(
+        self,
+        unit: PgsqlUnitOfWork,
+        *,
+        queue_item_id: str,
+        claim_token: str,
+        active_segment_id: str,
+        task_run_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+        result: TaskExecutionResult,
+        observed_at: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueCompletion:
+        """Cancel one exact partial resumed startup or replay it."""
+        await unit.cursor.execute(
+            _SELECT_QUEUE_ITEM_FOR_UPDATE_SQL,
+            (queue_item_id,),
+        )
+        queue_row = await unit.cursor.fetchone()
+        if queue_row is None:
+            raise TaskStoreNotFoundError("task queue item was not found")
+        if queue_row.get("run_id") != task_run_id:
+            raise TaskStoreConflictError(
+                "task queue item does not belong to the resumed run"
+            )
+        run = await _lock_run_or_raise(unit, task_run_id)
+        if run.last_attempt_id is None:
+            raise TaskStoreConflictError("resumed task has no active attempt")
+        attempt = await _lock_attempt_or_raise(
+            unit,
+            run.last_attempt_id,
+        )
+        previous_segment_id = queue_row.get("segment_id")
+        if not isinstance(previous_segment_id, str) or not previous_segment_id:
+            raise TaskStoreConflictError(
+                "partial task reentry has no suspension provenance"
+            )
+        previous_segment = await _lock_segment_or_raise(
+            unit,
+            previous_segment_id,
+        )
+        active_segment = await _lock_segment_or_raise(
+            unit,
+            active_segment_id,
+        )
+        _validate_partial_reentry_cancellation_provenance(
+            queue_row=queue_row,
+            attempt=attempt,
+            previous_segment=previous_segment,
+            active_segment=active_segment,
+            task_run_id=task_run_id,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            checkpoint_id=checkpoint_id,
+        )
+        cancellation_result = _cancelled_task_settlement_result(
+            TaskDurableResumeFailure(result=result)
+        )
+        if run.state is TaskRunState.CANCELLED:
+            return _replayed_partial_reentry_cancellation(
+                queue_row=queue_row,
+                run=run,
+                attempt=attempt,
+                previous_segment=previous_segment,
+                active_segment=active_segment,
+                result=cancellation_result,
+                claim_token=claim_token,
+            )
+        attempt_claim = attempt.context.claim
+        if (
+            run.state is not TaskRunState.CANCEL_REQUESTED
+            or queue_row.get("state") != TaskQueueItemState.CLAIMED.value
+            or queue_row.get("claim_token") != claim_token
+            or attempt_claim is None
+            or attempt_claim.claim_token != claim_token
+        ):
+            raise TaskStoreConflictError(
+                "partial task reentry cancellation claim did not match"
+            )
+        _verify_claim_token(run, claim_token)
+        partial_states = (
+            attempt.state,
+            active_segment.state,
+        )
+        if active_segment.segment_id == previous_segment.segment_id:
+            if partial_states not in {
+                (
+                    TaskAttemptState.SUSPENDED,
+                    TaskAttemptSegmentState.SUSPENDED,
+                ),
+                (
+                    TaskAttemptState.RUNNING,
+                    TaskAttemptSegmentState.SUSPENDED,
+                ),
+            }:
+                raise TaskStoreConflictError(
+                    "partial task reentry startup state did not match"
+                )
+            if active_segment.claim is not None:
+                raise TaskStoreConflictError(
+                    "suspended task reentry segment retained a claim"
+                )
+        else:
+            segment_claim = active_segment.claim
+            if (
+                partial_states
+                != (
+                    TaskAttemptState.RUNNING,
+                    TaskAttemptSegmentState.CREATED,
+                )
+                or segment_claim is None
+                or segment_claim.claim_token != claim_token
+            ):
+                raise TaskStoreConflictError(
+                    "partial task reentry startup state did not match"
+                )
+            await unit.cursor.execute(
+                _UPDATE_ATTEMPT_SEGMENT_SQL,
+                (
+                    TaskAttemptSegmentState.ABANDONED.value,
+                    _json(_claim_to_payload(segment_claim)),
+                    active_segment.request_id,
+                    active_segment.continuation_id,
+                    active_segment.checkpoint_id,
+                    _json(metadata),
+                    observed_at,
+                    active_segment.segment_id,
+                    TaskAttemptSegmentState.CREATED.value,
+                ),
+            )
+            segment_row = await unit.cursor.fetchone()
+            if segment_row is None:
+                raise TaskStoreConflictError(
+                    "partial task segment cancellation compare-and-swap failed"
+                )
+            await unit.cursor.execute(
+                _INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL,
+                (
+                    self._new_id(),
+                    active_segment.segment_id,
+                    attempt.attempt_id,
+                    task_run_id,
+                    TaskAttemptSegmentState.CREATED.value,
+                    TaskAttemptSegmentState.ABANDONED.value,
+                    "cancelled",
+                    _json(metadata),
+                    observed_at,
+                ),
+            )
+            if await unit.cursor.fetchone() is None:
+                raise TaskStoreConflictError(
+                    "partial task segment cancellation transition was not "
+                    "recorded"
+                )
+        result_payload = _json(_result_to_payload(cancellation_result))
+        await unit.cursor.execute(
+            _UPDATE_ATTEMPT_STATE_SQL,
+            (
+                TaskAttemptState.ABANDONED.value,
+                result_payload,
+                observed_at,
+                attempt.attempt_id,
+                attempt.state.value,
+                task_run_id,
+                TaskRunState.CANCEL_REQUESTED.value,
+                claim_token,
+                claim_token,
+            ),
+        )
+        attempt_row = await unit.cursor.fetchone()
+        if attempt_row is None:
+            raise TaskStoreConflictError(
+                "partial task attempt cancellation compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                self._new_id(),
+                attempt.attempt_id,
+                task_run_id,
+                attempt.state.value,
+                TaskAttemptState.ABANDONED.value,
+                "cancelled",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "partial task attempt cancellation transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _UPDATE_RUN_STATE_SQL,
+            (
+                TaskRunState.CANCELLED.value,
+                result_payload,
+                True,
+                observed_at,
+                task_run_id,
+                TaskRunState.CANCEL_REQUESTED.value,
+                claim_token,
+                claim_token,
+            ),
+        )
+        run_row = await unit.cursor.fetchone()
+        if run_row is None:
+            raise TaskStoreConflictError(
+                "partial task run cancellation compare-and-swap failed"
+            )
+        await unit.cursor.execute(
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                self._new_id(),
+                task_run_id,
+                TaskRunState.CANCEL_REQUESTED.value,
+                TaskRunState.CANCELLED.value,
+                "cancelled",
+                _json(metadata),
+                observed_at,
+            ),
+        )
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "partial task run cancellation transition was not recorded"
+            )
+        await unit.cursor.execute(
+            _SETTLE_QUEUE_ITEM_SQL,
+            (
+                TaskQueueItemState.DEAD.value,
+                observed_at,
+                queue_item_id,
+                claim_token,
+            ),
+        )
+        queue_result = await unit.cursor.fetchone()
+        if queue_result is None:
+            raise TaskStoreConflictError(
+                "partial task queue cancellation compare-and-swap failed"
+            )
+        cancelled_run = _run_from_row(run_row)
+        return TaskQueueCompletion(
+            queue_item=_queue_item_from_row(
+                queue_result,
+                run_state=cancelled_run.state,
+            ),
+            run=cancelled_run,
+            attempt=_attempt_from_row(attempt_row),
+        )
+
     async def append_event(
         self,
         run_id: str,
@@ -825,6 +3150,7 @@ class PgsqlTaskStore:
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
@@ -833,6 +3159,10 @@ class PgsqlTaskStore:
         assert isinstance(totals, UsageTotals)
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if segment_id is not None:
+            _assert_non_empty_string(segment_id, "segment_id")
+            if attempt_id is None:
+                raise AssertionError("segment usage requires an attempt")
         if usage_id is not None:
             _assert_non_empty_string(usage_id, "usage_id")
 
@@ -843,6 +3173,15 @@ class PgsqlTaskStore:
                 if attempt.run_id != run_id:
                     raise TaskStoreNotFoundError(
                         "task attempt was not found for run"
+                    )
+            if segment_id is not None:
+                segment = await _segment_or_raise(unit, segment_id)
+                if (
+                    segment.run_id != run_id
+                    or segment.attempt_id != attempt_id
+                ):
+                    raise TaskStoreNotFoundError(
+                        "task attempt segment was not found for run"
                     )
             record_id = usage_id or self._new_id()
             usage_metadata = freeze_usage_metadata(metadata)
@@ -858,6 +3197,7 @@ class PgsqlTaskStore:
                     record_id,
                     run_id,
                     attempt_id,
+                    segment_id,
                     sequence,
                     source.value,
                     totals.input_tokens,
@@ -883,6 +3223,7 @@ class PgsqlTaskStore:
                         if (
                             record.run_id == run_id
                             and record.attempt_id == attempt_id
+                            and record.segment_id == segment_id
                         ):
                             return record
                 raise TaskStoreConflictError(
@@ -1346,12 +3687,15 @@ def task_pgsql_script_location() -> str:
 
 
 def task_pgsql_schema_statements() -> tuple[str, ...]:
-    revision = cast(Any, import_module(_TASK_PGSQL_REVISION_MODULE))
-    statements = revision.TASK_SCHEMA_STATEMENTS
-    assert isinstance(statements, tuple)
-    for statement in statements:
-        _assert_non_empty_string(statement, "statement")
-    return statements
+    statements: list[str] = []
+    for module_name in _TASK_PGSQL_REVISION_MODULES:
+        revision = cast(Any, import_module(module_name))
+        revision_statements = revision.TASK_SCHEMA_STATEMENTS
+        assert isinstance(revision_statements, tuple)
+        for statement in revision_statements:
+            _assert_non_empty_string(statement, "statement")
+            statements.append(statement)
+    return tuple(statements)
 
 
 def task_pgsql_state_predicate(
@@ -1577,6 +3921,11 @@ RETURNING *
 _SELECT_ATTEMPT_SQL = """
 SELECT * FROM "task_attempts" WHERE "attempt_id" = %s
 """
+_SELECT_ATTEMPT_FOR_UPDATE_SQL = """
+SELECT * FROM "task_attempts"
+WHERE "attempt_id" = %s
+FOR UPDATE
+"""
 _SELECT_ATTEMPTS_FOR_RUN_SQL = """
 SELECT * FROM "task_attempts"
 WHERE "run_id" = %s
@@ -1612,6 +3961,404 @@ SELECT * FROM "task_attempt_transitions"
 WHERE "attempt_id" = %s
 ORDER BY "created_at", "transition_id"
 """
+_INSERT_ATTEMPT_SEGMENT_SQL = """
+INSERT INTO "task_attempt_segments" (
+    "segment_id", "attempt_id", "run_id", "segment_number", "state",
+    "claim", "resumed_from_segment_id", "metadata", "created_at", "updated_at"
+) VALUES (
+    %s, %s, %s, %s, %s, %s::jsonb, %s, %s::jsonb, %s, %s
+)
+ON CONFLICT ("segment_id") DO NOTHING
+RETURNING *
+"""
+_SELECT_ATTEMPT_SEGMENT_SQL = """
+SELECT * FROM "task_attempt_segments"
+WHERE "segment_id" = %s
+"""
+_SELECT_ATTEMPT_SEGMENT_FOR_UPDATE_SQL = """
+SELECT * FROM "task_attempt_segments"
+WHERE "segment_id" = %s
+FOR UPDATE
+"""
+_SELECT_SEGMENTS_FOR_ATTEMPT_SQL = """
+SELECT * FROM "task_attempt_segments"
+WHERE "attempt_id" = %s
+ORDER BY "segment_number", "created_at", "segment_id"
+"""
+_UPDATE_ATTEMPT_SEGMENT_SQL = """
+UPDATE "task_attempt_segments"
+SET
+    "state" = %s,
+    "claim" = %s::jsonb,
+    "request_id" = %s,
+    "continuation_id" = %s,
+    "checkpoint_id" = %s,
+    "metadata" = COALESCE(%s::jsonb, "metadata"),
+    "updated_at" = %s
+WHERE "segment_id" = %s
+  AND "state" = %s
+RETURNING *
+"""
+_INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL = """
+INSERT INTO "task_attempt_segment_transitions" (
+    "transition_id", "segment_id", "attempt_id", "run_id", "from_state",
+    "to_state", "reason", "metadata", "created_at"
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+ON CONFLICT ("transition_id") DO NOTHING
+RETURNING *
+"""
+_SELECT_ATTEMPT_SEGMENT_TRANSITIONS_SQL = """
+SELECT * FROM "task_attempt_segment_transitions"
+WHERE "segment_id" = %s
+ORDER BY "created_at", "transition_id"
+"""
+_SELECT_QUEUE_ITEM_FOR_UPDATE_SQL = """
+SELECT * FROM "task_queue_items"
+WHERE "queue_item_id" = %s
+FOR UPDATE
+"""
+_SELECT_QUEUE_FOR_RUN_FOR_UPDATE_SQL = """
+SELECT * FROM "task_queue_items"
+WHERE "run_id" = %s
+ORDER BY "created_at", "queue_item_id"
+LIMIT 1
+FOR UPDATE
+"""
+_SELECT_SUSPENDED_QUEUE_FOR_UPDATE_SQL = """
+SELECT * FROM "task_queue_items"
+WHERE "run_id" = %s
+  AND "state" IN ('suspended', 'available')
+ORDER BY "created_at", "queue_item_id"
+LIMIT 1
+FOR UPDATE
+"""
+_SELECT_DURABLE_CHECKPOINT_SQL = """
+SELECT c."continuation_id"
+FROM "interaction_continuations" c
+JOIN "interaction_records" r
+  ON r."request_id" = c."request_id"
+WHERE c."request_id" = %s
+  AND c."continuation_id" = %s
+  AND c."task_run_id" = %s
+  AND (%s::text IS NULL OR c."checkpoint_id" = %s::text)
+  AND c."lifecycle_state" = 'pending'
+  AND r."request_state" = 'pending'
+FOR KEY SHARE OF c, r
+"""
+_SUSPEND_RUN_SQL = """
+UPDATE "task_runs"
+SET
+    "state" = %s,
+    "result" = %s::jsonb,
+    "claim" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = %s
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+_SUSPEND_ATTEMPT_SQL = """
+UPDATE "task_attempts"
+SET
+    "state" = %s,
+    "result" = %s::jsonb,
+    "context" = JSONB_SET("context", '{claim}', 'null'::jsonb, TRUE),
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "attempt_id" = %s
+  AND "state" = %s
+RETURNING *
+"""
+_SUSPEND_SEGMENT_SQL = """
+UPDATE "task_attempt_segments"
+SET
+    "state" = %s,
+    "claim" = NULL,
+    "request_id" = %s,
+    "continuation_id" = %s,
+    "checkpoint_id" = %s,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "segment_id" = %s
+  AND "state" = %s
+RETURNING *
+"""
+_SUSPEND_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "attempt_id" = %s,
+    "segment_id" = %s,
+    "request_id" = %s,
+    "continuation_id" = %s,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" = %s
+RETURNING *
+"""
+_SELECT_ACCEPTED_RESOLUTION_SQL = """
+SELECT outbox.*
+FROM "interaction_resumption_outbox" outbox
+JOIN "interaction_continuations" continuation
+  ON continuation."continuation_id" = outbox."continuation_id"
+JOIN "interaction_records" interaction
+  ON interaction."request_id" = outbox."request_id"
+WHERE outbox."request_id" = %s
+  AND outbox."continuation_id" = %s
+  AND outbox."task_run_id" = %s
+  AND outbox."resolution_revision" = %s
+  AND outbox."status" IN ('pending', 'claimed', 'delivered')
+  AND continuation."lifecycle_state" IN (
+      'ready',
+      'claimed',
+      'dispatching',
+      'completed'
+  )
+  AND interaction."request_state" = 'answered'
+  AND interaction."state_revision" = outbox."resolution_revision"
+FOR UPDATE OF outbox, continuation, interaction
+"""
+_SELECT_RELEASED_CONTINUATION_SQL = """
+SELECT continuation."continuation_id"
+FROM "interaction_continuations" continuation
+JOIN "interaction_records" interaction
+  ON interaction."request_id" = continuation."request_id"
+WHERE continuation."request_id" = %s
+  AND continuation."continuation_id" = %s
+  AND continuation."task_run_id" = %s
+  AND continuation."checkpoint_id" = %s
+  AND continuation."lifecycle_state" = 'ready'
+  AND interaction."request_state" = 'answered'
+FOR KEY SHARE OF continuation, interaction
+"""
+_REQUEUE_RUN_SQL = """
+UPDATE "task_runs"
+SET
+    "state" = %s,
+    "result" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = %s
+  AND "claim" IS NULL
+RETURNING *
+"""
+_CLEAR_SUSPENDED_ATTEMPT_RESULT_SQL = """
+UPDATE "task_attempts"
+SET
+    "result" = NULL,
+    "updated_at" = %s
+WHERE "attempt_id" = %s
+  AND "state" = %s
+RETURNING *
+"""
+_REQUEUE_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "available_at" = %s,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" IS NULL
+RETURNING *
+"""
+_TERMINALIZE_SUSPENDED_QUEUE_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" IS NULL
+RETURNING *
+"""
+_SETTLE_QUEUE_ITEM_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = 'claimed'
+  AND "claim_token" = %s
+RETURNING *
+"""
+_RELEASE_REENTRY_ATTEMPT_SQL = """
+UPDATE "task_attempts" a
+SET
+    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "metadata" = a."metadata" || %s::jsonb,
+    "updated_at" = %s
+FROM "task_runs" r
+WHERE a."attempt_id" = %s
+  AND a."run_id" = %s
+  AND a."state" = 'suspended'
+  AND r."run_id" = a."run_id"
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = %s
+RETURNING a.*
+"""
+_RELEASE_REENTRY_RUN_SQL = """
+UPDATE "task_runs"
+SET
+    "state" = %s,
+    "result" = NULL,
+    "claim" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = %s
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+_RELEASE_REENTRY_QUEUE_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "available_at" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" = %s
+RETURNING *
+"""
+_FAIL_REENTRY_ATTEMPT_SQL = """
+UPDATE "task_attempts" a
+SET
+    "state" = %s,
+    "result" = %s::jsonb,
+    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "metadata" = a."metadata" || %s::jsonb,
+    "updated_at" = %s
+FROM "task_runs" r
+WHERE a."attempt_id" = %s
+  AND a."run_id" = %s
+  AND a."state" = 'suspended'
+  AND r."run_id" = a."run_id"
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = %s
+RETURNING a.*
+"""
+_FAIL_REENTRY_RUN_SQL = """
+UPDATE "task_runs"
+SET
+    "state" = %s,
+    "result" = %s::jsonb,
+    "claim" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = %s
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+_FAIL_REENTRY_QUEUE_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" = %s
+RETURNING *
+"""
+_RELEASE_RUNNING_SEGMENT_SQL = """
+UPDATE "task_attempt_segments"
+SET
+    "state" = %s,
+    "claim" = NULL,
+    "request_id" = %s,
+    "continuation_id" = %s,
+    "checkpoint_id" = %s,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "segment_id" = %s
+  AND "state" = %s
+RETURNING *
+"""
+_RELEASE_RUNNING_ATTEMPT_SQL = """
+UPDATE "task_attempts" a
+SET
+    "state" = %s,
+    "result" = NULL,
+    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "metadata" = a."metadata" || %s::jsonb,
+    "updated_at" = %s
+FROM "task_runs" r
+WHERE a."attempt_id" = %s
+  AND a."run_id" = %s
+  AND a."state" = 'running'
+  AND r."run_id" = a."run_id"
+  AND r."state" = 'running'
+  AND (r."claim"->>'claim_token') = %s
+RETURNING a.*
+"""
+_RELEASE_RUNNING_RUN_SQL = """
+UPDATE "task_runs"
+SET
+    "state" = %s,
+    "result" = NULL,
+    "claim" = NULL,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "run_id" = %s
+  AND "state" = %s
+  AND ("claim"->>'claim_token') = %s
+RETURNING *
+"""
+_RELEASE_RUNNING_QUEUE_SQL = """
+UPDATE "task_queue_items"
+SET
+    "state" = %s,
+    "available_at" = %s,
+    "claimed_at" = NULL,
+    "lease_expires_at" = NULL,
+    "worker_id" = NULL,
+    "claim_token" = NULL,
+    "heartbeat_at" = NULL,
+    "attempt_id" = %s,
+    "segment_id" = %s,
+    "request_id" = %s,
+    "continuation_id" = %s,
+    "metadata" = "metadata" || %s::jsonb,
+    "updated_at" = %s
+WHERE "queue_item_id" = %s
+  AND "state" = %s
+  AND "claim_token" = %s
+RETURNING *
+"""
 _SELECT_NEXT_EVENT_SEQUENCE_SQL = """
 SELECT COALESCE(MAX("sequence"), 0) + 1 AS "sequence"
 FROM "task_events"
@@ -1639,11 +4386,13 @@ WHERE "run_id" = %s
 """
 _INSERT_USAGE_SQL = """
 INSERT INTO "task_usage_records" (
-    "usage_id", "run_id", "attempt_id", "sequence", "source", "prompt_tokens",
-    "completion_tokens", "total_tokens", "cached_tokens",
+    "usage_id", "run_id", "attempt_id", "segment_id", "sequence", "source",
+    "prompt_tokens", "completion_tokens", "total_tokens", "cached_tokens",
     "cache_creation_input_tokens", "reasoning_tokens", "metadata",
     "created_at"
-) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+) VALUES (
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s
+)
 ON CONFLICT ("usage_id") DO NOTHING
 RETURNING *
 """
@@ -1792,12 +4541,153 @@ async def _attempt_or_raise(
     return _attempt_from_row(row)
 
 
+async def _lock_attempt_or_raise(
+    unit: PgsqlUnitOfWork,
+    attempt_id: str,
+) -> TaskAttempt:
+    await unit.cursor.execute(
+        _SELECT_ATTEMPT_FOR_UPDATE_SQL,
+        (attempt_id,),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskStoreNotFoundError("task attempt was not found")
+    return _attempt_from_row(row)
+
+
+async def _segment_or_raise(
+    unit: PgsqlUnitOfWork,
+    segment_id: str,
+) -> TaskAttemptSegment:
+    await unit.cursor.execute(
+        _SELECT_ATTEMPT_SEGMENT_SQL,
+        (segment_id,),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskStoreNotFoundError("task attempt segment was not found")
+    return _segment_from_row(row)
+
+
+async def _lock_segment_or_raise(
+    unit: PgsqlUnitOfWork,
+    segment_id: str,
+) -> TaskAttemptSegment:
+    await unit.cursor.execute(
+        _SELECT_ATTEMPT_SEGMENT_FOR_UPDATE_SQL,
+        (segment_id,),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskStoreNotFoundError("task attempt segment was not found")
+    return _segment_from_row(row)
+
+
 async def _attempt_rows_for_run(
     unit: PgsqlUnitOfWork,
     run_id: str,
 ) -> tuple[Mapping[str, object], ...]:
     await unit.cursor.execute(_SELECT_ATTEMPTS_FOR_RUN_SQL, (run_id,))
     return tuple(await unit.cursor.fetchall())
+
+
+async def _insert_suspension_transitions(
+    unit: PgsqlUnitOfWork,
+    *,
+    id_factory: Callable[[], str],
+    run: TaskRun,
+    attempt: TaskAttempt,
+    segment: TaskAttemptSegment,
+    now: datetime,
+    metadata: Mapping[str, object],
+) -> None:
+    statements = (
+        (
+            _INSERT_RUN_TRANSITION_SQL,
+            (
+                id_factory(),
+                run.run_id,
+                run.state.value,
+                TaskRunState.INPUT_REQUIRED.value,
+                "interaction input required",
+                _json(metadata),
+                now,
+            ),
+        ),
+        (
+            _INSERT_ATTEMPT_TRANSITION_SQL,
+            (
+                id_factory(),
+                attempt.attempt_id,
+                attempt.run_id,
+                attempt.state.value,
+                TaskAttemptState.SUSPENDED.value,
+                "interaction input required",
+                _json(metadata),
+                now,
+            ),
+        ),
+        (
+            _INSERT_ATTEMPT_SEGMENT_TRANSITION_SQL,
+            (
+                id_factory(),
+                segment.segment_id,
+                segment.attempt_id,
+                segment.run_id,
+                segment.state.value,
+                TaskAttemptSegmentState.SUSPENDED.value,
+                "interaction input required",
+                _json(metadata),
+                now,
+            ),
+        ),
+    )
+    for statement, parameters in statements:
+        await unit.cursor.execute(statement, parameters)
+        if await unit.cursor.fetchone() is None:
+            raise TaskStoreConflictError(
+                "task suspension transition was not recorded"
+            )
+
+
+async def _insert_interaction_event(
+    unit: PgsqlUnitOfWork,
+    *,
+    id_factory: Callable[[], str],
+    run_id: str,
+    attempt_id: str,
+    event_type: TaskInteractionEventType,
+    request_id: str,
+    continuation_id: str,
+    segment_id: str,
+    now: datetime,
+) -> None:
+    await unit.cursor.execute(_SELECT_NEXT_EVENT_SEQUENCE_SQL, (run_id,))
+    sequence_row = await unit.cursor.fetchone()
+    sequence = cast(int, _row_value(sequence_row, "sequence", 1))
+    await unit.cursor.execute(
+        _INSERT_EVENT_SQL,
+        (
+            id_factory(),
+            run_id,
+            attempt_id,
+            sequence,
+            event_type.value,
+            _json(
+                task_interaction_event_payload(
+                    event_type=event_type,
+                    request_id=request_id,
+                    continuation_id=continuation_id,
+                    segment_id=segment_id,
+                )
+            ),
+            _json({"category": TaskEventCategory.INTERACTION.value}),
+            now,
+            now,
+        ),
+    )
+    if await unit.cursor.fetchone() is None:
+        raise TaskStoreConflictError("task interaction event was not recorded")
 
 
 async def _fetch_artifact_row(
@@ -1892,6 +4782,370 @@ def _attempt_from_row(row: Mapping[str, object]) -> TaskAttempt:
     )
 
 
+def _segment_from_row(row: Mapping[str, object]) -> TaskAttemptSegment:
+    return TaskAttemptSegment(
+        segment_id=cast(str, row["segment_id"]),
+        attempt_id=cast(str, row["attempt_id"]),
+        run_id=cast(str, row["run_id"]),
+        segment_number=cast(int, row["segment_number"]),
+        state=TaskAttemptSegmentState(cast(str, row["state"])),
+        claim=(
+            _claim_from_payload(_mapping(row["claim"]))
+            if row.get("claim") is not None
+            else None
+        ),
+        resumed_from_segment_id=cast(
+            str | None,
+            row.get("resumed_from_segment_id"),
+        ),
+        request_id=cast(str | None, row.get("request_id")),
+        continuation_id=cast(
+            str | None,
+            row.get("continuation_id"),
+        ),
+        checkpoint_id=cast(str | None, row.get("checkpoint_id")),
+        created_at=_datetime(row["created_at"]),
+        updated_at=_datetime(row["updated_at"]),
+        metadata=freeze_snapshot_metadata(_mapping(row["metadata"])),
+    )
+
+
+def _segment_transition_from_row(
+    row: Mapping[str, object],
+) -> TaskAttemptSegmentTransition:
+    return TaskAttemptSegmentTransition(
+        transition_id=cast(str, row["transition_id"]),
+        segment_id=cast(str, row["segment_id"]),
+        attempt_id=cast(str, row["attempt_id"]),
+        run_id=cast(str, row["run_id"]),
+        from_state=TaskAttemptSegmentState(cast(str, row["from_state"])),
+        to_state=TaskAttemptSegmentState(cast(str, row["to_state"])),
+        reason=cast(str, row["reason"]),
+        created_at=_datetime(row["created_at"]),
+        metadata=freeze_snapshot_metadata(_mapping(row["metadata"])),
+    )
+
+
+def _validate_reentry_provenance(
+    *,
+    queue_row: Mapping[str, object],
+    attempt: TaskAttempt,
+    segment: TaskAttemptSegment,
+    task_run_id: str,
+    request_id: str,
+    continuation_id: str,
+    checkpoint_id: str,
+) -> None:
+    if (
+        attempt.run_id != task_run_id
+        or segment.run_id != task_run_id
+        or segment.attempt_id != attempt.attempt_id
+        or segment.state is not TaskAttemptSegmentState.SUSPENDED
+        or segment.request_id != request_id
+        or segment.continuation_id != continuation_id
+        or segment.checkpoint_id != checkpoint_id
+        or queue_row.get("request_id") != request_id
+        or queue_row.get("continuation_id") != continuation_id
+    ):
+        raise TaskStoreConflictError(
+            "claimed task reentry provenance did not match"
+        )
+
+
+def _validate_partial_reentry_cancellation_provenance(
+    *,
+    queue_row: Mapping[str, object],
+    attempt: TaskAttempt,
+    previous_segment: TaskAttemptSegment,
+    active_segment: TaskAttemptSegment,
+    task_run_id: str,
+    request_id: str,
+    continuation_id: str,
+    checkpoint_id: str,
+) -> None:
+    if (
+        queue_row.get("attempt_id") != attempt.attempt_id
+        or queue_row.get("segment_id") != previous_segment.segment_id
+        or queue_row.get("request_id") != request_id
+        or queue_row.get("continuation_id") != continuation_id
+        or attempt.run_id != task_run_id
+        or previous_segment.run_id != task_run_id
+        or previous_segment.attempt_id != attempt.attempt_id
+        or previous_segment.request_id != request_id
+        or previous_segment.continuation_id != continuation_id
+        or previous_segment.checkpoint_id != checkpoint_id
+        or active_segment.run_id != task_run_id
+        or active_segment.attempt_id != attempt.attempt_id
+    ):
+        raise TaskStoreConflictError(
+            "partial task reentry cancellation provenance did not match"
+        )
+    if active_segment.segment_id == previous_segment.segment_id:
+        return
+    if (
+        previous_segment.state is not TaskAttemptSegmentState.SUSPENDED
+        or previous_segment.claim is not None
+        or active_segment.resumed_from_segment_id
+        != previous_segment.segment_id
+        or active_segment.request_id is not None
+        or active_segment.continuation_id is not None
+        or active_segment.checkpoint_id is not None
+        or active_segment.segment_number != previous_segment.segment_number + 1
+    ):
+        raise TaskStoreConflictError(
+            "partial task reentry cancellation provenance did not match"
+        )
+
+
+def _replayed_partial_reentry_cancellation(
+    *,
+    queue_row: Mapping[str, object],
+    run: TaskRun,
+    attempt: TaskAttempt,
+    previous_segment: TaskAttemptSegment,
+    active_segment: TaskAttemptSegment,
+    result: TaskExecutionResult,
+    claim_token: str,
+) -> TaskQueueCompletion:
+    attempt_claim = attempt.context.claim
+    if (
+        queue_row.get("state") != TaskQueueItemState.DEAD.value
+        or queue_row.get("claimed_at") is not None
+        or queue_row.get("lease_expires_at") is not None
+        or queue_row.get("worker_id") is not None
+        or queue_row.get("claim_token") is not None
+        or queue_row.get("heartbeat_at") is not None
+        or run.claim is not None
+        or run.result != result
+        or attempt.state is not TaskAttemptState.ABANDONED
+        or attempt.result != result
+        or attempt_claim is None
+        or attempt_claim.claim_token != claim_token
+    ):
+        raise TaskStoreConflictError(
+            "terminal partial task cancellation does not match the replay"
+        )
+    if active_segment.segment_id == previous_segment.segment_id:
+        if (
+            active_segment.state is not TaskAttemptSegmentState.SUSPENDED
+            or active_segment.claim is not None
+        ):
+            raise TaskStoreConflictError(
+                "terminal partial task cancellation does not match the replay"
+            )
+    else:
+        segment_claim = active_segment.claim
+        if (
+            active_segment.state is not TaskAttemptSegmentState.ABANDONED
+            or segment_claim is None
+            or segment_claim.claim_token != claim_token
+        ):
+            raise TaskStoreConflictError(
+                "terminal partial task cancellation does not match the replay"
+            )
+    return TaskQueueCompletion(
+        queue_item=_queue_item_from_row(
+            queue_row,
+            run_state=run.state,
+        ),
+        run=run,
+        attempt=attempt,
+    )
+
+
+def _validate_released_running_reentry(
+    *,
+    queue_row: Mapping[str, object],
+    attempt: TaskAttempt,
+    segment: TaskAttemptSegment,
+    request_id: str,
+    continuation_id: str,
+    checkpoint_id: str,
+) -> None:
+    if (
+        attempt.state is not TaskAttemptState.SUSPENDED
+        or attempt.context.claim is not None
+        or segment.state is not TaskAttemptSegmentState.SUSPENDED
+        or segment.claim is not None
+        or segment.request_id != request_id
+        or segment.continuation_id != continuation_id
+        or segment.checkpoint_id != checkpoint_id
+        or queue_row.get("request_id") != request_id
+        or queue_row.get("continuation_id") != continuation_id
+        or queue_row.get("segment_id") != segment.segment_id
+        or queue_row.get("attempt_id") != attempt.attempt_id
+    ):
+        raise TaskStoreConflictError(
+            "released running task reentry does not match the replay"
+        )
+
+
+def _replayed_failed_reentry(
+    *,
+    queue_row: Mapping[str, object],
+    run: TaskRun,
+    attempt: TaskAttempt,
+    result: TaskExecutionResult,
+) -> TaskQueueCompletion:
+    if (
+        queue_row["state"] != TaskQueueItemState.DEAD.value
+        or queue_row.get("claim_token") is not None
+        or queue_row.get("lease_expires_at") is not None
+        or run.claim is not None
+        or run.result != result
+        or attempt.state is not TaskAttemptState.FAILED
+        or attempt.result != result
+    ):
+        raise TaskStoreConflictError(
+            "terminal task reentry failure does not match the replay"
+        )
+    return TaskQueueCompletion(
+        queue_item=_queue_item_from_row(
+            queue_row,
+            run_state=run.state,
+        ),
+        run=run,
+        attempt=attempt,
+    )
+
+
+def _replayed_task_settlement(
+    *,
+    queue_row: Mapping[str, object],
+    queue_state: TaskQueueItemState,
+    run: TaskRun,
+    attempt: TaskAttempt,
+    attempt_state: TaskAttemptState,
+    segment: TaskAttemptSegment,
+    segment_state: TaskAttemptSegmentState,
+    result: TaskExecutionResult,
+    claim_token: str,
+) -> TaskQueueCompletion:
+    attempt_claim = attempt.context.claim
+    segment_claim = segment.claim
+    if (
+        queue_row["state"] != queue_state.value
+        or queue_row.get("claim_token") is not None
+        or queue_row.get("lease_expires_at") is not None
+        or run.claim is not None
+        or run.result != result
+        or attempt.state is not attempt_state
+        or attempt.result != result
+        or segment.state is not segment_state
+        or attempt_claim is None
+        or attempt_claim.claim_token != claim_token
+        or segment_claim is None
+        or segment_claim.claim_token != claim_token
+    ):
+        raise TaskStoreConflictError(
+            "terminal task settlement does not match the replay"
+        )
+    return TaskQueueCompletion(
+        queue_item=_queue_item_from_row(
+            queue_row,
+            run_state=run.state,
+        ),
+        run=run,
+        attempt=attempt,
+    )
+
+
+def _cancelled_task_settlement_result(
+    settlement: TaskDurableResumeSettlement,
+) -> TaskExecutionResult:
+    return TaskExecutionResult(
+        error=freeze_snapshot_value(TaskError.cancellation().as_dict()),
+        metadata={
+            "superseded_settlement_digest": (
+                task_durable_resume_settlement_digest(settlement)
+            )
+        },
+    )
+
+
+def _replayed_suspended_task_lifecycle(
+    *,
+    queue_row: Mapping[str, object],
+    run: TaskRun,
+    attempt: TaskAttempt,
+    attempt_state: TaskAttemptState,
+    segment: TaskAttemptSegment,
+    result: TaskExecutionResult,
+    correlations: tuple[tuple[str, str], ...],
+) -> TaskQueueCompletion:
+    if (
+        queue_row["state"] != TaskQueueItemState.DEAD.value
+        or queue_row.get("claim_token") is not None
+        or queue_row.get("lease_expires_at") is not None
+        or run.claim is not None
+        or run.result != result
+        or attempt.state is not attempt_state
+        or attempt.result != result
+        or segment.state is not TaskAttemptSegmentState.SUSPENDED
+        or segment.claim is not None
+        or queue_row.get("attempt_id") != attempt.attempt_id
+        or queue_row.get("segment_id") != segment.segment_id
+        or queue_row.get("request_id") != segment.request_id
+        or queue_row.get("continuation_id") != segment.continuation_id
+        or (
+            correlations
+            and (
+                cast(str, queue_row.get("request_id")),
+                cast(str, queue_row.get("continuation_id")),
+            )
+            not in correlations
+        )
+    ):
+        raise TaskStoreConflictError(
+            "terminal suspended task does not match the replay"
+        )
+    return TaskQueueCompletion(
+        queue_item=_queue_item_from_row(
+            queue_row,
+            run_state=run.state,
+        ),
+        run=run,
+        attempt=attempt,
+    )
+
+
+def _queue_item_from_row(
+    row: Mapping[str, object],
+    *,
+    run_state: TaskRunState,
+) -> TaskQueueItem:
+    return TaskQueueItem(
+        queue_item_id=cast(str, row["queue_item_id"]),
+        run_id=cast(str, row["run_id"]),
+        queue_name=cast(str, row["queue_name"]),
+        state=TaskQueueItemState(cast(str, row["state"])),
+        priority=cast(int, row["priority"]),
+        available_at=_datetime(row["available_at"]),
+        claimed_at=(
+            _datetime(row["claimed_at"])
+            if row.get("claimed_at") is not None
+            else None
+        ),
+        lease_expires_at=(
+            _datetime(row["lease_expires_at"])
+            if row.get("lease_expires_at") is not None
+            else None
+        ),
+        worker_id=cast(str | None, row.get("worker_id")),
+        claim_token=cast(str | None, row.get("claim_token")),
+        heartbeat_at=(
+            _datetime(row["heartbeat_at"])
+            if row.get("heartbeat_at") is not None
+            else None
+        ),
+        attempts=cast(int, row["attempts"]),
+        metadata=freeze_snapshot_metadata(_mapping(row["metadata"])),
+        created_at=_datetime(row["created_at"]),
+        updated_at=_datetime(row["updated_at"]),
+        run_state=run_state,
+    )
+
+
 def _run_transition_from_row(row: Mapping[str, object]) -> TaskTransition:
     return TaskTransition(
         transition_id=cast(str, row["transition_id"]),
@@ -1939,6 +5193,7 @@ def _usage_from_row(row: Mapping[str, object]) -> UsageRecord:
         usage_id=cast(str, row["usage_id"]),
         run_id=cast(str, row["run_id"]),
         attempt_id=cast(str | None, row.get("attempt_id")),
+        segment_id=cast(str | None, row.get("segment_id")),
         sequence=cast(int, row["sequence"]),
         source=UsageSource(cast(str, row["source"])),
         totals=UsageTotals(
@@ -2355,6 +5610,25 @@ def _result_to_payload(
         "metadata": _plain(result.metadata),
         "output_summary": _plain(result.output_summary),
     }
+
+
+def _input_required_execution_result(
+    *,
+    request_id: str,
+    continuation_id: str,
+    checkpoint_id: str,
+) -> TaskExecutionResult:
+    return TaskExecutionResult(
+        metadata={
+            "interaction": {
+                "kind": "input_required",
+                "request_id": request_id,
+                "continuation_id": continuation_id,
+                "checkpoint_id": checkpoint_id,
+                "detached_resumption_available": True,
+            }
+        }
+    )
 
 
 def _result_from_payload(payload: Mapping[str, object]) -> TaskExecutionResult:

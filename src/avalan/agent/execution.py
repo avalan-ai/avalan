@@ -15,9 +15,18 @@ from ..interaction.broker import (
     InteractionRequestResult,
 )
 from ..interaction.codec import encode_input_model_result
+from ..interaction.continuation import (
+    ContinuationDispatchId,
+    derive_continuation_dispatch_id,
+    derive_provider_idempotency_key,
+)
+from ..interaction.durable import DurableInteractionSuspension
 from ..interaction.entities import (
     AgentId,
     BranchId,
+    ContinuationId,
+    ContinuationRevisionBinding,
+    ContinuationSnapshot,
     ExecutionDefinitionRef,
     ExecutionOrigin,
     InputAnsweredResult,
@@ -30,6 +39,7 @@ from ..interaction.entities import (
     InputUnavailableResult,
     ModelCallId,
     PrincipalScope,
+    ProviderIdempotencyKey,
     RequestState,
     ResumeInputContinuation,
     RunId,
@@ -58,7 +68,10 @@ from ..interaction.store import (
 )
 from ..interaction.validation import MAX_STATE_REVISION, validate_opaque_id
 from ..model.capability import (
+    ContinuationSnapshotCodecRegistry,
     CorrelatedCapabilityResult,
+    RegisteredContinuationSnapshotCodec,
+    TaskInputCapabilityAdvertisement,
     TaskInputCapabilityCall,
 )
 
@@ -148,11 +161,32 @@ class ExecutionInputRequiredError(RuntimeError):
     """Expose segment suspension without disguising it as completion."""
 
     result: InputRequiredResult
+    durable: DurableInteractionSuspension | None
 
-    def __init__(self, result: InputRequiredResult) -> None:
+    def __init__(
+        self,
+        result: InputRequiredResult,
+        *,
+        durable: DurableInteractionSuspension | None = None,
+    ) -> None:
         if type(result) is not InputRequiredResult:
             raise TypeError("result must be an input-required result")
+        if durable is not None:
+            if type(durable) is not DurableInteractionSuspension:
+                raise TypeError(
+                    "durable must be a durable interaction suspension"
+                )
+            request = durable.command.request
+            if (
+                request.request_id != result.request_id
+                or request.continuation_id != result.continuation_id
+                or not result.detached_resumption_available
+            ):
+                raise ExecutionCorrelationError(
+                    "durable suspension does not match input-required result"
+                )
         self.result = result
+        self.durable = durable
         super().__init__("execution requires correlated input")
 
 
@@ -451,8 +485,14 @@ class AgentExecutionSnapshot:
         if (
             self.pending_request is not None
             and self.pending_request.state is not RequestState.PENDING
+            and not (
+                self.status is AgentExecutionStatus.INPUT_REQUIRED
+                and self.pending_request.state is RequestState.CREATED
+            )
         ):
-            raise ExecutionStateError("stored interaction must be pending")
+            raise ExecutionStateError(
+                "stored interaction must be pending or durably staged"
+            )
         if self.active_interaction_fingerprint is not None:
             _validate_fingerprint(self.active_interaction_fingerprint)
         if not isinstance(self.interaction_fingerprint_counts, tuple) or any(
@@ -743,12 +783,25 @@ def _replay_execution_ledger(
                 pending_request = request
                 status = AgentExecutionStatus.WAITING_FOR_INPUT
             case ExecutionLedgerEntryKind.INPUT_REQUIRED:
-                _require_replay_status(
-                    status,
-                    AgentExecutionStatus.WAITING_FOR_INPUT,
-                )
                 request = cast(InputRequest, entry.request)
                 required = cast(InputRequiredResult, entry.input_required)
+                if status is AgentExecutionStatus.PREPARING_INPUT:
+                    if request.state is not RequestState.CREATED:
+                        raise ExecutionStateError(
+                            "durable input request was already persisted"
+                        )
+                    call = cast(TaskInputCapabilityCall, active_call)
+                    if request.origin != origin:
+                        raise ExecutionCorrelationError(
+                            "durable input changed execution origin"
+                        )
+                    _validate_request_matches_task_input_call(request, call)
+                    pending_request = request
+                else:
+                    _require_replay_status(
+                        status,
+                        AgentExecutionStatus.WAITING_FOR_INPUT,
+                    )
                 if request != pending_request or (
                     request.request_id != required.request_id
                     or request.continuation_id != required.continuation_id
@@ -758,10 +811,19 @@ def _replay_execution_ledger(
                     )
                 status = AgentExecutionStatus.INPUT_REQUIRED
             case ExecutionLedgerEntryKind.INTERACTION_RESULT:
-                _require_replay_status(
-                    status,
-                    AgentExecutionStatus.WAITING_FOR_INPUT,
-                )
+                if status is AgentExecutionStatus.INPUT_REQUIRED:
+                    if (
+                        pending_request is None
+                        or pending_request.state is not RequestState.CREATED
+                    ):
+                        raise ExecutionStateError(
+                            "durable result lacks its staged request"
+                        )
+                else:
+                    _require_replay_status(
+                        status,
+                        AgentExecutionStatus.WAITING_FOR_INPUT,
+                    )
                 request = cast(InputRequest, entry.request)
                 result = cast(InputModelResult, entry.result)
                 call = cast(TaskInputCapabilityCall, active_call)
@@ -1051,6 +1113,202 @@ class AttachedInteractionRuntime:
             )
 
 
+class DurableInteractionStager(Protocol):
+    """Build one portable suspension without persisting it."""
+
+    async def __call__(
+        self,
+        request: InteractionBrokerRequest,
+        *,
+        execution: "AgentExecution",
+        response: object,
+        stream_sequence: int,
+        staging: "DurableInteractionStagingContext",
+    ) -> DurableInteractionSuspension:
+        """Return one validated uncommitted durable suspension."""
+        ...
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DurableInteractionStagingContext:
+    """Bind one provider-owned replay snapshot to its reserved call."""
+
+    task_input_call: TaskInputCapabilityCall
+    continuation_id: ContinuationId
+    dispatch_id: ContinuationDispatchId
+    revision_binding: ContinuationRevisionBinding
+    codec_registry: ContinuationSnapshotCodecRegistry = field(repr=False)
+    codec: RegisteredContinuationSnapshotCodec
+    provider_snapshot: ContinuationSnapshot = field(repr=False)
+    provider_idempotency_key: ProviderIdempotencyKey
+    provider_call_correlation_id: str
+
+    def __post_init__(self) -> None:
+        if type(self.task_input_call) is not TaskInputCapabilityCall:
+            raise TypeError(
+                "task_input_call must be a task-input capability call"
+            )
+        if (
+            self.task_input_call.advertisement
+            is not TaskInputCapabilityAdvertisement.DURABLE
+        ):
+            raise ExecutionCorrelationError(
+                "durable staging requires a durable reserved call"
+            )
+        continuation_id = ContinuationId(
+            validate_opaque_id(
+                self.continuation_id,
+                "continuation_id",
+            )
+        )
+        object.__setattr__(self, "continuation_id", continuation_id)
+        dispatch_id = ContinuationDispatchId(
+            validate_opaque_id(
+                self.dispatch_id,
+                "dispatch_id",
+            )
+        )
+        object.__setattr__(self, "dispatch_id", dispatch_id)
+        if dispatch_id != derive_continuation_dispatch_id(continuation_id):
+            raise ExecutionCorrelationError(
+                "durable staging dispatch does not match the continuation"
+            )
+        if type(self.revision_binding) is not ContinuationRevisionBinding:
+            raise TypeError(
+                "revision_binding must be a continuation revision binding"
+            )
+        if type(self.codec_registry) is not ContinuationSnapshotCodecRegistry:
+            raise TypeError("codec_registry must be a codec registry")
+        if (
+            type(self.codec) is not RegisteredContinuationSnapshotCodec
+            or not self.codec_registry.is_registered(self.codec)
+            or self.codec.revision_binding != self.revision_binding
+        ):
+            raise ExecutionCorrelationError(
+                "durable staging codec is not registered for the revision"
+            )
+        if type(self.provider_snapshot) is not ContinuationSnapshot:
+            raise TypeError(
+                "provider_snapshot must be a continuation snapshot"
+            )
+        if not self.codec.accepts(self.provider_snapshot):
+            raise ExecutionCorrelationError(
+                "provider snapshot does not match the durable codec"
+            )
+        if (
+            not isinstance(
+                self.provider_idempotency_key,
+                str,
+            )
+            or not self.provider_idempotency_key
+        ):
+            raise TypeError("provider_idempotency_key must be non-empty")
+        if self.provider_idempotency_key != derive_provider_idempotency_key(
+            continuation_id,
+            dispatch_id,
+        ):
+            raise ExecutionCorrelationError(
+                "provider idempotency key does not match durable dispatch"
+            )
+        correlation_id = validate_opaque_id(
+            self.provider_call_correlation_id,
+            "provider_call_correlation_id",
+            maximum_characters=256,
+            maximum_bytes=1_024,
+        )
+        object.__setattr__(
+            self,
+            "provider_call_correlation_id",
+            correlation_id,
+        )
+        if correlation_id != str(self.task_input_call.call_id):
+            raise ExecutionCorrelationError(
+                "provider correlation does not match the reserved call"
+            )
+        snapshot = self.provider_snapshot
+        if snapshot.provider_idempotency_key != self.provider_idempotency_key:
+            raise ExecutionCorrelationError(
+                "provider snapshot changed its idempotency key"
+            )
+        if (
+            snapshot.payload.get("reserved_capability_call_id")
+            != correlation_id
+        ):
+            raise ExecutionCorrelationError(
+                "provider snapshot changed the reserved call"
+            )
+        encoded = self.codec_registry.export_snapshot(
+            self.codec,
+            snapshot,
+        )
+        restored = self.codec_registry.restore_snapshot(
+            self.codec,
+            encoded,
+            self.revision_binding,
+        )
+        if restored != snapshot:
+            raise ExecutionCorrelationError(
+                "provider snapshot codec changed durable replay state"
+            )
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class DurableInteractionRuntime:
+    """Bind a trusted durable stager to one task execution."""
+
+    actor: InteractionActor
+    stager: DurableInteractionStager = field(repr=False)
+    id_factory: ExecutionIdFactory = field(
+        default_factory=UuidExecutionIdFactory,
+        repr=False,
+    )
+    run_id: RunId | None = None
+    task_id: TaskId | None = None
+    branch_id: BranchId | None = None
+    parent_branch_id: BranchId | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.actor, InteractionActor):
+            raise TypeError("actor must be an interaction actor")
+        _assert_async_callable(self.stager, "durable_runtime.stager")
+        _assert_execution_id_factory(self.id_factory, "durable_runtime")
+        if self.run_id is not None:
+            object.__setattr__(
+                self,
+                "run_id",
+                RunId(validate_opaque_id(self.run_id, "run_id")),
+            )
+        if self.task_id is not None:
+            object.__setattr__(
+                self,
+                "task_id",
+                TaskId(validate_opaque_id(self.task_id, "task_id")),
+            )
+        for name in ("branch_id", "parent_branch_id"):
+            value = getattr(self, name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    name,
+                    BranchId(validate_opaque_id(value, name)),
+                )
+        if (
+            self.branch_id is not None
+            and self.parent_branch_id is not None
+            and self.branch_id == self.parent_branch_id
+        ):
+            raise ExecutionCorrelationError(
+                "parent branch must differ from the active branch"
+            )
+
+
+InteractionRuntime: TypeAlias = (
+    AttachedInteractionRuntime | DurableInteractionRuntime
+)
+
+
 @final
 class ExecutionBranchInteractionBroker:
     """Constrain broker admission and cancellation to one live branch."""
@@ -1217,7 +1475,7 @@ class AgentExecution:
         id_factory: ExecutionIdFactory,
         initial_messages: tuple[Message, ...],
         synced_message_prefix: int = 0,
-        interaction_runtime: AttachedInteractionRuntime | None = None,
+        interaction_runtime: InteractionRuntime | None = None,
     ) -> None:
         if not isinstance(origin, ExecutionOrigin):
             raise TypeError("origin must be an execution origin")
@@ -1229,10 +1487,11 @@ class AgentExecution:
         )
         _assert_execution_id_factory(id_factory, "execution")
         if interaction_runtime is not None and not isinstance(
-            interaction_runtime, AttachedInteractionRuntime
+            interaction_runtime,
+            AttachedInteractionRuntime | DurableInteractionRuntime,
         ):
             raise TypeError(
-                "interaction_runtime must be an attached runtime or None"
+                "interaction_runtime must be an interaction runtime or None"
             )
         if interaction_runtime is not None:
             _validate_runtime_origin(
@@ -1255,7 +1514,7 @@ class AgentExecution:
                 actor=interaction_runtime.actor,
                 current_origin=lambda: self.origin,
             )
-            if interaction_runtime is not None
+            if isinstance(interaction_runtime, AttachedInteractionRuntime)
             else None
         )
         self._lock = Lock()
@@ -1315,7 +1574,7 @@ class AgentExecution:
         return self.definition.operation_index
 
     @property
-    def interaction_runtime(self) -> AttachedInteractionRuntime | None:
+    def interaction_runtime(self) -> InteractionRuntime | None:
         """Return explicit attached handling or absence."""
         return self._interaction_runtime
 
@@ -1593,7 +1852,15 @@ class AgentExecution:
             )
         async with self._lock:
             current = self._checked_state(expected_revision)
-            if current.status is not AgentExecutionStatus.WAITING_FOR_INPUT:
+            durable_staged = (
+                current.status is AgentExecutionStatus.INPUT_REQUIRED
+                and current.pending_request is not None
+                and current.pending_request.state is RequestState.CREATED
+            )
+            if (
+                current.status is not AgentExecutionStatus.WAITING_FOR_INPUT
+                and not durable_staged
+            ):
                 replay = _find_result_replay(
                     current.ledger,
                     request,
@@ -1721,6 +1988,62 @@ class AgentExecution:
                 status=AgentExecutionStatus.INPUT_REQUIRED,
                 request=request,
                 input_required=result,
+                pending_request=request,
+            )
+            return True
+
+    async def stage_durable_input_required(
+        self,
+        request: InputRequest,
+        result: InputRequiredResult,
+        *,
+        expected_revision: int | None = None,
+    ) -> bool:
+        """End a segment around one uncommitted durable request."""
+        if type(request) is not InputRequest:
+            raise TypeError("request must be an input request")
+        if request.state is not RequestState.CREATED:
+            raise ExecutionCorrelationError(
+                "deferred durable request must remain uncommitted"
+            )
+        if type(result) is not InputRequiredResult:
+            raise TypeError("result must be an input-required result")
+        if not result.detached_resumption_available:
+            raise ExecutionCorrelationError(
+                "durable input requires detached resumption"
+            )
+        async with self._lock:
+            current = self._checked_state(expected_revision)
+            if current.status is AgentExecutionStatus.INPUT_REQUIRED:
+                if _find_input_required_replay(current.ledger, result):
+                    return False
+            _require_status(
+                current,
+                AgentExecutionStatus.PREPARING_INPUT,
+            )
+            if request.origin != current.origin:
+                raise ExecutionCorrelationError(
+                    "interaction origin does not match execution"
+                )
+            task_input_call, _ = _active_task_input(current.ledger)
+            _validate_request_matches_task_input_call(
+                request,
+                task_input_call,
+            )
+            if (
+                request.request_id != result.request_id
+                or request.continuation_id != result.continuation_id
+            ):
+                raise ExecutionCorrelationError(
+                    "input-required result is not correlated"
+                )
+            self._commit(
+                current,
+                kind=ExecutionLedgerEntryKind.INPUT_REQUIRED,
+                status=AgentExecutionStatus.INPUT_REQUIRED,
+                request=request,
+                input_required=result,
+                pending_request=request,
             )
             return True
 
@@ -2145,7 +2468,7 @@ async def create_agent_execution(
     initial_messages: tuple[Message, ...],
     synced_message_prefix: int = 0,
     id_factory: ExecutionIdFactory | None = None,
-    interaction_runtime: AttachedInteractionRuntime | None = None,
+    interaction_runtime: InteractionRuntime | None = None,
 ) -> AgentExecution:
     """Create one invocation with genuinely minted execution identities."""
     if not isinstance(definition, ExecutionDefinitionRef):
@@ -2158,20 +2481,21 @@ async def create_agent_execution(
         len(initial_messages),
     )
     if interaction_runtime is not None and not isinstance(
-        interaction_runtime, AttachedInteractionRuntime
+        interaction_runtime,
+        AttachedInteractionRuntime | DurableInteractionRuntime,
     ):
-        raise TypeError("interaction_runtime must be an attached runtime")
+        raise TypeError("interaction_runtime must be an interaction runtime")
     if interaction_runtime is not None:
         if interaction_runtime.actor.principal != principal:
             raise ExecutionCorrelationError(
-                "attached actor does not match execution principal"
+                "interaction actor does not match execution principal"
             )
         if (
             id_factory is not None
             and id_factory is not interaction_runtime.id_factory
         ):
             raise ExecutionCorrelationError(
-                "attached runtime and execution need one identity factory"
+                "interaction runtime and execution need one identity factory"
             )
     factory = (
         id_factory
@@ -2190,7 +2514,15 @@ async def create_agent_execution(
         else await factory.new_branch_id()
     )
     origin = ExecutionOrigin(
-        run_id=await factory.new_run_id(),
+        run_id=(
+            interaction_runtime.run_id
+            if isinstance(
+                interaction_runtime,
+                DurableInteractionRuntime,
+            )
+            and interaction_runtime.run_id is not None
+            else await factory.new_run_id()
+        ),
         turn_id=await factory.new_turn_id(),
         task_id=(
             interaction_runtime.task_id
@@ -2746,7 +3078,7 @@ def _validate_correlated_result_messages(
         provider_name=call.provider_name,
         payload=cast(Mapping[str, Any], encode_input_model_result(result)),
     )
-    expected_result = correlated.local_message()
+    expected_result = correlated.tool_result_message(call)
     if messages != (assistant_message, expected_result):
         raise ExecutionCorrelationError(
             "interaction result needs its exact ordered assistant/tool pair"
@@ -2824,29 +3156,37 @@ def _next_revision(state: AgentExecutionSnapshot) -> int:
 
 
 def _validate_runtime_origin(
-    runtime: AttachedInteractionRuntime,
+    runtime: InteractionRuntime,
     origin: ExecutionOrigin,
     id_factory: ExecutionIdFactory,
 ) -> None:
     if runtime.actor.principal != origin.principal:
         raise ExecutionCorrelationError(
-            "attached actor does not match execution principal"
+            "interaction actor does not match execution principal"
         )
     if runtime.id_factory is not id_factory:
         raise ExecutionCorrelationError(
-            "attached runtime and execution need one identity factory"
+            "interaction runtime and execution need one identity factory"
+        )
+    if (
+        isinstance(runtime, DurableInteractionRuntime)
+        and runtime.run_id is not None
+        and runtime.run_id != origin.run_id
+    ):
+        raise ExecutionCorrelationError(
+            "durable run does not match execution origin"
         )
     if runtime.task_id is not None and runtime.task_id != origin.task_id:
         raise ExecutionCorrelationError(
-            "attached task does not match execution origin"
+            "interaction task does not match execution origin"
         )
     if runtime.branch_id is not None and runtime.branch_id != origin.branch_id:
         raise ExecutionCorrelationError(
-            "attached branch does not match execution origin"
+            "interaction branch does not match execution origin"
         )
     if runtime.parent_branch_id != origin.parent_branch_id:
         raise ExecutionCorrelationError(
-            "attached parent branch does not match execution origin"
+            "interaction parent branch does not match execution origin"
         )
 
 

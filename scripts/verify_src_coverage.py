@@ -45,17 +45,17 @@ _EXPECTED_EXCLUSION_PRIOR_RELOCATION_SHA256 = (
     "e580686aa03ca866cfd27f1794413643f191e8e32750f7b1ec64b5cba9a85405"
 )
 _EXPECTED_EXCLUSION_CURRENT_SHA256 = (
-    "2ac7bbe973d9fbf38c6afb1ce1210f9a43d9781807d7078b3e57519008d1187d"
+    "5b8f457e560d97b797bd89e6a9ea872af51c3d42791a55052b65fcf328cfb4ef"
 )
 _EXPECTED_EXCLUSION_RELOCATION_SHA256 = (
-    "8000a76131ea2fd0d7747adbc3057084fc0c4217c62694f62c02a547622c6c5f"
+    "33626209ee261b7af92e8057456cb98542f59ce486c4dc89476bbb7021986e76"
 )
 _EXPECTED_EXCLUSION_PHASE1_REVIEWER = "/root/interaction_round4_gates"
 _EXPECTED_EXCLUSION_PHASE2_REVIEWER = "/root/phase2_coverage_metadata"
 _EXPECTED_EXCLUSION_PRIOR_REVIEWER = (
     "/root/phase3_closure_audit/turn3_toolmanager_readonly"
 )
-_EXPECTED_EXCLUSION_REVIEWER = "/root/a2a_contract_review"
+_EXPECTED_EXCLUSION_REVIEWER = "/root/durable_coverage_exclusion_review"
 
 
 class CoverageVerificationError(RuntimeError):
@@ -770,16 +770,24 @@ def _verify_exclusion_relocations(
             "coverage exclusion relocation ledger has invalid shape"
         )
     schema_version = raw.get("schema_version")
-    if type(schema_version) is not int or schema_version not in {1, 2, 3, 4}:
+    if type(schema_version) is not int or schema_version not in {
+        1,
+        2,
+        3,
+        4,
+        5,
+    }:
         raise CoverageVerificationError(
             "coverage exclusion relocation schema_version must be the"
-            " integer 1, 2, 3, or 4"
+            " integer 1, 2, 3, 4, or 5"
         )
     expected_keys = base_keys
     if schema_version >= 2:
         expected_keys |= {"report_exclusion_additions"}
     if schema_version >= 3:
         expected_keys |= {"report_exclusion_removals"}
+    if schema_version >= 5:
+        expected_keys |= {"directive_additions", "directive_removals"}
     if not isinstance(raw, dict) or set(raw) != expected_keys:
         raise CoverageVerificationError(
             "coverage exclusion relocation ledger has invalid shape"
@@ -794,9 +802,9 @@ def _verify_exclusion_relocations(
             "coverage exclusion report removals are prohibited for this"
             " history link"
         )
-    if require_exact_report_deltas and schema_version != 4:
+    if require_exact_report_deltas and schema_version != 5:
         raise CoverageVerificationError(
-            "current coverage exclusion relocation requires schema_version 4"
+            "current coverage exclusion relocation requires schema_version 5"
         )
     if (
         raw.get("baseline_snapshot_sha256") != baseline.digest
@@ -810,6 +818,20 @@ def _verify_exclusion_relocations(
         root,
         source_root,
         expected_reviewer,
+    )
+    directive_additions = _directive_changes(
+        raw.get("directive_additions", []),
+        root,
+        source_root,
+        expected_reviewer,
+        label="addition",
+    )
+    directive_removals = _directive_changes(
+        raw.get("directive_removals", []),
+        root,
+        source_root,
+        expected_reviewer,
+        label="removal",
     )
     report_relocations = _report_exclusion_relocations(
         raw.get("report_exclusion_relocations"),
@@ -833,14 +855,20 @@ def _verify_exclusion_relocations(
         raw,
         baseline,
         current,
+        directive_additions,
+        directive_removals,
         report_additions,
         report_removals,
+        exact_directive_deltas=schema_version >= 5,
         exact_report_deltas=schema_version >= 4,
     )
     _verify_directive_relocations(
         baseline.directives,
         current.directives,
         directive_relocations,
+        directive_additions,
+        directive_removals,
+        exact_directive_deltas=schema_version >= 5,
     )
     _verify_report_relocations(
         baseline.report_lines,
@@ -875,9 +903,12 @@ def _verify_exclusion_counts(
     raw: dict[str, object],
     baseline: _ExclusionSnapshot,
     current: _ExclusionSnapshot,
+    directive_additions: dict[str, _ExclusionDirective],
+    directive_removals: dict[str, _ExclusionDirective],
     report_additions: dict[str, tuple[int, ...]],
     report_removals: dict[str, tuple[int, ...]],
     *,
+    exact_directive_deltas: bool,
     exact_report_deltas: bool,
 ) -> None:
     counts = {
@@ -896,7 +927,15 @@ def _verify_exclusion_counts(
             raise CoverageVerificationError(
                 f"coverage exclusion relocation {field} is inconsistent"
             )
-    if counts["directive_count_before"] != counts["directive_count_after"]:
+    directive_delta = (
+        counts["directive_count_after"] - counts["directive_count_before"]
+    )
+    expected_directive_delta = (
+        len(directive_additions) - len(directive_removals)
+        if exact_directive_deltas
+        else 0
+    )
+    if directive_delta != expected_directive_delta:
         raise CoverageVerificationError(
             "coverage exclusion relocation changed exclusion counts"
         )
@@ -994,6 +1033,71 @@ def _directive_relocations(
             to_line,
         )
     return relocations
+
+
+def _directive_changes(
+    raw: object,
+    root: Path,
+    source_root: Path,
+    expected_reviewer: str,
+    *,
+    label: str,
+) -> dict[str, _ExclusionDirective]:
+    if not isinstance(raw, list):
+        raise CoverageVerificationError(
+            f"coverage directive {label}s must be a list"
+        )
+    changes: dict[str, _ExclusionDirective] = {}
+    expected_keys = {
+        "identity",
+        "path",
+        "text",
+        "occurrence",
+        "line",
+        "reviewed_by",
+        "reason",
+    }
+    for entry in raw:
+        if not isinstance(entry, dict) or set(entry) != expected_keys:
+            raise CoverageVerificationError(
+                f"coverage directive {label} has invalid shape"
+            )
+        identity = entry.get("identity")
+        raw_path = entry.get("path")
+        text = entry.get("text")
+        occurrence = entry.get("occurrence")
+        line = entry.get("line")
+        if (
+            not isinstance(identity, str)
+            or not isinstance(raw_path, str)
+            or not isinstance(text, str)
+            or not _EXCLUSION_PATTERN.search(text)
+            or type(occurrence) is not int
+            or occurrence <= 0
+            or type(line) is not int
+            or line <= 0
+        ):
+            raise CoverageVerificationError(
+                f"coverage directive {label} has invalid fields"
+            )
+        _verify_relocation_review(entry, expected_reviewer)
+        normalized = _normalize_source_path(raw_path, root, source_root)
+        if identity != _directive_identity(normalized, text, occurrence):
+            raise CoverageVerificationError(
+                f"coverage directive {label} identity changed"
+            )
+        if identity in changes:
+            raise CoverageVerificationError(
+                f"coverage directive {label} is duplicated"
+            )
+        changes[identity] = _ExclusionDirective(
+            identity=identity,
+            path=normalized,
+            line=line,
+            text=text,
+            occurrence=occurrence,
+        )
+    return changes
 
 
 def _report_exclusion_relocations(
@@ -1178,20 +1282,48 @@ def _verify_directive_relocations(
     baseline: tuple[_ExclusionDirective, ...],
     current: tuple[_ExclusionDirective, ...],
     relocations: dict[str, tuple[str, str, int, int, int]],
+    additions: dict[str, _ExclusionDirective],
+    removals: dict[str, _ExclusionDirective],
+    *,
+    exact_directive_deltas: bool,
 ) -> None:
     baseline_by_id = {directive.identity: directive for directive in baseline}
     current_by_id = {directive.identity: directive for directive in current}
-    if (
-        len(baseline_by_id) != len(baseline)
-        or len(current_by_id) != len(current)
-        or set(baseline_by_id) != set(current_by_id)
+    if len(baseline_by_id) != len(baseline) or len(current_by_id) != len(
+        current
     ):
+        raise CoverageVerificationError(
+            "coverage directive identity, text, or count changed"
+        )
+    if exact_directive_deltas:
+        expected_additions = set(current_by_id) - set(baseline_by_id)
+        expected_removals = set(baseline_by_id) - set(current_by_id)
+        if set(additions) != expected_additions:
+            raise CoverageVerificationError(
+                "coverage directive addition differs from snapshots"
+            )
+        if set(removals) != expected_removals:
+            raise CoverageVerificationError(
+                "coverage directive removal differs from snapshots"
+            )
+        for identity in expected_additions:
+            if additions[identity] != current_by_id[identity]:
+                raise CoverageVerificationError(
+                    "coverage directive addition differs from snapshots"
+                )
+        for identity in expected_removals:
+            if removals[identity] != baseline_by_id[identity]:
+                raise CoverageVerificationError(
+                    "coverage directive removal differs from snapshots"
+                )
+    elif set(baseline_by_id) != set(current_by_id):
         raise CoverageVerificationError(
             "coverage directive identity, text, or count changed"
         )
     changed = {
         identity
-        for identity, directive in baseline_by_id.items()
+        for identity in set(baseline_by_id) & set(current_by_id)
+        for directive in (baseline_by_id[identity],)
         if directive.line != current_by_id[identity].line
     }
     if set(relocations) != changed:

@@ -1,9 +1,15 @@
 from ..event import Event
+from ..interaction.continuation import (
+    ContinuationCompletionCommand,
+    ContinuationRejectionCommand,
+    DurableContinuationResumeState,
+)
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactRef
 from .converters import FileConverter
 from .definition import TaskDefinition
 from .input import TaskProviderReference
+from .settlement import TaskDurableResumeFailure, TaskDurableResumeSettlement
 from .store import (
     TaskExecutionContext,
     TaskStore,
@@ -14,6 +20,7 @@ from .store import (
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
+from typing import Protocol
 
 _REDACTED_METADATA_SUMMARY = MappingProxyType({"privacy": "<redacted>"})
 _SAFE_LOGICAL_PATH_PREFIXES = ("artifact:", "inline:", "provider:")
@@ -22,6 +29,92 @@ TaskCancellationChecker = Callable[[], Awaitable[None]]
 TaskEventListener = Callable[[Event], Awaitable[None] | None]
 TaskUsageObserver = Callable[[object], Awaitable[None] | None]
 TaskUsageObservationPredicate = Callable[[object], bool]
+
+
+class TaskEventListenerRegistration(Protocol):
+    """Own one task event listener registration."""
+
+    def close(self) -> None:
+        """Remove the registered task event listener exactly once."""
+        ...
+
+
+class TaskDurableResumeHandle(Protocol):
+    """Resume one exact durable task continuation."""
+
+    def register_event_listener(
+        self,
+        listener: TaskEventListener,
+    ) -> TaskEventListenerRegistration:
+        """Register one task listener before resumed provider dispatch."""
+        ...
+
+    async def dispatch(self) -> object:
+        """Dispatch the reconstructed continuation."""
+        ...
+
+    async def wait_dispatch_settled(
+        self,
+    ) -> DurableContinuationResumeState:
+        """Wait for an owned provider dispatch to settle durably."""
+        ...
+
+    async def interrupt_dispatch(self) -> DurableContinuationResumeState:
+        """Stop owned work at a durable pre- or post-dispatch boundary."""
+        ...
+
+    async def complete_output(self, output: object) -> None:
+        """Complete continuation metadata after task success."""
+        ...
+
+    def completion_command_for_output(
+        self,
+        output: object,
+    ) -> ContinuationCompletionCommand:
+        """Return a fenced command for atomic task settlement."""
+        ...
+
+    def completion_command_for_settlement(
+        self,
+        settlement: TaskDurableResumeSettlement,
+    ) -> ContinuationCompletionCommand:
+        """Return a fenced command for atomic terminal task settlement."""
+        ...
+
+    def completed_completion_command(
+        self,
+    ) -> ContinuationCompletionCommand:
+        """Return the pinned fence for an already completed continuation."""
+        ...
+
+    def completion_command_for_suspension(
+        self,
+        *,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str,
+    ) -> ContinuationCompletionCommand:
+        """Return a fenced command for an atomic successor suspension."""
+        ...
+
+    def rejection_command_for_settlement(
+        self,
+        failure: TaskDurableResumeFailure,
+    ) -> ContinuationRejectionCommand:
+        """Return a fenced command for deterministic setup rejection."""
+        ...
+
+    async def release(self) -> None:
+        """Release a claim before provider dispatch starts."""
+        ...
+
+    async def release_if_pre_dispatch(self) -> bool:
+        """Release safely only when provider dispatch has not started."""
+        ...
+
+    async def close(self) -> None:
+        """Close resources owned by this durable resume admission."""
+        ...
 
 
 class TaskUsageObservationTracker:
@@ -116,6 +209,7 @@ class TaskTargetContext:
     usage_observer: TaskUsageObserver | None = None
     artifact_store: ArtifactStore | None = None
     task_store: TaskStore | None = None
+    durable_resume: TaskDurableResumeHandle | None = None
     file_converters: Mapping[str, FileConverter] = field(
         default_factory=lambda: MappingProxyType({})
     )
@@ -141,6 +235,22 @@ class TaskTargetContext:
             assert callable(getattr(self.artifact_store, "open_stream", None))
         if self.task_store is not None:
             assert callable(getattr(self.task_store, "append_artifact", None))
+        if self.durable_resume is not None:
+            for method in (
+                "register_event_listener",
+                "dispatch",
+                "wait_dispatch_settled",
+                "interrupt_dispatch",
+                "complete_output",
+                "completion_command_for_output",
+                "completion_command_for_settlement",
+                "completion_command_for_suspension",
+                "rejection_command_for_settlement",
+                "release",
+                "release_if_pre_dispatch",
+                "close",
+            ):
+                assert callable(getattr(self.durable_resume, method, None))
         assert isinstance(self.file_converters, Mapping)
         object.__setattr__(
             self,

@@ -85,6 +85,11 @@ from avalan.flow.flow import Flow
 from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
+from avalan.interaction import (
+    ContinuationId,
+    InputRequestId,
+    InputRequiredResult,
+)
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -140,13 +145,19 @@ from avalan.task import (
     TaskRunPolicy,
     TaskRunState,
     TaskStoreNotFoundError,
+    TaskTargetCompleted,
     TaskTargetContext,
+    TaskTargetOutcome,
+    TaskTargetSuspended,
+    TaskTargetType,
     TaskValidationCategory,
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
     UsageSource,
+    completed_task_target_outcome,
     pdf_image_converter_capability,
+    suspended_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.store import TaskExecutionContext
@@ -366,12 +377,15 @@ class CapturingTaskTargetRunner:
     def __init__(
         self,
         *,
+        durable_suspension: bool = False,
         issues: tuple[TaskValidationIssue, ...] = (),
         output: object = "agent output",
     ) -> None:
+        self.durable_suspension = durable_suspension
         self.issues = issues
         self.output = output
         self.contexts: list[TaskTargetContext] = []
+        self.validation_count = 0
 
     async def validate_definition(
         self,
@@ -379,11 +393,23 @@ class CapturingTaskTargetRunner:
         context: TaskValidationContext,
     ) -> tuple[TaskValidationIssue, ...]:
         _ = definition, context
+        self.validation_count += 1
         return self.issues
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.contexts.append(context)
-        return self.output
+        if isinstance(self.output, TaskTargetCompleted | TaskTargetSuspended):
+            return self.output
+        return completed_task_target_outcome(self.output)
+
+    def supports_durable_suspension(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        return self.durable_suspension and target_type is TaskTargetType.AGENT
 
 
 class FailingArtifactStore:
@@ -869,6 +895,35 @@ def _multi_incoming_agent_flow(
 
 
 class FlowTaskTargetRunnerValidationTest(TestCase):
+    def test_validation_rejects_durable_nested_agent_before_resolution(
+        self,
+    ) -> None:
+        resolution_contexts: list[TaskTargetContext] = []
+        agent_runner = CapturingTaskTargetRunner(durable_suspension=True)
+
+        def resolve(context: TaskTargetContext) -> FlowDefinition:
+            resolution_contexts.append(context)
+            return _strict_echo_definition()
+
+        runner = FlowTaskTargetRunner(
+            strict_resolver=resolve,
+            agent_runner=agent_runner,
+        )
+
+        issues = self._run_validate(
+            runner,
+            self._definition(),
+            TaskValidationContext(),
+        )
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in issues],
+            [("execution.unsupported_flow", "execution.ref")],
+        )
+        self.assertEqual(resolution_contexts, [])
+        self.assertEqual(agent_runner.validation_count, 0)
+        self.assertEqual(agent_runner.contexts, [])
+
     def test_flow_node_event_listener_adds_flow_node(self) -> None:
         captured: list[Event] = []
         listener = flow_target_module._flow_node_event_listener(
@@ -1421,6 +1476,132 @@ def load(path):
 
 
 class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
+    async def test_run_rejects_strict_result_with_nested_suspension(
+        self,
+    ) -> None:
+        suspension = suspended_task_target_outcome(
+            InputRequiredResult(
+                request_id=InputRequestId("strict-flow-request"),
+                continuation_id=ContinuationId("strict-flow-continuation"),
+                detached_resumption_available=True,
+            )
+        )
+
+        async def execute_with_suspension(
+            *args: Any,
+            **kwargs: Any,
+        ) -> object:
+            _ = args, kwargs
+            return SimpleNamespace(
+                outputs={"answer": completed_task_target_outcome(suspension)},
+                node_outputs={},
+                diagnostics=(),
+                pause_tokens={},
+                trace=object(),
+            )
+
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_echo_definition()
+        )
+
+        with (
+            patch.object(
+                flow_target_module,
+                "execute_flow_plan",
+                execute_with_suspension,
+            ),
+            self.assertRaises(TaskValidationError) as error,
+        ):
+            await runner.run(self._context(input_value="private"))
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("execution.unsupported_flow", "execution.ref")],
+        )
+
+    async def test_run_rejects_durable_nested_agent_before_resolution(
+        self,
+    ) -> None:
+        resolution_contexts: list[TaskTargetContext] = []
+        agent_runner = CapturingTaskTargetRunner(durable_suspension=True)
+
+        async def resolve(context: TaskTargetContext) -> Flow:
+            resolution_contexts.append(context)
+            return Flow()
+
+        runner = FlowTaskTargetRunner(
+            flow_resolver=resolve,
+            agent_runner=agent_runner,
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(input_value="private"))
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("execution.unsupported_flow", "execution.ref")],
+        )
+        self.assertEqual(resolution_contexts, [])
+        self.assertEqual(agent_runner.contexts, [])
+
+    async def test_run_rejects_unadvertised_nested_suspension_as_failure(
+        self,
+    ) -> None:
+        suspension = suspended_task_target_outcome(
+            InputRequiredResult(
+                request_id=InputRequestId("flow-request"),
+                continuation_id=ContinuationId("flow-continuation"),
+                detached_resumption_available=True,
+            )
+        )
+        agent_runner = CapturingTaskTargetRunner(output=suspension)
+        runner = FlowTaskTargetRunner(
+            flow_resolver=lambda context: _agent_node_flow(
+                context,
+                agent_runner=agent_runner,
+            ),
+            agent_runner=agent_runner,
+        )
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.run(self._context(input_value="private"))
+
+        self.assertEqual(
+            [(issue.code, issue.path) for issue in error.exception.issues],
+            [("execution.unsupported_flow", "execution.ref")],
+        )
+        self.assertEqual(len(agent_runner.contexts), 1)
+
+    def test_discovery_handles_completed_values_and_container_cycles(
+        self,
+    ) -> None:
+        cyclic_mapping: dict[str, object] = {}
+        cyclic_sequence: list[object] = []
+        cyclic_mapping["self"] = cyclic_mapping
+        cyclic_mapping["sequence"] = cyclic_sequence
+        cyclic_sequence.append(cyclic_sequence)
+
+        self.assertIsNone(
+            flow_target_module._find_task_target_suspension(cyclic_mapping)
+        )
+
+        suspension = suspended_task_target_outcome(
+            InputRequiredResult(
+                request_id=InputRequestId("discovery-request"),
+                continuation_id=ContinuationId("discovery-continuation"),
+                detached_resumption_available=True,
+            )
+        )
+
+        self.assertIs(
+            flow_target_module._find_task_target_suspension(
+                completed_task_target_outcome(
+                    {"nested": (completed_task_target_outcome(suspension),)}
+                )
+            ),
+            suspension,
+        )
+
     async def test_task_flow_stream_listener_preserves_custom_event_type(
         self,
     ) -> None:
@@ -2224,7 +2405,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         result = await runner.run(self._context(input_value="ready"))
 
-        self.assertEqual(result, "ready!")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("ready!"),
+        )
 
     async def test_run_executes_strict_definition_and_records_state(
         self,
@@ -2266,8 +2450,8 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         record = await flow_store.get_flow_execution("run-1")
 
-        self.assertEqual(result, "ready")
-        self.assertEqual(second, "ready")
+        self.assertEqual(result, completed_task_target_outcome("ready"))
+        self.assertEqual(second, completed_task_target_outcome("ready"))
         self.assertEqual(execution_count, 1)
         self.assertEqual(record.revision, 2)
         self.assertEqual(dict(record.selected_outputs), {"answer": "ready"})
@@ -2338,7 +2522,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             result = await runner.run(self._context(input_value="ready"))
         record = await flow_store.get_flow_execution("run-1")
 
-        self.assertEqual(result, "ready")
+        self.assertEqual(result, completed_task_target_outcome("ready"))
         self.assertEqual(execution_count, 1)
         self.assertEqual(record.revision, 2)
         self.assertEqual(dict(record.selected_outputs), {"answer": "ready"})
@@ -2392,7 +2576,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             result = await runner.run(self._context(input_value="fresh"))
         record = await flow_store.get_flow_execution("run-1")
 
-        self.assertEqual(result, "stored seed")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("stored seed"),
+        )
         self.assertEqual(calls, ["answer"])
         self.assertEqual(record.revision, 2)
         self.assertEqual(
@@ -2611,7 +2798,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         record = await flow_store.get_flow_execution("run-1")
 
-        self.assertEqual(result, "approved")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("approved"),
+        )
         self.assertEqual(calls, ["finish"])
         self.assertEqual(record.revision, 3)
         self.assertEqual(dict(record.pause_tokens), {})
@@ -2713,7 +2903,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         record = await resumed_store.get_flow_execution(run.run_id)
 
         self.assertEqual(paused_record.revision, 2)
-        self.assertEqual(result, "approved")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("approved"),
+        )
         self.assertEqual(calls, ["finish"])
         self.assertEqual(record.revision, 3)
         self.assertEqual(dict(record.pause_tokens), {})
@@ -3024,7 +3217,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
                     )
                 record = await flow_store.get_flow_execution("run-1")
 
-                self.assertEqual(result, decision)
+                self.assertEqual(
+                    result,
+                    completed_task_target_outcome(decision),
+                )
                 self.assertEqual(calls, [target])
                 self.assertEqual(dict(record.pause_tokens), {})
                 self.assertEqual(
@@ -3147,7 +3343,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             result = await runner.run(self._context(input_value="fresh"))
         record = await flow_store.get_flow_execution("run-1")
 
-        self.assertEqual(result, "fresh")
+        self.assertEqual(result, completed_task_target_outcome("fresh"))
         self.assertEqual(calls, ["start", "answer"])
         self.assertEqual(
             dict(record.node_outputs),
@@ -3354,7 +3550,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         record = await flow_store.get_flow_execution(run.run_id)
 
-        self.assertEqual(result, "stored answer")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("stored answer"),
+        )
         self.assertEqual(record.revision, 1)
         self.assertEqual(
             dict(record.selected_outputs),
@@ -3850,7 +4049,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(direct, queued)
-        self.assertEqual(queued, "ready")
+        self.assertEqual(queued, completed_task_target_outcome("ready"))
 
     async def test_run_rejects_precompiled_plan_with_wider_flow_skills(
         self,
@@ -3911,7 +4110,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(definition=definition, input_value="ready")
         )
 
-        self.assertEqual(output, "ready")
+        self.assertEqual(output, completed_task_target_outcome("ready"))
 
     async def test_run_merges_narrowing_strict_flow_skills_config(
         self,
@@ -3931,7 +4130,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(definition=definition, input_value="ready")
         )
 
-        self.assertEqual(output, "ready")
+        self.assertEqual(output, completed_task_target_outcome("ready"))
 
     async def test_run_injects_task_skills_into_strict_flow_definition(
         self,
@@ -3946,7 +4145,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(definition=definition, input_value="ready")
         )
 
-        self.assertEqual(output, "ready")
+        self.assertEqual(output, completed_task_target_outcome("ready"))
 
     async def test_run_injects_task_skills_into_precompiled_plan(
         self,
@@ -3965,7 +4164,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(definition=definition, input_value="ready")
         )
 
-        self.assertEqual(output, "ready")
+        self.assertEqual(output, completed_task_target_outcome("ready"))
 
     async def test_run_accepts_precompiled_plan_with_allowed_skills(
         self,
@@ -3983,7 +4182,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(definition=definition, input_value="ready")
         )
 
-        self.assertEqual(output, "ready")
+        self.assertEqual(output, completed_task_target_outcome("ready"))
 
     async def test_run_rejects_invalid_strict_input_before_events(
         self,
@@ -4348,7 +4547,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
                 result = await runner.run(self._context(input_value="ready"))
 
-                self.assertEqual(result, "agent output")
+                self.assertEqual(
+                    result,
+                    completed_task_target_outcome("agent output"),
+                )
                 self.assertEqual(
                     agent_runner.contexts[0].input_value,
                     expected_input,
@@ -4385,7 +4587,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(input_value="ready", files=(parent_file,))
         )
 
-        self.assertEqual(result, "agent output")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("agent output"),
+        )
         self.assertEqual(agent_runner.contexts[0].files, generated_files)
         self.assertNotIn("source-private", str(agent_runner.contexts[0].files))
 
@@ -4412,7 +4617,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             self._context(input_value="ready", files=(parent_file,))
         )
 
-        self.assertEqual(result, "agent output")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("agent output"),
+        )
         self.assertEqual(
             agent_runner.contexts[0].files[0],
             parent_file,
@@ -4662,7 +4870,7 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, 2)
+        self.assertEqual(result, completed_task_target_outcome(2))
 
     async def test_run_binds_object_fields_and_full_input(self) -> None:
         flow = Flow()
@@ -4697,7 +4905,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, {"name": "report", "limit": 3})
+        self.assertEqual(
+            result,
+            completed_task_target_outcome({"name": "report", "limit": 3}),
+        )
 
     async def test_run_does_not_trust_reserved_object_input_key(self) -> None:
         flow = Flow()
@@ -4739,7 +4950,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {"reserved": "private spoofed input", "limit": 3},
+            completed_task_target_outcome(
+                {
+                    "reserved": "private spoofed input",
+                    "limit": 3,
+                }
+            ),
         )
 
     async def test_run_isolates_object_input_from_node_mutation(self) -> None:
@@ -4790,10 +5006,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {
-                "field": ("original", "mutated"),
-                "full": ("original",),
-            },
+            completed_task_target_outcome(
+                {
+                    "field": ("original", "mutated"),
+                    "full": ("original",),
+                }
+            ),
         )
         self.assertEqual(input_value, {"nested": {"items": ["original"]}})
 
@@ -4819,7 +5037,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, {"full": "ready", "value": "ready"})
+        self.assertEqual(
+            result,
+            completed_task_target_outcome({"full": "ready", "value": "ready"}),
+        )
 
     async def test_run_binds_array_input_as_json_lists(self) -> None:
         flow = Flow()
@@ -4851,14 +5072,17 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {
-                "full": [["first", "second"]],
-                "items": [["first", "second"]],
-            },
+            completed_task_target_outcome(
+                {
+                    "full": [["first", "second"]],
+                    "items": [["first", "second"]],
+                }
+            ),
         )
-        assert isinstance(result, Mapping)
-        self.assertIsInstance(result["full"], list)
-        self.assertIsInstance(result["items"], list)
+        assert isinstance(result, TaskTargetCompleted)
+        assert isinstance(result.output, Mapping)
+        self.assertIsInstance(result.output["full"], list)
+        self.assertIsInstance(result.output["items"], list)
 
     async def test_run_rejects_invalid_input_contract_safely(self) -> None:
         flow = Flow()
@@ -4956,7 +5180,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, "ready!")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("ready!"),
+        )
 
     async def test_run_unwraps_legacy_stored_queued_input(self) -> None:
         flow = Flow()
@@ -4980,7 +5207,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, "ready!")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("ready!"),
+        )
 
     async def test_run_keeps_legacy_object_input_envelope_collision(
         self,
@@ -5026,7 +5256,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {"privacy": STORED_MARKER, "value": "ready"},
+            completed_task_target_outcome(
+                {
+                    "privacy": STORED_MARKER,
+                    "value": "ready",
+                }
+            ),
         )
 
     async def test_run_keeps_declared_object_input_with_privacy_marker(
@@ -5080,7 +5315,12 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
                 self.assertEqual(
                     result,
-                    {"privacy": marker, "value": "ready"},
+                    completed_task_target_outcome(
+                        {
+                            "privacy": marker,
+                            "value": "ready",
+                        }
+                    ),
                 )
 
     async def test_run_accepts_plain_queued_input(self) -> None:
@@ -5102,7 +5342,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, "ready!")
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("ready!"),
+        )
 
     async def test_run_accepts_plain_queued_object_input(self) -> None:
         flow = Flow()
@@ -5138,7 +5381,10 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
             )
         )
 
-        self.assertEqual(result, {"name": "ready", "limit": 2})
+        self.assertEqual(
+            result,
+            completed_task_target_outcome({"name": "ready", "limit": 2}),
+        )
 
     async def test_run_accepts_queued_file_array_from_durable_refs(
         self,
@@ -5210,11 +5456,16 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {
-                "references": ["source-1", "file-123"],
-                "source_kinds": ["artifact", "provider_reference"],
-                "mime_types": ["application/pdf", "application/pdf"],
-            },
+            completed_task_target_outcome(
+                {
+                    "references": ["source-1", "file-123"],
+                    "source_kinds": ["artifact", "provider_reference"],
+                    "mime_types": [
+                        "application/pdf",
+                        "application/pdf",
+                    ],
+                }
+            ),
         )
 
     async def test_run_accepts_queued_file_from_durable_ref(self) -> None:
@@ -5265,11 +5516,13 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
 
         self.assertEqual(
             result,
-            {
-                "reference": "source-1",
-                "source_kind": "artifact",
-                "mime_type": "application/pdf",
-            },
+            completed_task_target_outcome(
+                {
+                    "reference": "source-1",
+                    "source_kind": "artifact",
+                    "mime_type": "application/pdf",
+                }
+            ),
         )
 
     async def test_run_rejects_queued_file_inputs_without_refs_safely(

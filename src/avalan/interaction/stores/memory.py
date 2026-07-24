@@ -5,6 +5,7 @@ from ..entities import (
     DeadlineScheduleRevision,
     InputRequestId,
     InteractionStoreRevision,
+    PrincipalScope,
     ResolutionStatus,
 )
 from ..error import (
@@ -536,6 +537,7 @@ class MemoryInteractionStore:
                 snapshot.records,
                 snapshot.branch_records,
                 command.scope,
+                command.actor.principal,
             )
         decisions: list[
             tuple[InputRequestId, InteractionAuthorizationDecision | None]
@@ -557,6 +559,7 @@ class MemoryInteractionStore:
                     snapshot.records,
                     snapshot.branch_records,
                     command.scope,
+                    command.actor.principal,
                 )
             }
             projections: list[InteractionDisclosureProjection] = []
@@ -1034,6 +1037,8 @@ class MemoryInteractionStore:
                     for record in snapshot.branch_records
                     if record.registration.run_id
                     == command.registration.run_id
+                    and record.registration.principal
+                    == command.registration.principal
                     and record.registration.branch_id
                     == command.registration.branch_id
                 ),
@@ -1958,6 +1963,7 @@ def _branch_registration_creates_cycle(
         record.registration.branch_id: record.registration.parent_branch_id
         for record in branch_records
         if record.registration.run_id == registration.run_id
+        and record.registration.principal == registration.principal
     }
     current = registration.parent_branch_id
     while current in parents:
@@ -1969,12 +1975,18 @@ def _records_in_scope(
     records: tuple[InteractionRecord, ...],
     branch_records: tuple[InteractionBranchRecord, ...],
     scope: InteractionExecutionScope,
+    principal: PrincipalScope,
 ) -> tuple[InteractionRecord, ...]:
-    descendants = _scope_descendant_branches(scope, branch_records)
+    descendants = _scope_descendant_branches(
+        scope,
+        branch_records,
+        principal,
+    )
     return tuple(
         record
         for record in records
         if record.request.origin.run_id == scope.run_id
+        and record.request.origin.principal == principal
         and (
             scope.turn_id is None
             or record.request.origin.turn_id == scope.turn_id

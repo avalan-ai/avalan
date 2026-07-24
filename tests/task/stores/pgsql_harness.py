@@ -1,4 +1,5 @@
 from os import environ
+from typing import Literal
 from uuid import uuid4
 
 from avalan.pgsql import (
@@ -93,7 +94,7 @@ class FakeTransaction:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: object | None,
-    ) -> bool:
+    ) -> Literal[False]:
         return False
 
 
@@ -134,7 +135,7 @@ class FakeConnectionContext:
         exc_type: type[BaseException] | None,
         exc: BaseException | None,
         traceback: object | None,
-    ) -> bool:
+    ) -> Literal[False]:
         return False
 
 

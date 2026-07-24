@@ -90,6 +90,7 @@ from avalan.task import (
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationContext,
     TaskValidationError,
@@ -98,6 +99,7 @@ from avalan.task import (
     UsageSource,
     UsageTotals,
     canonical_schema_json,
+    completed_task_target_outcome,
     pdf_image_converter_capability,
     spec_hash,
 )
@@ -650,11 +652,14 @@ class TextSummaryTarget(TaskTargetRunner):
         self.definition_refs.append(definition.execution.ref)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         self.metadata_values.append(context.metadata)
         await context.check_cancelled()
-        return "public summary"
+        return completed_task_target_outcome("public summary")
 
 
 class UsageTextOutput(str):
@@ -683,21 +688,26 @@ class UsageTextOutput(str):
 
 
 class ReturnedUsageTextSummaryTarget(TextSummaryTarget):
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         self.metadata_values.append(context.metadata)
         await context.check_cancelled()
-        return UsageTextOutput(
-            "public summary",
-            usage={
-                "input_tokens": 9,
-                "cached_input_tokens": 4,
-                "output_tokens": 6,
-                "reasoning_tokens": 2,
-                "total_tokens": 15,
-                "provider_family": "openai",
-                "raw_response_id": "private-response-id",
-            },
+        return completed_task_target_outcome(
+            UsageTextOutput(
+                "public summary",
+                usage={
+                    "input_tokens": 9,
+                    "cached_input_tokens": 4,
+                    "output_tokens": 6,
+                    "reasoning_tokens": 2,
+                    "total_tokens": 15,
+                    "provider_family": "openai",
+                    "raw_response_id": "private-response-id",
+                },
+            )
         )
 
 
@@ -716,7 +726,10 @@ class ReviewingTarget(TaskTargetRunner):
         self.definition_refs.append(definition.execution.ref)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         await context.check_cancelled()
         assert context.artifact_store is not None
@@ -749,10 +762,12 @@ class ReviewingTarget(TaskTargetRunner):
                 total_token_count=21,
             )
         )
-        return await context.artifact_store.put(
-            b"private generated summary",
-            media_type="text/plain",
-            metadata={"filename": "summary.txt"},
+        return completed_task_target_outcome(
+            await context.artifact_store.put(
+                b"private generated summary",
+                media_type="text/plain",
+                metadata={"filename": "summary.txt"},
+            )
         )
 
 
@@ -775,10 +790,13 @@ class StructuredTarget(TaskTargetRunner):
         self.definition_refs.append(definition.execution.ref)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         await context.check_cancelled()
-        return self.output
+        return completed_task_target_outcome(self.output)
 
 
 class FlakyTextSummaryTarget(TaskTargetRunner):
@@ -795,7 +813,10 @@ class FlakyTextSummaryTarget(TaskTargetRunner):
         self.definition_refs.append(definition.execution.ref)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         attempt_number = len(self.input_values)
         await context.check_cancelled()
@@ -821,7 +842,7 @@ class FlakyTextSummaryTarget(TaskTargetRunner):
         )
         if attempt_number == 1:
             raise OSError("private transient path /tmp/customer-secret.txt")
-        return "public retry summary"
+        return completed_task_target_outcome("public retry summary")
 
 
 class DirectCancellingTarget(TaskTargetRunner):
@@ -842,11 +863,20 @@ class DirectCancellingTarget(TaskTargetRunner):
         self.definition_refs.append(definition.execution.ref)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.input_values.append(context.input_value)
         await self.cancel(context.execution.run_id)
         await context.check_cancelled()
-        return {"status": "ready", "count": 1, "summary": "unused"}
+        return completed_task_target_outcome(
+            {
+                "status": "ready",
+                "count": 1,
+                "summary": "unused",
+            }
+        )
 
 
 class ProviderFakeResponse:
@@ -938,7 +968,10 @@ class StreamingUsageTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         await context.check_cancelled()
         settings = GenerationSettings()
         response = TextGenerationResponse(
@@ -950,7 +983,7 @@ class StreamingUsageTarget(TaskTargetRunner):
         )
         output = await response.to_str()
         await context.observe_usage(response)
-        return output
+        return completed_task_target_outcome(output)
 
 
 class AzureUsageTarget(TaskTargetRunner):
@@ -962,7 +995,10 @@ class AzureUsageTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         await context.check_cancelled()
         await context.observe_usage(
             SimpleNamespace(
@@ -978,7 +1014,7 @@ class AzureUsageTarget(TaskTargetRunner):
                 },
             )
         )
-        return "public azure summary"
+        return completed_task_target_outcome("public azure summary")
 
 
 class ProviderFakeClient:

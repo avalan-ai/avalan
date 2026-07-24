@@ -16,19 +16,35 @@ from input_contract_json import StrictJsonError, strict_json_path
 
 _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
+_CURRENT_BOUNDARY_PHASE = 5
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "a7c73a112c67e4dbac893394be9bbf5a0ac944034df157b4c19f1f403288d011"
+    "27fdb29c76d11dd0a7b63daad15add69363b83bc7661406087a8c01eaa215107"
 )
+_FROZEN_FIXTURE_INVENTORIES = {
+    4: (
+        (
+            "execution-state-positive",
+            "execution-context-interchange-negative",
+            "synchronous-execution-id-factory-negative",
+        ),
+        "deaaba77909963af88741d6f07de211e1fa58b13497f1ae2a4acca6a680d03c3",
+        "f6fd2f128d4c16e7fb070965dd6075f4e0bec6b48a834861c5069936be336666",
+    ),
+}
 _EXPECTED_CURRENT_FIXTURE_IDS = (
-    "execution-state-positive",
-    "execution-context-interchange-negative",
-    "synchronous-execution-id-factory-negative",
+    "portable-continuation-positive",
+    "continuation-store-cas-negative",
+    "provider-snapshot-identity-interchange-negative",
+    "synchronous-continuation-runtime-resolver-negative",
+    "task-target-outcome-positive",
+    "task-target-outcome-raw-negative",
+    "task-target-suspension-as-success-negative",
 )
 _EXPECTED_CURRENT_FIXTURE_SHA256 = (
-    "deaaba77909963af88741d6f07de211e1fa58b13497f1ae2a4acca6a680d03c3"
+    "6486211d14c7b9114aa938350a3436998f33211aec97cc91e2a4e1ad5eae8ce9"
 )
 _EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256 = (
-    "f6fd2f128d4c16e7fb070965dd6075f4e0bec6b48a834861c5069936be336666"
+    "611ca045028054c3c4ad3536affb2fb5b07c0baae437f02e54378068f69ee2f8"
 )
 
 
@@ -156,32 +172,50 @@ def _validate_current_fixture_inventory(
     current_phase: int,
 ) -> None:
     """Require the exact reviewed current static fixture inventory."""
-    if current_phase < 4:
+    if current_phase < _CURRENT_BOUNDARY_PHASE:
         return
-    current = tuple(
-        fixture for fixture in fixtures if fixture.active_from_phase == 4
-    )
-    raw_current = [
-        value
-        for value in raw_fixtures
-        if isinstance(value, dict) and value.get("active_from_phase") == 4
-    ]
-    digest = sha256(
-        dumps(
-            raw_current,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
-    if (
-        tuple(fixture.id for fixture in current)
-        != _EXPECTED_CURRENT_FIXTURE_IDS
-        or digest != _EXPECTED_CURRENT_FIXTURE_SHA256
-    ):
-        raise TypeContractVerificationError(
-            "current type fixture inventory changed without verifier review"
+    expected_inventories = {
+        **{
+            phase: (fixture_ids, digest)
+            for phase, (
+                fixture_ids,
+                digest,
+                _,
+            ) in _FROZEN_FIXTURE_INVENTORIES.items()
+        },
+        _CURRENT_BOUNDARY_PHASE: (
+            _EXPECTED_CURRENT_FIXTURE_IDS,
+            _EXPECTED_CURRENT_FIXTURE_SHA256,
+        ),
+    }
+    for phase, (expected_ids, expected_digest) in expected_inventories.items():
+        selected = tuple(
+            fixture
+            for fixture in fixtures
+            if fixture.active_from_phase == phase
         )
+        raw_selected = [
+            value
+            for value in raw_fixtures
+            if isinstance(value, dict)
+            and value.get("active_from_phase") == phase
+        ]
+        digest = sha256(
+            dumps(
+                raw_selected,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        ).hexdigest()
+        if (
+            tuple(fixture.id for fixture in selected) != expected_ids
+            or digest != expected_digest
+        ):
+            raise TypeContractVerificationError(
+                "reviewed type fixture inventory changed without verifier"
+                f" review: boundary={phase}"
+            )
 
 
 def _validate_current_fixture_sources(
@@ -189,23 +223,36 @@ def _validate_current_fixture_sources(
     root: Path,
 ) -> None:
     """Require exact source content for every current static fixture."""
-    digest = sha256()
-    for fixture in manifest.fixtures:
-        if fixture.active_from_phase != 4:
-            continue
-        path = _fixture_path(fixture.path, root)
-        if not path.is_file():
+    expected_sources = {
+        **{
+            phase: source_digest
+            for phase, (
+                _,
+                _,
+                source_digest,
+            ) in _FROZEN_FIXTURE_INVENTORIES.items()
+        },
+        _CURRENT_BOUNDARY_PHASE: _EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256,
+    }
+    for phase, expected_digest in expected_sources.items():
+        digest = sha256()
+        for fixture in manifest.fixtures:
+            if fixture.active_from_phase != phase:
+                continue
+            path = _fixture_path(fixture.path, root)
+            if not path.is_file():
+                raise TypeContractVerificationError(
+                    f"active type fixture does not exist: {fixture.path}"
+                )
+            digest.update(fixture.path.encode("utf-8"))
+            digest.update(b"\0")
+            digest.update(path.read_bytes())
+            digest.update(b"\0")
+        if digest.hexdigest() != expected_digest:
             raise TypeContractVerificationError(
-                f"active type fixture does not exist: {fixture.path}"
+                "reviewed type fixture sources changed without verifier"
+                f" review: boundary={phase}"
             )
-        digest.update(fixture.path.encode("utf-8"))
-        digest.update(b"\0")
-        digest.update(path.read_bytes())
-        digest.update(b"\0")
-    if digest.hexdigest() != _EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256:
-        raise TypeContractVerificationError(
-            "current type fixture sources changed without verifier review"
-        )
 
 
 def verify_input_types(
@@ -231,7 +278,7 @@ def verify_input_types(
         raise TypeContractVerificationError(
             "through-phase must be implemented by the current manifest"
         )
-    if through_phase >= 4:
+    if through_phase >= min(_FROZEN_FIXTURE_INVENTORIES):
         _validate_current_fixture_sources(manifest, root)
     selected = tuple(
         fixture
