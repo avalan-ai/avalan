@@ -310,7 +310,7 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         _VERIFIER,
         "_parse_args",
         lambda: _VERIFIER.Namespace(
-            through_phase=9,
+            through_phase=10,
             manifest=_FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
             runtime_only=True,
@@ -325,15 +325,17 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         for requirement_id in node.requirement_ids
     }
     assert requirements == {
-        "INPUT-N-085",
-        "INPUT-N-086",
-        "INPUT-N-087",
-        "INPUT-N-088",
-        "INPUT-N-089",
-        "INPUT-26.10",
+        "INPUT-N-075",
+        "INPUT-N-076",
+        "INPUT-N-077",
+        "INPUT-N-078",
+        "INPUT-N-079",
+        "INPUT-N-080",
+        "INPUT-N-106",
+        "INPUT-26.8",
     }
-    assert len(executed) == 6
-    assert all(node.active_from_phase == 9 for node in executed)
+    assert len(executed) == 20
+    assert all(node.active_from_phase == 10 for node in executed)
     assert f"nodes={len(executed)}" in capsys.readouterr().out
 
 
@@ -433,7 +435,7 @@ def test_current_phase_requires_real_postgresql_harness(
         _VERIFIER.verify_acceptance(
             _FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
-            through_phase=9,
+            through_phase=10,
         )
 
 

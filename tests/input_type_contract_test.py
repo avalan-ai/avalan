@@ -42,9 +42,9 @@ def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
         _FIXTURES / "type_contract_manifest.json"
     )
 
-    _VERIFIER._validate_acceptance_phase(manifest, 9)
+    _VERIFIER._validate_acceptance_phase(manifest, 10)
 
-    obligation = replace(manifest.fixtures[0], active_from_phase=9)
+    obligation = replace(manifest.fixtures[0], active_from_phase=10)
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
         match="acceptance-only phase without new type obligations",
@@ -54,13 +54,13 @@ def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
                 manifest,
                 fixtures=(*manifest.fixtures, obligation),
             ),
-            9,
+            10,
         )
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
         match="acceptance-only phase without new type obligations",
     ):
-        _VERIFIER._validate_acceptance_phase(manifest, 10)
+        _VERIFIER._validate_acceptance_phase(manifest, 11)
 
 
 def _read_manifest() -> dict[str, Any]:
@@ -233,10 +233,10 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=9,
+        through_phase=10,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 8
+    assert loaded.current_phase == 9
     active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures

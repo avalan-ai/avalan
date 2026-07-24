@@ -179,6 +179,7 @@ def _create_lifespan(
             try:
                 yield
             finally:
+                await mcp_router.close_mcp_state(app)
                 await close_server_interactions(app)
 
     return lifespan

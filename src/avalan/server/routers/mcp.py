@@ -1,3 +1,4 @@
+from ...agent.execution import AttachedInteractionRuntime
 from ...agent.orchestrator import Orchestrator
 from ...entities import (
     MessageRole,
@@ -9,6 +10,8 @@ from ...entities import (
     ToolDescriptor,
     ToolValue,
 )
+from ...interaction.entities import PrincipalScope, TaskId
+from ...interaction.policy import InteractionActor
 from ...model.stream import (
     CanonicalStreamItem,
     StreamConsumerProjection,
@@ -40,6 +43,29 @@ from ..container_policy import (
     remote_container_policy_from_state,
     validate_remote_container_arguments,
 )
+from ..interaction import (
+    ServerInteractionHTTPError,
+    ServerInteractionService,
+)
+from ..mcp_session import (
+    MCPFormElicitationOutbound,
+    MCPFormErrorCode,
+    MCPFormSessionError,
+    MCPFormSessionRegistry,
+    MCPFormSessionView,
+    MCPFormStatus,
+    MCPFormStatusEvent,
+    MCPFormStatusHook,
+)
+from ..mcp_tasks import (
+    MCPTaskController,
+    MCPTaskHandle,
+    MCPTaskOutcome,
+    MCPTaskProtocolError,
+    MCPTaskRequest,
+    with_related_task_metadata,
+    without_related_task_metadata,
+)
 from ..sse import sse_bytes, sse_headers
 from . import (
     MODEL_FALLBACK as DEFAULT_MODEL_FALLBACK,
@@ -63,7 +89,15 @@ from .streaming import (
     stream_consumer_iterator,
 )
 
-from asyncio import CancelledError, Lock, create_task
+from asyncio import (
+    FIRST_COMPLETED,
+    CancelledError,
+    Lock,
+    Task,
+    create_task,
+    gather,
+    wait,
+)
 from asyncio import Event as AsyncEvent
 from collections import deque
 from contextlib import suppress
@@ -91,6 +125,8 @@ from fastapi.responses import (
     Response,
     StreamingResponse,
 )
+from mcp.shared.version import SUPPORTED_PROTOCOL_VERSIONS
+from mcp.types import LATEST_PROTOCOL_VERSION
 
 RS: Final[str] = "\x1e"
 MODEL_FALLBACK: Final[str] = DEFAULT_MODEL_FALLBACK
@@ -98,8 +134,18 @@ MODEL_FALLBACK: Final[str] = DEFAULT_MODEL_FALLBACK
 JSONScalar: TypeAlias = JsonScalar
 JSONValue: TypeAlias = MutableJsonValue
 JSONObject: TypeAlias = JsonObject
+MCPCancellationKey: TypeAlias = tuple[PrincipalScope, str, str | int]
 
-Method = Literal["initialize", "ping", "tools/list", "tools/call"]
+Method = Literal[
+    "initialize",
+    "ping",
+    "tasks/cancel",
+    "tasks/get",
+    "tasks/list",
+    "tasks/result",
+    "tools/list",
+    "tools/call",
+]
 NotificationMethod = Literal[
     "notifications/cancelled",
     "notifications/initialized",
@@ -108,6 +154,22 @@ NotificationMethod = Literal[
 AllowedMethod = Method | NotificationMethod
 
 ResponseItem = CanonicalStreamItem | StreamConsumerProjection
+
+
+@dataclass(frozen=True, slots=True)
+class _MCPSessionContext:
+    session_id: str
+    owner: PrincipalScope
+    actor: InteractionActor
+    service: ServerInteractionService
+    registry: MCPFormSessionRegistry
+    negotiation: MCPFormSessionView
+
+    @property
+    def task_requestor(self) -> tuple[PrincipalScope, str] | None:
+        if not _identifiable_principal(self.owner):
+            return None
+        return (self.owner, self.session_id)
 
 
 def _default_model_id(orchestrator: Orchestrator) -> str:
@@ -854,49 +916,129 @@ def create_router() -> APIRouter:
         assert isinstance(logger, Logger)
         assert isinstance(orchestrator, Orchestrator)
 
-        message, messages = await _expect_jsonrpc_message(
-            request,
-            {
-                "initialize",
-                "ping",
-                "tools/list",
-                "tools/call",
-                "notifications/initialized",
-            },
-        )
-        method = cast(str, message.get("method"))
+        message, messages = await _first_jsonrpc_message(request)
+        method = message.get("method")
+        if method is None:
+            try:
+                session = await _mcp_session_context(request, required=True)
+                assert session is not None
+                await session.registry.dispatch_response(
+                    session.session_id,
+                    session.owner,
+                    message,
+                )
+            except (MCPFormSessionError, MCPTaskProtocolError) as exc:
+                return _mcp_protocol_error_response(message, exc)
+            return Response(status_code=202)
+        if method not in {
+            "initialize",
+            "ping",
+            "tasks/cancel",
+            "tasks/get",
+            "tasks/list",
+            "tasks/result",
+            "tools/list",
+            "tools/call",
+            "notifications/cancelled",
+            "notifications/initialized",
+        }:
+            raise HTTPException(
+                status_code=400, detail=f"Unsupported MCP method {method}"
+            )
         if method == "initialize":
-            return _handle_initialize_message(
+            return await _initialize_mcp_session(
                 request, logger, orchestrator, message
             )
+        try:
+            session = await _mcp_session_context(request)
+        except (MCPFormSessionError, MCPTaskProtocolError) as exc:
+            return _mcp_protocol_error_response(message, exc)
         if method == "ping":
             return _handle_ping_message(logger, message)
+        if method == "notifications/cancelled":
+            if session is None:
+                return _mcp_protocol_error_response(
+                    message,
+                    _mcp_session_unavailable(),
+                )
+            return _handle_cancelled_notification(
+                request,
+                logger,
+                message,
+                session,
+            )
+        if method.startswith("tasks/"):
+            try:
+                if session is None:
+                    raise MCPTaskProtocolError(
+                        code=-32001,
+                        message="MCP task session is unavailable.",
+                    )
+                return await _handle_task_message(
+                    request,
+                    message,
+                    session,
+                )
+            except (MCPFormSessionError, MCPTaskProtocolError) as exc:
+                return _mcp_protocol_error_response(message, exc)
         if method == "tools/list":
+            request.state.mcp_task_capable = (
+                session is not None and session.task_requestor is not None
+            )
             return _handle_list_tools_message(
                 request, logger, orchestrator, message
             )
         if method == "tools/call":
-            if _is_direct_skills_tool_call(orchestrator, message):
-                return await _handle_direct_skills_tool_call_message(
-                    request, logger, orchestrator, message
+            try:
+                direct = _is_direct_skills_tool_call(orchestrator, message)
+                task_request = _mcp_task_request(
+                    request,
+                    message,
+                    session,
+                    execution_task_support=(
+                        "forbidden" if direct else "optional"
+                    ),
                 )
-            request_id, responses_request, progress_token = (
-                _parse_call_request(request, message, messages)
-            )
-            return await _start_tool_streaming_response(
-                request,
-                logger,
-                orchestrator,
-                request_id,
-                responses_request,
-                progress_token,
-            )
-        if method == "notifications/initialized":
-            return _handle_initialized_notification(logger, message)
-
-        raise HTTPException(
-            status_code=400, detail=f'Unsupported MCP method "{method}"'
-        )
+                if direct:
+                    return await _handle_direct_skills_tool_call_message(
+                        request, logger, orchestrator, message
+                    )
+                request_id, responses_request, progress_token = (
+                    _parse_call_request(request, message, messages)
+                )
+                if task_request is not None:
+                    assert session is not None
+                    return await _start_tool_task_response(
+                        request,
+                        logger,
+                        orchestrator,
+                        request_id,
+                        responses_request,
+                        progress_token,
+                        session,
+                        task_request,
+                    )
+                return await _start_tool_streaming_response(
+                    request,
+                    logger,
+                    orchestrator,
+                    request_id,
+                    responses_request,
+                    progress_token,
+                    session=session,
+                )
+            except (MCPFormSessionError, MCPTaskProtocolError) as exc:
+                return _mcp_protocol_error_response(message, exc)
+        assert method == "notifications/initialized"
+        if session is not None:
+            try:
+                await session.registry.mark_initialized(
+                    session.session_id,
+                    session.owner,
+                )
+            except MCPFormSessionError as exc:
+                return _mcp_protocol_error_response(message, exc)
+        return _handle_initialized_notification(logger, message)
 
     @router.post("/initialize")
     async def mcp_initialize(
@@ -908,7 +1050,7 @@ def create_router() -> APIRouter:
         assert isinstance(orchestrator, Orchestrator)
 
         message, _ = await _expect_jsonrpc_message(request, {"initialize"})
-        return _handle_initialize_message(
+        return await _initialize_mcp_session(
             request, logger, orchestrator, message
         )
 
@@ -931,6 +1073,10 @@ def create_router() -> APIRouter:
         assert isinstance(orchestrator, Orchestrator)
 
         message, _ = await _expect_jsonrpc_message(request, {"tools/list"})
+        session = await _mcp_session_context(request)
+        request.state.mcp_task_capable = (
+            session is not None and session.task_requestor is not None
+        )
         return _handle_list_tools_message(
             request, logger, orchestrator, message
         )
@@ -957,7 +1103,30 @@ def create_router() -> APIRouter:
         message, _ = await _expect_jsonrpc_message(
             request, {"notifications/initialized"}
         )
+        session = await _mcp_session_context(request)
+        if session is not None:
+            await session.registry.mark_initialized(
+                session.session_id,
+                session.owner,
+            )
         return _handle_initialized_notification(logger, message)
+
+    @router.delete("", response_model=None)
+    @router.delete("/", response_model=None)
+    async def mcp_close_session(request: Request) -> Response:
+        session = await _mcp_session_context(request, required=True)
+        assert session is not None
+        _cancel_mcp_session_requests(request.app, session)
+        await session.registry.close(session.session_id, session.owner)
+        if session.task_requestor is not None:
+            await _cancel_mcp_background_tasks(
+                request.app,
+                session.task_requestor,
+            )
+            await _get_task_controller(request).cleanup_requestor(
+                session.task_requestor
+            )
+        return Response(status_code=204)
 
     return router
 
@@ -1030,8 +1199,44 @@ def _parse_call_request(
     )
 
 
+def _mcp_task_request(
+    request: Request,
+    message: Mapping[str, object],
+    session: _MCPSessionContext | None,
+    *,
+    execution_task_support: Literal["forbidden", "optional"],
+) -> MCPTaskRequest | None:
+    params = message.get("params")
+    if not isinstance(params, Mapping):
+        raise MCPTaskProtocolError(
+            code=-32602,
+            message="Missing MCP params.",
+        )
+    if session is None or session.task_requestor is None:
+        return None
+    return _get_task_controller(request).task_request(
+        params,
+        request_type="tools/call",
+        execution_task_support=execution_task_support,
+        requestor=session.task_requestor,
+    )
+
+
 async def _expect_jsonrpc_message(
     request: Request, allowed_methods: set[AllowedMethod]
+) -> tuple[JSONObject, AsyncIterator[JSONObject]]:
+    message, messages = await _first_jsonrpc_message(request)
+    method = cast(str | None, message.get("method"))
+    if method not in allowed_methods:
+        raise HTTPException(
+            status_code=400, detail=f"Unsupported MCP method {method}"
+        )
+
+    return message, messages
+
+
+async def _first_jsonrpc_message(
+    request: Request,
 ) -> tuple[JSONObject, AsyncIterator[JSONObject]]:
     messages = _iter_jsonrpc_messages(request)
     try:
@@ -1045,12 +1250,6 @@ async def _expect_jsonrpc_message(
 
     if not isinstance(message, dict):
         raise HTTPException(status_code=400, detail="Invalid MCP payload")
-
-    method = cast(str | None, message.get("method"))
-    if method not in allowed_methods:
-        raise HTTPException(
-            status_code=400, detail=f"Unsupported MCP method {method}"
-        )
 
     return message, messages
 
@@ -1066,8 +1265,13 @@ def _server_info(request: Request) -> JSONObject:
     return {"name": str(name), "version": str(version)}
 
 
-def _server_capabilities(orchestrator: Orchestrator) -> dict[str, JSONValue]:
-    return {
+def _server_capabilities(
+    orchestrator: Orchestrator,
+    *,
+    task_controller: MCPTaskController | None = None,
+    task_requestor: tuple[PrincipalScope, str] | None = None,
+) -> dict[str, JSONValue]:
+    capabilities: dict[str, JSONValue] = {
         "tools": {
             "list": True,
             "call": True,
@@ -1078,6 +1282,189 @@ def _server_capabilities(orchestrator: Orchestrator) -> dict[str, JSONValue]:
             "listChanged": False,
         },
     }
+    if task_controller is not None and task_requestor is not None:
+        capabilities.update(
+            task_controller.capability_dict(requestor=task_requestor)
+        )
+    return capabilities
+
+
+async def _initialize_mcp_session(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    message: JSONObject,
+) -> JSONResponse:
+    params = message.get("params")
+    params_obj: JSONObject = params if isinstance(params, dict) else {}
+    protocol_version = _negotiated_protocol_version(
+        params_obj.get("protocolVersion")
+    )
+    capabilities = _server_capabilities(orchestrator)
+    headers: dict[str, str] = {}
+    actor_and_service = await _optional_mcp_actor(request)
+    if (
+        protocol_version == LATEST_PROTOCOL_VERSION
+        and actor_and_service is not None
+    ):
+        actor, service = actor_and_service
+        owner = actor.principal
+        session_id = str(uuid4())
+        registry = _get_form_session_registry(request)
+        identifiable = _identifiable_principal(owner)
+        try:
+            await registry.initialize(
+                session_id=session_id,
+                owner=owner,
+                protocol_version=protocol_version,
+                capabilities=params_obj.get("capabilities", {}),
+                can_route_and_resume=identifiable,
+                preserves_newlines=bool(
+                    getattr(
+                        request.app.state,
+                        "mcp_form_preserves_newlines",
+                        True,
+                    )
+                ),
+            )
+        except MCPFormSessionError as exc:
+            return _mcp_protocol_error_response(message, exc)
+        headers["MCP-Session-Id"] = session_id
+        if identifiable:
+            capabilities = _server_capabilities(
+                orchestrator,
+                task_controller=_get_task_controller(request),
+                task_requestor=(owner, session_id),
+            )
+        logger.debug(
+            "Initialized MCP session",
+            extra={
+                "mcp_session_initialized": True,
+                "mcp_form_available": False,
+                "mcp_task_capable": identifiable,
+            },
+        )
+    return _handle_initialize_message(
+        request,
+        logger,
+        orchestrator,
+        message,
+        capabilities=capabilities,
+        headers=headers,
+    )
+
+
+async def _optional_mcp_actor(
+    request: Request,
+) -> tuple[InteractionActor, ServerInteractionService] | None:
+    service = getattr(request.app.state, "interaction_service", None)
+    if not isinstance(service, ServerInteractionService):
+        return None
+    try:
+        actor = await service.authenticate(request)
+    except ServerInteractionHTTPError:
+        return None
+    return actor, service
+
+
+async def _mcp_session_context(
+    request: Request,
+    *,
+    required: bool = False,
+) -> _MCPSessionContext | None:
+    headers = getattr(request, "headers", {})
+    session_id = headers.get("MCP-Session-Id")
+    if session_id is None:
+        session_id = headers.get("mcp-session-id")
+    if not isinstance(session_id, str) or not session_id:
+        if required:
+            raise _mcp_session_unavailable()
+        return None
+    actor_and_service = await _optional_mcp_actor(request)
+    if actor_and_service is None:
+        raise _mcp_session_unavailable()
+    actor, service = actor_and_service
+    registry = _get_form_session_registry(request)
+    negotiation = await registry.negotiation(session_id, actor.principal)
+    protocol_header = headers.get("MCP-Protocol-Version")
+    if protocol_header is None:
+        protocol_header = headers.get("mcp-protocol-version")
+    if protocol_header != negotiation.protocol_version:
+        raise MCPFormSessionError(
+            code=MCPFormErrorCode.INVALID_CAPABILITIES,
+            rpc_code=-32602,
+            safe_message="MCP protocol version does not match the session.",
+        )
+    return _MCPSessionContext(
+        session_id=session_id,
+        owner=actor.principal,
+        actor=actor,
+        service=service,
+        registry=registry,
+        negotiation=negotiation,
+    )
+
+
+def _identifiable_principal(principal: PrincipalScope) -> bool:
+    return any(
+        value is not None
+        for value in (
+            principal.user_id,
+            principal.tenant_id,
+            principal.participant_id,
+            principal.session_id,
+        )
+    )
+
+
+def _negotiated_protocol_version(value: object) -> str:
+    if isinstance(value, str) and value in SUPPORTED_PROTOCOL_VERSIONS:
+        return value
+    return LATEST_PROTOCOL_VERSION
+
+
+def _get_form_session_registry(request: Request) -> MCPFormSessionRegistry:
+    registry = getattr(request.app.state, "mcp_form_session_registry", None)
+    if not isinstance(registry, MCPFormSessionRegistry):
+        registry = MCPFormSessionRegistry()
+        request.app.state.mcp_form_session_registry = registry
+    return registry
+
+
+def _get_task_controller(request: Request) -> MCPTaskController:
+    controller = getattr(request.app.state, "mcp_task_controller", None)
+    if not isinstance(controller, MCPTaskController):
+        controller = MCPTaskController()
+        request.app.state.mcp_task_controller = controller
+    return controller
+
+
+def _mcp_session_unavailable() -> MCPFormSessionError:
+    return MCPFormSessionError(
+        code=MCPFormErrorCode.SESSION_NOT_FOUND,
+        rpc_code=-32001,
+        safe_message="MCP session is unavailable.",
+    )
+
+
+def _mcp_protocol_error_response(
+    message: Mapping[str, object],
+    error: MCPFormSessionError | MCPTaskProtocolError,
+) -> JSONResponse:
+    if isinstance(error, MCPFormSessionError):
+        payload: JsonObject = {
+            "code": error.rpc_code,
+            "message": error.safe_message,
+            "data": {"reason": error.code.value},
+        }
+    else:
+        payload = error.as_error()
+    response: JsonObject = {
+        "jsonrpc": "2.0",
+        "id": cast(JSONValue, message.get("id")),
+        "error": payload,
+    }
+    return JSONResponse(response)
 
 
 class StreamResponse(Protocol):
@@ -1114,6 +1501,32 @@ def _build_chat_request(
     )
 
 
+def _mcp_interaction_runtime(
+    session: _MCPSessionContext | None,
+    *,
+    related_request_id: str | int,
+    related_task_id: str | None = None,
+    status_hook: MCPFormStatusHook | None = None,
+) -> AttachedInteractionRuntime | None:
+    if session is None or not session.negotiation.form_available:
+        return None
+    return AttachedInteractionRuntime(
+        broker=session.service.configuration.broker,
+        actor=session.actor,
+        handler=session.registry.handler(
+            session_id=session.session_id,
+            owner=session.owner,
+            related_request_id=related_request_id,
+            related_task_id=related_task_id,
+            status_hook=status_hook,
+        ),
+        task_id=(
+            TaskId(related_task_id) if related_task_id is not None else None
+        ),
+        context_label="mcp",
+    )
+
+
 async def _start_tool_streaming_response(
     request: Request,
     logger: Logger,
@@ -1121,10 +1534,19 @@ async def _start_tool_streaming_response(
     request_id: str | int,
     tool_request: MCPToolRequest,
     progress_token: str | int,
+    *,
+    session: _MCPSessionContext | None = None,
 ) -> Response:
     chat_request = _build_chat_request(tool_request, orchestrator)
+    interaction_runtime = _mcp_interaction_runtime(
+        session,
+        related_request_id=request_id,
+    )
     response, response_uuid, timestamp = await orchestrate(
-        chat_request, logger, orchestrator
+        chat_request,
+        logger,
+        orchestrator,
+        interaction_runtime=interaction_runtime,
     )
     response_typed = cast(StreamResponse, response)
     response_uuid_obj = (
@@ -1134,9 +1556,23 @@ async def _start_tool_streaming_response(
     )
 
     cancel_event = AsyncEvent()
+    cancellation_registered = session is not None and chat_request.stream
+    if cancellation_registered:
+        assert session is not None
+        _register_mcp_cancellation(
+            request,
+            session,
+            request_id,
+            cancel_event,
+        )
     message_iter = _iter_jsonrpc_messages(request)
     watcher = create_task(
-        _watch_for_cancellation(message_iter, cancel_event, logger)
+        _watch_for_cancellation(
+            message_iter,
+            cancel_event,
+            logger,
+            request_id=request_id,
+        )
     )
 
     resource_store = _get_resource_store(request)
@@ -1189,7 +1625,7 @@ async def _start_tool_streaming_response(
 
     async def stream() -> AsyncGenerator[bytes, None]:
         try:
-            async for chunk in _stream_mcp_response(
+            response_stream = _stream_mcp_response(
                 request_id=request_id,
                 request_model=chat_request,
                 response=response_typed,
@@ -1202,16 +1638,444 @@ async def _start_tool_streaming_response(
                 base_path=base_path,
                 cancel_event=cancel_event,
                 output_redaction_settings=output_redaction_settings,
-            ):
+            )
+            if interaction_runtime is not None:
+                assert session is not None
+                response_stream = _merge_mcp_session_outbound(
+                    response_stream,
+                    session,
+                    related_request_id=request_id,
+                )
+            async for chunk in response_stream:
                 yield sse_bytes(chunk)
         finally:
             watcher.cancel()
             with suppress(Exception):
                 await watcher
+            if cancellation_registered:
+                assert session is not None
+                _discard_mcp_cancellation(
+                    request,
+                    session,
+                    request_id,
+                    cancel_event,
+                )
 
     return StreamingResponse(
         stream(), media_type="text/event-stream", headers=sse_headers()
     )
+
+
+async def _start_tool_task_response(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    request_id: str | int,
+    tool_request: MCPToolRequest,
+    progress_token: str | int,
+    session: _MCPSessionContext,
+    task_request: MCPTaskRequest,
+) -> JSONResponse:
+    requestor = session.task_requestor
+    assert requestor is not None
+    controller = _get_task_controller(request)
+    cancel_event = AsyncEvent()
+    background: Task[None] | None = None
+
+    async def cancel_operation() -> None:
+        cancel_event.set()
+        if background is not None and not background.done():
+            background.cancel()
+            await gather(background, return_exceptions=True)
+
+    creation = await controller.create(
+        task_request,
+        requestor=requestor,
+        cancellation_callback=cancel_operation,
+    )
+    task_id = creation.handle.task_id
+    status_hook = _mcp_task_status_hook(creation.handle)
+    interaction_runtime = _mcp_interaction_runtime(
+        session,
+        related_request_id=request_id,
+        related_task_id=task_id,
+        status_hook=status_hook,
+    )
+    chat_request = _build_chat_request(tool_request, orchestrator)
+    background = create_task(
+        _run_tool_task(
+            request,
+            logger,
+            orchestrator,
+            request_id=request_id,
+            chat_request=chat_request,
+            progress_token=progress_token,
+            interaction_runtime=interaction_runtime,
+            handle=creation.handle,
+            cancel_event=cancel_event,
+        ),
+        name=f"mcp-task-{task_id}",
+    )
+    _track_mcp_background_task(request, background, requestor)
+
+    payload: JSONObject = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": creation.as_dict(),
+    }
+    return JSONResponse(payload)
+
+
+async def _run_tool_task(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    *,
+    request_id: str | int,
+    chat_request: ChatCompletionRequest,
+    progress_token: str | int,
+    interaction_runtime: AttachedInteractionRuntime | None,
+    handle: MCPTaskHandle,
+    cancel_event: AsyncEvent,
+) -> None:
+    operation = create_task(
+        _execute_tool_task(
+            request,
+            logger,
+            orchestrator,
+            request_id=request_id,
+            chat_request=chat_request,
+            progress_token=progress_token,
+            interaction_runtime=interaction_runtime,
+            handle=handle,
+            cancel_event=cancel_event,
+        )
+    )
+    cancelled = create_task(handle.wait_cancelled())
+    try:
+        done, _ = await wait(
+            {operation, cancelled},
+            return_when=FIRST_COMPLETED,
+        )
+        if cancelled in done and not operation.done():
+            cancel_event.set()
+            operation.cancel()
+        await gather(operation, return_exceptions=True)
+    finally:
+        if not operation.done():
+            operation.cancel()
+        if not cancelled.done():
+            cancelled.cancel()
+        await gather(operation, cancelled, return_exceptions=True)
+
+
+async def _execute_tool_task(
+    request: Request,
+    logger: Logger,
+    orchestrator: Orchestrator,
+    *,
+    request_id: str | int,
+    chat_request: ChatCompletionRequest,
+    progress_token: str | int,
+    interaction_runtime: AttachedInteractionRuntime | None,
+    handle: MCPTaskHandle,
+    cancel_event: AsyncEvent,
+) -> None:
+    try:
+        response, response_uuid, timestamp = await orchestrate(
+            chat_request,
+            logger,
+            orchestrator,
+            interaction_runtime=interaction_runtime,
+        )
+        response_uuid_obj = (
+            response_uuid
+            if isinstance(response_uuid, UUID)
+            else UUID(str(response_uuid))
+        )
+        response_stream = _stream_mcp_response(
+            request_id=request_id,
+            request_model=chat_request,
+            response=cast(StreamResponse, response),
+            response_id=response_uuid_obj,
+            timestamp=timestamp,
+            progress_token=progress_token,
+            orchestrator=orchestrator,
+            logger=logger,
+            resource_store=_get_resource_store(request),
+            base_path=cast(
+                str,
+                getattr(request.app.state, "mcp_resource_base_path", ""),
+            ),
+            cancel_event=cancel_event,
+            output_redaction_settings=(
+                server_output_redaction_settings_from_state(request.app.state)
+            ),
+        )
+        await _consume_tool_task(
+            response_stream,
+            request_id=request_id,
+            handle=handle,
+            cancel_event=cancel_event,
+            logger=logger,
+        )
+    except CancelledError:
+        cancel_event.set()
+        raise
+    except Exception:
+        logger.exception("MCP task operation failed")
+        await handle.fail(
+            {
+                "code": -32603,
+                "message": "An internal server error occurred.",
+            }
+        )
+
+
+def _mcp_task_status_hook(
+    handle: MCPTaskHandle,
+) -> MCPFormStatusHook:
+    async def update(event: MCPFormStatusEvent) -> None:
+        if event.status is MCPFormStatus.INPUT_REQUIRED:
+            await handle.transition_input_required()
+        else:
+            try:
+                await handle.transition_working()
+            except MCPTaskProtocolError as exc:
+                if exc.data != {
+                    "policy": "avalan",
+                    "reason": "state_mismatch",
+                }:
+                    raise
+
+    return update
+
+
+async def _consume_tool_task(
+    response_stream: AsyncIterator[bytes],
+    *,
+    request_id: str | int,
+    handle: MCPTaskHandle,
+    cancel_event: AsyncEvent,
+    logger: Logger,
+) -> None:
+    terminal: Mapping[str, object] | None = None
+    try:
+        async for chunk in response_stream:
+            for raw_line in chunk.splitlines():
+                if not raw_line:
+                    continue
+                message = loads(raw_line)
+                if (
+                    isinstance(message, Mapping)
+                    and message.get("id") == request_id
+                    and ("result" in message or "error" in message)
+                ):
+                    terminal = cast(Mapping[str, object], message)
+        if terminal is None:
+            await handle.fail(
+                {
+                    "code": -32603,
+                    "message": "MCP task ended without an operation result.",
+                }
+            )
+            return
+        result = terminal.get("result")
+        if isinstance(result, Mapping):
+            await handle.complete(result)
+            return
+        error = terminal.get("error")
+        if isinstance(error, Mapping):
+            await handle.fail(error)
+            return
+        await handle.fail(
+            {
+                "code": -32603,
+                "message": "MCP task returned an invalid operation result.",
+            }
+        )
+    except CancelledError:
+        cancel_event.set()
+        raise
+    except Exception:
+        logger.exception("MCP task operation failed")
+        await handle.fail(
+            {
+                "code": -32603,
+                "message": "An internal server error occurred.",
+            }
+        )
+    finally:
+        close = getattr(response_stream, "aclose", None)
+        if callable(close):
+            await close()
+
+
+def _track_mcp_background_task(
+    request: Request,
+    task: Task[None],
+    requestor: tuple[PrincipalScope, str],
+) -> None:
+    registry = getattr(request.app.state, "mcp_background_tasks", None)
+    if not isinstance(registry, dict):
+        registry = {}
+        request.app.state.mcp_background_tasks = registry
+    tasks = registry.setdefault(requestor, set())
+    tasks.add(task)
+
+    def discard(completed: Task[None]) -> None:
+        owned = registry.get(requestor)
+        if not isinstance(owned, set):
+            return
+        owned.discard(completed)
+        if not owned:
+            registry.pop(requestor, None)
+
+    task.add_done_callback(discard)
+
+
+async def _cancel_mcp_background_tasks(
+    app: object,
+    requestor: tuple[PrincipalScope, str],
+) -> None:
+    state = getattr(app, "state", None)
+    if state is None:
+        return
+    registry = getattr(state, "mcp_background_tasks", None)
+    if not isinstance(registry, dict):
+        return
+    tasks = tuple(registry.pop(requestor, ()))
+    for task in tasks:
+        task.cancel()
+    if tasks:
+        await gather(*tasks, return_exceptions=True)
+
+
+async def _handle_task_message(
+    request: Request,
+    message: JSONObject,
+    session: _MCPSessionContext,
+) -> Response:
+    method = message.get("method")
+    params_value = message.get("params")
+    params = (
+        without_related_task_metadata(params_value)
+        if isinstance(params_value, Mapping)
+        else {}
+    )
+    controller = _get_task_controller(request)
+    requestor = session.task_requestor
+    if requestor is None:
+        raise MCPTaskProtocolError(
+            code=-32001,
+            message="MCP task session is unavailable.",
+        )
+    request_id = cast(str | int, message.get("id", str(uuid4())))
+    if method == "tasks/list":
+        cursor = params.get("cursor")
+        if cursor is not None and not isinstance(cursor, str):
+            raise MCPTaskProtocolError(
+                code=-32602,
+                message="Invalid task cursor.",
+            )
+        result = await controller.list(
+            requestor=requestor,
+            cursor=cursor,
+        )
+        return _mcp_jsonrpc_result(request_id, result)
+    task_id = params.get("taskId")
+    if not isinstance(task_id, str) or not task_id:
+        raise MCPTaskProtocolError(
+            code=-32602,
+            message="Invalid task identifier.",
+        )
+    if method == "tasks/get":
+        return _mcp_jsonrpc_result(
+            request_id,
+            await controller.get(task_id, requestor=requestor),
+        )
+    if method == "tasks/cancel":
+        return _mcp_jsonrpc_result(
+            request_id,
+            await controller.cancel(task_id, requestor=requestor),
+        )
+    if method == "tasks/result":
+        return _mcp_task_result_response(
+            controller,
+            task_id=task_id,
+            request_id=request_id,
+            requestor=requestor,
+            session=session,
+        )
+    raise MCPTaskProtocolError(
+        code=-32601,
+        message="MCP task method is not supported.",
+    )
+
+
+def _mcp_task_result_response(
+    controller: MCPTaskController,
+    *,
+    task_id: str,
+    request_id: str | int,
+    requestor: tuple[PrincipalScope, str],
+    session: _MCPSessionContext,
+) -> StreamingResponse:
+    async def result_stream() -> AsyncIterator[bytes]:
+        try:
+            outcome = await controller.result(task_id, requestor=requestor)
+        except MCPTaskProtocolError as exc:
+            message: JSONObject = {
+                "jsonrpc": "2.0",
+                "id": request_id,
+                "error": exc.as_error(),
+            }
+        else:
+            message = _mcp_task_outcome_message(request_id, outcome)
+        yield _encode_mcp_message(message)
+
+    stream: AsyncIterator[bytes] = result_stream()
+    if session.negotiation.form_available:
+        stream = _merge_mcp_session_outbound(
+            stream,
+            session,
+            related_task_id=task_id,
+        )
+    return StreamingResponse(
+        (sse_bytes(chunk) async for chunk in stream),
+        media_type="text/event-stream",
+        headers=sse_headers(),
+    )
+
+
+def _mcp_task_outcome_message(
+    request_id: str | int,
+    outcome: MCPTaskOutcome,
+) -> JSONObject:
+    if outcome.result is not None:
+        return {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "result": outcome.result,
+        }
+    assert outcome.error is not None
+    return {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "error": outcome.error,
+    }
+
+
+def _mcp_jsonrpc_result(
+    request_id: str | int,
+    result: Mapping[str, object],
+) -> JSONResponse:
+    payload: JSONObject = {
+        "jsonrpc": "2.0",
+        "id": request_id,
+        "result": cast(JSONObject, dict(result)),
+    }
+    return JSONResponse(payload)
 
 
 def _handle_ping_message(
@@ -1239,10 +2103,15 @@ def _handle_initialize_message(
     logger: Logger,
     orchestrator: Orchestrator,
     message: JSONObject,
+    *,
+    capabilities: Mapping[str, JSONValue] | None = None,
+    headers: Mapping[str, str] | None = None,
 ) -> JSONResponse:
     params = message.get("params")
     params_obj: JSONObject = params if isinstance(params, dict) else {}
-    protocol_version = str(params_obj.get("protocolVersion") or "1.0.0")
+    protocol_version = _negotiated_protocol_version(
+        params_obj.get("protocolVersion")
+    )
 
     response_id = cast(str | int, message.get("id", str(uuid4())))
     payload: JSONRPCResult = {
@@ -1250,7 +2119,9 @@ def _handle_initialize_message(
         "id": response_id,
         "result": {
             "protocolVersion": protocol_version,
-            "capabilities": _server_capabilities(orchestrator),
+            "capabilities": dict(
+                capabilities or _server_capabilities(orchestrator)
+            ),
             "serverInfo": _server_info(request),
         },
     }
@@ -1258,7 +2129,7 @@ def _handle_initialize_message(
         "Handled MCP initialize request",
         extra={"response_id": response_id},
     )
-    return JSONResponse(payload)
+    return JSONResponse(payload, headers=dict(headers or {}))
 
 
 def _handle_initialized_notification(
@@ -1319,13 +2190,14 @@ def _collect_tool_descriptions(
             "Execute the Avalan orchestrator run endpoint.",
         ),
     )
-    tools: list[dict[str, JSONValue]] = [
-        {
-            "name": name,
-            "description": description,
-            "inputSchema": MCPToolRequest.model_json_schema(),
-        }
-    ]
+    run_tool: dict[str, JSONValue] = {
+        "name": name,
+        "description": description,
+        "inputSchema": MCPToolRequest.model_json_schema(),
+    }
+    if getattr(request.state, "mcp_task_capable", False) is True:
+        run_tool["execution"] = {"taskSupport": "optional"}
+    tools: list[dict[str, JSONValue]] = [run_tool]
     if orchestrator is None:
         return tools
     tool_manager = getattr(orchestrator, "tool", None)
@@ -1600,15 +2472,218 @@ async def _watch_for_cancellation(
     messages: AsyncIterator[JSONObject],
     cancel_event: AsyncEvent,
     logger: Logger,
+    *,
+    request_id: str | int,
 ) -> None:
     async for message in messages:
         if not isinstance(message, dict):
             continue
         method = cast(str | None, message.get("method"))
-        if method == "notifications/cancelled":
-            cancel_event.set()
-            logger.debug("Received MCP cancellation notification")
-            break
+        if method != "notifications/cancelled":
+            continue
+        params = message.get("params")
+        if not isinstance(params, Mapping):
+            continue
+        cancelled_id = params.get("requestId")
+        if not (
+            (
+                type(cancelled_id) is int
+                or isinstance(cancelled_id, str)
+                and cancelled_id
+            )
+            and type(cancelled_id) is type(request_id)
+            and cancelled_id == request_id
+        ):
+            continue
+        cancel_event.set()
+        logger.debug("Received MCP cancellation notification")
+        break
+
+
+def _mcp_cancellations(
+    app: object,
+    *,
+    create: bool = False,
+) -> dict[MCPCancellationKey, AsyncEvent] | None:
+    state = getattr(app, "state", None)
+    if state is None:
+        return None
+    value = getattr(state, "mcp_stream_cancellations", None)
+    if isinstance(value, dict):
+        return cast(dict[MCPCancellationKey, AsyncEvent], value)
+    if not create:
+        return None
+    cancellations: dict[MCPCancellationKey, AsyncEvent] = {}
+    state.mcp_stream_cancellations = cancellations
+    return cancellations
+
+
+def _mcp_cancellation_key(
+    session: _MCPSessionContext,
+    request_id: str | int,
+) -> MCPCancellationKey:
+    return (session.owner, session.session_id, request_id)
+
+
+def _register_mcp_cancellation(
+    request: Request,
+    session: _MCPSessionContext,
+    request_id: str | int,
+    cancel_event: AsyncEvent,
+) -> None:
+    cancellations = _mcp_cancellations(request.app, create=True)
+    assert cancellations is not None
+    cancellations[_mcp_cancellation_key(session, request_id)] = cancel_event
+
+
+def _discard_mcp_cancellation(
+    request: Request,
+    session: _MCPSessionContext,
+    request_id: str | int,
+    cancel_event: AsyncEvent,
+) -> None:
+    cancellations = _mcp_cancellations(request.app)
+    if cancellations is None:
+        return
+    key = _mcp_cancellation_key(session, request_id)
+    if cancellations.get(key) is cancel_event:
+        cancellations.pop(key)
+    if not cancellations:
+        delattr(request.app.state, "mcp_stream_cancellations")
+
+
+def _cancel_mcp_session_requests(
+    app: object,
+    session: _MCPSessionContext,
+) -> None:
+    cancellations = _mcp_cancellations(app)
+    if cancellations is None:
+        return
+    prefix = (session.owner, session.session_id)
+    for key, event in tuple(cancellations.items()):
+        if key[:2] == prefix:
+            cancellations.pop(key)
+            event.set()
+    state = getattr(app, "state", None)
+    if not cancellations and state is not None:
+        delattr(state, "mcp_stream_cancellations")
+
+
+def _handle_cancelled_notification(
+    request: Request,
+    logger: Logger,
+    message: JSONObject,
+    session: _MCPSessionContext,
+) -> Response:
+    if "id" in message:
+        raise HTTPException(
+            status_code=400,
+            detail="MCP notifications cannot include an id",
+        )
+    params = message.get("params")
+    if not isinstance(params, dict):
+        raise HTTPException(status_code=400, detail="Missing MCP params")
+    request_id = params.get("requestId")
+    if not (
+        type(request_id) is int or isinstance(request_id, str) and request_id
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="MCP cancellation requires a requestId",
+        )
+    cancellations = _mcp_cancellations(request.app)
+    event = (
+        cancellations.get(_mcp_cancellation_key(session, request_id))
+        if cancellations is not None
+        else None
+    )
+    if event is not None:
+        event.set()
+    logger.debug(
+        "Handled MCP cancellation notification",
+        extra={"request_id": request_id, "active": event is not None},
+    )
+    return Response(status_code=202)
+
+
+async def _merge_mcp_session_outbound(
+    source: AsyncIterator[bytes],
+    session: _MCPSessionContext,
+    *,
+    related_request_id: str | int | None = None,
+    related_task_id: str | None = None,
+) -> AsyncIterator[bytes]:
+    source_next = create_task(_next_mcp_chunk(source))
+    outbound_next = create_task(
+        session.registry.next_outbound(
+            session.session_id,
+            session.owner,
+            timeout_seconds=30,
+            related_request_id=related_request_id,
+            related_task_id=related_task_id,
+        )
+    )
+    try:
+        while True:
+            done, _ = await wait(
+                {source_next, outbound_next},
+                return_when=FIRST_COMPLETED,
+            )
+            if outbound_next in done:
+                outbound = outbound_next.result()
+                if outbound is not None:
+                    yield _encode_mcp_message(_mcp_outbound_message(outbound))
+                outbound_next = create_task(
+                    session.registry.next_outbound(
+                        session.session_id,
+                        session.owner,
+                        timeout_seconds=30,
+                        related_request_id=related_request_id,
+                        related_task_id=related_task_id,
+                    )
+                )
+            if source_next in done:
+                try:
+                    chunk = source_next.result()
+                except StopAsyncIteration:
+                    return
+                yield chunk
+                source_next = create_task(_next_mcp_chunk(source))
+    finally:
+        pending = tuple(
+            task for task in (source_next, outbound_next) if not task.done()
+        )
+        for task in pending:
+            task.cancel()
+        await gather(*pending, return_exceptions=True)
+        close = getattr(source, "aclose", None)
+        if callable(close):
+            await close()
+
+
+async def _next_mcp_chunk(source: AsyncIterator[bytes]) -> bytes:
+    return await anext(source)
+
+
+def _mcp_outbound_message(
+    outbound: MCPFormElicitationOutbound,
+) -> JSONObject:
+    params: Mapping[str, object] = outbound.params
+    if outbound.related_task_id is not None:
+        params = with_related_task_metadata(
+            params,
+            outbound.related_task_id,
+        )
+    return {
+        "jsonrpc": "2.0",
+        "id": outbound.jsonrpc_id,
+        "method": outbound.method,
+        "params": cast(JSONObject, dict(params)),
+    }
+
+
+def _encode_mcp_message(message: Mapping[str, object]) -> bytes:
+    return (dumps(message, separators=(",", ":")) + "\n").encode("utf-8")
 
 
 async def _cleanup_mcp_stream_sources(
@@ -2815,6 +3890,40 @@ def _get_resource_store(request: Request) -> MCPResourceStore:
         request.app.state.mcp_resource_store = store
     assert isinstance(store, MCPResourceStore)
     return store
+
+
+async def close_mcp_state(app: object) -> None:
+    """Close MCP sessions, operations, and task state owned by one app."""
+    state = getattr(app, "state", None)
+    if state is None:
+        return
+    registry = getattr(state, "mcp_form_session_registry", None)
+    if isinstance(registry, MCPFormSessionRegistry):
+        await registry.close_all()
+        delattr(state, "mcp_form_session_registry")
+    cancellations = _mcp_cancellations(app)
+    if cancellations is not None:
+        for event in tuple(cancellations.values()):
+            event.set()
+        cancellations.clear()
+        delattr(state, "mcp_stream_cancellations")
+    background = getattr(state, "mcp_background_tasks", {})
+    tasks = (
+        tuple(task for owned in background.values() for task in owned)
+        if isinstance(background, dict)
+        else ()
+    )
+    if hasattr(state, "mcp_background_tasks"):
+        delattr(state, "mcp_background_tasks")
+    for task in tasks:
+        if isinstance(task, Task) and not task.done():
+            task.cancel()
+    if tasks:
+        await gather(*tasks, return_exceptions=True)
+    controller = getattr(state, "mcp_task_controller", None)
+    if isinstance(controller, MCPTaskController):
+        await controller.close()
+        delattr(state, "mcp_task_controller")
 
 
 async def _iter_jsonrpc_messages(

@@ -11,29 +11,81 @@ from . import Tool, ToolSet
 from .builtin_display import project_mcp_call_tool_display
 from .input_files import input_file_string, iter_input_file_content
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AsyncExitStack
 from importlib import import_module
 from json import JSONDecodeError, dumps, loads
 from typing import Protocol, cast
-from uuid import uuid4
 
 JSONValue = dict[str, object] | list[object] | str | int | float | bool | None
 JSONObject = dict[str, JSONValue]
 _MCP_FILE_ARGUMENT_KEYS = {"files", "input_files", "file_descriptors"}
 
 
-class _MCPHTTPResponse(Protocol):
-    headers: Mapping[str, str]
+class _MCPDumpable(Protocol):
+    """Describe the SDK model serialization used by notification callbacks."""
 
-    async def aread(self) -> bytes:
-        raise NotImplementedError
+    def model_dump(self, **kwargs: object) -> object:
+        """Return one decoded MCP value."""
+        ...
 
-    def aiter_lines(self) -> AsyncIterator[str]:
-        raise NotImplementedError
 
-    def raise_for_status(self) -> None:
-        raise NotImplementedError
+class _McpToolEventSink:
+    """Forward decoded MCP notifications to one tool-call stream."""
+
+    def __init__(self, context: ToolCallContext) -> None:
+        self._context = context
+
+    async def progress(
+        self,
+        progress: float,
+        total: float | None,
+        message: str | None,
+    ) -> None:
+        params: dict[str, object] = {"progress": progress}
+        if total is not None:
+            params["total"] = total
+        if message is not None:
+            params["message"] = message
+        await _forward_mcp_progress(cast(JSONObject, params), self._context)
+
+    async def logging(
+        self,
+        params: object,
+    ) -> None:
+        payload = cast(_MCPDumpable, params).model_dump(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
+        if not isinstance(payload, dict):
+            return
+        await _forward_mcp_message(
+            cast(JSONObject, payload),
+            self._context,
+        )
+
+    async def message(self, message: object) -> None:
+        serializer = getattr(message, "model_dump", None)
+        if not callable(serializer):
+            return
+        payload = serializer(
+            by_alias=True,
+            mode="json",
+            exclude_none=True,
+        )
+        if not isinstance(payload, dict):
+            return
+        method = payload.get("method")
+        if isinstance(method, str) and method not in {
+            "notifications/message",
+            "notifications/progress",
+        }:
+            await _forward_mcp_notification(
+                method,
+                cast(JSONObject, payload),
+                self._context,
+            )
 
 
 class McpCallTool(Tool):
@@ -122,48 +174,44 @@ async def _call_streamable_http_mcp_tool(
     client_params: Mapping[str, object],
     call_params: Mapping[str, object],
 ) -> dict[str, object]:
-    httpx_module = import_module("httpx")
-    client_factory = getattr(httpx_module, "AsyncClient")
-
-    request_id = call_params.get("request_id") or str(uuid4())
-    progress_token = call_params.get("progress_token") or request_id
     request_arguments = (
         _arguments_with_context_input_files(arguments, context)
         if forward_input_files
         else arguments
     )
-    payload: JSONObject = {
-        "jsonrpc": "2.0",
-        "id": cast(JSONValue, request_id),
-        "method": "tools/call",
-        "params": {
-            "name": name,
-            "arguments": cast(JSONValue, request_arguments),
-            "progressToken": cast(JSONValue, progress_token),
-            "_meta": {"progressToken": cast(JSONValue, progress_token)},
-        },
-    }
-    request_params = {
-        key: value
-        for key, value in call_params.items()
-        if key not in {"progress_token", "request_id"}
-    }
-    async with client_factory(**_client_options(client_params)) as client:
-        async with client.stream(
-            "POST",
-            uri,
-            json=payload,
-            **request_params,
-        ) as response:
-            response.raise_for_status()
-            async for message in _iter_mcp_response_messages(response):
-                terminal = await _handle_mcp_message(
-                    message, request_id=request_id, context=context
-                )
-                if terminal is not None:
-                    return terminal
+    sink = _McpToolEventSink(context)
+    return await _call_initialized_mcp_tool(
+        uri=uri,
+        name=name,
+        arguments=request_arguments,
+        context=context,
+        client_params=client_params,
+        call_params=call_params,
+        progress_callback=sink.progress,
+        logging_callback=sink.logging,
+        message_handler=sink.message,
+    )
 
-    raise RuntimeError("MCP response ended without a result")
+
+async def _call_initialized_mcp_tool(
+    **kwargs: object,
+) -> dict[str, object]:
+    """Load the optional MCP SDK only when executing a remote call."""
+    try:
+        module = import_module("avalan.tool.mcp_session")
+    except ModuleNotFoundError as error:
+        if error.name == "mcp" or (
+            error.name is not None and error.name.startswith("mcp.")
+        ):
+            raise RuntimeError(
+                "MCP calls require the optional 'server' dependencies"
+            ) from error
+        raise
+    call = cast(
+        Callable[..., Awaitable[dict[str, object]]],
+        getattr(module, "call_initialized_mcp_tool"),
+    )
+    return await call(**kwargs)
 
 
 def _arguments_with_context_input_files(
@@ -218,90 +266,6 @@ def _mcp_file_descriptor(
     if filename is not None:
         descriptor["filename"] = filename
     return descriptor
-
-
-def _client_options(client_params: Mapping[str, object]) -> dict[str, object]:
-    options = dict(client_params)
-    raw_headers = options.pop("headers", None)
-    headers = (
-        dict(cast(Mapping[str, str], raw_headers))
-        if isinstance(raw_headers, Mapping)
-        else {}
-    )
-    headers.setdefault("Accept", "application/json, text/event-stream")
-    headers.setdefault("Content-Type", "application/json")
-    options.setdefault("timeout", None)
-    options["headers"] = headers
-    return options
-
-
-async def _iter_mcp_response_messages(
-    response: _MCPHTTPResponse,
-) -> AsyncIterator[JSONObject]:
-    content_type = response.headers.get("content-type", "").lower()
-    if "text/event-stream" not in content_type:
-        body = await response.aread()
-        yield _decode_json_object(body.decode("utf-8"))
-        return
-
-    data_lines: list[str] = []
-    async for line in response.aiter_lines():
-        if not line:
-            if data_lines:
-                yield _decode_sse_data(data_lines)
-                data_lines = []
-            continue
-        if line.startswith(":"):
-            continue
-        if line.startswith("data:"):
-            data_lines.append(line[5:].lstrip())
-            continue
-        if line.startswith("{"):
-            yield _decode_json_object(line)
-    if data_lines:
-        yield _decode_sse_data(data_lines)
-
-
-def _decode_sse_data(data_lines: list[str]) -> JSONObject:
-    return _decode_json_object("\n".join(data_lines))
-
-
-def _decode_json_object(text: str) -> JSONObject:
-    try:
-        message = loads(text)
-    except JSONDecodeError as exc:
-        raise RuntimeError("Invalid MCP JSON-RPC response") from exc
-    if not isinstance(message, dict):
-        raise RuntimeError("Invalid MCP JSON-RPC response")
-    return cast(JSONObject, message)
-
-
-async def _handle_mcp_message(
-    message: JSONObject,
-    *,
-    request_id: object,
-    context: ToolCallContext,
-) -> dict[str, object] | None:
-    error = message.get("error")
-    if isinstance(error, dict) and _matches_request_id(message, request_id):
-        code = error.get("code")
-        detail = error.get("message")
-        raise RuntimeError(f"MCP tool call failed [{code}]: {detail}")
-
-    result = message.get("result")
-    if isinstance(result, dict) and _matches_request_id(message, request_id):
-        return result
-
-    method = message.get("method")
-    if isinstance(method, str):
-        await _forward_mcp_notification(method, message, context)
-    return None
-
-
-def _matches_request_id(message: JSONObject, request_id: object) -> bool:
-    return message.get("id") == request_id or str(message.get("id")) == str(
-        request_id
-    )
 
 
 async def _forward_mcp_notification(

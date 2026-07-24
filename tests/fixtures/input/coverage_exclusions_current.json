@@ -224,22 +224,22 @@
     },
     {
       "path": "src/avalan/server/routers/mcp.py",
-      "line": 945,
+      "line": 1091,
       "text": "        except KeyError as exc:  # pragma: no cover - FastAPI handles"
     },
     {
       "path": "src/avalan/server/routers/mcp.py",
-      "line": 1012,
+      "line": 1181,
       "text": "    except Exception as exc:  # pragma: no cover - validation error path"
     },
     {
       "path": "src/avalan/server/routers/mcp.py",
-      "line": 1041,
+      "line": 1246,
       "text": "    ) as exc:  # pragma: no cover - defensive validation"
     },
     {
       "path": "src/avalan/server/routers/mcp.py",
-      "line": 2750,
+      "line": 3825,
       "text": "        except Exception:  # pragma: no cover - best effort cleanup"
     },
     {
@@ -1268,6 +1268,11 @@
       151,
       152
     ],
+    "src/avalan/server/mcp_session.py": [
+      222,
+      223,
+      224
+    ],
     "src/avalan/server/routers/flow.py": [
       40,
       41,
@@ -1281,23 +1286,23 @@
       49
     ],
     "src/avalan/server/routers/mcp.py": [
-      137,
-      138,
-      139,
-      945,
-      946,
-      1012,
-      1013,
-      1039,
-      1042,
-      1087,
-      1088,
-      1089,
-      1090,
+      199,
+      200,
+      201,
       1091,
       1092,
-      2750,
-      2751
+      1181,
+      1182,
+      1244,
+      1247,
+      1474,
+      1475,
+      1476,
+      1477,
+      1478,
+      1479,
+      3825,
+      3826
     ],
     "src/avalan/server/routers/streaming.py": [
       746,
@@ -2376,6 +2381,11 @@
       26,
       31
     ],
+    "src/avalan/tool/mcp.py": [
+      30,
+      31,
+      32
+    ],
     "src/avalan/tool/shell/commands/awk.py": [
       22,
       23
@@ -2410,5 +2420,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "3f5eb73002ea4ff03900d3a2c757e952af3a376147314623246db9dbd254f513"
+  "snapshot_sha256": "8f9251357cb24d37d791927534d9b5775f27e63831e540dfa2789488bd74bb0b"
 }
