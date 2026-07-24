@@ -63,14 +63,16 @@ from collections import deque
 from collections.abc import Awaitable, Callable, Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
+from enum import StrEnum
 from importlib import import_module
 from inspect import isawaitable
 from time import monotonic, time
 from types import MappingProxyType, ModuleType
-from typing import Protocol, TypeAlias, cast
+from typing import Literal, Protocol, TypeAlias, cast
 from uuid import uuid4
 
 _MISSING = object()
+_FLOW_TASK_INPUT_PAUSES_METADATA_KEY = "task_input_pauses"
 
 FlowPlanNodeRunner: TypeAlias = Callable[
     [FlowNodePlan, Mapping[str, object]],
@@ -136,6 +138,57 @@ class _JsonSchemaAdapter:
     validation_error: type[Exception]
 
 
+class FlowPauseReason(StrEnum):
+    """Discriminate task input from review and approval pauses."""
+
+    TASK_INPUT = "task_input"
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowTaskInputPause:
+    """Carry one exact nested task-input suspension through a flow."""
+
+    request_id: str
+    continuation_id: str
+    checkpoint_id: str
+    outcome: object = field(repr=False, compare=False)
+    reason: Literal[FlowPauseReason.TASK_INPUT] = field(
+        init=False,
+        default=FlowPauseReason.TASK_INPUT,
+    )
+
+    def __post_init__(self) -> None:
+        assert_non_empty_string(self.request_id, "request_id")
+        assert_non_empty_string(self.continuation_id, "continuation_id")
+        assert_non_empty_string(self.checkpoint_id, "checkpoint_id")
+
+    def as_metadata(self) -> Mapping[str, object]:
+        """Return portable opaque references without runtime payloads."""
+        return MappingProxyType(
+            {
+                "reason": self.reason.value,
+                "request_id": self.request_id,
+                "continuation_id": self.continuation_id,
+                "checkpoint_id": self.checkpoint_id,
+            }
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class FlowTaskInputResume:
+    """Carry one broker-validated exact-node continuation result."""
+
+    request_id: str
+    continuation_id: str
+    checkpoint_id: str
+    output: object
+
+    def __post_init__(self) -> None:
+        assert_non_empty_string(self.request_id, "request_id")
+        assert_non_empty_string(self.continuation_id, "continuation_id")
+        assert_non_empty_string(self.checkpoint_id, "checkpoint_id")
+
+
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _NodeRunOutcome:
     node: FlowNodePlan
@@ -148,6 +201,7 @@ class _NodeRunOutcome:
     exhausted_route: str | None = None
     exhausted_route_kind: FlowEdgeKind | None = None
     pause_token: str | None = None
+    task_input_pause: FlowTaskInputPause | None = None
     output: object = None
 
 
@@ -261,6 +315,23 @@ class FlowNodeRegistryRunner:
                 options.stream_session if options is not None else None
             ),
         )
+        if result.task_input_pauses:
+            if len(result.task_input_pauses) != 1:
+                raise FlowNodeExecutionError(
+                    code="flow.execution.subflow_input_ambiguous",
+                    message="Subflow input suspension is ambiguous.",
+                    hint="Resume one nested input request at a time.",
+                    failure_category="validation",
+                )
+            pause = next(iter(result.task_input_pauses.values()))
+            if pause.outcome is None:
+                raise FlowNodeExecutionError(
+                    code="flow.execution.subflow_input_unavailable",
+                    message="Subflow input suspension is unavailable.",
+                    hint="Resume the persisted containing flow execution.",
+                    failure_category="validation",
+                )
+            return pause
         if not result.ok:
             raise FlowNodeExecutionError(
                 code="flow.execution.subflow_failed",
@@ -375,6 +446,9 @@ class FlowPlanExecutionResult:
         default_factory=_empty_node_outputs
     )
     pause_tokens: Mapping[str, str] = field(default_factory=dict)
+    task_input_pauses: Mapping[str, FlowTaskInputPause] = field(
+        default_factory=dict
+    )
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "outputs", _freeze_mapping(self.outputs))
@@ -402,6 +476,16 @@ class FlowPlanExecutionResult:
             "pause_tokens",
             MappingProxyType(frozen_tokens),
         )
+        frozen_task_input: dict[str, FlowTaskInputPause] = {}
+        for node_name, pause in self.task_input_pauses.items():
+            assert isinstance(node_name, str) and node_name.strip()
+            assert isinstance(pause, FlowTaskInputPause)
+            frozen_task_input[node_name] = pause
+        object.__setattr__(
+            self,
+            "task_input_pauses",
+            MappingProxyType(frozen_task_input),
+        )
 
     @property
     def ok(self) -> bool:
@@ -426,6 +510,7 @@ async def execute_flow_plan(
     resume_trace: FlowExecutionTrace | None = None,
     resume_node_outputs: Mapping[str, Mapping[str, object]] | None = None,
     resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
+    resume_task_inputs: Mapping[str, FlowTaskInputResume] | None = None,
     runtime_envelope_runner: FlowRuntimeEnvelopeRunner | None = None,
 ) -> FlowPlanExecutionResult:
     assert isinstance(plan, FlowExecutionPlan)
@@ -450,6 +535,11 @@ async def execute_flow_plan(
         assert isinstance(resume_node_outputs, Mapping)
     if resume_decisions is not None:
         assert isinstance(resume_decisions, Mapping)
+    if resume_task_inputs is not None:
+        assert isinstance(resume_task_inputs, Mapping)
+        for node_name, resume in resume_task_inputs.items():
+            assert_non_empty_string(node_name, "resume task-input node")
+            assert isinstance(resume, FlowTaskInputResume)
     assert isinstance(concurrency_limit, int) and not isinstance(
         concurrency_limit,
         bool,
@@ -510,9 +600,11 @@ async def execute_flow_plan(
         node: _freeze_mapping(payload)
         for node, payload in (resume_decisions or {}).items()
     }
+    task_input_resume_payloads = dict(resume_task_inputs or {})
     pause_tokens: dict[str, str] = {}
     diagnostics: list[FlowDiagnostic] = []
     trace = resume_trace or FlowExecutionTrace.from_plan(plan)
+    task_input_pauses = _task_input_pauses_from_trace(trace)
     node_map = plan.node_map
     event_drafts: list[_FlowEventDraft] = []
     (
@@ -527,9 +619,11 @@ async def execute_flow_plan(
         input_values,
         node_outputs,
         resume_payloads,
+        task_input_resume_payloads,
         trace,
         event_drafts=event_drafts,
     )
+    task_input_pauses = _task_input_pauses_from_trace(trace)
     diagnostics.extend(resume_diagnostics)
     paused = False
     flow_started_at = monotonic()
@@ -680,6 +774,15 @@ async def execute_flow_plan(
                 if outcome.pause_token is not None:
                     pause_tokens[outcome.node.name] = outcome.pause_token
                     paused = True
+                if outcome.task_input_pause is not None:
+                    task_input_pauses[outcome.node.name] = (
+                        outcome.task_input_pause
+                    )
+                    trace = _with_task_input_pauses_metadata(
+                        trace,
+                        task_input_pauses,
+                    )
+                    paused = True
                 processed.add(outcome.node.name)
             for outcome in batch_outcomes:
                 if outcome.state == FlowNodeState.PAUSED:
@@ -742,7 +845,7 @@ async def execute_flow_plan(
         )
         raise
 
-    if paused:
+    if paused or task_input_pauses:
         finished_at = monotonic()
         await _emit_flow_event(
             event_listener,
@@ -759,6 +862,7 @@ async def execute_flow_plan(
             diagnostics=tuple(diagnostics),
             node_outputs=node_outputs,
             pause_tokens=pause_tokens,
+            task_input_pauses=task_input_pauses,
         )
     skipped_nodes = tuple(
         node.node
@@ -994,6 +1098,7 @@ def _initial_runtime_queue(
     inputs: Mapping[str, object],
     node_outputs: dict[str, Mapping[str, object]],
     resume_decisions: Mapping[str, Mapping[str, object]],
+    resume_task_inputs: Mapping[str, FlowTaskInputResume],
     trace: FlowExecutionTrace,
     *,
     event_drafts: list[_FlowEventDraft] | None = None,
@@ -1010,6 +1115,57 @@ def _initial_runtime_queue(
     resume_routes: dict[str, FlowEdgeKind] = {}
     resumed_container_nodes: set[str] = set()
     container_approvals: dict[str, ContainerApprovalRecord] = {}
+    task_input_pauses = _task_input_pauses_from_trace(trace)
+    for node_name, resume in resume_task_inputs.items():
+        node = plan.node_map.get(node_name)
+        expected = task_input_pauses.get(node_name)
+        if (
+            node is None
+            or node_states.get(node_name) is not FlowNodeState.PAUSED
+            or expected is None
+            or not _task_input_resume_matches(expected, resume)
+        ):
+            diagnostic = _execution_diagnostic(
+                code="flow.execution.invalid_task_input_resume",
+                path=f"nodes.{node_name}.task_input",
+                message="Flow task-input continuation is invalid.",
+                hint="Resume only the broker-validated paused flow node.",
+            )
+            diagnostics.append(diagnostic)
+            if node is not None:
+                trace = trace.with_node_state(
+                    node_name,
+                    FlowNodeState.FAILED,
+                    diagnostics=(diagnostic,),
+                )
+                _append_node_event_draft(
+                    event_drafts,
+                    EventType.FLOW_NODE_FAILED,
+                    node=node_name,
+                    status="failed",
+                    diagnostics=(diagnostic,),
+                )
+            continue
+        node_outputs[node_name] = _node_output_mapping(node, resume.output)
+        attempts = max(1, _node_trace_attempts(trace, node_name))
+        trace = trace.with_node_state(
+            node_name,
+            FlowNodeState.SUCCEEDED,
+            attempts=attempts,
+        )
+        task_input_pauses.pop(node_name)
+        trace = _with_task_input_pauses_metadata(
+            trace,
+            task_input_pauses,
+        )
+        _append_node_event_draft(
+            event_drafts,
+            EventType.FLOW_NODE_RESUMED,
+            node=node_name,
+            status="resumed",
+            attempts=attempts,
+        )
+        resume_routes[node_name] = FlowEdgeKind.SUCCESS
     for node_name, payload in resume_decisions.items():
         node = plan.node_map.get(node_name)
         if node is None:
@@ -1022,20 +1178,24 @@ def _initial_runtime_queue(
                 )
             )
             continue
-        diagnostic = _validate_resume_decision(node, payload, node_states)
-        if diagnostic is not None:
-            diagnostics.append(diagnostic)
+        resume_diagnostic = _validate_resume_decision(
+            node,
+            payload,
+            node_states,
+        )
+        if resume_diagnostic is not None:
+            diagnostics.append(resume_diagnostic)
             trace = trace.with_node_state(
                 node.name,
                 FlowNodeState.FAILED,
-                diagnostics=(diagnostic,),
+                diagnostics=(resume_diagnostic,),
             )
             _append_node_event_draft(
                 event_drafts,
                 EventType.FLOW_NODE_FAILED,
                 node=node.name,
                 status="failed",
-                diagnostics=(diagnostic,),
+                diagnostics=(resume_diagnostic,),
             )
             continue
         if _is_container_review_node(node):
@@ -1147,7 +1307,7 @@ def _initial_runtime_queue(
                 tuple(diagnostics),
                 MappingProxyType(container_approvals),
             )
-        if resume_decisions:
+        if resume_decisions or resume_task_inputs:
             return (
                 deque(),
                 set(),
@@ -1201,6 +1361,89 @@ def _initial_runtime_queue(
         trace,
         tuple(diagnostics),
         MappingProxyType(container_approvals),
+    )
+
+
+def _task_input_pauses_from_trace(
+    trace: FlowExecutionTrace,
+) -> dict[str, FlowTaskInputPause]:
+    value = trace.metadata.get(_FLOW_TASK_INPUT_PAUSES_METADATA_KEY)
+    if not isinstance(value, Mapping):
+        return {}
+    pauses: dict[str, FlowTaskInputPause] = {}
+    for node_name, item in value.items():
+        if (
+            not isinstance(node_name, str)
+            or not node_name.strip()
+            or not isinstance(item, Mapping)
+            or item.get("reason") != FlowPauseReason.TASK_INPUT.value
+        ):
+            continue
+        request_id = item.get("request_id")
+        continuation_id = item.get("continuation_id")
+        checkpoint_id = item.get("checkpoint_id")
+        if not all(
+            isinstance(reference, str) and reference.strip()
+            for reference in (
+                request_id,
+                continuation_id,
+                checkpoint_id,
+            )
+        ):
+            continue
+        pauses[node_name] = FlowTaskInputPause(
+            request_id=cast(str, request_id),
+            continuation_id=cast(str, continuation_id),
+            checkpoint_id=cast(str, checkpoint_id),
+            outcome=None,
+        )
+    return pauses
+
+
+def flow_task_input_pauses(
+    trace: FlowExecutionTrace,
+) -> Mapping[str, FlowTaskInputPause]:
+    """Return persisted task-input pauses keyed by exact flow node."""
+    assert isinstance(trace, FlowExecutionTrace)
+    return MappingProxyType(_task_input_pauses_from_trace(trace))
+
+
+def _with_task_input_pauses_metadata(
+    trace: FlowExecutionTrace,
+    pauses: Mapping[str, FlowTaskInputPause],
+) -> FlowExecutionTrace:
+    metadata = dict(trace.metadata)
+    if pauses:
+        metadata[_FLOW_TASK_INPUT_PAUSES_METADATA_KEY] = {
+            node_name: pause.as_metadata()
+            for node_name, pause in pauses.items()
+        }
+    else:
+        metadata.pop(_FLOW_TASK_INPUT_PAUSES_METADATA_KEY, None)
+    return replace(trace, metadata=metadata)
+
+
+def flow_trace_with_task_input_pauses(
+    trace: FlowExecutionTrace,
+    pauses: Mapping[str, FlowTaskInputPause],
+) -> FlowExecutionTrace:
+    """Return a trace with portable task-input pause references."""
+    assert isinstance(trace, FlowExecutionTrace)
+    assert isinstance(pauses, Mapping)
+    for node_name, pause in pauses.items():
+        assert_non_empty_string(node_name, "task-input pause node")
+        assert isinstance(pause, FlowTaskInputPause)
+    return _with_task_input_pauses_metadata(trace, pauses)
+
+
+def _task_input_resume_matches(
+    pause: FlowTaskInputPause,
+    resume: FlowTaskInputResume,
+) -> bool:
+    return (
+        pause.request_id == resume.request_id
+        and pause.continuation_id == resume.continuation_id
+        and pause.checkpoint_id == resume.checkpoint_id
     )
 
 
@@ -1739,6 +1982,16 @@ async def _run_plan_node_attempts(
             event_listener=event_listener,
             stream_session=stream_session,
         )
+        if outcome.state is FlowNodeState.PAUSED:
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.PAUSED,
+                route_kind=FlowEdgeKind.PAUSE,
+                attempts=attempts,
+                diagnostics=(),
+                duration_ms=_elapsed_ms(started_at),
+                task_input_pause=outcome.task_input_pause,
+            )
         if outcome.route_kind == FlowEdgeKind.SUCCESS:
             return _NodeRunOutcome(
                 node=node,
@@ -1818,6 +2071,16 @@ async def _run_loop_plan_node(
             stream_session=stream_session,
         )
         attempts += outcome.attempts
+        if outcome.state is FlowNodeState.PAUSED:
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.PAUSED,
+                route_kind=FlowEdgeKind.PAUSE,
+                attempts=attempts,
+                diagnostics=(),
+                duration_ms=_elapsed_ms(started_at),
+                task_input_pause=outcome.task_input_pause,
+            )
         if outcome.route_kind != FlowEdgeKind.SUCCESS:
             return _NodeRunOutcome(
                 node=node,
@@ -2449,6 +2712,15 @@ async def _run_plan_node_once(
                 attempts=1,
                 diagnostics=(diagnostic,),
                 failure_category="error",
+            )
+        if isinstance(output, FlowTaskInputPause):
+            return _NodeRunOutcome(
+                node=node,
+                state=FlowNodeState.PAUSED,
+                route_kind=FlowEdgeKind.PAUSE,
+                attempts=1,
+                diagnostics=(),
+                task_input_pause=output,
             )
         return _NodeRunOutcome(
             node=node,

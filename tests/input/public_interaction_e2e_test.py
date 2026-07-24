@@ -1,6 +1,15 @@
 """Exercise public durable interaction behavior."""
 
-from asyncio import gather, run
+from asyncio import (
+    CancelledError,
+    Event,
+    all_tasks,
+    create_task,
+    current_task,
+    gather,
+    run,
+    sleep,
+)
 from datetime import timedelta
 from json import dumps
 from pathlib import Path
@@ -11,6 +20,7 @@ sys_path.append(str(Path(__file__).parents[1] / "interaction" / "stores"))
 sys_path.append(str(Path(__file__).parent))
 sys_path.append(str(Path(__file__).parents[1]))
 
+import attached_runtime_matrix_test as matrix_support  # noqa: E402
 import failure_matrix_task_e2e_test as task_support  # noqa: E402
 import interaction_pgsql_store_test as durable_support  # noqa: E402
 from input_consumers.public_sdk_consumer import (  # noqa: E402
@@ -22,6 +32,7 @@ from avalan import (  # noqa: E402
     AgentRunCompleted,
     AgentRunInputRequired,
     AnswerProvenance,
+    AttachedInputContext,
     ConfirmationAnswer,
     DurableInputPersistenceAccepted,
     DurableInputPersistenceRequest,
@@ -37,24 +48,41 @@ from avalan import (  # noqa: E402
     Orchestrator,
     QuestionId,
     ResolutionIdempotencyKey,
+    create_attached_input_runtime,
     create_durable_input_integration,
     run_agent,
 )
 from avalan.agent.execution import (  # noqa: E402
+    AgentExecutionStatus,
+    AttachedInteractionRuntime,
     ExecutionInputRequiredError,
+    create_agent_execution,
+    create_child_interaction_runtime,
 )
 from avalan.interaction import (  # noqa: E402
+    AgentId,
     AnsweredResolution,
+    AsyncInteractionBroker,
     ContinuationClaimOwnerId,
     ContinuationDispatchId,
+    ExecutionDefinitionRef,
+    ExecutionOrigin,
     InputErrorCode,
     InputRequest,
     InputRequiredResult,
+    InteractionActor,
     InteractionCorrelation,
+    InteractionExecutionScope,
+    InteractionPresentationState,
+    InteractionRecord,
+    ListInteractionsCommand,
     ProviderIdempotencyKey,
+    QuestionType,
     RequestState,
     ResolveInteractionApplied,
     ResolveInteractionRejected,
+    ScopeCancellationApplied,
+    TerminalizeInteractionScopeCommand,
 )
 from avalan.interaction.codec import encode_input_request  # noqa: E402
 from avalan.interaction.continuation import (  # noqa: E402
@@ -68,6 +96,11 @@ from avalan.interaction.stores.pgsql import (  # noqa: E402
     ContinuationStoreConflictError,
     PgsqlDurableTaskCoordinator,
     PgsqlInteractionStoreError,
+)
+from avalan.model.response.text import TextGenerationResponse  # noqa: E402
+from avalan.model.stream import (  # noqa: E402
+    CanonicalStreamItem,
+    StreamItemKind,
 )
 from avalan.task import TaskInteractionEventType  # noqa: E402
 from avalan.task.stores import PgsqlTaskStore  # noqa: E402
@@ -398,6 +431,334 @@ class _AdvisoryOrchestrator:
         return _PublicResponse("continued-after-advisory-timeout")
 
 
+class _MultiAgentHandler:
+    """Drive one invalid sibling answer and one valid child answer."""
+
+    def __init__(self) -> None:
+        self.contexts: list[AttachedInputContext] = []
+        self.presentation_order: list[QuestionId] = []
+        self.reviewer_presented = Event()
+        self.submit_wrong_sibling = Event()
+        self.wrong_sibling_rejected = Event()
+        self.resolve_reviewer = Event()
+        self.planner_presented = Event()
+        self.planner_cancelled = Event()
+        self.active_presentations = 0
+        self.maximum_active_presentations = 0
+
+    async def __call__(
+        self,
+        context: AttachedInputContext,
+    ) -> InputAnswerSubmission:
+        """Return one externally authored answer for the presented child."""
+        question_id = context.request.questions[0].question_id
+        self.contexts.append(context)
+        self.presentation_order.append(question_id)
+        self.active_presentations += 1
+        self.maximum_active_presentations = max(
+            self.maximum_active_presentations,
+            self.active_presentations,
+        )
+        try:
+            if question_id == QuestionId("confirmation"):
+                self.reviewer_presented.set()
+                if context.validation_error is None:
+                    await self.submit_wrong_sibling.wait()
+                    answer_id = QuestionId("text")
+                else:
+                    assert (
+                        context.validation_error.code
+                        is InputErrorCode.UNKNOWN_QUESTION
+                    )
+                    self.wrong_sibling_rejected.set()
+                    await self.resolve_reviewer.wait()
+                    answer_id = question_id
+                return InputAnswerSubmission(
+                    answers=(
+                        ConfirmationAnswer(
+                            question_id=answer_id,
+                            provenance=AnswerProvenance.HUMAN,
+                            value=True,
+                        ),
+                    ),
+                    provenance=AnswerProvenance.HUMAN,
+                )
+
+            assert question_id == QuestionId("text")
+            assert context.validation_error is None
+            self.planner_presented.set()
+            try:
+                await Event().wait()
+            except CancelledError:
+                self.planner_cancelled.set()
+                raise
+            raise AssertionError("planner input must be cancelled")
+        finally:
+            self.active_presentations -= 1
+
+
+class _MultiAgentOriginOrchestrator:
+    """Run isolated child requests through the public attached runtime."""
+
+    def __init__(self, handler: _MultiAgentHandler) -> None:
+        self.handler = handler
+        self.parent_origin: ExecutionOrigin | None = None
+        self.child_origins: tuple[ExecutionOrigin, ...] = ()
+        self.context_labels: tuple[str | None, ...] = ()
+        self.provider_calls: tuple[int, ...] = ()
+        self.continuation_calls: tuple[int, ...] = ()
+        self.tasks_completed = False
+
+    @staticmethod
+    def _harness(
+        runtime: AttachedInteractionRuntime,
+        responses: list[TextGenerationResponse],
+    ) -> Any:
+        broker = runtime.broker
+        assert isinstance(broker, AsyncInteractionBroker)
+        harness = matrix_support._Harness(
+            broker=broker,
+            clock=matrix_support._Clock(),
+            handler=runtime.handler,
+            responses=responses,
+            tool=matrix_support._empty_tool_manager(),
+            tool_confirm=None,
+        )
+        harness.runtime = runtime
+        return harness
+
+    @staticmethod
+    async def _records(
+        broker: AsyncInteractionBroker,
+        origin: ExecutionOrigin,
+        count: int,
+    ) -> tuple[InteractionRecord, ...]:
+        for _ in range(100):
+            projections = await broker.list(
+                ListInteractionsCommand(
+                    actor=InteractionActor(principal=origin.principal),
+                    scope=InteractionExecutionScope(run_id=origin.run_id),
+                )
+            )
+            records = tuple(
+                item
+                for item in projections
+                if isinstance(item, InteractionRecord)
+            )
+            if len(records) == count:
+                return records
+            await sleep(0)
+        raise AssertionError("child interactions were not admitted")
+
+    async def __call__(
+        self,
+        input: object,
+        **kwargs: object,
+    ) -> _PublicResponse:
+        del input
+        runtime = kwargs["interaction_runtime"]
+        assert isinstance(runtime, AttachedInteractionRuntime)
+        broker = runtime.broker
+        assert isinstance(broker, AsyncInteractionBroker)
+        definition = ExecutionDefinitionRef(
+            agent_definition_locator="agent://public-multi",
+            agent_definition_revision="agent-r1",
+            operation_id="public-multi",
+            operation_index=0,
+            model_config_reference="model-r1",
+            tool_revision="tools-r1",
+            capability_revision="capabilities-r1",
+        )
+        parent = await create_agent_execution(
+            definition=definition,
+            agent_id=AgentId("parent"),
+            principal=runtime.actor.principal,
+            initial_messages=(),
+            interaction_runtime=runtime,
+        )
+        planner_runtime, reviewer_runtime = await gather(
+            create_child_interaction_runtime(
+                runtime,
+                parent_origin=parent.origin,
+                context_label="Planner child",
+            ),
+            create_child_interaction_runtime(
+                runtime,
+                parent_origin=parent.origin,
+                context_label="Reviewer child",
+            ),
+        )
+        assert isinstance(planner_runtime, AttachedInteractionRuntime)
+        assert isinstance(reviewer_runtime, AttachedInteractionRuntime)
+        planner = self._harness(
+            planner_runtime,
+            [
+                matrix_support._task_input_response(
+                    "planner",
+                    matrix_support._input_arguments(
+                        matrix_support._question(QuestionType.TEXT)
+                    ),
+                ),
+                matrix_support._provider_response(
+                    "planner-final",
+                    answer="planner-complete",
+                ),
+            ],
+        )
+        reviewer = self._harness(
+            reviewer_runtime,
+            [
+                matrix_support._task_input_response(
+                    "reviewer",
+                    matrix_support._input_arguments(
+                        matrix_support._question(QuestionType.CONFIRMATION)
+                    ),
+                ),
+                matrix_support._provider_response(
+                    "reviewer-final",
+                    answer="reviewer-complete",
+                ),
+            ],
+        )
+        unrelated = self._harness(
+            runtime,
+            [
+                matrix_support._provider_response(
+                    "unrelated",
+                    answer="unrelated-complete",
+                )
+            ],
+        )
+        reviewer_response = await reviewer.response()
+        planner_response = await planner.response()
+        unrelated_response = await unrelated.response()
+        reviewer_execution = reviewer_response._execution
+        planner_execution = planner_response._execution
+        unrelated_execution = unrelated_response._execution
+        assert reviewer_execution is not None
+        assert planner_execution is not None
+        assert unrelated_execution is not None
+        self.parent_origin = parent.origin
+        self.child_origins = (
+            planner_execution.origin,
+            reviewer_execution.origin,
+        )
+        self.context_labels = (
+            planner_runtime.context_label,
+            reviewer_runtime.context_label,
+        )
+
+        reviewer_task = create_task(
+            matrix_support._consume(reviewer_response),
+            name="public-reviewer-child",
+        )
+        await self.handler.reviewer_presented.wait()
+        planner_task = create_task(
+            matrix_support._consume(planner_response),
+            name="public-planner-child",
+        )
+        records = await self._records(broker, parent.origin, 2)
+        by_label = {record.request.context_label: record for record in records}
+        planner_record = by_label["Planner child"]
+        reviewer_record = by_label["Reviewer child"]
+        assert (
+            planner_record.request.request_id
+            != reviewer_record.request.request_id
+        )
+        assert (
+            planner_record.request.continuation_id
+            != reviewer_record.request.continuation_id
+        )
+        assert planner_record.request.state is RequestState.PENDING
+        assert reviewer_record.request.state is RequestState.PENDING
+        assert (
+            planner_record.presentation is InteractionPresentationState.QUEUED
+        )
+        assert (
+            reviewer_record.presentation
+            is InteractionPresentationState.PRESENTED
+        )
+
+        self.handler.submit_wrong_sibling.set()
+        await self.handler.wrong_sibling_rejected.wait()
+        records = await self._records(broker, parent.origin, 2)
+        assert all(
+            record.request.state is RequestState.PENDING for record in records
+        )
+        assert reviewer.engine_agent.await_count == 1
+        assert planner.engine_agent.await_count == 1
+
+        self.handler.resolve_reviewer.set()
+        reviewer_items = await reviewer_task
+        await self.handler.planner_presented.wait()
+        records = await self._records(broker, parent.origin, 2)
+        by_label = {record.request.context_label: record for record in records}
+        assert (
+            by_label["Reviewer child"].request.state is RequestState.ANSWERED
+        )
+        assert by_label["Planner child"].request.state is RequestState.PENDING
+        assert reviewer.engine_agent.await_count == 2
+        assert planner.engine_agent.await_count == 1
+        reviewer_kinds = tuple(item.kind for item in reviewer_items)
+        assert StreamItemKind.MODEL_CONTINUATION_COMPLETED in reviewer_kinds
+        assert StreamItemKind.STREAM_COMPLETED in reviewer_kinds
+
+        assert await parent.cancel()
+        parent_broker = parent.interaction_broker
+        assert parent_broker is not None
+        command = TerminalizeInteractionScopeCommand(
+            actor=runtime.actor,
+            scope=InteractionExecutionScope(
+                run_id=parent.origin.run_id,
+                branch_id=parent.origin.branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+        )
+        cancellation = await parent_broker.cancel_scope(command)
+        assert isinstance(cancellation.store_result, ScopeCancellationApplied)
+        assert cancellation.store_result.command == command
+        await self.handler.planner_cancelled.wait()
+        planner_items: list[CanonicalStreamItem] = await planner_task
+        assert StreamItemKind.INTERACTION_CANCELLED in tuple(
+            item.kind for item in planner_items
+        )
+        unrelated_items = await matrix_support._consume(unrelated_response)
+        assert (
+            "".join(
+                item.text_delta or ""
+                for item in unrelated_items
+                if item.kind is StreamItemKind.ANSWER_DELTA
+            )
+            == "unrelated-complete"
+        )
+        assert unrelated_execution.origin.run_id != parent.origin.run_id
+        assert unrelated_execution.status is AgentExecutionStatus.COMPLETED
+
+        records = await self._records(broker, parent.origin, 2)
+        by_label = {record.request.context_label: record for record in records}
+        assert (
+            by_label["Planner child"].request.state is RequestState.CANCELLED
+        )
+        assert (
+            by_label["Reviewer child"].request.state is RequestState.ANSWERED
+        )
+        assert reviewer_execution.status is AgentExecutionStatus.COMPLETED
+        assert planner_execution.status is AgentExecutionStatus.CANCELLED
+        self.provider_calls = (
+            planner.engine_agent.await_count,
+            reviewer.engine_agent.await_count,
+            unrelated.engine_agent.await_count,
+        )
+        self.continuation_calls = (
+            len(planner.contexts) - 1,
+            len(reviewer.contexts) - 1,
+            len(unrelated.contexts) - 1,
+        )
+        self.tasks_completed = planner_task.done() and reviewer_task.done()
+        return _PublicResponse("children-isolated")
+
+
 def test_fully_headless_run() -> None:
     """Resolve, requeue, and complete one persisted continuation."""
 
@@ -524,5 +885,52 @@ def test_required_versus_advisory() -> None:
         assert required.continuation_id is None
         assert isinstance(advisory, AgentRunCompleted)
         assert advisory.to_str() == "continued-after-advisory-timeout"
+
+    run(exercise())
+
+
+def test_multi_agent_origin() -> None:
+    """Isolate real sibling requests, continuations, and parent cleanup."""
+
+    async def exercise() -> None:
+        handler = _MultiAgentHandler()
+        runtime = await create_attached_input_runtime(handler)
+        orchestrator = _MultiAgentOriginOrchestrator(handler)
+        try:
+            result = await run_agent(
+                cast(Any, orchestrator),
+                "delegate",
+                interaction_runtime=runtime,
+            )
+            assert isinstance(result, AgentRunCompleted)
+            assert result.to_str() == "children-isolated"
+            parent = orchestrator.parent_origin
+            assert parent is not None
+            planner, reviewer = orchestrator.child_origins
+            assert planner.run_id == reviewer.run_id == parent.run_id
+            assert planner.task_id == reviewer.task_id == parent.task_id
+            assert planner.parent_branch_id == parent.branch_id
+            assert reviewer.parent_branch_id == parent.branch_id
+            assert planner.branch_id != reviewer.branch_id
+            assert orchestrator.context_labels == (
+                "Planner child",
+                "Reviewer child",
+            )
+            assert handler.presentation_order == (
+                [
+                    QuestionId("confirmation"),
+                    QuestionId("confirmation"),
+                    QuestionId("text"),
+                ]
+            )
+            assert handler.maximum_active_presentations == 1
+            assert orchestrator.provider_calls == (1, 2, 1)
+            assert orchestrator.continuation_calls == (0, 1, 0)
+            assert orchestrator.tasks_completed
+        finally:
+            await runtime.aclose()
+        await sleep(0)
+        active = current_task()
+        assert all(task is active or task.done() for task in all_tasks())
 
     run(exercise())

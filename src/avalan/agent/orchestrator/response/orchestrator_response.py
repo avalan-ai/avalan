@@ -2741,6 +2741,7 @@ class OrchestratorResponse(
                         mode=call.mode,
                         reason=call.reason,
                         questions=call.questions,
+                        context_label=runtime.context_label,
                     )
                     durable = await runtime.stager(
                         request_spec,
@@ -2811,6 +2812,7 @@ class OrchestratorResponse(
                 mode=call.mode,
                 reason=call.reason,
                 questions=call.questions,
+                context_label=runtime.context_label,
                 handler=attached_handler,
             )
             broker = execution.interaction_broker
@@ -3383,6 +3385,7 @@ class OrchestratorResponse(
                 scope=InteractionExecutionScope(
                     run_id=origin.run_id,
                     branch_id=origin.branch_id,
+                    include_descendants=runtime._lineage is not None,
                 ),
                 provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
             )

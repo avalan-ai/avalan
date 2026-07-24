@@ -147,6 +147,7 @@ def _context(
         | MultipleSelectionQuestion
     ),
     reason: str = "The agent needs more information.",
+    context_label: str | None = None,
     validation_error: InputValidationFeedback | None = None,
 ) -> AttachedInputContext:
     return AttachedInputContext(
@@ -157,6 +158,7 @@ def _context(
             created_at=_CREATED_AT,
             state=RequestState.PENDING,
             state_revision=StateRevision(1),
+            context_label=context_label,
         ),
         validation_error=validation_error,
     )
@@ -232,7 +234,10 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
     ) -> None:
         invalid = _FakeChannel("maybe", "NO")
         result = await CliInteractionRenderer(invalid).render(
-            _context(_confirmation())
+            _context(
+                _confirmation(),
+                context_label="Planner / confirmation",
+            )
         )
 
         answer = cast(
@@ -240,6 +245,7 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
             _answer(result, ConfirmationAnswer),
         )
         self.assertFalse(answer.value)
+        self.assertIn("Context: Planner / confirmation", invalid.output)
         self.assertIn("Invalid input: Enter yes or no.", invalid.output)
         self.assertEqual(invalid.read_count, 2)
 

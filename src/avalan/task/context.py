@@ -20,7 +20,10 @@ from .store import (
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
+
+if TYPE_CHECKING:
+    from ..agent.execution import InteractionRuntime
 
 _REDACTED_METADATA_SUMMARY = MappingProxyType({"privacy": "<redacted>"})
 _SAFE_LOGICAL_PATH_PREFIXES = ("artifact:", "inline:", "provider:")
@@ -41,6 +44,21 @@ class TaskEventListenerRegistration(Protocol):
 
 class TaskDurableResumeHandle(Protocol):
     """Resume one exact durable task continuation."""
+
+    @property
+    def request_id(self) -> str:
+        """Return the broker-validated request identifier."""
+        ...
+
+    @property
+    def continuation_id(self) -> str:
+        """Return the broker-validated continuation identifier."""
+        ...
+
+    @property
+    def checkpoint_id(self) -> str:
+        """Return the broker-validated checkpoint identifier."""
+        ...
 
     def register_event_listener(
         self,
@@ -210,6 +228,7 @@ class TaskTargetContext:
     artifact_store: ArtifactStore | None = None
     task_store: TaskStore | None = None
     durable_resume: TaskDurableResumeHandle | None = None
+    interaction_runtime: "InteractionRuntime | None" = None
     file_converters: Mapping[str, FileConverter] = field(
         default_factory=lambda: MappingProxyType({})
     )

@@ -186,6 +186,10 @@ class CliInteractionRenderer:
         request = context.request
         assert 1 <= len(request.questions) <= 3
         await self._write_line("Input required")
+        if request.context_label is not None:
+            await self._write_line(
+                f"Context: {_literal_text(request.context_label)}"
+            )
         await self._write_line(f"Reason: {_literal_text(request.reason)}")
         await self._write_line(f"Controls: {_CONTROL_HELP}")
         if context.validation_error is not None:

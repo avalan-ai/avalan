@@ -52,6 +52,7 @@ from avalan.interaction import (
     InteractionActor,
     InteractionAuthorizationDecision,
     InteractionAuthorizationTarget,
+    InteractionBranchRecord,
     InteractionBranchRegistration,
     InteractionBranchRegistrationApplied,
     InteractionBranchRegistrationRejected,
@@ -1350,6 +1351,49 @@ def test_trusted_default_requires_sealed_authorized_host_request() -> None:
     run(exercise())
 
 
+def test_branch_registration_rejects_cycle_detector_result(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Translate an authoritative cycle decision into an exact rejection."""
+
+    async def exercise() -> None:
+        factory, _, _ = _factory()
+        store = await factory.open()
+        seed = _request("cycle-detector")
+        command = RegisterInteractionBranchCommand(
+            actor=_actor(seed),
+            registration=InteractionBranchRegistration(
+                run_id=seed.origin.run_id,
+                branch_id=BranchId("cycle-child"),
+                parent_branch_id=BranchId("cycle-parent"),
+                principal=seed.origin.principal,
+            ),
+        )
+
+        def detects_cycle(
+            branch_records: tuple[InteractionBranchRecord, ...],
+            candidate: RegisterInteractionBranchCommand,
+        ) -> bool:
+            assert branch_records == ()
+            assert candidate is command
+            return True
+
+        monkeypatch.setattr(
+            "avalan.interaction.stores.memory."
+            "_branch_registration_creates_cycle",
+            detects_cycle,
+        )
+        result = await store.register_branch(command)
+
+        assert isinstance(result, InteractionBranchRegistrationRejected)
+        assert result.error.code is InputErrorCode.CORRELATION_MISMATCH
+        assert result.error.path == "branch.registration.parent_branch_id"
+        assert not result.store_mutation_applied
+        await store.aclose()
+
+    run(exercise())
+
+
 def test_branch_root_lookup_fails_closed_for_graph_corruption_and_toctou() -> (
     None
 ):
@@ -1377,6 +1421,8 @@ def test_branch_root_lookup_fails_closed_for_graph_corruption_and_toctou() -> (
                 ),
             )
 
+        parent = await first.register_branch(branch_command("B", "A"))
+        assert isinstance(parent, InteractionBranchRegistrationApplied)
         child = await first.register_branch(branch_command("C", "B"))
         assert isinstance(child, InteractionBranchRegistrationApplied)
         query = InteractionBranchRootLookup(
@@ -1384,11 +1430,12 @@ def test_branch_root_lookup_fails_closed_for_graph_corruption_and_toctou() -> (
             run_id=seed.origin.run_id,
             branch_id=BranchId("C"),
         )
-        assert await first.lookup_branch_root(query) == InteractionBranchRoot(
+        expected = InteractionBranchRoot(
             run_id=seed.origin.run_id,
             branch_id=BranchId("C"),
-            root_branch_id=BranchId("B"),
+            root_branch_id=BranchId("A"),
         )
+        assert await first.lookup_branch_root(query) == expected
 
         authorizer.block(
             frozenset({InteractionOperation.INSPECT_BRANCH}),
@@ -1396,15 +1443,10 @@ def test_branch_root_lookup_fails_closed_for_graph_corruption_and_toctou() -> (
         )
         raced_lookup = create_task(first.lookup_branch_root(query))
         await authorizer.entered.wait()
-        parent = await second.register_branch(branch_command("B", "A"))
-        assert isinstance(parent, InteractionBranchRegistrationApplied)
+        sibling = await second.register_branch(branch_command("D", "B"))
+        assert isinstance(sibling, InteractionBranchRegistrationApplied)
         authorizer.release.set()
         assert await raced_lookup is None
-        expected = InteractionBranchRoot(
-            run_id=seed.origin.run_id,
-            branch_id=BranchId("C"),
-            root_branch_id=BranchId("A"),
-        )
         assert await first.lookup_branch_root(query) == expected
         assert await second.lookup_branch_root(query) == expected
 

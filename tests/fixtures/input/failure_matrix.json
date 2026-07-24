@@ -620,7 +620,7 @@
         "flow-node-tool",
         "flow-node-validation"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=flow.interaction_unavailable.v1",
       "status_or_exit": "flow_state=running",
@@ -633,7 +633,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=nested.interaction_unavailable.v1",
       "status_or_exit": "branch_state=running",
@@ -647,7 +647,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=task.interaction_unavailable.v1",
       "status_or_exit": "task_state=running",
@@ -890,7 +890,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.interaction_pending.v1",
       "status_or_exit": "flow_state=paused",
@@ -904,7 +904,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -917,7 +917,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=nested.interaction_pending.v1",
       "status_or_exit": "branch_state=paused",
@@ -931,7 +931,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.interaction_pending.v1",
       "status_or_exit": "task_state=input_required",
@@ -1114,7 +1114,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.interaction_pending.v1",
       "status_or_exit": "flow_state=paused",
@@ -1128,7 +1128,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -1141,7 +1141,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=nested.interaction_pending.v1",
       "status_or_exit": "branch_state=paused",
@@ -1155,7 +1155,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.interaction_pending.v1",
       "status_or_exit": "task_state=input_required",
@@ -1338,7 +1338,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.interaction_pending.v1",
       "status_or_exit": "flow_state=paused",
@@ -1352,7 +1352,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -1365,7 +1365,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=nested.interaction_pending.v1",
       "status_or_exit": "branch_state=paused",
@@ -1379,7 +1379,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.interaction_pending.v1",
       "status_or_exit": "task_state=input_required",
@@ -1562,7 +1562,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=flow.interaction_answered.v1",
       "status_or_exit": "flow_state=running",
@@ -1576,7 +1576,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=flow.observation_answered.v1",
       "status_or_exit": "exit=0",
@@ -1589,7 +1589,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=nested.interaction_answered.v1",
       "status_or_exit": "branch_state=running",
@@ -1603,7 +1603,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=task.interaction_answered.v1",
       "status_or_exit": "task_state=running",
@@ -1786,7 +1786,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=flow.interaction_answered.v1",
       "status_or_exit": "flow_state=running",
@@ -1800,7 +1800,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=flow.observation_answered.v1",
       "status_or_exit": "exit=0",
@@ -1813,7 +1813,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=nested.interaction_answered.v1",
       "status_or_exit": "branch_state=running",
@@ -1827,7 +1827,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=task.interaction_answered.v1",
       "status_or_exit": "task_state=running",
@@ -2010,7 +2010,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=flow.interaction_expired.v1",
       "status_or_exit": "flow_state=failed",
@@ -2024,7 +2024,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=flow.observation_expired.v1",
       "status_or_exit": "exit=0",
@@ -2037,7 +2037,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=nested.interaction_expired.v1",
       "status_or_exit": "branch_state=running",
@@ -2051,7 +2051,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=task.interaction_expired.v1",
       "status_or_exit": "task_state=expired",
@@ -2267,7 +2267,7 @@
       "surface_ids": [
         "cli-flow-cancel"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=flow.cancellation_ack.v1",
       "status_or_exit": "exit=0",
@@ -2281,7 +2281,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=flow.interaction_cancelled.v1",
       "status_or_exit": "flow_state=cancelled",
@@ -2295,7 +2295,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=flow.observation_cancelled.v1",
       "status_or_exit": "exit=0",
@@ -2308,7 +2308,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=nested.interaction_cancelled.v1",
       "status_or_exit": "branch_state=cancelled",
@@ -2322,7 +2322,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=task.interaction_cancelled.v1",
       "status_or_exit": "task_state=cancelled",
@@ -2505,7 +2505,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=flow.interaction_superseded.v1",
       "status_or_exit": "flow_state=running",
@@ -2519,7 +2519,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=flow.observation_superseded.v1",
       "status_or_exit": "exit=0",
@@ -2532,7 +2532,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=nested.interaction_superseded.v1",
       "status_or_exit": "branch_state=running",
@@ -2546,7 +2546,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=task.interaction_superseded.v1",
       "status_or_exit": "task_state=running",
@@ -2700,7 +2700,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.interaction_pending.v1",
       "status_or_exit": "flow_state=paused",
@@ -2714,7 +2714,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=flow.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -2727,7 +2727,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=nested.interaction_pending.v1",
       "status_or_exit": "branch_state=paused",
@@ -2741,7 +2741,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.interaction_pending.v1",
       "status_or_exit": "task_state=input_required",
@@ -2907,7 +2907,7 @@
         "flow-node-agent",
         "flow-node-subflow"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=flow.interaction_timed_out.v1",
       "status_or_exit": "flow_state=running",
@@ -2921,7 +2921,7 @@
         "cli-flow-inspect",
         "cli-flow-trace"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=flow.observation_timed_out.v1",
       "status_or_exit": "exit=0",
@@ -2934,7 +2934,7 @@
       "surface_ids": [
         "nested-agent-branch"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=nested.interaction_timed_out.v1",
       "status_or_exit": "branch_state=running",
@@ -2948,7 +2948,7 @@
         "task-target-flow-direct",
         "task-target-flow-queue"
       ],
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=task.interaction_timed_out.v1",
       "status_or_exit": "task_state=running",
@@ -3111,5 +3111,5 @@
       "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
     }
   ],
-  "matrix_sha256": "2fb557313134f8e9cc7d4be37cb0c1be534043640d256c3fe8c029cf603eb154"
+  "matrix_sha256": "46d29df4975c3cff88f2414553cbf40268f3c3650f97a970b95372c04b62baa4"
 }

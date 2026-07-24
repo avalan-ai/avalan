@@ -290,7 +290,7 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    """Execute every current server-interaction acceptance node."""
+    """Execute every current orchestration acceptance node."""
     executed: tuple[Any, ...] = ()
 
     def verify_nodes(nodes: tuple[Any, ...], root: Path) -> tuple[str, ...]:
@@ -310,7 +310,7 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         _VERIFIER,
         "_parse_args",
         lambda: _VERIFIER.Namespace(
-            through_phase=8,
+            through_phase=9,
             manifest=_FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
             runtime_only=True,
@@ -325,13 +325,15 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         for requirement_id in node.requirement_ids
     }
     assert requirements == {
-        "INPUT-N-071",
-        "INPUT-N-072",
-        "INPUT-N-073",
-        "INPUT-N-074",
+        "INPUT-N-085",
+        "INPUT-N-086",
+        "INPUT-N-087",
+        "INPUT-N-088",
+        "INPUT-N-089",
+        "INPUT-26.10",
     }
-    assert len(executed) == 4
-    assert all(node.active_from_phase == 8 for node in executed)
+    assert len(executed) == 6
+    assert all(node.active_from_phase == 9 for node in executed)
     assert f"nodes={len(executed)}" in capsys.readouterr().out
 
 
@@ -431,7 +433,7 @@ def test_current_phase_requires_real_postgresql_harness(
         _VERIFIER.verify_acceptance(
             _FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
-            through_phase=8,
+            through_phase=9,
         )
 
 

@@ -149,6 +149,8 @@ def encode_input_request(request: InputRequest) -> JsonObject:
     }
     if request.advisory_wait_seconds is not None:
         result["advisory_wait_seconds"] = request.advisory_wait_seconds
+    if request.context_label is not None:
+        result["context_label"] = request.context_label
     if request.advisory_deadline is not None:
         result["advisory_deadline"] = _encode_datetime(
             request.advisory_deadline
@@ -180,6 +182,7 @@ def decode_input_request(value: object) -> InputRequest:
         optional={
             "advisory_wait_seconds",
             "advisory_deadline",
+            "context_label",
             "resolution",
         },
         path="request",
@@ -219,6 +222,10 @@ def decode_input_request(value: object) -> InputRequest:
         origin=decode_execution_origin(item["origin"]),
         mode=mode,
         reason=_string(item["reason"], "request.reason"),
+        context_label=_optional_string(
+            item.get("context_label"),
+            "request.context_label",
+        ),
         questions=questions,
         created_at=_datetime(item["created_at"], "request.created_at"),
         continuation_ttl_seconds=_integer(

@@ -4,7 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, NoReturn, cast
 from unittest import IsolatedAsyncioTestCase, TestCase
 
 from avalan.agent import execution as execution_module
@@ -66,7 +66,7 @@ from avalan.interaction.entities import (
     UserId,
     create_input_request,
 )
-from avalan.interaction.error import InputErrorCode
+from avalan.interaction.error import InputErrorCode, InputValidationError
 from avalan.interaction.policy import InteractionActor
 from avalan.interaction.state import (
     InputTransitionError,
@@ -83,6 +83,9 @@ from avalan.interaction.store import (
     RegisterInteractionBranchCommand,
     ScopeCancellationRejected,
     ScopeCancellationReplayed,
+    ScopeSupersessionRejected,
+    ScopeSupersessionReplayed,
+    SupersedeInteractionScopeCommand,
     TerminalizeInteractionScopeCommand,
 )
 from avalan.model.capability import (
@@ -355,6 +358,20 @@ def _scope_command(
     )
 
 
+def _supersession_command(
+    origin: ExecutionOrigin,
+    actor: InteractionActor,
+) -> SupersedeInteractionScopeCommand:
+    return SupersedeInteractionScopeCommand(
+        actor=actor,
+        scope=InteractionExecutionScope(
+            run_id=origin.run_id,
+            branch_id=origin.branch_id,
+        ),
+        provenance=AnswerProvenance.HUMAN,
+    )
+
+
 def _registration_command(
     origin: ExecutionOrigin,
     actor: InteractionActor,
@@ -398,8 +415,8 @@ async def _durable_stager() -> DurableInteractionSuspension:
     raise AssertionError("the validation-only stager must not run")
 
 
-class _CancellationBroker:
-    """Return one scripted cancellation result."""
+class _ScopeLifecycleBroker:
+    """Return one scripted cancellation or supersession result."""
 
     def __init__(self, result: object) -> None:
         self._result = result
@@ -407,6 +424,12 @@ class _CancellationBroker:
     async def cancel_scope(
         self,
         _command: TerminalizeInteractionScopeCommand,
+    ) -> object:
+        return self._result
+
+    async def supersede(
+        self,
+        _command: SupersedeInteractionScopeCommand,
     ) -> object:
         return self._result
 
@@ -425,6 +448,48 @@ class _RegistrationBroker:
         command: RegisterInteractionBranchCommand,
     ) -> object:
         return self._result_factory(command)
+
+
+class _OwnedLineage:
+    """Model an already attested child for broker-result guard tests."""
+
+    def __init__(self, parent_branch_id: BranchId | None) -> None:
+        self._parent_branch_id = parent_branch_id
+
+    async def ancestry(
+        self,
+        **identity: object,
+    ) -> tuple[tuple[BranchId, BranchId], ...]:
+        branch_id = cast(BranchId, identity["branch_id"])
+        if self._parent_branch_id is None:
+            return ()
+        return ((branch_id, self._parent_branch_id),)
+
+
+class _RejectingLineage:
+    """Reject lineage queries at a selected runtime trust boundary."""
+
+    def __init__(self, *, reject_ancestry: bool = False) -> None:
+        self._reject_ancestry = reject_ancestry
+
+    async def ancestry(
+        self,
+        **_identity: object,
+    ) -> tuple[tuple[BranchId, BranchId], ...]:
+        if self._reject_ancestry:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "attached_lineage.branch_id",
+                "branch is not owned by the attached lineage",
+            )
+        return ()
+
+    async def claim(self, **_identity: object) -> NoReturn:
+        raise InputValidationError(
+            InputErrorCode.FORBIDDEN,
+            "attached_lineage.branch_id",
+            "branch is not owned by the attached lineage",
+        )
 
 
 class _TranscriptCursorConflictSink:
@@ -861,6 +926,7 @@ class BranchBrokerDefenseTest(IsolatedAsyncioTestCase):
             broker=cast(InteractionBroker, broker),
             actor=actor,
             current_origin=lambda: origin,
+            lineage=cast(Any, _OwnedLineage(origin.parent_branch_id)),
         )
 
     async def test_public_type_actor_and_scope_guards(self) -> None:
@@ -878,6 +944,13 @@ class BranchBrokerDefenseTest(IsolatedAsyncioTestCase):
         ):
             await wrapper.cancel_scope(
                 cast(TerminalizeInteractionScopeCommand, object())
+            )
+        with self.assertRaisesRegex(
+            TypeError,
+            "supersede an interaction scope",
+        ):
+            await wrapper.supersede(
+                cast(SupersedeInteractionScopeCommand, object())
             )
 
         other_actor = InteractionActor(principal=_principal("user-other"))
@@ -898,49 +971,160 @@ class BranchBrokerDefenseTest(IsolatedAsyncioTestCase):
         ):
             wrapper._validate_scope(mismatched_scope, origin)
 
-    async def test_cancellation_rejects_invalid_store_results(self) -> None:
+    async def test_scope_changes_reject_invalid_store_results(self) -> None:
         origin = _origin()
         actor = InteractionActor(principal=origin.principal)
-        command = _scope_command(origin, actor)
-        rejected = InteractionBrokerResult(
-            store_result=ScopeCancellationRejected(
-                command=command,
-                error=_transition_error(),
-            )
-        )
-        registration_command = _registration_command(origin, actor)
         unrelated = InteractionBrokerResult(
             store_result=InteractionBranchRegistrationRejected(
-                command=registration_command,
+                command=_registration_command(origin, actor),
                 error=_transition_error(),
             )
         )
-        other_command = _scope_command(
-            origin,
-            actor,
-            turn_id=TurnId("turn-other"),
+        operations = (
+            (
+                "cancellation",
+                "cancel_scope",
+                _scope_command(origin, actor),
+                ScopeCancellationRejected(
+                    command=_scope_command(origin, actor),
+                    error=_transition_error(),
+                ),
+                ScopeCancellationReplayed,
+            ),
+            (
+                "supersession",
+                "supersede",
+                _supersession_command(origin, actor),
+                ScopeSupersessionRejected(
+                    command=_supersession_command(origin, actor),
+                    error=_transition_error(),
+                ),
+                ScopeSupersessionReplayed,
+            ),
         )
-        replayed = object.__new__(ScopeCancellationReplayed)
-        object.__setattr__(replayed, "command", other_command)
-        mismatched = InteractionBrokerResult(store_result=replayed)
+        for noun, method_name, command, rejection, replay_type in operations:
+            self.assertIs(
+                rejection.error.code,
+                InputErrorCode.ILLEGAL_TRANSITION,
+            )
+            other_command = replace(
+                command,
+                scope=replace(
+                    command.scope,
+                    turn_id=TurnId("turn-other"),
+                ),
+            )
+            replayed = object.__new__(replay_type)
+            object.__setattr__(replayed, "command", other_command)
+            cases = (
+                (object(), f"interaction {noun} returned invalid state"),
+                (
+                    InteractionBrokerResult(store_result=rejection),
+                    f"interaction branch {noun} was rejected",
+                ),
+                (unrelated, f"interaction {noun} returned unrelated state"),
+                (
+                    InteractionBrokerResult(store_result=replayed),
+                    f"interaction {noun} returned mismatched state",
+                ),
+            )
+            for result, message in cases:
+                with (
+                    self.subTest(operation=noun, message=message),
+                    self.assertRaisesRegex(
+                        ExecutionCorrelationError,
+                        f"^{message}$",
+                    ),
+                ):
+                    wrapper = self._wrapper(
+                        _ScopeLifecycleBroker(result),
+                        origin,
+                        actor,
+                    )
+                    method = getattr(wrapper, method_name)
+                    await method(command)
 
-        cases = (
-            (object(), "invalid state"),
-            (rejected, "was rejected"),
-            (unrelated, "unrelated state"),
-            (mismatched, "mismatched state"),
+    async def test_lineage_rejections_cannot_expand_branch_authority(
+        self,
+    ) -> None:
+        origin = _origin()
+        actor = InteractionActor(principal=origin.principal)
+        cancellation = replace(
+            _scope_command(origin, actor),
+            scope=replace(
+                _scope_command(origin, actor).scope,
+                include_descendants=True,
+            ),
         )
-        for result, message in cases:
-            with (
-                self.subTest(message=message),
-                self.assertRaisesRegex(ExecutionCorrelationError, message),
-            ):
-                wrapper = self._wrapper(
-                    _CancellationBroker(result),
-                    origin,
-                    actor,
-                )
-                await wrapper.cancel_scope(command)
+        supersession = replace(
+            _supersession_command(origin, actor),
+            scope=replace(
+                _supersession_command(origin, actor).scope,
+                include_descendants=True,
+            ),
+        )
+        rejecting = cast(Any, _RejectingLineage())
+        cancellation_wrapper = ExecutionBranchInteractionBroker(
+            broker=cast(InteractionBroker, object()),
+            actor=actor,
+            current_origin=lambda: origin,
+            lineage=rejecting,
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "not owned",
+        ):
+            await cancellation_wrapper.cancel_scope(cancellation)
+
+        no_lineage_wrapper = ExecutionBranchInteractionBroker(
+            broker=cast(InteractionBroker, object()),
+            actor=actor,
+            current_origin=lambda: origin,
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "lacks attached lineage ownership",
+        ):
+            await no_lineage_wrapper.supersede(supersession)
+
+        supersession_wrapper = ExecutionBranchInteractionBroker(
+            broker=cast(InteractionBroker, object()),
+            actor=actor,
+            current_origin=lambda: origin,
+            lineage=rejecting,
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "not owned",
+        ):
+            await supersession_wrapper.supersede(supersession)
+
+        ancestry_wrapper = ExecutionBranchInteractionBroker(
+            broker=cast(InteractionBroker, object()),
+            actor=actor,
+            current_origin=lambda: origin,
+            lineage=cast(
+                Any,
+                _RejectingLineage(reject_ancestry=True),
+            ),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "not owned",
+        ):
+            await ancestry_wrapper._ensure_branch_registered(origin)
+
+        mismatched_wrapper = ExecutionBranchInteractionBroker(
+            broker=cast(InteractionBroker, object()),
+            actor=actor,
+            current_origin=lambda: origin,
+            lineage=cast(Any, _OwnedLineage(BranchId("parent-other"))),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "differs from attached lineage ancestry",
+        ):
+            await mismatched_wrapper._ensure_branch_registered(origin)
 
     async def test_child_registration_rejects_every_invalid_result(
         self,

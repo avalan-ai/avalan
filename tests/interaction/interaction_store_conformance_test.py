@@ -52,9 +52,11 @@ from avalan.interaction import (
     InputRequestId,
     InputResumer,
     InputResumptionNotification,
+    InputValidationError,
     InteractionActor,
     InteractionAuthorizationDecision,
     InteractionAuthorizationTarget,
+    InteractionBranchRecord,
     InteractionBranchRegistration,
     InteractionBranchRegistrationApplied,
     InteractionBranchRegistrationRejected,
@@ -121,8 +123,15 @@ from avalan.interaction import (
     create_input_request,
 )
 from avalan.interaction.store import (
+    _begin_scope_transaction,
+    _bind_attached_scope_root_claim,
+    _bind_attached_supersede_scope_root_claim,
     _InteractionAdmissionCleanupDisposition,
+    _new_attached_interaction_lineage,
     _new_interaction_admission_commands,
+    _new_interaction_store_backing,
+    _validate_claimed_scope_ownership,
+    _validate_scope_transaction_commit,
 )
 from avalan.interaction.stores import (
     InteractionResumptionDeliveryError,
@@ -216,6 +225,18 @@ class _IdFactory(InteractionIdFactory):
     ) -> ActiveControlLeaseNonce:
         """Return a controller lease nonce."""
         return ActiveControlLeaseNonce(self._next("lease"))
+
+
+class _BranchIdFactory:
+    """Mint deterministic branch identifiers for attached-lineage tests."""
+
+    def __init__(self, *branch_ids: str) -> None:
+        self.branch_ids = list(branch_ids)
+
+    async def new_branch_id(self) -> BranchId:
+        """Return the next configured branch identifier."""
+        assert self.branch_ids
+        return BranchId(self.branch_ids.pop(0))
 
 
 class _Classifier(TaskInputClassifier):
@@ -750,6 +771,18 @@ def test_branch_graph_replay_conflict_cycle_owner_and_child_ancestry(
         )
         _assert_rejected_code(owner_drift, InputErrorCode.FORBIDDEN)
 
+        forged_root_parent = await harness.store.register_branch(
+            _branch_command(root, "root", "attacker-root")
+        )
+        assert isinstance(
+            forged_root_parent,
+            InteractionBranchRegistrationRejected,
+        )
+        _assert_rejected_code(
+            forged_root_parent,
+            InputErrorCode.CORRELATION_MISMATCH,
+        )
+
         grandchild = await harness.store.register_branch(
             _branch_command(root, "grandchild", "child")
         )
@@ -792,6 +825,605 @@ def test_branch_graph_replay_conflict_cycle_owner_and_child_ancestry(
         assert isinstance(exact_child, CreateInteractionApplied)
 
     backend.run(contract)
+
+
+@pytest.mark.parametrize("scope_operation", ("cancel", "supersede"))
+def test_child_registration_cannot_claim_an_unowned_parent_scope(
+    backend: _Backend,
+    scope_operation: str,
+) -> None:
+    """Reject scope mutation rooted only in a caller-asserted edge."""
+
+    async def contract(harness: _Harness) -> None:
+        child_request = _request(
+            "unowned-parent-child",
+            origin=_origin(
+                run_id="unowned-parent-run",
+                branch_id="attacker-child",
+                parent_branch_id="invented-root",
+            ),
+        )
+        registration = await harness.store.register_branch(
+            _branch_command(
+                child_request,
+                "attacker-child",
+                "invented-root",
+            )
+        )
+        assert isinstance(
+            registration,
+            InteractionBranchRegistrationApplied,
+        )
+        created = await _create(harness, child_request)
+        assert isinstance(created, CreateInteractionApplied)
+
+        scope = InteractionExecutionScope(
+            run_id=child_request.origin.run_id,
+            branch_id=BranchId("invented-root"),
+            include_descendants=True,
+        )
+        if scope_operation == "cancel":
+            cancel_result = await harness.store.terminalize_scope(
+                TerminalizeInteractionScopeCommand(
+                    actor=_actor(child_request),
+                    scope=scope,
+                    provenance=AnswerProvenance.HUMAN,
+                )
+            )
+            assert isinstance(cancel_result, ScopeCancellationRejected)
+            error = cancel_result.error
+        else:
+            supersede_result = await harness.store.supersede_scope(
+                SupersedeInteractionScopeCommand(
+                    actor=_actor(child_request),
+                    scope=scope,
+                    provenance=AnswerProvenance.HUMAN,
+                )
+            )
+            assert isinstance(supersede_result, ScopeSupersessionRejected)
+            error = supersede_result.error
+
+        assert error.code is InputErrorCode.FORBIDDEN
+        projections = await harness.store.list_scoped(
+            ListInteractionsCommand(
+                actor=_actor(child_request),
+                scope=InteractionExecutionScope(
+                    run_id=child_request.origin.run_id,
+                ),
+            )
+        )
+        assert len(projections) == 1
+        projection = projections[0]
+        assert isinstance(projection, InteractionRecord)
+        assert projection.request.state is RequestState.PENDING
+
+    backend.run(contract)
+
+
+def test_attached_supersession_claim_selects_child_only_root_closure(
+    backend: _Backend,
+) -> None:
+    """Supersede an exact attached closure whose root has no request."""
+
+    async def contract(harness: _Harness) -> None:
+        run_id = RunId("attached-supersede-run")
+        principal = _principal()
+        lineage = _new_attached_interaction_lineage()
+        id_factory = _BranchIdFactory("attached-root", "attached-child")
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=principal,
+            id_factory=id_factory,
+        )
+        child_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=principal,
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        child_request = _request(
+            "attached-child-request",
+            origin=_origin(
+                run_id=str(run_id),
+                branch_id=str(child_branch_id),
+                parent_branch_id=str(root_branch_id),
+                principal=principal,
+            ),
+        )
+        registered = await harness.store.register_branch(
+            _branch_command(
+                child_request,
+                str(child_branch_id),
+                str(root_branch_id),
+            )
+        )
+        assert isinstance(
+            registered,
+            InteractionBranchRegistrationApplied,
+        )
+        child_created = await _create(harness, child_request)
+        assert isinstance(child_created, CreateInteractionApplied)
+        unrelated = _request(
+            "attached-unrelated-request",
+            origin=_origin(
+                run_id=str(run_id),
+                branch_id="unrelated-root",
+                principal=principal,
+            ),
+        )
+        unrelated_created = await _create(harness, unrelated)
+        assert isinstance(unrelated_created, CreateInteractionApplied)
+
+        command = SupersedeInteractionScopeCommand(
+            actor=_actor(child_request),
+            scope=InteractionExecutionScope(
+                run_id=run_id,
+                branch_id=root_branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.HUMAN,
+        )
+        claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        bound = _bind_attached_supersede_scope_root_claim(command, claim)
+        assert bound == command
+        result = await harness.store.supersede_scope(bound)
+
+        assert isinstance(result, ScopeSupersessionApplied)
+        assert result.command == command
+        assert tuple(
+            record.request.request_id for record in result.records
+        ) == (child_request.request_id,)
+        assert result.records[0].request.state is RequestState.SUPERSEDED
+        unrelated_projection = await harness.store.lookup_scoped(
+            ScopedInteractionLookup(
+                actor=_actor(unrelated),
+                correlation=unrelated_created.record.correlation,
+            )
+        )
+        assert isinstance(unrelated_projection, InteractionRecord)
+        assert unrelated_projection.request.state is RequestState.PENDING
+
+    backend.run(contract)
+
+
+def test_attached_lineage_capabilities_fail_closed() -> None:
+    """Reject forged capabilities, unknown branches, and identity drift."""
+
+    async def exercise() -> None:
+        run_id = RunId("attached-lineage-guards")
+        principal = _principal()
+        lineage = _new_attached_interaction_lineage()
+
+        with pytest.raises(InputValidationError) as forged_lineage:
+            type(lineage)(_token=object())
+        assert forged_lineage.value.code is InputErrorCode.FORBIDDEN
+        assert forged_lineage.value.path == "attached_lineage"
+
+        with pytest.raises(InputValidationError) as invalid_principal:
+            await lineage.mint_root(
+                run_id=run_id,
+                principal=cast(PrincipalScope, object()),
+                id_factory=_BranchIdFactory("unused"),
+            )
+        assert invalid_principal.value.code is InputErrorCode.INVALID_TYPE
+        assert invalid_principal.value.path == "attached_lineage.principal"
+
+        with pytest.raises(InputValidationError) as invalid_factory:
+            await lineage.mint_root(
+                run_id=run_id,
+                principal=principal,
+                id_factory=cast(Any, object()),
+            )
+        assert invalid_factory.value.code is InputErrorCode.INVALID_TYPE
+        assert invalid_factory.value.path == "attached_lineage.id_factory"
+
+        id_factory = _BranchIdFactory("root", "child", "child")
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=principal,
+            id_factory=id_factory,
+        )
+        assert (
+            await lineage.mint_root(
+                run_id=run_id,
+                principal=principal,
+                id_factory=id_factory,
+            )
+            == root_branch_id
+        )
+        assert await lineage.contains(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        assert not await lineage.contains(
+            run_id=RunId("other-run"),
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+
+        unknown_branch_id = BranchId("unknown")
+        with pytest.raises(InputValidationError) as unknown_parent:
+            await lineage.mint_child(
+                run_id=run_id,
+                principal=principal,
+                parent_branch_id=unknown_branch_id,
+                id_factory=id_factory,
+            )
+        assert unknown_parent.value.code is InputErrorCode.FORBIDDEN
+        assert unknown_parent.value.path == "attached_lineage.parent_branch_id"
+
+        child_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=principal,
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        with pytest.raises(InputValidationError) as duplicate_child:
+            await lineage.mint_child(
+                run_id=run_id,
+                principal=principal,
+                parent_branch_id=root_branch_id,
+                id_factory=id_factory,
+            )
+        assert duplicate_child.value.code is InputErrorCode.DUPLICATE
+        assert duplicate_child.value.path == "attached_lineage.branch_id"
+
+        with pytest.raises(InputValidationError) as unknown_claim:
+            await lineage.claim(
+                run_id=run_id,
+                principal=principal,
+                branch_id=unknown_branch_id,
+            )
+        assert unknown_claim.value.code is InputErrorCode.FORBIDDEN
+        assert unknown_claim.value.path == "attached_lineage.branch_id"
+
+        with pytest.raises(InputValidationError) as unknown_admission:
+            await lineage.begin_admission(
+                run_id=run_id,
+                principal=principal,
+                branch_id=unknown_branch_id,
+            )
+        assert unknown_admission.value.code is InputErrorCode.FORBIDDEN
+        assert unknown_admission.value.path == "attached_lineage.branch_id"
+
+        with pytest.raises(InputValidationError) as unknown_ancestry:
+            await lineage.ancestry(
+                run_id=run_id,
+                principal=principal,
+                branch_id=unknown_branch_id,
+            )
+        assert unknown_ancestry.value.code is InputErrorCode.FORBIDDEN
+        assert unknown_ancestry.value.path == "attached_lineage.branch_id"
+
+        lease = await lineage.begin_admission(
+            run_id=run_id,
+            principal=principal,
+            branch_id=child_branch_id,
+        )
+        with pytest.raises(InputValidationError) as forged_lease:
+            type(lease)(
+                lineage=lineage,
+                run_id=run_id,
+                principal=principal,
+                branch_id=child_branch_id,
+                _token=object(),
+            )
+        assert forged_lease.value.code is InputErrorCode.FORBIDDEN
+        assert forged_lease.value.path == "attached_admission"
+
+        await lease.close()
+        await lease.close()
+        with pytest.raises(InputValidationError) as released_lease:
+            await lease.mark_admitted()
+        assert released_lease.value.code is InputErrorCode.FORBIDDEN
+        assert released_lease.value.path == "attached_admission"
+
+        claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        with pytest.raises(InputValidationError) as forged_claim:
+            type(claim)(
+                lineage=lineage,
+                run_id=run_id,
+                principal=principal,
+                branch_id=root_branch_id,
+                members=claim.members,
+                parent_edges=claim.parent_edges,
+                _token=object(),
+            )
+        assert forged_claim.value.code is InputErrorCode.FORBIDDEN
+        assert forged_claim.value.path == "attached_scope_root_claim"
+
+        with pytest.raises(InputValidationError) as identity_drift:
+            await lineage.mint_root(
+                run_id=RunId("different-run"),
+                principal=principal,
+                id_factory=id_factory,
+            )
+        assert identity_drift.value.code is InputErrorCode.CORRELATION_MISMATCH
+        assert identity_drift.value.path == "attached_lineage"
+
+    run(exercise())
+
+
+def test_attached_scope_claim_binding_guards_exact_authority() -> None:
+    """Reject wrong command types, forged claims, and claim drift."""
+
+    async def exercise() -> None:
+        run_id = RunId("attached-binding-guards")
+        principal = _principal()
+        lineage = _new_attached_interaction_lineage()
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=principal,
+            id_factory=_BranchIdFactory("root"),
+        )
+        claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        scope = InteractionExecutionScope(
+            run_id=run_id,
+            branch_id=root_branch_id,
+            include_descendants=True,
+        )
+        cancel = TerminalizeInteractionScopeCommand(
+            actor=InteractionActor(principal=principal),
+            scope=scope,
+            provenance=AnswerProvenance.HUMAN,
+        )
+        supersede = SupersedeInteractionScopeCommand(
+            actor=InteractionActor(principal=principal),
+            scope=scope,
+            provenance=AnswerProvenance.HUMAN,
+        )
+
+        with pytest.raises(InputValidationError) as invalid_cancel:
+            _bind_attached_scope_root_claim(
+                cast(TerminalizeInteractionScopeCommand, supersede),
+                claim,
+            )
+        assert invalid_cancel.value.code is InputErrorCode.INVALID_TYPE
+        assert invalid_cancel.value.path == "command"
+
+        with pytest.raises(InputValidationError) as invalid_supersede:
+            _bind_attached_supersede_scope_root_claim(
+                cast(SupersedeInteractionScopeCommand, cancel),
+                claim,
+            )
+        assert invalid_supersede.value.code is InputErrorCode.INVALID_TYPE
+        assert invalid_supersede.value.path == "command"
+
+        with pytest.raises(InputValidationError) as forged_claim:
+            _bind_attached_scope_root_claim(
+                cancel,
+                cast(Any, object()),
+            )
+        assert forged_claim.value.code is InputErrorCode.FORBIDDEN
+        assert forged_claim.value.path == "attached_scope_root_claim"
+
+        mismatched = replace(
+            cancel,
+            scope=replace(scope, include_descendants=False),
+        )
+        with pytest.raises(InputValidationError) as claim_drift:
+            _bind_attached_scope_root_claim(mismatched, claim)
+        assert claim_drift.value.code is InputErrorCode.CORRELATION_MISMATCH
+        assert claim_drift.value.path == "attached_scope_root_claim"
+
+        backing = _new_interaction_store_backing()
+        unbound = replace(
+            cancel,
+            scope=InteractionExecutionScope(run_id=RunId("empty-run")),
+        )
+        transaction = _begin_scope_transaction(backing, unbound)
+        object.__setattr__(transaction, "_attached_root_claim", claim)
+        with pytest.raises(InputValidationError) as transaction_drift:
+            _validate_scope_transaction_commit(
+                transaction,
+                unbound,
+                backing,
+            )
+        assert transaction_drift.value.code is (
+            InputErrorCode.CORRELATION_MISMATCH
+        )
+        assert transaction_drift.value.path == "transaction.command"
+
+    run(exercise())
+
+
+def test_attached_claimed_scope_ownership_rejects_snapshot_drift() -> None:
+    """Reject every mismatch between a claim and persisted ancestry."""
+
+    async def contract(harness: _Harness) -> None:
+        run_id = RunId("attached-ownership-guards")
+        principal = _principal()
+        lineage = _new_attached_interaction_lineage()
+        id_factory = _BranchIdFactory(
+            "root",
+            "mismatch-child",
+            "missing-child",
+            "escape-child",
+        )
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=principal,
+            id_factory=id_factory,
+        )
+        mismatch_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=principal,
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        missing_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=principal,
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        escape_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=principal,
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+
+        async def create_child(
+            name: str,
+            branch_id: BranchId,
+            parent_branch_id: BranchId,
+        ) -> tuple[InteractionRecord, InteractionBranchRecord]:
+            request = _request(
+                name,
+                origin=_origin(
+                    run_id=str(run_id),
+                    branch_id=str(branch_id),
+                    parent_branch_id=str(parent_branch_id),
+                    principal=principal,
+                ),
+            )
+            registration = await harness.store.register_branch(
+                _branch_command(
+                    request,
+                    str(branch_id),
+                    str(parent_branch_id),
+                )
+            )
+            assert isinstance(
+                registration,
+                InteractionBranchRegistrationApplied,
+            )
+            created = await _create(harness, request)
+            assert isinstance(created, CreateInteractionApplied)
+            return created.record, registration.record
+
+        wrong_parent_id = BranchId("wrong-parent")
+        mismatch_record, mismatch_registration = await create_child(
+            "attached-mismatch-record",
+            mismatch_branch_id,
+            wrong_parent_id,
+        )
+        missing_record, _ = await create_child(
+            "attached-missing-record",
+            missing_branch_id,
+            root_branch_id,
+        )
+        outside_parent_id = BranchId("outside-parent")
+        escape_record, escape_registration = await create_child(
+            "attached-escape-record",
+            escape_branch_id,
+            outside_parent_id,
+        )
+        outside_request = _request(
+            "attached-outside-record",
+            origin=_origin(
+                run_id=str(run_id),
+                branch_id="outside",
+                principal=principal,
+            ),
+        )
+        outside_created = await _create(harness, outside_request)
+        assert isinstance(outside_created, CreateInteractionApplied)
+
+        root_claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        subtree_claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=missing_branch_id,
+        )
+        escape_claim = await lineage.claim(
+            run_id=run_id,
+            principal=principal,
+            branch_id=root_branch_id,
+        )
+        object.__setattr__(
+            escape_claim,
+            "parent_edges",
+            frozenset({(escape_branch_id, outside_parent_id)}),
+        )
+
+        def assert_rejected(
+            expected_code: InputErrorCode,
+            expected_path: str,
+            *,
+            claim: Any = root_claim,
+            scope: InteractionExecutionScope | None = None,
+            branch_records: tuple[InteractionBranchRecord, ...] = (),
+            selected_records: tuple[InteractionRecord, ...] = (),
+        ) -> None:
+            active_scope = scope or InteractionExecutionScope(
+                run_id=run_id,
+                branch_id=claim.branch_id,
+                include_descendants=True,
+            )
+            with pytest.raises(InputValidationError) as rejected:
+                _validate_claimed_scope_ownership(
+                    branch_records,
+                    active_scope,
+                    principal,
+                    selected_records,
+                    claim,
+                )
+            assert rejected.value.code is expected_code
+            assert rejected.value.path == expected_path
+
+        assert_rejected(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "attached_scope_root_claim",
+            scope=InteractionExecutionScope(
+                run_id=RunId("different-run"),
+                branch_id=root_branch_id,
+                include_descendants=True,
+            ),
+        )
+        assert_rejected(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "branch_records",
+            branch_records=(mismatch_registration,),
+        )
+        assert_rejected(
+            InputErrorCode.FORBIDDEN,
+            "selected_records",
+            selected_records=(outside_created.record,),
+        )
+        assert_rejected(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "selected_records",
+            selected_records=(mismatch_record,),
+        )
+        assert_rejected(
+            InputErrorCode.FORBIDDEN,
+            "branch_records",
+            selected_records=(missing_record,),
+        )
+        assert_rejected(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "attached_scope_root_claim",
+            claim=escape_claim,
+            branch_records=(escape_registration,),
+            selected_records=(escape_record,),
+        )
+        assert_rejected(
+            InputErrorCode.FORBIDDEN,
+            "branch_records",
+            claim=subtree_claim,
+            selected_records=(missing_record,),
+        )
+
+    _Backend("memory-fresh").run(contract)
 
 
 def test_branch_ids_are_isolated_by_principal_scope(

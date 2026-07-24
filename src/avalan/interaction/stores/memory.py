@@ -1061,6 +1061,25 @@ class MemoryInteractionStore:
                         ),
                     ),
                 )
+            if any(
+                record.registration.run_id == command.registration.run_id
+                and record.registration.principal
+                == command.registration.principal
+                and record.registration.parent_branch_id
+                == command.registration.branch_id
+                for record in snapshot.branch_records
+            ):
+                return InteractionBranchRegistrationRejected(
+                    command=command,
+                    error=InputTransitionError(
+                        code=InputErrorCode.CORRELATION_MISMATCH,
+                        path="branch.registration.branch_id",
+                        message=(
+                            "a branch already used as an ancestry parent "
+                            "cannot be reparented"
+                        ),
+                    ),
+                )
             if _branch_registration_creates_cycle(
                 snapshot.branch_records,
                 command,

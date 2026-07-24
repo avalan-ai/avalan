@@ -108,6 +108,7 @@ from .store import (
     TrustedDefaultResolutionResult,
     WaitForDeadlineChangeCommand,
     WaitForInteractionChangeCommand,
+    _AttachedInteractionAdmissionLease,
     _CandidateResolutionCommand,
     _InteractionAdmissionCleanupCommand,
     _InteractionAdmissionCleanupDisposition,
@@ -144,7 +145,7 @@ from asyncio import (
     wait,
 )
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import StrEnum
 from inspect import iscoroutinefunction
 from typing import Callable, Protocol, TypeAlias, cast, final
@@ -314,10 +315,19 @@ class InteractionBrokerRequest:
     mode: RequirementMode
     reason: str
     questions: tuple[InputQuestion, ...]
+    context_label: str | None = None
     handler: _InputHandler | None = field(default=None, repr=False)
     resumer: InputResumer | None = field(default=None, repr=False)
     continuation_ttl_seconds: int = 86_400
     advisory_wait_seconds: int | None = None
+    _attached_admission_lease: _AttachedInteractionAdmissionLease | None = (
+        field(
+            init=False,
+            default=None,
+            repr=False,
+            compare=False,
+        )
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.actor, InteractionActor):
@@ -355,6 +365,18 @@ class InteractionBrokerRequest:
                 maximum_bytes=2_000,
             ),
         )
+        if self.context_label is not None:
+            object.__setattr__(
+                self,
+                "context_label",
+                validate_presentation_text(
+                    self.context_label,
+                    "broker_request.context_label",
+                    minimum=1,
+                    maximum=80,
+                    maximum_bytes=320,
+                ),
+            )
         if not isinstance(self.questions, tuple):
             raise InputValidationError(
                 InputErrorCode.INVALID_TYPE,
@@ -418,6 +440,46 @@ class InteractionBrokerRequest:
             _validate_async_callable(self.handler, "broker_request.handler")
         if self.resumer is not None:
             _validate_async_callable(self.resumer, "broker_request.resumer")
+
+
+def _bind_attached_admission_lease(
+    request: InteractionBrokerRequest,
+    lease: _AttachedInteractionAdmissionLease,
+) -> InteractionBrokerRequest:
+    """Bind a runtime-internal admission lease to one semantic request."""
+    if type(request) is not InteractionBrokerRequest:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "broker_request",
+            "value must be an interaction broker request",
+        )
+    _validate_attached_admission_lease(request, lease)
+    bound = replace(request)
+    object.__setattr__(bound, "_attached_admission_lease", lease)
+    return bound
+
+
+def _validate_attached_admission_lease(
+    request: InteractionBrokerRequest,
+    lease: _AttachedInteractionAdmissionLease | None = None,
+) -> _AttachedInteractionAdmissionLease | None:
+    """Validate one attached admission lease against its exact request."""
+    candidate = request._attached_admission_lease if lease is None else lease
+    if candidate is None:
+        return None
+    if (
+        type(candidate) is not _AttachedInteractionAdmissionLease
+        or candidate.run_id != request.origin.run_id
+        or candidate.principal != request.actor.principal
+        or candidate.principal != request.origin.principal
+        or candidate.branch_id != request.origin.branch_id
+    ):
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "broker_request.attached_admission",
+            "attached admission does not match the request",
+        )
+    return candidate
 
 
 @final
@@ -812,6 +874,7 @@ class AsyncInteractionBroker:
                 "broker.request",
                 "value must be an interaction broker request",
             )
+        admission_lease = _validate_attached_admission_lease(request)
         await self._ensure_started()
         observed_at = await self._clock.read()
         request_id = await self._id_factory.new_request_id()
@@ -822,6 +885,7 @@ class AsyncInteractionBroker:
             origin=request.origin,
             mode=request.mode,
             reason=request.reason,
+            context_label=request.context_label,
             questions=request.questions,
             created_at=observed_at.wall_time,
             continuation_ttl_seconds=request.continuation_ttl_seconds,
@@ -857,6 +921,8 @@ class AsyncInteractionBroker:
                 create_result = await shield(create_operation)
             except CancelledError:
                 create_result = await create_operation
+                if admission_lease is not None:
+                    await admission_lease.mark_admitted()
                 if isinstance(create_result, CreateInteractionApplied):
                     self._emit_record(
                         InteractionObserverEventKind.CREATED,
@@ -880,6 +946,8 @@ class AsyncInteractionBroker:
                         continuation_id,
                     )
                 raise
+            if admission_lease is not None:
+                await admission_lease.mark_admitted()
         except CancelledError:
             if create_operation.cancelled():
                 await self._unbind_resumer(request_id, continuation_id)

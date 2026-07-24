@@ -8,6 +8,7 @@ from asyncio import (
     all_tasks,
     create_task,
     current_task,
+    gather,
     get_running_loop,
     run,
 )
@@ -18,6 +19,11 @@ from typing import Any, cast
 
 import pytest
 
+from avalan.agent.execution import (
+    ExecutionBranchInteractionBroker,
+    ExecutionCorrelationError,
+    UuidExecutionIdFactory,
+)
 from avalan.interaction import (
     AcquireControllerActivity,
     ActiveControlLeaseNonce,
@@ -100,6 +106,7 @@ from avalan.interaction import (
     ResolveInteractionRejected,
     RunId,
     ScopeCancellationApplied,
+    ScopeCancellationReplayed,
     ScopedInteractionLookup,
     ScopeSupersessionApplied,
     StreamSessionId,
@@ -118,7 +125,10 @@ from avalan.interaction import (
     UserId,
     WaitForInteractionChangeCommand,
 )
-from avalan.interaction.broker import _StoreBoundResumer
+from avalan.interaction.broker import (
+    _bind_attached_admission_lease,
+    _StoreBoundResumer,
+)
 from avalan.interaction.handler import (
     InputDisconnectReason,
     InputHandler,
@@ -129,6 +139,7 @@ from avalan.interaction.store import (
     _InteractionAdmissionCleanupCommand,
     _InteractionAdmissionCleanupResult,
     _InteractionAdmissionCreateCommand,
+    _new_attached_interaction_lineage,
 )
 from avalan.interaction.stores import MemoryInteractionStoreFactory
 
@@ -2182,6 +2193,557 @@ def test_root_fifo_and_cross_root_concurrency_hold_no_external_lock() -> None:
         )
         assert all(result.delivery is not None for result in results)
         await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_attached_request_context_and_admission_binding_guards() -> None:
+    """Validate context labels and bind only exact attached admissions."""
+
+    async def exercise() -> None:
+        contextual = replace(
+            _request(None),
+            context_label="Research agent / source selection",
+        )
+        assert contextual.context_label == "Research agent / source selection"
+        with pytest.raises(
+            InputValidationError,
+            match="broker_request.context_label",
+        ):
+            replace(contextual, context_label="")
+
+        lineage = _new_attached_interaction_lineage()
+        run_id = RunId("binding-run")
+        branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=_principal(),
+            id_factory=UuidExecutionIdFactory(),
+        )
+        lease = await lineage.begin_admission(
+            run_id=run_id,
+            principal=_principal(),
+            branch_id=branch_id,
+        )
+        request = _request(
+            None,
+            origin=_origin(
+                run_id=str(run_id),
+                branch_id=str(branch_id),
+            ),
+        )
+        try:
+            with pytest.raises(
+                InputValidationError,
+                match="value must be an interaction broker request",
+            ):
+                _bind_attached_admission_lease(
+                    cast(InteractionBrokerRequest, object()),
+                    lease,
+                )
+            with pytest.raises(
+                InputValidationError,
+                match="attached admission does not match",
+            ):
+                _bind_attached_admission_lease(
+                    replace(
+                        request,
+                        origin=replace(
+                            request.origin,
+                            branch_id=BranchId("other-branch"),
+                        ),
+                    ),
+                    lease,
+                )
+
+            bound = _bind_attached_admission_lease(request, lease)
+            assert bound == request
+            assert bound is not request
+            assert bound._attached_admission_lease is lease
+        finally:
+            await lease.close()
+
+    run(exercise())
+
+
+def test_attached_owning_cancellation_marks_admission_ready() -> None:
+    """Finish and clean attached admission before owner cancellation exits."""
+
+    async def exercise() -> None:
+        authorizer = _Authorizer()
+        authorizer.block_operation = InteractionOperation.CREATE
+        harness = await _harness(authorizer=authorizer)
+        lineage = _new_attached_interaction_lineage()
+        run_id = RunId("cancelled-admission-run")
+        branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=_principal(),
+            id_factory=UuidExecutionIdFactory(),
+        )
+        origin = _origin(
+            run_id=str(run_id),
+            branch_id=str(branch_id),
+        )
+        wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: origin,
+            lineage=lineage,
+        )
+        request_task = create_task(
+            wrapper.request(_request(None, origin=origin))
+        )
+        await authorizer.entered.wait()
+        request_task.cancel()
+        authorizer.release.set()
+        try:
+            with pytest.raises(CancelledError):
+                await request_task
+            result = await wrapper.cancel_scope(
+                TerminalizeInteractionScopeCommand(
+                    actor=_actor(),
+                    scope=InteractionExecutionScope(
+                        run_id=run_id,
+                        branch_id=branch_id,
+                        include_descendants=True,
+                    ),
+                    provenance=AnswerProvenance.HUMAN,
+                )
+            )
+            assert isinstance(result.store_result, ScopeCancellationReplayed)
+            records = await harness.broker.list(
+                ListInteractionsCommand(
+                    actor=_actor(),
+                    scope=InteractionExecutionScope(run_id=run_id),
+                )
+            )
+            assert len(records) == 1
+            assert records[0].request.state is RequestState.UNAVAILABLE
+        finally:
+            authorizer.release.set()
+            if not request_task.done():
+                request_task.cancel()
+                await gather(request_task, return_exceptions=True)
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_attached_cancellation_first_denies_late_request_admission() -> None:
+    """Reject a request admitted after its attached subtree is sealed."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        lineage = _new_attached_interaction_lineage()
+        branch_id = await lineage.mint_root(
+            run_id=RunId("sealed-run"),
+            principal=_principal(),
+            id_factory=UuidExecutionIdFactory(),
+        )
+        origin = _origin(
+            run_id="sealed-run",
+            branch_id=str(branch_id),
+        )
+        wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: origin,
+            lineage=lineage,
+        )
+        command = TerminalizeInteractionScopeCommand(
+            actor=_actor(),
+            scope=InteractionExecutionScope(
+                run_id=origin.run_id,
+                branch_id=origin.branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.HUMAN,
+        )
+        try:
+            cancellation = await wrapper.cancel_scope(command)
+            assert isinstance(
+                cancellation.store_result,
+                ScopeCancellationReplayed,
+            )
+            with pytest.raises(
+                ExecutionCorrelationError,
+                match="sealed attached subtree",
+            ):
+                await wrapper.request(_request(None, origin=origin))
+            assert (
+                await harness.broker.list(
+                    ListInteractionsCommand(
+                        actor=_actor(),
+                        scope=InteractionExecutionScope(run_id=origin.run_id),
+                    )
+                )
+                == ()
+            )
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_attached_request_first_is_included_in_subtree_cancellation() -> None:
+    """Wait for an in-flight create before cancelling its exact subtree."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        lineage = _new_attached_interaction_lineage()
+        branch_id = await lineage.mint_root(
+            run_id=RunId("admission-run"),
+            principal=_principal(),
+            id_factory=UuidExecutionIdFactory(),
+        )
+        origin = _origin(
+            run_id="admission-run",
+            branch_id=str(branch_id),
+        )
+        wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: origin,
+            lineage=lineage,
+        )
+        handler = _BlockingHandler()
+        harness.authorizer.block_operation = InteractionOperation.CREATE
+        request_task = create_task(
+            wrapper.request(_request(handler, origin=origin))
+        )
+        await harness.authorizer.entered.wait()
+        command = TerminalizeInteractionScopeCommand(
+            actor=_actor(),
+            scope=InteractionExecutionScope(
+                run_id=origin.run_id,
+                branch_id=origin.branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.HUMAN,
+        )
+        cancellation_task = create_task(wrapper.cancel_scope(command))
+        try:
+            await _yield_once()
+            assert not cancellation_task.done()
+            harness.authorizer.release.set()
+            cancellation = await cancellation_task
+            assert isinstance(
+                cancellation.store_result,
+                ScopeCancellationApplied,
+            )
+            result = await request_task
+            assert result.delivery is not None
+            assert (
+                result.delivery.record.request.state is RequestState.CANCELLED
+            )
+        finally:
+            harness.authorizer.release.set()
+            handler.release.set()
+            if not request_task.done():
+                request_task.cancel()
+                await gather(request_task, return_exceptions=True)
+            if not cancellation_task.done():
+                cancellation_task.cancel()
+                await gather(cancellation_task, return_exceptions=True)
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_prebound_child_without_lineage_registers_its_exact_edge() -> None:
+    """Preserve exact child admission without granting subtree authority."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        origin = _origin(
+            run_id="prebound-run",
+            branch_id="prebound-child",
+            parent_branch_id="prebound-parent",
+        )
+        wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: origin,
+        )
+        handler = _BlockingHandler()
+        handler.release.set()
+        try:
+            result = await wrapper.request(_request(handler, origin=origin))
+            assert isinstance(result.create_result, CreateInteractionApplied)
+            assert result.delivery is not None
+
+            command = TerminalizeInteractionScopeCommand(
+                actor=_actor(),
+                scope=InteractionExecutionScope(
+                    run_id=origin.run_id,
+                    branch_id=origin.branch_id,
+                ),
+                provenance=AnswerProvenance.HUMAN,
+            )
+            cancellation = await wrapper.cancel_scope(command)
+            assert isinstance(
+                cancellation.store_result,
+                (ScopeCancellationApplied, ScopeCancellationReplayed),
+            )
+            with pytest.raises(
+                ExecutionCorrelationError,
+                match="lacks attached lineage ownership",
+            ):
+                await wrapper.cancel_scope(
+                    replace(
+                        command,
+                        scope=replace(
+                            command.scope,
+                            include_descendants=True,
+                        ),
+                    )
+                )
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_attached_depth_three_closure_seals_after_exact_cancellation() -> None:
+    """Register full ancestry and prevent children below a sealed closure."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        lineage = _new_attached_interaction_lineage()
+        id_factory = UuidExecutionIdFactory()
+        run_id = RunId("depth-three-run")
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=_principal(),
+            id_factory=id_factory,
+        )
+        child_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=_principal(),
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        grandchild_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=_principal(),
+            parent_branch_id=child_branch_id,
+            id_factory=id_factory,
+        )
+        root_origin = _origin(
+            run_id=str(run_id),
+            branch_id=str(root_branch_id),
+        )
+        grandchild_origin = _origin(
+            run_id=str(run_id),
+            branch_id=str(grandchild_branch_id),
+            parent_branch_id=str(child_branch_id),
+        )
+        grandchild_wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: grandchild_origin,
+            lineage=lineage,
+        )
+        root_wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: root_origin,
+            lineage=lineage,
+        )
+        handler = _BlockingHandler()
+        request_task = create_task(
+            grandchild_wrapper.request(
+                _request(handler, origin=grandchild_origin)
+            )
+        )
+        await handler.started.wait()
+        command = TerminalizeInteractionScopeCommand(
+            actor=_actor(),
+            scope=InteractionExecutionScope(
+                run_id=run_id,
+                branch_id=root_branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.HUMAN,
+        )
+        try:
+            cancellation = await root_wrapper.cancel_scope(command)
+            assert isinstance(
+                cancellation.store_result,
+                ScopeCancellationApplied,
+            )
+            result = await request_task
+            assert result.delivery is not None
+            assert (
+                result.delivery.record.request.state is RequestState.CANCELLED
+            )
+            with pytest.raises(InputValidationError) as sealed:
+                await lineage.mint_child(
+                    run_id=run_id,
+                    principal=_principal(),
+                    parent_branch_id=child_branch_id,
+                    id_factory=id_factory,
+                )
+            assert sealed.value.code is InputErrorCode.ILLEGAL_TRANSITION
+        finally:
+            handler.release.set()
+            if not request_task.done():
+                request_task.cancel()
+                await gather(request_task, return_exceptions=True)
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_attached_supersession_seals_exact_child_only_root_during_create() -> (
+    None
+):
+    """Wait for child admission and supersede only its attached closure."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        lineage = _new_attached_interaction_lineage()
+        id_factory = UuidExecutionIdFactory()
+        run_id = RunId("supersession-admission-run")
+        root_branch_id = await lineage.mint_root(
+            run_id=run_id,
+            principal=_principal(),
+            id_factory=id_factory,
+        )
+        child_branch_id = await lineage.mint_child(
+            run_id=run_id,
+            principal=_principal(),
+            parent_branch_id=root_branch_id,
+            id_factory=id_factory,
+        )
+        root_origin = _origin(
+            run_id=str(run_id),
+            branch_id=str(root_branch_id),
+        )
+        child_origin = _origin(
+            run_id=str(run_id),
+            branch_id=str(child_branch_id),
+            parent_branch_id=str(root_branch_id),
+        )
+        unrelated_origin = _origin(
+            run_id=str(run_id),
+            branch_id="unrelated-root",
+        )
+        root_wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: root_origin,
+            lineage=lineage,
+        )
+        child_wrapper = ExecutionBranchInteractionBroker(
+            broker=harness.broker,
+            actor=_actor(),
+            current_origin=lambda: child_origin,
+            lineage=lineage,
+        )
+        command = SupersedeInteractionScopeCommand(
+            actor=_actor(),
+            scope=InteractionExecutionScope(
+                run_id=run_id,
+                branch_id=root_branch_id,
+                include_descendants=True,
+            ),
+            provenance=AnswerProvenance.HUMAN,
+        )
+        with pytest.raises(
+            ExecutionCorrelationError,
+            match="actor does not match",
+        ):
+            await root_wrapper.supersede(
+                replace(command, actor=_actor("other-owner"))
+            )
+        with pytest.raises(
+            ExecutionCorrelationError,
+            match="scope does not match",
+        ):
+            await root_wrapper.supersede(
+                replace(
+                    command,
+                    scope=replace(
+                        command.scope,
+                        branch_id=BranchId("invented-root"),
+                    ),
+                )
+            )
+
+        unrelated_handler = _BlockingHandler()
+        unrelated_task = create_task(
+            harness.broker.request(
+                _request(
+                    unrelated_handler,
+                    origin=unrelated_origin,
+                    reason="Keep this unrelated root pending.",
+                )
+            )
+        )
+        await unrelated_handler.started.wait()
+        child_handler = _BlockingHandler()
+        harness.authorizer.block_operation = InteractionOperation.CREATE
+        child_task = create_task(
+            child_wrapper.request(
+                _request(
+                    child_handler,
+                    origin=child_origin,
+                    reason="Supersede this child.",
+                )
+            )
+        )
+        await harness.authorizer.entered.wait()
+        supersession_task = create_task(root_wrapper.supersede(command))
+        try:
+            await _yield_once()
+            assert not supersession_task.done()
+            harness.authorizer.release.set()
+            supersession = await supersession_task
+            assert isinstance(
+                supersession.store_result,
+                ScopeSupersessionApplied,
+            )
+            assert supersession.store_result.command == command
+            result = await child_task
+            assert result.delivery is not None
+            assert (
+                result.delivery.record.request.state is RequestState.SUPERSEDED
+            )
+            await _yield_once()
+            assert not unrelated_task.done()
+            unrelated = await harness.broker.list(
+                ListInteractionsCommand(
+                    actor=_actor(),
+                    scope=InteractionExecutionScope(
+                        run_id=run_id,
+                        branch_id=unrelated_origin.branch_id,
+                    ),
+                )
+            )
+            assert len(unrelated) == 1
+            assert isinstance(unrelated[0], InteractionRecord)
+            assert unrelated[0].request.state is RequestState.PENDING
+            with pytest.raises(
+                ExecutionCorrelationError,
+                match="sealed attached subtree",
+            ):
+                await child_wrapper.request(
+                    _request(None, origin=child_origin)
+                )
+        finally:
+            harness.authorizer.release.set()
+            child_handler.release.set()
+            unrelated_handler.release.set()
+            for task in (child_task, supersession_task, unrelated_task):
+                if not task.done():
+                    task.cancel()
+            await gather(
+                child_task,
+                supersession_task,
+                unrelated_task,
+                return_exceptions=True,
+            )
+            await harness.broker.aclose()
 
     run(exercise())
 

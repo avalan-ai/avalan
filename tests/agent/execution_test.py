@@ -14,6 +14,7 @@ from avalan.agent.execution import (
     AgentExecutionSnapshot,
     AgentExecutionStatus,
     AttachedInteractionRuntime,
+    DurableInteractionRuntime,
     ExecutionCorrelationError,
     ExecutionInputRequiredError,
     ExecutionLedgerEntry,
@@ -27,6 +28,8 @@ from avalan.agent.execution import (
     ModelPromptRecord,
     UuidExecutionIdFactory,
     create_agent_execution,
+    create_child_interaction_runtime,
+    ensure_interaction_runtime_branch,
 )
 from avalan.entities import (
     Message,
@@ -34,7 +37,10 @@ from avalan.entities import (
     MessageToolCall,
     normalize_tool_arguments,
 )
-from avalan.interaction.broker import InteractionBroker
+from avalan.interaction.broker import (
+    InteractionBroker,
+    InteractionBrokerRequest,
+)
 from avalan.interaction.codec import encode_input_model_result
 from avalan.interaction.entities import (
     AgentId,
@@ -73,6 +79,10 @@ from avalan.interaction.handler import (
 )
 from avalan.interaction.policy import InteractionActor
 from avalan.interaction.state import project_resolution_to_model
+from avalan.interaction.store import (
+    InteractionExecutionScope,
+    TerminalizeInteractionScopeCommand,
+)
 from avalan.interaction.validation import MAX_STATE_REVISION
 from avalan.model.capability import (
     CorrelatedCapabilityResult,
@@ -150,6 +160,22 @@ class _BlockingIdFactory(_IdFactory):
             self.started.set()
             await self.release.wait()
         return await super().new_turn_id()
+
+
+class _DuplicateBranchIdFactory(_IdFactory):
+    """Return one repeated branch identifier for lineage rejection tests."""
+
+    async def new_branch_id(self) -> BranchId:
+        self.branch += 1
+        return BranchId("branch-duplicate")
+
+
+class _InvalidBranchIdFactory(_IdFactory):
+    """Return one untyped branch identifier across a trusted boundary."""
+
+    async def new_branch_id(self) -> BranchId:
+        self.branch += 1
+        return cast(BranchId, object())
 
 
 class _PersistentTerminalFailure(BaseException):
@@ -686,6 +712,404 @@ class ExecutionCreationTest(IsolatedAsyncioTestCase):
         self.assertEqual(execution.origin.parent_branch_id, "branch-parent")
         self.assertEqual(factory.branch, 0)
         self.assertEqual(factory.task, 0)
+
+    async def test_child_runtime_mints_one_correlated_isolated_branch(
+        self,
+    ) -> None:
+        factory = _IdFactory()
+        actor = InteractionActor(principal=_principal())
+        root = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, _Broker()),
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=factory,
+            run_id=RunId("run-root"),
+            task_id=TaskId("task-root"),
+        )
+        containing = await ensure_interaction_runtime_branch(root)
+        child = await create_child_interaction_runtime(
+            containing,
+            context_label="Research agent / source selection",
+        )
+        assert isinstance(child, AttachedInteractionRuntime)
+
+        self.assertEqual(containing.branch_id, "branch-1")
+        self.assertEqual(child.run_id, "run-root")
+        self.assertEqual(child.task_id, "task-root")
+        self.assertEqual(child.branch_id, "branch-2")
+        self.assertEqual(child.parent_branch_id, "branch-1")
+        self.assertEqual(
+            child.context_label,
+            "Research agent / source selection",
+        )
+        self.assertIs(child.broker, root.broker)
+        self.assertIs(child.handler, root.handler)
+        self.assertIs(child.id_factory, factory)
+
+        execution = await create_agent_execution(
+            definition=_definition(),
+            agent_id=AgentId("child-agent"),
+            principal=_principal(),
+            initial_messages=(),
+            interaction_runtime=child,
+        )
+        self.assertEqual(execution.origin.run_id, child.run_id)
+        self.assertEqual(execution.origin.task_id, child.task_id)
+        self.assertEqual(execution.origin.branch_id, child.branch_id)
+        self.assertEqual(
+            execution.origin.parent_branch_id,
+            containing.branch_id,
+        )
+
+        branch_broker = execution.interaction_broker
+        assert branch_broker is not None
+        forged = InteractionBrokerRequest(
+            actor=actor,
+            origin=replace(
+                execution.origin,
+                branch_id=BranchId("sibling-branch"),
+            ),
+            mode=RequirementMode.REQUIRED,
+            reason="Choose how the execution should continue.",
+            questions=(
+                ConfirmationQuestion(
+                    question_id=QuestionId("continue"),
+                    prompt="Continue?",
+                    required=True,
+                ),
+            ),
+            handler=cast(InputHandler, _handler),
+        )
+        with self.assertRaises(ExecutionCorrelationError):
+            await branch_broker.request(forged)
+
+        mismatched_parent = replace(
+            execution.origin,
+            run_id=RunId("other-run"),
+        )
+        with self.assertRaises(ExecutionCorrelationError):
+            await create_child_interaction_runtime(
+                child,
+                parent_origin=mismatched_parent,
+                context_label="Nested child",
+            )
+
+    async def test_child_runtime_rejects_sibling_reparenting(self) -> None:
+        factory = _IdFactory()
+        root = await ensure_interaction_runtime_branch(
+            AttachedInteractionRuntime(
+                broker=cast(InteractionBroker, _Broker()),
+                actor=InteractionActor(principal=_principal()),
+                handler=cast(InputHandler, _handler),
+                id_factory=factory,
+                run_id=RunId("run-root"),
+                task_id=TaskId("task-root"),
+            )
+        )
+        parent = await create_agent_execution(
+            definition=_definition(),
+            agent_id=AgentId("parent"),
+            principal=_principal(),
+            initial_messages=(),
+            interaction_runtime=root,
+        )
+        first, second = await gather(
+            create_child_interaction_runtime(
+                root,
+                parent_origin=parent.origin,
+                context_label="First child",
+            ),
+            create_child_interaction_runtime(
+                root,
+                parent_origin=parent.origin,
+                context_label="Second child",
+            ),
+        )
+        assert first.branch_id is not None
+        assert second.branch_id is not None
+
+        with self.assertRaises(ExecutionCorrelationError):
+            await create_child_interaction_runtime(
+                first,
+                parent_origin=replace(
+                    parent.origin,
+                    branch_id=second.branch_id,
+                ),
+                context_label="Forged grandchild",
+            )
+
+        self.assertEqual(factory.branch, 3)
+
+    async def test_child_runtime_rejects_untrusted_derivation_contracts(
+        self,
+    ) -> None:
+        actor = InteractionActor(principal=_principal())
+        broker = cast(InteractionBroker, _Broker())
+        with self.assertRaisesRegex(TypeError, "interaction runtime"):
+            await create_child_interaction_runtime(
+                cast(Any, object()),
+                context_label="Invalid runtime",
+            )
+
+        unbound = AttachedInteractionRuntime(
+            broker=broker,
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=_IdFactory(),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "containing branch",
+        ):
+            await create_child_interaction_runtime(
+                unbound,
+                context_label="Missing parent",
+            )
+
+        runtime = AttachedInteractionRuntime(
+            broker=broker,
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=_IdFactory(),
+            run_id=RunId("run-1"),
+            task_id=TaskId("task-1"),
+            branch_id=BranchId("branch-1"),
+        )
+        with self.assertRaisesRegex(TypeError, "execution origin"):
+            await create_child_interaction_runtime(
+                runtime,
+                parent_origin=cast(ExecutionOrigin, object()),
+                context_label="Invalid parent",
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "owner does not match",
+        ):
+            await create_child_interaction_runtime(
+                runtime,
+                parent_origin=replace(
+                    _origin(),
+                    principal=_principal(user_id="other"),
+                ),
+                context_label="Wrong owner",
+            )
+
+        wrong_task = replace(runtime, task_id=TaskId("task-other"))
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "task does not match",
+        ):
+            await create_child_interaction_runtime(
+                wrong_task,
+                parent_origin=_origin(),
+                context_label="Wrong task",
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "lacks attached lineage ownership",
+        ):
+            await create_child_interaction_runtime(
+                runtime,
+                parent_origin=_origin(),
+                context_label="Unowned parent",
+            )
+
+    async def test_runtime_derivation_covers_durable_and_lineage_rejections(
+        self,
+    ) -> None:
+        actor = InteractionActor(principal=_principal())
+        duplicate_factory = _DuplicateBranchIdFactory()
+        duplicate_root = await ensure_interaction_runtime_branch(
+            AttachedInteractionRuntime(
+                broker=cast(InteractionBroker, _Broker()),
+                actor=actor,
+                handler=cast(InputHandler, _handler),
+                id_factory=duplicate_factory,
+                run_id=RunId("run-duplicate"),
+            )
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "already registered",
+        ):
+            await create_child_interaction_runtime(
+                duplicate_root,
+                context_label="Duplicate child",
+            )
+
+        durable_factory = _IdFactory()
+        durable = DurableInteractionRuntime(
+            actor=actor,
+            stager=cast(Any, _handler),
+            id_factory=durable_factory,
+            run_id=RunId("run-durable"),
+            task_id=TaskId("task-durable"),
+            branch_id=BranchId("branch-durable"),
+        )
+        durable_child = await create_child_interaction_runtime(
+            durable,
+            context_label="Durable child",
+        )
+        self.assertIsInstance(durable_child, DurableInteractionRuntime)
+        self.assertEqual(durable_child.branch_id, "branch-1")
+        self.assertEqual(durable_child.parent_branch_id, "branch-durable")
+        self.assertEqual(durable_child.context_label, "Durable child")
+
+    async def test_ensure_runtime_branch_rejects_invalid_claims_and_mints(
+        self,
+    ) -> None:
+        actor = InteractionActor(principal=_principal())
+        broker = cast(InteractionBroker, _Broker())
+        with self.assertRaisesRegex(TypeError, "interaction runtime"):
+            await ensure_interaction_runtime_branch(cast(Any, object()))
+
+        without_run = AttachedInteractionRuntime(
+            broker=broker,
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=_IdFactory(),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "requires a run",
+        ):
+            await ensure_interaction_runtime_branch(without_run)
+
+        with_parent = replace(
+            without_run,
+            run_id=RunId("run-parent"),
+            parent_branch_id=BranchId("parent"),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "cannot claim a parent",
+        ):
+            await ensure_interaction_runtime_branch(with_parent)
+
+        bound = replace(
+            without_run,
+            run_id=RunId("run-bound"),
+            branch_id=BranchId("bound"),
+        )
+        self.assertIs(await ensure_interaction_runtime_branch(bound), bound)
+
+        durable_factory = _IdFactory()
+        durable = DurableInteractionRuntime(
+            actor=actor,
+            stager=cast(Any, _handler),
+            id_factory=durable_factory,
+            run_id=RunId("run-durable"),
+        )
+        durable_bound = await ensure_interaction_runtime_branch(durable)
+        self.assertIsInstance(durable_bound, DurableInteractionRuntime)
+        self.assertEqual(durable_bound.branch_id, "branch-1")
+
+        invalid = AttachedInteractionRuntime(
+            broker=broker,
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=_InvalidBranchIdFactory(),
+            run_id=RunId("run-invalid"),
+        )
+        with self.assertRaises(ExecutionCorrelationError):
+            await ensure_interaction_runtime_branch(invalid)
+
+    async def test_creation_mints_and_rejects_attached_root_lineage(
+        self,
+    ) -> None:
+        actor = InteractionActor(principal=_principal())
+        broker = cast(InteractionBroker, _Broker())
+        factory = _IdFactory()
+        runtime = AttachedInteractionRuntime(
+            broker=broker,
+            actor=actor,
+            handler=cast(InputHandler, _handler),
+            id_factory=factory,
+            run_id=RunId("run-attached"),
+        )
+        execution = await create_agent_execution(
+            definition=_definition(),
+            agent_id=AgentId("attached-agent"),
+            principal=_principal(),
+            initial_messages=(),
+            interaction_runtime=runtime,
+        )
+        self.assertEqual(execution.origin.run_id, "run-attached")
+        self.assertEqual(execution.origin.branch_id, "branch-1")
+        self.assertIsNotNone(runtime._lineage)
+
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "cannot claim a parent",
+        ):
+            await create_agent_execution(
+                definition=_definition(),
+                agent_id=AgentId("parent-claim"),
+                principal=_principal(),
+                initial_messages=(),
+                interaction_runtime=AttachedInteractionRuntime(
+                    broker=broker,
+                    actor=actor,
+                    handler=cast(InputHandler, _handler),
+                    id_factory=_IdFactory(),
+                    run_id=RunId("run-parent-claim"),
+                    parent_branch_id=BranchId("parent"),
+                ),
+            )
+
+        with self.assertRaises(ExecutionCorrelationError):
+            await create_agent_execution(
+                definition=_definition(),
+                agent_id=AgentId("invalid-root"),
+                principal=_principal(),
+                initial_messages=(),
+                interaction_runtime=AttachedInteractionRuntime(
+                    broker=broker,
+                    actor=actor,
+                    handler=cast(InputHandler, _handler),
+                    id_factory=_InvalidBranchIdFactory(),
+                    run_id=RunId("run-invalid-root"),
+                ),
+            )
+
+    async def test_direct_child_runtime_cannot_claim_parent_cleanup(
+        self,
+    ) -> None:
+        factory = _IdFactory()
+        runtime = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, _Broker()),
+            actor=InteractionActor(principal=_principal()),
+            handler=cast(InputHandler, _handler),
+            id_factory=factory,
+            run_id=RunId("forged-run"),
+            branch_id=BranchId("forged-child"),
+            parent_branch_id=BranchId("victim-root"),
+        )
+        execution = await create_agent_execution(
+            definition=_definition(),
+            agent_id=AgentId("forged-agent"),
+            principal=_principal(),
+            initial_messages=(),
+            interaction_runtime=runtime,
+        )
+        broker = execution.interaction_broker
+        assert broker is not None
+
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "lacks attached lineage ownership",
+        ):
+            await broker.cancel_scope(
+                TerminalizeInteractionScopeCommand(
+                    actor=runtime.actor,
+                    scope=InteractionExecutionScope(
+                        run_id=execution.origin.run_id,
+                        branch_id=execution.origin.branch_id,
+                        include_descendants=True,
+                    ),
+                    provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                )
+            )
 
     async def test_creation_validates_runtime_trust_and_types(self) -> None:
         factory = _IdFactory()
