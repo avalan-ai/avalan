@@ -16,9 +16,9 @@ from input_contract_json import StrictJsonError, strict_json_path
 
 _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
-_CURRENT_BOUNDARY_PHASE = 5
+_CURRENT_BOUNDARY_PHASE = 6
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "27fdb29c76d11dd0a7b63daad15add69363b83bc7661406087a8c01eaa215107"
+    "ff65967324837ddffe0c583d5a11e82e3f3408a70227af5f9fb0acc0611e6dc5"
 )
 _FROZEN_FIXTURE_INVENTORIES = {
     4: (
@@ -30,21 +30,33 @@ _FROZEN_FIXTURE_INVENTORIES = {
         "deaaba77909963af88741d6f07de211e1fa58b13497f1ae2a4acca6a680d03c3",
         "f6fd2f128d4c16e7fb070965dd6075f4e0bec6b48a834861c5069936be336666",
     ),
+    5: (
+        (
+            "portable-continuation-positive",
+            "continuation-store-cas-negative",
+            "provider-snapshot-identity-interchange-negative",
+            "synchronous-continuation-runtime-resolver-negative",
+            "task-target-outcome-positive",
+            "task-target-outcome-raw-negative",
+            "task-target-suspension-as-success-negative",
+        ),
+        "6486211d14c7b9114aa938350a3436998f33211aec97cc91e2a4e1ad5eae8ce9",
+        "611ca045028054c3c4ad3536affb2fb5b07c0baae437f02e54378068f69ee2f8",
+    ),
 }
 _EXPECTED_CURRENT_FIXTURE_IDS = (
-    "portable-continuation-positive",
-    "continuation-store-cas-negative",
-    "provider-snapshot-identity-interchange-negative",
-    "synchronous-continuation-runtime-resolver-negative",
-    "task-target-outcome-positive",
-    "task-target-outcome-raw-negative",
-    "task-target-suspension-as-success-negative",
+    "public-sdk-attached-positive",
+    "public-sdk-construction-positive",
+    "public-sdk-sync-handler-negative",
+    "public-sdk-untyped-submission-negative",
+    "public-sdk-result-conversion-negative",
+    "public-sdk-ref-interchange-negative",
 )
 _EXPECTED_CURRENT_FIXTURE_SHA256 = (
-    "6486211d14c7b9114aa938350a3436998f33211aec97cc91e2a4e1ad5eae8ce9"
+    "6dada43c10c61b9e9b965259c5b779af13f35d734d3b23f8317b2fa3f1ada3c4"
 )
 _EXPECTED_CURRENT_FIXTURE_SOURCE_SHA256 = (
-    "611ca045028054c3c4ad3536affb2fb5b07c0baae437f02e54378068f69ee2f8"
+    "8c6d53b7d284fee53db349020897c525568b8a268ed6778e0ff548b2621942ee"
 )
 
 

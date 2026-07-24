@@ -1304,7 +1304,7 @@ class PgsqlStoreCoverageTest(IsolatedAsyncioTestCase):
         self.assertIsInstance(store, PgsqlTaskStore)
 
     async def test_requeue_suspended_rejects_invalid_revision(self) -> None:
-        store, _ = _scripted_store()
+        store, cursor = _scripted_store()
 
         with self.assertRaisesRegex(
             AssertionError,
@@ -1315,6 +1315,20 @@ class PgsqlStoreCoverageTest(IsolatedAsyncioTestCase):
                 request_id="request-1",
                 continuation_id="continuation-1",
                 resolution_revision=0,
+            )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "interaction_state must be answered or timed_out",
+        ):
+            await store._requeue_suspended_in_unit(
+                _scripted_unit(cursor),
+                run_id="run-1",
+                request_id="request-1",
+                continuation_id="continuation-1",
+                resolution_revision=1,
+                observed_at=_DURABLE_NOW,
+                metadata={},
+                interaction_state="declined",
             )
 
     async def test_requeue_suspended_rejects_each_stale_boundary(self) -> None:

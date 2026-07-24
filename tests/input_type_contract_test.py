@@ -205,16 +205,16 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=5,
+        through_phase=6,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 5
+    assert loaded.current_phase == 6
     active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures
         if fixture.lifecycle == "active"
     ]
-    assert len(active_fixture_ids) == 28
+    assert len(active_fixture_ids) == 34
     assert active_fixture_ids == [
         "deterministic-fixtures-positive",
         "canonical-answers-positive",
@@ -244,6 +244,12 @@ def test_type_contract_manifest_and_runner_are_strict(
         "task-target-outcome-positive",
         "task-target-outcome-raw-negative",
         "task-target-suspension-as-success-negative",
+        "public-sdk-attached-positive",
+        "public-sdk-construction-positive",
+        "public-sdk-sync-handler-negative",
+        "public-sdk-untyped-submission-negative",
+        "public-sdk-result-conversion-negative",
+        "public-sdk-ref-interchange-negative",
     ]
 
     invalid = deepcopy(manifest)
@@ -350,7 +356,7 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
         _VERIFIER._validate_current_fixture_inventory(
             fixtures,
             raw_fixtures,
-            5,
+            6,
         )
 
     changed_descriptors = deepcopy(raw_manifest["fixtures"])
@@ -369,7 +375,7 @@ def test_current_type_fixture_inventory_and_sources_fail_closed(
         _VERIFIER._validate_current_fixture_inventory(
             loaded.fixtures,
             changed_descriptors,
-            5,
+            6,
         )
 
     for fixture in loaded.fixtures:

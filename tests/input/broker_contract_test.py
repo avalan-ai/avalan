@@ -12,8 +12,10 @@ from asyncio import (
 from collections.abc import Callable
 from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
+from typing import cast
 
 from avalan.interaction import (
+    AcquireControllerActivity,
     ActiveControlLeaseNonce,
     AgentId,
     AnsweredResolution,
@@ -25,6 +27,8 @@ from avalan.interaction import (
     ConfirmationAnswer,
     ConfirmationQuestion,
     ContinuationId,
+    ControllerActivityApplied,
+    ControllerId,
     CreateInteractionApplied,
     DeclinedResolution,
     ExecutionDefinitionRef,
@@ -68,6 +72,8 @@ from avalan.interaction import (
     ParticipantId,
     PrincipalScope,
     QuestionId,
+    RecordControllerActivityCommand,
+    ReleaseControllerActivity,
     RequestState,
     RequirementMode,
     ResolutionDecisionStage,
@@ -90,6 +96,8 @@ from avalan.interaction import (
     TaskInputClassifier,
     TenantId,
     TextAnswer,
+    TrustedDefaultResolutionApplied,
+    TrustedDefaultResolutionRequest,
     TurnId,
     UserId,
     project_resolution_to_model,
@@ -1812,4 +1820,242 @@ def test_requirement_input_n_096() -> None:
         ResolutionStatus.UNAVAILABLE,
         ResolutionStatus.TIMED_OUT,
         ResolutionStatus.CANCELLED,
+    )
+
+
+def test_requirement_input_n_048() -> None:
+    """Apply the host-declared advisory waiting budget exactly once."""
+
+    async def exercise() -> tuple[tuple[float, ...], ResolutionStatus]:
+        harness = await _harness()
+        resumer = _Resumer()
+        try:
+            result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n048",
+                    resumer=resumer,
+                    mode=RequirementMode.ADVISORY,
+                    advisory_wait_seconds=4,
+                    reason="Wait only for the declared advisory budget.",
+                )
+            )
+            assert isinstance(result.delivery, InteractionDelivery)
+            await _wait_until(lambda: 4.0 in harness.clock.wait_calls)
+            harness.clock.advance(3)
+            assert not resumer.called.is_set()
+            pending = await _inspect(
+                harness.broker,
+                result.delivery.correlation,
+            )
+            assert pending.request.state is RequestState.PENDING
+
+            harness.clock.advance(1)
+            await resumer.called.wait()
+            settled = await _inspect(
+                harness.broker,
+                result.delivery.correlation,
+            )
+            assert settled.request.resolution is not None
+            return (
+                tuple(harness.clock.wait_calls),
+                settled.request.resolution.status,
+            )
+        finally:
+            await harness.broker.aclose()
+
+    wait_calls, status = run(exercise())
+    assert wait_calls.count(4.0) == 1
+    assert status is ResolutionStatus.TIMED_OUT
+
+
+def test_requirement_input_n_049() -> None:
+    """Preserve advisory budget expiry as policy-authored timeout."""
+
+    async def exercise() -> tuple[ResolutionStatus, AnswerProvenance]:
+        harness = await _harness()
+        resumer = _Resumer()
+        try:
+            result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n049",
+                    resumer=resumer,
+                    mode=RequirementMode.ADVISORY,
+                    advisory_wait_seconds=2,
+                    default_value=False,
+                    reason="Retain timeout provenance.",
+                )
+            )
+            assert isinstance(result.delivery, InteractionDelivery)
+            await _wait_until(lambda: 2.0 in harness.clock.wait_calls)
+            harness.clock.advance(2)
+            await resumer.called.wait()
+            record = await _inspect(
+                harness.broker,
+                result.delivery.correlation,
+            )
+            resolution = record.request.resolution
+            assert resolution is not None
+            assert not isinstance(resolution, AnsweredResolution)
+            return resolution.status, resolution.provenance
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        ResolutionStatus.TIMED_OUT,
+        AnswerProvenance.POLICY,
+    )
+
+
+def test_requirement_input_n_050() -> None:
+    """Keep a trusted default distinct from a human-authored answer."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        resumer = _Resumer()
+        try:
+            result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n050",
+                    resumer=resumer,
+                    default_value=True,
+                    reason="Apply only the declared trusted default.",
+                )
+            )
+            assert isinstance(result.delivery, InteractionDelivery)
+            record = result.delivery.record
+            defaulted = await harness.broker.resolve_trusted_default(
+                TrustedDefaultResolutionRequest(
+                    actor=_actor(),
+                    correlation=record.correlation,
+                    expected_state_revision=record.request.state_revision,
+                )
+            )
+            assert isinstance(
+                defaulted.store_result,
+                TrustedDefaultResolutionApplied,
+            )
+            resolution = defaulted.store_result.record.request.resolution
+            assert isinstance(resolution, AnsweredResolution)
+            assert len(resolution.answers) == 1
+            answer = resolution.answers[0]
+            return (
+                resolution.status,
+                resolution.provenance,
+                answer.provenance,
+                cast(ConfirmationAnswer, answer).value,
+                len(resumer.notifications),
+            )
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        ResolutionStatus.ANSWERED,
+        AnswerProvenance.TRUSTED_DEFAULT,
+        AnswerProvenance.TRUSTED_DEFAULT,
+        True,
+        1,
+    )
+
+
+def test_requirement_input_n_051() -> None:
+    """Pause advisory inactivity accounting while control stays active."""
+
+    async def exercise() -> tuple[RequestState, ResolutionStatus]:
+        harness = await _harness()
+        handler = _GateHandler()
+        request_task = create_task(
+            harness.broker.request(
+                _request(
+                    handler,
+                    run_id="n051",
+                    mode=RequirementMode.ADVISORY,
+                    advisory_wait_seconds=5,
+                    reason="Pause while the trusted controller is active.",
+                )
+            )
+        )
+        try:
+            await handler.started.wait()
+            correlation = _correlation(
+                harness.ids.request_ids[0],
+                harness.ids.continuation_ids[0],
+                _origin("n051"),
+            )
+            presented = await _inspect(harness.broker, correlation)
+            acquired = await harness.broker.record_activity(
+                RecordControllerActivityCommand(
+                    actor=_actor(),
+                    correlation=correlation,
+                    evidence=AcquireControllerActivity(
+                        request_id=presented.request.request_id,
+                        controller_id=ControllerId("n051-controller"),
+                    ),
+                )
+            )
+            assert isinstance(
+                acquired.store_result,
+                ControllerActivityApplied,
+            )
+            lease_nonce = acquired.store_result.lease_nonce
+            assert lease_nonce is not None
+
+            harness.clock.advance(4)
+            await _yield_once()
+            harness.clock.advance(2)
+            await _yield_once()
+            paused = await _inspect(harness.broker, correlation)
+            assert paused.request.state is RequestState.PENDING
+
+            released = await harness.broker.record_activity(
+                RecordControllerActivityCommand(
+                    actor=_actor(),
+                    correlation=correlation,
+                    evidence=ReleaseControllerActivity(
+                        request_id=presented.request.request_id,
+                        controller_id=ControllerId("n051-controller"),
+                        lease_nonce=lease_nonce,
+                        sequence=1,
+                    ),
+                )
+            )
+            assert isinstance(
+                released.store_result,
+                ControllerActivityApplied,
+            )
+            await _wait_until(
+                lambda: any(
+                    deadline > harness.clock.monotonic_seconds
+                    for deadline in harness.clock.wait_calls
+                )
+            )
+            harness.clock.advance(4)
+            await _yield_once()
+            still_pending = await _inspect(harness.broker, correlation)
+            assert still_pending.request.state is RequestState.PENDING
+            harness.clock.advance(1)
+            await _wait_until(request_task.done)
+            result = await request_task
+            assert isinstance(result.delivery, InteractionDelivery)
+            terminal = await _inspect(harness.broker, correlation)
+            assert terminal.request.resolution is not None
+            return (
+                still_pending.request.state,
+                terminal.request.resolution.status,
+            )
+        finally:
+            handler.release.set()
+            if not request_task.done():
+                request_task.cancel()
+                try:
+                    await request_task
+                except CancelledError:
+                    pass
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        RequestState.PENDING,
+        ResolutionStatus.TIMED_OUT,
     )

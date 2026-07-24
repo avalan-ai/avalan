@@ -1,7 +1,7 @@
 # mypy: disable-error-code=import-not-found
 """Exercise canonical input failures across a suspended task boundary."""
 
-from asyncio import Event, create_task, wait_for
+from asyncio import Event, Task, create_task, wait_for
 from asyncio import run as run_async
 from collections.abc import (
     AsyncIterator,
@@ -138,6 +138,7 @@ from avalan.pgsql import PgsqlDatabase
 from avalan.task import (
     EncryptedPrivacyValue,
     PrivacyAction,
+    SanitizedTaskEvent,
     TaskAttemptSegmentState,
     TaskAttemptState,
     TaskClient,
@@ -153,10 +154,12 @@ from avalan.task import (
     TaskQueueItemState,
     TaskQueueSuspension,
     TaskRunPolicy,
+    TaskRunResult,
     TaskRunState,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskWorker,
+    TaskWorkerProcessResult,
 )
 from avalan.task.context import TaskDurableResumeHandle
 from avalan.task.durable_agent import DurableAgentTaskHost
@@ -548,6 +551,68 @@ class _ProviderManagerFactory:
         return manager
 
 
+class _GatedProviderModelManager(_ProviderModelManager):
+    """Pause one provider call after recording its exact invocation."""
+
+    def __init__(
+        self,
+        *,
+        plan: tuple[bool, ...],
+        arguments: Mapping[str, object],
+        call_id_start: int,
+        started: Event,
+        release: Event,
+    ) -> None:
+        super().__init__(
+            plan=plan,
+            arguments=arguments,
+            call_id_start=call_id_start,
+            use_openai_transport=False,
+        )
+        self._started = started
+        self._release = release
+
+    async def __call__(self, call: ModelCall) -> TextGenerationResponse:
+        """Block the second call until the test explicitly releases it."""
+        response = await super().__call__(call)
+        if len(self.calls) == 2:
+            self._started.set()
+            await self._release.wait()
+        return response
+
+
+class _GatedProviderManagerFactory(_ProviderManagerFactory):
+    """Create one manager whose continuation call can be observed live."""
+
+    def __init__(
+        self,
+        plans: list[tuple[bool, ...]],
+        *,
+        arguments: Mapping[str, object],
+    ) -> None:
+        super().__init__(plans, arguments=arguments)
+        self.started = Event()
+        self.release = Event()
+
+    def __call__(
+        self,
+        *args: object,
+        **kwargs: object,
+    ) -> _ProviderModelManager:
+        _ = args, kwargs
+        if not self._plans:
+            raise AssertionError("unexpected orchestrator process")
+        manager = _GatedProviderModelManager(
+            plan=self._plans.pop(0),
+            arguments=self._arguments,
+            call_id_start=len(self.instances) + 1,
+            started=self.started,
+            release=self.release,
+        )
+        self.instances.append(manager)
+        return manager
+
+
 def _openai_client() -> OpenAIClient:
     client = cast(Any, object.__new__(OpenAIClient))
     client._base_url = "https://api.openai.com/v1"
@@ -882,8 +947,25 @@ class _RecordingAgentTaskTargetRunner(AgentTaskTargetRunner):
         return outcome
 
 
+class _DirectSuspendingAgentTaskTargetRunner(_RecordingAgentTaskTargetRunner):
+    """Expose the agent pause through direct TaskClient observation."""
+
+    async def run(self, context: TaskTargetContext) -> TaskTargetOutcome:
+        """Return the real agent pause without queued persistence metadata."""
+        outcome = await super().run(context)
+        assert isinstance(outcome, TaskTargetSuspended)
+        return TaskTargetSuspended(
+            input_required=outcome.input_required,
+            checkpoint_id=outcome.checkpoint_id,
+        )
+
+
 class _ResumeAdapter:
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        expected_mode: RequirementMode = RequirementMode.REQUIRED,
+    ) -> None:
+        self.expected_mode = expected_mode
         self.imported: list[ContinuationSnapshot] = []
 
     def validate_continuation_snapshot_call(
@@ -901,7 +983,7 @@ class _ResumeAdapter:
             == provider_call_correlation_id
         )
         assert expected_provider_name == "request_user_input"
-        assert expected_arguments["mode"] == RequirementMode.REQUIRED.value
+        assert expected_arguments["mode"] == self.expected_mode.value
 
     def import_continuation_snapshot(
         self,
@@ -1011,6 +1093,25 @@ class _DirectFailureHarness:
         self.temporary.cleanup()
 
 
+@dataclass(frozen=True, slots=True)
+class _AdvisoryTimeoutObservation:
+    """Retain one live task observation at advisory timeout."""
+
+    request: InputRequest
+    task_state: TaskRunState
+    provider_call_count: int
+    domain_side_effect_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class _RequiredHandoffObservation:
+    """Retain one task-target suspension exposed by the public task API."""
+
+    task_state: TaskRunState
+    provider_call_count: int
+    domain_side_effect_count: int
+
+
 def _task_evidence(
     *,
     condition_id: str,
@@ -1038,6 +1139,121 @@ def _task_evidence(
         "provider_call_count": provider_call_count,
         "domain_side_effect_count": domain_side_effect_count,
     }
+
+
+def _task_observation_evidence(
+    *,
+    condition_id: str,
+    surface_id: str,
+    transition_from: RequestState,
+    transition_to: RequestState,
+    public_result_id: str,
+    status_key: str,
+    status_value: str,
+    provider_call_count: int,
+    domain_side_effect_count: int,
+) -> dict[str, object]:
+    """Return one redacted TaskClient or CLI observation."""
+    return {
+        "condition_id": condition_id,
+        "surface_id": surface_id,
+        "transition_from": transition_from.value,
+        "transition_to": transition_to.value,
+        "public_result_id": public_result_id,
+        "public_result": {
+            "interaction_state": transition_to.value,
+            "redacted": True,
+            "channel": "task-client",
+        },
+        "status_key": status_key,
+        "status_value": status_value,
+        "provider_call_count": provider_call_count,
+        "domain_side_effect_count": domain_side_effect_count,
+    }
+
+
+def _observed_task_interaction_states(
+    events: tuple[SanitizedTaskEvent, ...],
+) -> tuple[RequestState, ...]:
+    """Return interaction states exposed by real TaskClient events."""
+    states: list[RequestState] = []
+    event_states = {
+        TaskInteractionEventType.INPUT_REQUIRED.value: RequestState.PENDING,
+        TaskInteractionEventType.INPUT_RESUMED.value: RequestState.ANSWERED,
+        TaskInteractionEventType.INPUT_CANCELLED.value: RequestState.CANCELLED,
+        TaskInteractionEventType.INPUT_EXPIRED.value: RequestState.EXPIRED,
+        TaskInteractionEventType.INPUT_SUPERSEDED.value: (
+            RequestState.SUPERSEDED
+        ),
+    }
+    for event in events:
+        payload = event.payload
+        if isinstance(payload, Mapping):
+            lifecycle = payload.get("interaction_lifecycle")
+            if isinstance(lifecycle, Mapping):
+                state = lifecycle.get("state")
+                if isinstance(state, str):
+                    request_state = next(
+                        (item for item in RequestState if item.value == state),
+                        None,
+                    )
+                    if request_state is not None:
+                        states.append(request_state)
+        event_state = event_states.get(event.event_type)
+        if event_state is not None:
+            states.append(event_state)
+    assert states
+    return tuple(states)
+
+
+async def _task_client_observation_evidence(
+    *,
+    condition_id: str,
+    suspended: _DurableFailureHarness,
+    transition_from: RequestState,
+    provider_call_count: int,
+) -> list[dict[str, object]]:
+    """Observe one real task lifecycle through both TaskClient methods."""
+    inspection = await suspended.client.inspect(suspended.run_id)
+    inspection_result = "ok"
+    events = await suspended.client.events(suspended.run_id)
+    events_result = "ok"
+
+    assert events == inspection.events
+    assert inspection.output.state is inspection.run.state
+    assert all(event.run_id == suspended.run_id for event in events)
+    inspect_states = _observed_task_interaction_states(inspection.events)
+    event_states = _observed_task_interaction_states(events)
+    assert inspect_states == event_states
+    assert transition_from in inspect_states
+    transition_to = inspect_states[-1]
+    public_result_id = f"task.observation_{transition_to.value}.v1"
+    domain_side_effect_count = len(inspection.artifacts)
+
+    return [
+        _task_observation_evidence(
+            condition_id=condition_id,
+            surface_id="task-client-inspect",
+            transition_from=transition_from,
+            transition_to=transition_to,
+            public_result_id=public_result_id,
+            status_key="client_result",
+            status_value=inspection_result,
+            provider_call_count=provider_call_count,
+            domain_side_effect_count=domain_side_effect_count,
+        ),
+        _task_observation_evidence(
+            condition_id=condition_id,
+            surface_id="task-client-events",
+            transition_from=transition_from,
+            transition_to=transition_to,
+            public_result_id=public_result_id,
+            status_key="client_result",
+            status_value=events_result,
+            provider_call_count=provider_call_count,
+            domain_side_effect_count=domain_side_effect_count,
+        ),
+    ]
 
 
 def _client_cancel_evidence(
@@ -1377,7 +1593,7 @@ def test_input_f_04(
 ) -> None:
     """Reject a wrong answer type without resuming the task."""
     evidence = run_async(_test_input_f_04())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -1440,13 +1656,23 @@ async def _test_input_f_04() -> list[dict[str, object]]:
         assert handler.failure_provider_call_count == 1
         assert result.run.state is TaskRunState.SUCCEEDED
         assert _provider_call_count(direct.model_factory) == 2
-        evidence = await _validation_failure_evidence(
-            condition_id="INPUT-F-04",
-            suspended=suspended,
-            direct=direct,
-            handler=handler,
-            direct_run_id=result.run.run_id,
-        )
+        evidence = [
+            *await _validation_failure_evidence(
+                condition_id="INPUT-F-04",
+                suspended=suspended,
+                direct=direct,
+                handler=handler,
+                direct_run_id=result.run.run_id,
+            ),
+            *await _task_client_observation_evidence(
+                condition_id="INPUT-F-04",
+                suspended=suspended,
+                transition_from=suspended.request.state,
+                provider_call_count=_provider_call_count(
+                    suspended.model_factory
+                ),
+            ),
+        ]
     finally:
         await direct.close()
     assert evidence is not None
@@ -1458,7 +1684,7 @@ def test_input_f_05(
 ) -> None:
     """Reject an unknown choice without resuming the task."""
     evidence = run_async(_test_input_f_05())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -1530,13 +1756,23 @@ async def _test_input_f_05() -> list[dict[str, object]]:
         assert handler.failure_provider_call_count == 1
         assert result.run.state is TaskRunState.SUCCEEDED
         assert _provider_call_count(direct.model_factory) == 2
-        evidence = await _validation_failure_evidence(
-            condition_id="INPUT-F-05",
-            suspended=suspended,
-            direct=direct,
-            handler=handler,
-            direct_run_id=result.run.run_id,
-        )
+        evidence = [
+            *await _validation_failure_evidence(
+                condition_id="INPUT-F-05",
+                suspended=suspended,
+                direct=direct,
+                handler=handler,
+                direct_run_id=result.run.run_id,
+            ),
+            *await _task_client_observation_evidence(
+                condition_id="INPUT-F-05",
+                suspended=suspended,
+                transition_from=suspended.request.state,
+                provider_call_count=_provider_call_count(
+                    suspended.model_factory
+                ),
+            ),
+        ]
     finally:
         await direct.close()
     assert evidence is not None
@@ -1548,7 +1784,7 @@ def test_input_f_06(
 ) -> None:
     """Reject a missing required answer without resuming the task."""
     evidence = run_async(_test_input_f_06())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -1605,13 +1841,23 @@ async def _test_input_f_06() -> list[dict[str, object]]:
         assert handler.failure_provider_call_count == 1
         assert result.run.state is TaskRunState.SUCCEEDED
         assert _provider_call_count(direct.model_factory) == 2
-        evidence = await _validation_failure_evidence(
-            condition_id="INPUT-F-06",
-            suspended=suspended,
-            direct=direct,
-            handler=handler,
-            direct_run_id=result.run.run_id,
-        )
+        evidence = [
+            *await _validation_failure_evidence(
+                condition_id="INPUT-F-06",
+                suspended=suspended,
+                direct=direct,
+                handler=handler,
+                direct_run_id=result.run.run_id,
+            ),
+            *await _task_client_observation_evidence(
+                condition_id="INPUT-F-06",
+                suspended=suspended,
+                transition_from=suspended.request.state,
+                provider_call_count=_provider_call_count(
+                    suspended.model_factory
+                ),
+            ),
+        ]
     finally:
         await direct.close()
     assert evidence is not None
@@ -1623,7 +1869,7 @@ def test_input_f_07(
 ) -> None:
     """Treat an identical answer replay as one accepted resolution."""
     evidence = run_async(_test_input_f_07())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -1758,6 +2004,15 @@ async def _test_input_f_07() -> list[dict[str, object]]:
         )
         assert direct_inspection.artifacts == ()
         assert inspection.artifacts == ()
+        client_provider_call_count = _provider_call_count(
+            suspended.model_factory
+        ) + len(runtime.executor.commands)
+        client_evidence = await _task_client_observation_evidence(
+            condition_id="INPUT-F-07",
+            suspended=suspended,
+            transition_from=accepted.resolution.record.request.state,
+            provider_call_count=client_provider_call_count,
+        )
         evidence = [
             _task_evidence(
                 condition_id="INPUT-F-07",
@@ -1785,6 +2040,7 @@ async def _test_input_f_07() -> list[dict[str, object]]:
                 ),
                 domain_side_effect_count=len(inspection.artifacts),
             ),
+            *client_evidence,
         ]
     finally:
         await direct.close()
@@ -1797,7 +2053,7 @@ def test_input_f_08(
 ) -> None:
     """Reject a conflicting answer after the winning resolution."""
     evidence = run_async(_test_input_f_08())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -1924,6 +2180,15 @@ async def _test_input_f_08() -> list[dict[str, object]]:
         )
         assert direct_inspection.artifacts == ()
         assert inspection.artifacts == ()
+        client_provider_call_count = _provider_call_count(
+            suspended.model_factory
+        ) + len(runtime.executor.commands)
+        client_evidence = await _task_client_observation_evidence(
+            condition_id="INPUT-F-08",
+            suspended=suspended,
+            transition_from=accepted.resolution.record.request.state,
+            provider_call_count=client_provider_call_count,
+        )
         evidence = [
             _task_evidence(
                 condition_id="INPUT-F-08",
@@ -1947,6 +2212,7 @@ async def _test_input_f_08() -> list[dict[str, object]]:
                 ),
                 domain_side_effect_count=len(inspection.artifacts),
             ),
+            *client_evidence,
         ]
     finally:
         await direct.close()
@@ -1959,7 +2225,7 @@ def test_input_f_09(
 ) -> None:
     """Expire the suspended task when its continuation expires."""
     evidence = run_async(_test_input_f_09())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -2086,6 +2352,12 @@ async def _test_input_f_09() -> list[dict[str, object]]:
         )
         assert direct_inspection.artifacts == ()
         assert inspection.artifacts == ()
+        client_evidence = await _task_client_observation_evidence(
+            condition_id="INPUT-F-09",
+            suspended=suspended,
+            transition_from=suspended.request.state,
+            provider_call_count=_provider_call_count(suspended.model_factory),
+        )
         evidence = [
             _task_evidence(
                 condition_id="INPUT-F-09",
@@ -2109,6 +2381,7 @@ async def _test_input_f_09() -> list[dict[str, object]]:
                 ),
                 domain_side_effect_count=len(inspection.artifacts),
             ),
+            *client_evidence,
         ]
     finally:
         await direct.close()
@@ -2121,7 +2394,7 @@ def test_input_f_10(
 ) -> None:
     """Cancel both the pending interaction and containing task."""
     evidence = run_async(_test_input_f_10())
-    assert len(evidence) == 3
+    assert len(evidence) == 5
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -2224,6 +2497,12 @@ async def _test_input_f_10() -> list[dict[str, object]]:
         assert direct_segments[0].state is TaskAttemptSegmentState.ABANDONED
         assert direct_inspection.artifacts == ()
         assert inspection.artifacts == ()
+        client_evidence = await _task_client_observation_evidence(
+            condition_id="INPUT-F-10",
+            suspended=suspended,
+            transition_from=suspended.request.state,
+            provider_call_count=_provider_call_count(suspended.model_factory),
+        )
         evidence = [
             _task_evidence(
                 condition_id="INPUT-F-10",
@@ -2247,6 +2526,7 @@ async def _test_input_f_10() -> list[dict[str, object]]:
                 ),
                 domain_side_effect_count=len(inspection.artifacts),
             ),
+            *client_evidence,
             _client_cancel_evidence(
                 interaction_state=persisted.state,
                 client_result=cancelled.state,
@@ -2267,7 +2547,7 @@ def test_input_f_11(
 ) -> None:
     """Supersede pending input and terminalize its containing task."""
     evidence = run_async(_test_input_f_11())
-    assert len(evidence) == 2
+    assert len(evidence) == 4
     _record_failure_matrix_evidence(record_property, evidence)
 
 
@@ -2385,6 +2665,12 @@ async def _test_input_f_11() -> list[dict[str, object]]:
         )
         assert direct_inspection.artifacts == ()
         assert inspection.artifacts == ()
+        client_evidence = await _task_client_observation_evidence(
+            condition_id="INPUT-F-11",
+            suspended=suspended,
+            transition_from=suspended.request.state,
+            provider_call_count=_provider_call_count(suspended.model_factory),
+        )
         evidence = [
             _task_evidence(
                 condition_id="INPUT-F-11",
@@ -2408,6 +2694,7 @@ async def _test_input_f_11() -> list[dict[str, object]]:
                 ),
                 domain_side_effect_count=len(inspection.artifacts),
             ),
+            *client_evidence,
         ]
     finally:
         await direct.close()
@@ -2415,8 +2702,430 @@ async def _test_input_f_11() -> list[dict[str, object]]:
     return evidence
 
 
+def test_input_f_12(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Persist required input after the finite caller handoff budget."""
+    evidence = run_async(_test_input_f_12())
+    assert len(evidence) == 6
+    _record_failure_matrix_evidence(record_property, evidence)
+
+
+async def _test_input_f_12() -> list[dict[str, object]]:
+    direct = await _direct_required_handoff_observation()
+    suspended = await _durable_failure_harness(_confirmation())
+    inspection = await suspended.client.inspect(suspended.run_id)
+    output = await suspended.client.output(suspended.run_id)
+    events = await suspended.client.events(suspended.run_id)
+    persisted = await _persisted_request(suspended)
+
+    assert persisted.state is RequestState.PENDING
+    assert inspection.run.state is TaskRunState.INPUT_REQUIRED
+    assert inspection.artifacts == ()
+    assert events == inspection.events
+    assert (
+        tuple(event.event_type for event in events).count(
+            TaskInteractionEventType.INPUT_REQUIRED.value
+        )
+        == 1
+    )
+    assert output.state is TaskRunState.INPUT_REQUIRED
+    assert isinstance(output.input_required, Mapping)
+    assert output.input_required["kind"] == "input_required"
+    assert output.input_required["request_id"] == str(persisted.request_id)
+    assert output.input_required["continuation_id"] == str(
+        persisted.continuation_id
+    )
+    assert output.input_required["detached_resumption_available"] is True
+    assert "questions" not in output.input_required
+    provider_call_count = _provider_call_count(suspended.model_factory)
+    assert provider_call_count == 1
+
+    task_evidence = [
+        _task_evidence(
+            condition_id="INPUT-F-12",
+            surface_id="task-target-agent-direct",
+            transition_from=RequestState.PENDING,
+            transition_to=RequestState.PENDING,
+            public_result_id="task.interaction_pending.v1",
+            task_state=direct.task_state,
+            provider_call_count=direct.provider_call_count,
+            domain_side_effect_count=direct.domain_side_effect_count,
+        ),
+        _task_evidence(
+            condition_id="INPUT-F-12",
+            surface_id="task-target-agent-queue",
+            transition_from=suspended.request.state,
+            transition_to=persisted.state,
+            public_result_id="task.interaction_pending.v1",
+            task_state=inspection.run.state,
+            provider_call_count=provider_call_count,
+            domain_side_effect_count=len(inspection.artifacts),
+        ),
+    ]
+    observation_evidence = [
+        _task_observation_evidence(
+            condition_id="INPUT-F-12",
+            surface_id=surface_id,
+            transition_from=RequestState.PENDING,
+            transition_to=RequestState.PENDING,
+            public_result_id="task.observation_pending.v1",
+            status_key=status_key,
+            status_value=status_value,
+            provider_call_count=provider_call_count,
+            domain_side_effect_count=len(inspection.artifacts),
+        )
+        for surface_id, status_key, status_value in (
+            ("cli-task-inspect", "exit", "0"),
+            ("cli-task-events", "exit", "0"),
+            ("task-client-inspect", "client_result", "ok"),
+            ("task-client-events", "client_result", "ok"),
+        )
+    ]
+    await suspended.stack.aclose()
+    suspended.temporary.cleanup()
+    return [*task_evidence, *observation_evidence]
+
+
+def test_input_f_13(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Continue advisory input with policy timeout provenance."""
+    evidence = run_async(_test_input_f_13())
+    assert len(evidence) == 6
+    _record_failure_matrix_evidence(record_property, evidence)
+
+
+async def _test_input_f_13() -> list[dict[str, object]]:
+    direct = await _attached_advisory_timeout_observation(queued=False)
+    queued = await _attached_advisory_timeout_observation(queued=True)
+    assert direct.request.state is RequestState.PENDING
+    assert queued.request.state is RequestState.PENDING
+    assert direct.task_state is TaskRunState.RUNNING
+    assert queued.task_state is TaskRunState.RUNNING
+    assert direct.provider_call_count == queued.provider_call_count == 2
+
+    task_evidence = [
+        _task_evidence(
+            condition_id="INPUT-F-13",
+            surface_id="task-target-agent-direct",
+            transition_from=direct.request.state,
+            transition_to=RequestState.TIMED_OUT,
+            public_result_id="task.interaction_timed_out.v1",
+            task_state=direct.task_state,
+            provider_call_count=direct.provider_call_count,
+            domain_side_effect_count=direct.domain_side_effect_count,
+        ),
+        _task_evidence(
+            condition_id="INPUT-F-13",
+            surface_id="task-target-agent-queue",
+            transition_from=queued.request.state,
+            transition_to=RequestState.TIMED_OUT,
+            public_result_id="task.interaction_timed_out.v1",
+            task_state=queued.task_state,
+            provider_call_count=queued.provider_call_count,
+            domain_side_effect_count=queued.domain_side_effect_count,
+        ),
+    ]
+    observation_evidence = [
+        _task_observation_evidence(
+            condition_id="INPUT-F-13",
+            surface_id=surface_id,
+            transition_from=RequestState.PENDING,
+            transition_to=RequestState.TIMED_OUT,
+            public_result_id="task.observation_timed_out.v1",
+            status_key=status_key,
+            status_value=status_value,
+            provider_call_count=queued.provider_call_count,
+            domain_side_effect_count=queued.domain_side_effect_count,
+        )
+        for surface_id, status_key, status_value in (
+            ("cli-task-inspect", "exit", "0"),
+            ("cli-task-events", "exit", "0"),
+            ("task-client-inspect", "client_result", "ok"),
+            ("task-client-events", "client_result", "ok"),
+        )
+    ]
+    return [*task_evidence, *observation_evidence]
+
+
+async def _direct_required_handoff_observation() -> (
+    _RequiredHandoffObservation
+):
+    """Run one direct agent target through a real durable suspension."""
+    database = FullFakePgsqlDatabase()
+    clock = _TestClock()
+    interaction_store = await _open_interaction_store(
+        database,
+        clock=clock,
+    )
+    task_store = PgsqlTaskStore(
+        cast(PgsqlDatabase, database),
+        clock=lambda: clock.now,
+    )
+    temporary = TemporaryDirectory()
+    root = Path(temporary.name)
+    _write_agent(root)
+    stack = AsyncExitStack()
+    loader = OrchestratorLoader(
+        hub=MagicMock(spec=HuggingfaceHub),
+        logger=MagicMock(spec=Logger),
+        participant_id=uuid4(),
+        stack=stack,
+    )
+    host = DurableAgentTaskHost(
+        orchestrator_loader=loader,
+        stack=stack,
+        allowed_roots=(root,),
+        continuation_store=interaction_store,
+        clock=lambda: clock.now,
+    )
+    target = _DirectSuspendingAgentTaskTargetRunner(
+        loader,
+        root=root,
+        runtime_factory=host.interaction_runtime,
+    )
+    model_factory = _ProviderManagerFactory(
+        [(True,)],
+        arguments={
+            "mode": RequirementMode.REQUIRED.value,
+            "reason": "A response is required to continue.",
+            "questions": [encode_input_question(_confirmation())],
+        },
+    )
+    client = TaskClient(
+        task_store,
+        target=target,
+        hmac_provider=_StaticHmacProvider(),
+        definition_hash=lambda _: "task-failure-matrix-direct-handoff",
+        clock=lambda: clock.now,
+    )
+    try:
+        with patch(
+            "avalan.agent.loader.ModelManager",
+            side_effect=model_factory,
+        ):
+            result = await client.run(
+                _definition(),
+                input_value="private",
+            )
+        inspection = await client.inspect(result.run.run_id)
+        events = await client.events(result.run.run_id)
+        assert result.run.state is TaskRunState.INPUT_REQUIRED
+        assert result.input_required is not None
+        assert (
+            result.input_required.input_required.detached_resumption_available
+        )
+        assert inspection.run.state is TaskRunState.INPUT_REQUIRED
+        assert inspection.artifacts == ()
+        assert events == inspection.events
+        assert (
+            tuple(event.event_type for event in events).count(
+                TaskInteractionEventType.INPUT_REQUIRED.value
+            )
+            == 1
+        )
+        assert len(target.suspensions) == 1
+        assert (
+            target.suspensions[0].command.request.state is RequestState.CREATED
+        )
+        assert _provider_call_count(model_factory) == 1
+        return _RequiredHandoffObservation(
+            task_state=inspection.run.state,
+            provider_call_count=_provider_call_count(model_factory),
+            domain_side_effect_count=len(inspection.artifacts),
+        )
+    finally:
+        await stack.aclose()
+        temporary.cleanup()
+
+
+async def _attached_advisory_timeout_observation(
+    *,
+    queued: bool,
+) -> _AdvisoryTimeoutObservation:
+    """Observe a task while an advisory timeout enters model continuation."""
+    database = FullFakePgsqlDatabase()
+    clock = _TestClock()
+    interaction_store = await _open_interaction_store(
+        database,
+        clock=clock,
+    )
+    policy = InteractionPolicy()
+    broker = AsyncInteractionBroker(
+        store=interaction_store,
+        clock=clock,
+        id_factory=_TestIds(),
+        policy=policy,
+        classifier=_TestClassifier(policy),
+    )
+    temporary = TemporaryDirectory()
+    root = Path(temporary.name)
+    _write_agent(root)
+    stack = AsyncExitStack()
+    loader = OrchestratorLoader(
+        hub=MagicMock(spec=HuggingfaceHub),
+        logger=MagicMock(spec=Logger),
+        participant_id=uuid4(),
+        stack=stack,
+    )
+    handler = _BlockingInputHandler()
+    target = _AttachedAgentTaskTargetRunner(
+        loader,
+        root=root,
+        runtime=AttachedInteractionRuntime(
+            broker=broker,
+            actor=InteractionActor(principal=PrincipalScope()),
+            handler=handler,
+        ),
+    )
+    question = ConfirmationQuestion(
+        question_id=QuestionId("answer"),
+        prompt="Continue when the advisory wait expires?",
+        required=False,
+    )
+    model_factory = _GatedProviderManagerFactory(
+        [(True, False)],
+        arguments={
+            "mode": RequirementMode.ADVISORY.value,
+            "reason": "Continue after the bounded advisory wait.",
+            "questions": [encode_input_question(question)],
+        },
+    )
+    task_store = PgsqlTaskStore(
+        cast(PgsqlDatabase, database),
+        clock=lambda: clock.now,
+    )
+    queue = (
+        PgsqlTaskQueue(
+            cast(PgsqlDatabase, database),
+            clock=lambda: clock.now,
+        )
+        if queued
+        else None
+    )
+    client = TaskClient(
+        task_store,
+        target=target,
+        queue=queue,
+        hmac_provider=_StaticHmacProvider(),
+        encryption_provider=(_StaticEncryptionProvider() if queued else None),
+        raw_storage_allowed=queued,
+        definition_hash=lambda _: (
+            "task-failure-matrix-advisory-queue"
+            if queued
+            else "task-failure-matrix-advisory-direct"
+        ),
+        clock=lambda: clock.now,
+    )
+    running: object | None = None
+    task: Task[TaskWorkerProcessResult] | Task[TaskRunResult]
+    try:
+        with patch(
+            "avalan.agent.loader.ModelManager",
+            side_effect=model_factory,
+        ):
+            if queued:
+                assert queue is not None
+                submission = await client.enqueue(
+                    _queued_definition(),
+                    input_value="private",
+                )
+                worker = TaskWorker(
+                    task_store,
+                    queue,
+                    target=target,
+                    worker_id="failure-matrix-advisory-worker",
+                    queue_name="failure-matrix",
+                    encryption_provider=_StaticEncryptionProvider(),
+                    raw_storage_allowed=True,
+                    clock=lambda: clock.now,
+                )
+                task = create_task(worker.process_once())
+                run_id = submission.run.run_id
+            else:
+                task = create_task(
+                    client.run(_definition(), input_value="private")
+                )
+                await wait_for(handler.started.wait(), timeout=1)
+                run_id = _only_task_run_id(database)
+            running = task
+            if queued:
+                await wait_for(handler.started.wait(), timeout=1)
+            request = handler.contexts[0].request
+            assert request.state is RequestState.PENDING
+            assert _only_task_run_state(database) == TaskRunState.RUNNING.value
+            assert _provider_call_count(model_factory) == 1
+
+            assert request.advisory_wait_seconds == 60
+            clock.now = request.created_at + timedelta(seconds=60)
+            clock.monotonic = 60.0
+            clock.changed.set()
+            await wait_for(model_factory.started.wait(), timeout=1)
+
+            inspection = await client.inspect(run_id)
+            events = await client.events(run_id)
+            persisted_state = next(iter(database.records.values()))[
+                "request_state"
+            ]
+            assert persisted_state == RequestState.TIMED_OUT.value
+            assert inspection.run.state is TaskRunState.RUNNING
+            assert inspection.artifacts == ()
+            assert events == inspection.events
+            assert RequestState.TIMED_OUT.value in _interaction_event_states(
+                events
+            )
+            assert _provider_call_count(model_factory) == 2
+
+            observation = _AdvisoryTimeoutObservation(
+                request=request,
+                task_state=inspection.run.state,
+                provider_call_count=_provider_call_count(model_factory),
+                domain_side_effect_count=len(inspection.artifacts),
+            )
+            model_factory.release.set()
+            completed = await wait_for(task, timeout=1)
+        completion = getattr(completed, "completion", None)
+        completed_run = (
+            completion.run
+            if completion is not None
+            else getattr(completed, "run")
+        )
+        assert completed_run.state is TaskRunState.SUCCEEDED
+        final = await client.inspect(run_id)
+        assert final.artifacts == ()
+        return observation
+    finally:
+        model_factory.release.set()
+        if running is not None:
+            task = cast(Any, running)
+            if not task.done():
+                await wait_for(task, timeout=1)
+        await broker.aclose()
+        await stack.aclose()
+        temporary.cleanup()
+
+
+def _interaction_event_states(events: tuple[object, ...]) -> tuple[str, ...]:
+    """Return redacted interaction states from sanitized task events."""
+    states: list[str] = []
+    for event in events:
+        payload = getattr(event, "payload", None)
+        if not isinstance(payload, Mapping):
+            continue
+        interaction = payload.get("interaction_lifecycle")
+        if not isinstance(interaction, Mapping):
+            continue
+        state = interaction.get("state")
+        if isinstance(state, str):
+            states.append(state)
+    return tuple(states)
+
+
 async def _durable_failure_harness(
     question: ConfirmationQuestion | SingleSelectionQuestion,
+    *,
+    mode: RequirementMode = RequirementMode.REQUIRED,
 ) -> _DurableFailureHarness:
     database = FullFakePgsqlDatabase()
     clock = _TestClock()
@@ -2461,8 +3170,12 @@ async def _durable_failure_harness(
         runtime_factory=host.interaction_runtime,
     )
     arguments = {
-        "mode": RequirementMode.REQUIRED.value,
-        "reason": "A response is required to continue.",
+        "mode": mode.value,
+        "reason": (
+            "A response is required to continue."
+            if mode is RequirementMode.REQUIRED
+            else "Continue after the bounded advisory wait."
+        ),
         "questions": [encode_input_question(question)],
     }
     model_factory = _ProviderManagerFactory(
@@ -2501,7 +3214,7 @@ async def _durable_failure_harness(
             "avalan.agent.loader.ModelManager",
             side_effect=model_factory,
         ),
-        patch("avalan.agent.durable_runtime.datetime") as wall_datetime,
+        patch("avalan.agent.continuation_stager.datetime") as wall_datetime,
     ):
         processed = await worker.process_once()
     assert not wall_datetime.now.called
@@ -2740,7 +3453,9 @@ def _only_task_run_state(database: FullFakePgsqlDatabase) -> str:
 
 def _only_task_run_id(database: FullFakePgsqlDatabase) -> str:
     assert len(database.runs) == 1
-    return next(iter(database.runs))
+    run_id = next(iter(database.runs))
+    assert isinstance(run_id, str)
+    return run_id
 
 
 def _provider_call_count(model_factory: _ProviderManagerFactory) -> int:
@@ -2856,13 +3571,16 @@ def _continuation_lifecycle(suspended: _DurableFailureHarness) -> str:
 async def _resume_harness(
     suspended: _DurableFailureHarness,
 ) -> _ResumeHarness:
-    suspended.clock.now = _NOW + timedelta(seconds=3)
-    suspended.clock.monotonic = 3
+    suspended.clock.now = max(
+        suspended.clock.now,
+        _NOW + timedelta(seconds=3),
+    )
+    suspended.clock.monotonic = max(suspended.clock.monotonic, 3)
     record = await suspended.interaction_store.get_task_continuation_record(
         suspended.run_id
     )
     continuation = record.continuation
-    adapter = _ResumeAdapter()
+    adapter = _ResumeAdapter(suspended.request.mode)
     executor = _ResumeExecutor()
     runtime = ResolvedContinuationRuntime(
         definition=continuation.definition,

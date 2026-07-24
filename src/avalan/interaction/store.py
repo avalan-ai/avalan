@@ -194,6 +194,9 @@ _DEADLINE_RESOLVER = _InteractionSystemResolver(_token=_SYSTEM_RESOLVER_TOKEN)
 _TRUSTED_DEFAULT_RESOLVER = _InteractionSystemResolver(
     _token=_SYSTEM_RESOLVER_TOKEN
 )
+_TRUSTED_POLICY_RESOLVER = _InteractionSystemResolver(
+    _token=_SYSTEM_RESOLVER_TOKEN
+)
 _ADMISSION_CLEANUP_RESOLVER = _InteractionSystemResolver(
     _token=_SYSTEM_RESOLVER_TOKEN
 )
@@ -1376,6 +1379,146 @@ class ResolveInteractionCommand:
         return canonical_resolution_digest(self.proposed_resolution)
 
 
+_TRUSTED_POLICY_RESOLUTION_COMMAND_TOKEN = object()
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False)
+class _TrustedPolicyResolutionCommand:
+    """Carry one sealed trusted-host policy resolution."""
+
+    actor: InteractionActor
+    correlation: InteractionCorrelation
+    expected_state_revision: StateRevision
+    idempotency_key: ResolutionIdempotencyKey
+    proposed_resolution: InputCandidateResolution
+    _authority: object = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        actor: InteractionActor,
+        correlation: InteractionCorrelation,
+        expected_state_revision: StateRevision,
+        idempotency_key: ResolutionIdempotencyKey,
+        proposed_resolution: InputCandidateResolution,
+        _token: object,
+    ) -> None:
+        if _token is not _TRUSTED_POLICY_RESOLUTION_COMMAND_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "policy_resolution.authority",
+                "policy commands must be minted by the trusted host",
+            )
+        _validate_actor(actor)
+        _validate_correlation(correlation)
+        revision = StateRevision(
+            validate_state_revision(
+                expected_state_revision,
+                "policy_resolution.expected_state_revision",
+            )
+        )
+        key = validate_resolution_idempotency_key(
+            idempotency_key,
+            "policy_resolution.idempotency_key",
+        )
+        if not _is_input_candidate_resolution(proposed_resolution):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "policy_resolution.proposed_resolution",
+                "policy resolution may only answer or decline",
+            )
+        if proposed_resolution.request_id != correlation.request_id:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "policy_resolution.proposed_resolution.request_id",
+                "resolution does not match request correlation",
+            )
+        if proposed_resolution.provenance is not AnswerProvenance.POLICY:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "policy_resolution.proposed_resolution.provenance",
+                "policy resolution requires policy provenance",
+            )
+        if isinstance(proposed_resolution, AnsweredResolution) and any(
+            answer.provenance is not AnswerProvenance.POLICY
+            for answer in proposed_resolution.answers
+        ):
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "policy_resolution.proposed_resolution.answers",
+                "policy answers require policy provenance",
+            )
+        object.__setattr__(self, "actor", actor)
+        object.__setattr__(self, "correlation", correlation)
+        object.__setattr__(self, "expected_state_revision", revision)
+        object.__setattr__(self, "idempotency_key", key)
+        object.__setattr__(
+            self,
+            "proposed_resolution",
+            proposed_resolution,
+        )
+        object.__setattr__(self, "_authority", _token)
+
+    @property
+    def resolution_digest(self) -> str:
+        """Return semantic content independent from trusted commit time."""
+        return canonical_resolution_digest(self.proposed_resolution)
+
+
+_CandidateResolutionCommand: TypeAlias = (
+    ResolveInteractionCommand | _TrustedPolicyResolutionCommand
+)
+
+
+def _new_trusted_policy_resolution_command(
+    *,
+    actor: InteractionActor,
+    correlation: InteractionCorrelation,
+    expected_state_revision: StateRevision,
+    idempotency_key: ResolutionIdempotencyKey,
+    proposed_resolution: InputCandidateResolution,
+) -> _TrustedPolicyResolutionCommand:
+    """Mint one sealed store command at the trusted broker boundary."""
+    return _TrustedPolicyResolutionCommand(
+        actor=actor,
+        correlation=correlation,
+        expected_state_revision=expected_state_revision,
+        idempotency_key=idempotency_key,
+        proposed_resolution=proposed_resolution,
+        _token=_TRUSTED_POLICY_RESOLUTION_COMMAND_TOKEN,
+    )
+
+
+def _validate_trusted_policy_resolution_command(
+    command: object,
+) -> _TrustedPolicyResolutionCommand:
+    """Return one exactly sealed trusted-policy store command."""
+    if type(command) is not _TrustedPolicyResolutionCommand:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "command",
+            "value must be a trusted policy resolution command",
+        )
+    assert isinstance(command, _TrustedPolicyResolutionCommand)
+    if command._authority is not _TRUSTED_POLICY_RESOLUTION_COMMAND_TOKEN:
+        raise InputValidationError(
+            InputErrorCode.FORBIDDEN,
+            "policy_resolution.authority",
+            "policy command authority is invalid",
+        )
+    return command
+
+
+def _validate_candidate_resolution_command(
+    command: object,
+) -> _CandidateResolutionCommand:
+    """Return one valid external or sealed policy candidate command."""
+    if isinstance(command, ResolveInteractionCommand):
+        return command
+    return _validate_trusted_policy_resolution_command(command)
+
+
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TrustedDefaultResolutionRequest:
@@ -1947,7 +2090,7 @@ InteractionPresentationCommand: TypeAlias = (
     PresentInteractionCommand | DetachInteractionCommand
 )
 InteractionDeadlineTriggerCommand: TypeAlias = (
-    ResolveInteractionCommand
+    _CandidateResolutionCommand
     | TrustedDefaultResolutionCommand
     | PresentInteractionCommand
     | DetachInteractionCommand
@@ -1956,7 +2099,7 @@ InteractionDeadlineTriggerCommand: TypeAlias = (
     | TerminalizeInteractionCommand
 )
 InteractionLeaseExpiryTriggerCommand: TypeAlias = (
-    ResolveInteractionCommand
+    _CandidateResolutionCommand
     | TrustedDefaultResolutionCommand
     | DetachInteractionCommand
     | RecordControllerActivityCommand
@@ -2990,7 +3133,7 @@ class TrustedDefaultResolutionApplied:
 class InteractionStoreReplayed:
     """Return a terminal outcome after a same-key or semantic replay."""
 
-    command: ResolveInteractionCommand
+    command: _CandidateResolutionCommand
     record: InteractionRecord
     replay_kind: InteractionReplayKind
     previous: InteractionRecord | None = None
@@ -3005,12 +3148,7 @@ class InteractionStoreReplayed:
 
     def __post_init__(self) -> None:
         _validate_record(self.record, "result.record")
-        if not isinstance(self.command, ResolveInteractionCommand):
-            raise InputValidationError(
-                InputErrorCode.INVALID_TYPE,
-                "result.command",
-                "replay requires its exact resolve command",
-            )
+        _validate_candidate_resolution_command(self.command)
         key = self.command.idempotency_key
         if not _is_candidate_resolution_record(self.record):
             raise InputValidationError(
@@ -3075,17 +3213,12 @@ class InteractionStoreReplayed:
 
 def apply_semantic_resolution_replay(
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     *,
     maximum_keys: int = MAX_RESOLUTION_IDEMPOTENCY_KEYS_PER_REQUEST,
 ) -> InteractionStoreReplayed:
     """Append one exact semantic-replay key without lifecycle mutation."""
-    if not isinstance(command, ResolveInteractionCommand):
-        raise InputValidationError(
-            InputErrorCode.INVALID_TYPE,
-            "command",
-            "value must be a resolve interaction command",
-        )
+    _validate_candidate_resolution_command(command)
     disposition = evaluate_resolution_idempotency(
         previous,
         key=command.idempotency_key,
@@ -3274,7 +3407,7 @@ class ControllerActivityRejected(_InteractionStoreRejectedBase):
 class ResolveInteractionRejected:
     """Reject resolution admission at one explicit precedence stage."""
 
-    command: ResolveInteractionCommand
+    command: _CandidateResolutionCommand
     error: InputTransitionError
     decision_stage: ResolutionDecisionStage
     store_mutation_applied: Literal[False] = field(init=False, default=False)
@@ -3284,12 +3417,7 @@ class ResolveInteractionRejected:
     )
 
     def __post_init__(self) -> None:
-        if not isinstance(self.command, ResolveInteractionCommand):
-            raise InputValidationError(
-                InputErrorCode.INVALID_TYPE,
-                "result.command",
-                "value must be a resolve interaction command",
-            )
+        _validate_candidate_resolution_command(self.command)
         if not isinstance(self.error, InputTransitionError):
             raise InputValidationError(
                 InputErrorCode.INVALID_TYPE,
@@ -3563,7 +3691,7 @@ class InteractionStore(Protocol):
 
     async def resolve(
         self,
-        command: ResolveInteractionCommand,
+        command: _CandidateResolutionCommand,
     ) -> InteractionResolutionResult:
         """Apply RESOLUTION_DECISION_PRECEDENCE in one atomic operation.
 
@@ -3831,7 +3959,7 @@ def apply_controller_activity(
 
 def apply_candidate_resolution(
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     observed_at: InteractionTime,
     policy: InteractionPolicy,
     *,
@@ -4266,17 +4394,12 @@ def _scope_authorization_target(
 
 def _task_input_classification_requests(
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     policy: InteractionPolicy,
 ) -> tuple[TaskInputClassificationRequest, ...]:
     """Return all classifier work for one exact stored candidate."""
     _validate_pending_record(previous)
-    if not isinstance(command, ResolveInteractionCommand):
-        raise InputValidationError(
-            InputErrorCode.INVALID_TYPE,
-            "command",
-            "value must be a resolve interaction command",
-        )
+    _validate_candidate_resolution_command(command)
     if command.correlation != previous.correlation:
         raise InputValidationError(
             InputErrorCode.CORRELATION_MISMATCH,
@@ -4300,7 +4423,7 @@ def _task_input_classification_requests(
 
 
 def _candidate_free_form_values(
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
 ) -> tuple[tuple[str, QuestionId, QuestionType], ...]:
     resolution = command.proposed_resolution
     work: list[tuple[str, QuestionId, QuestionType]] = []
@@ -4334,7 +4457,7 @@ def _candidate_free_form_values(
 def _bind_task_input_classifications(
     binding: _TaskInputClassifierBinding,
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     classifications: tuple[TaskInputClassification, ...],
     policy: InteractionPolicy,
 ) -> _BoundTaskInputClassifications:
@@ -4361,7 +4484,7 @@ def _bind_task_input_classifications(
 
 def _validate_candidate_classifications(
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     policy: InteractionPolicy,
     binding: _TaskInputClassifierBinding | None,
     proof: _BoundTaskInputClassifications | None,
@@ -4927,7 +5050,7 @@ def _reduce_controller_activity(
 
 def _reduce_candidate_resolution(
     previous: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     observed_at: InteractionTime,
     policy: InteractionPolicy,
     classifier_binding: _TaskInputClassifierBinding | None = None,
@@ -4935,11 +5058,15 @@ def _reduce_candidate_resolution(
 ) -> InteractionRecord:
     _validate_pending_record(previous)
     _validate_temporal_context(observed_at, policy)
-    if not isinstance(command, ResolveInteractionCommand):
+    _validate_candidate_resolution_command(command)
+    if (
+        isinstance(command, _TrustedPolicyResolutionCommand)
+        and command.actor.principal != previous.request.origin.principal
+    ):
         raise InputValidationError(
-            InputErrorCode.INVALID_TYPE,
-            "command",
-            "value must be a resolve interaction command",
+            InputErrorCode.FORBIDDEN,
+            "command.actor",
+            "policy resolver differs from the request principal",
         )
     if command.correlation != previous.correlation:
         raise InputValidationError(
@@ -5011,7 +5138,11 @@ def _reduce_candidate_resolution(
                 resolution_digest=digest,
             ),
         ),
-        resolved_by=command.actor.principal,
+        resolved_by=(
+            _TRUSTED_POLICY_RESOLVER
+            if isinstance(command, _TrustedPolicyResolutionCommand)
+            else command.actor.principal
+        ),
     )
 
 
@@ -6456,12 +6587,7 @@ def validate_resolution_commit_transition(
             "an applied resolution must be a deadline or candidate commit",
         )
     if decision_stage is ResolutionDecisionStage.COMMIT:
-        if not isinstance(command, ResolveInteractionCommand):
-            raise InputValidationError(
-                InputErrorCode.INVALID_TYPE,
-                "result.command",
-                "candidate commit requires its exact resolve command",
-            )
+        command = _validate_candidate_resolution_command(command)
         expected = _reduce_candidate_resolution(
             previous,
             command,
@@ -6559,7 +6685,21 @@ def _is_candidate_resolution_record(record: InteractionRecord) -> bool:
     resolution = record.request.resolution
     return (
         _is_input_candidate_resolution(resolution)
-        and isinstance(record.resolved_by, PrincipalScope)
+        and resolution is not None
+        and (
+            (
+                resolution.provenance is AnswerProvenance.POLICY
+                and record.resolved_by is _TRUSTED_POLICY_RESOLVER
+            )
+            or (
+                resolution.provenance
+                not in {
+                    AnswerProvenance.POLICY,
+                    AnswerProvenance.TRUSTED_DEFAULT,
+                }
+                and isinstance(record.resolved_by, PrincipalScope)
+            )
+        )
         and record.resolution_digest is not None
         and bool(record.idempotency_ledger)
         and all(
@@ -6769,11 +6909,21 @@ def _validate_record_resolution(record: InteractionRecord) -> None:
                     "trusted-default answers require trusted provenance",
                 )
         elif resolution.provenance is AnswerProvenance.POLICY:
-            raise InputValidationError(
-                InputErrorCode.FORBIDDEN,
-                "record.resolution.provenance",
-                "candidate outcomes cannot claim deadline policy provenance",
-            )
+            if record.resolved_by is not _TRUSTED_POLICY_RESOLVER:
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "record.resolved_by",
+                    "policy candidates require sealed policy authority",
+                )
+            if isinstance(resolution, AnsweredResolution) and any(
+                answer.provenance is not AnswerProvenance.POLICY
+                for answer in resolution.answers
+            ):
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "record.resolution.answers",
+                    "policy answers require policy provenance",
+                )
         elif not isinstance(record.resolved_by, PrincipalScope):
             raise InputValidationError(
                 InputErrorCode.INVALID_TYPE,
@@ -7029,7 +7179,11 @@ def _validate_deadline_trigger_command(
     previous: InteractionRecord,
     command: object,
 ) -> None:
-    if isinstance(command, ResolveInteractionCommand):
+    if isinstance(
+        command,
+        (ResolveInteractionCommand, _TrustedPolicyResolutionCommand),
+    ):
+        _validate_candidate_resolution_command(command)
         if command.correlation != previous.correlation:
             raise InputValidationError(
                 InputErrorCode.CORRELATION_MISMATCH,
@@ -7066,7 +7220,11 @@ def _validate_lease_expiry_trigger_command(
     previous: InteractionRecord,
     command: object,
 ) -> None:
-    if isinstance(command, ResolveInteractionCommand):
+    if isinstance(
+        command,
+        (ResolveInteractionCommand, _TrustedPolicyResolutionCommand),
+    ):
+        _validate_candidate_resolution_command(command)
         if command.correlation != previous.correlation:
             raise InputValidationError(
                 InputErrorCode.CORRELATION_MISMATCH,
@@ -7098,7 +7256,7 @@ def _validate_lease_expiry_trigger_command(
 
 def _validate_replay_command(
     record: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
 ) -> None:
     if command.correlation != record.correlation:
         raise InputValidationError(
@@ -7112,7 +7270,20 @@ def _validate_replay_command(
             "result.command.proposed_resolution",
             "replay command differs from the terminal candidate",
         )
-    if command.actor.principal != record.resolved_by:
+    if isinstance(command, _TrustedPolicyResolutionCommand):
+        if record.resolved_by is not _TRUSTED_POLICY_RESOLVER:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "result.command.actor",
+                "policy replay lacks sealed resolver authority",
+            )
+        if command.actor.principal != record.request.origin.principal:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "result.command.actor",
+                "policy replay actor differs from the request principal",
+            )
+    elif command.actor.principal != record.resolved_by:
         raise InputValidationError(
             InputErrorCode.FORBIDDEN,
             "result.command.actor",
@@ -7174,7 +7345,7 @@ def _validate_branch_record(value: object, path: str) -> None:
 def _validate_semantic_replay_binding(
     previous: InteractionRecord,
     record: InteractionRecord,
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
 ) -> None:
     _validate_record(previous, "result.previous")
     if not _is_candidate_resolution_record(previous):

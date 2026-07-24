@@ -25,6 +25,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from avalan.agent import continuation as continuation_module
+from avalan.agent import continuation_stager as continuation_stager_module
 from avalan.agent import durable_runtime as durable_runtime_module
 from avalan.agent.continuation import (
     AgentContinuationEventListener,
@@ -72,16 +73,21 @@ from avalan.interaction.entities import (
     AnsweredResolution,
     AnswerProvenance,
     BranchId,
+    CancellationScope,
+    CancelledResolution,
     CapabilityRevision,
     ConfirmationAnswer,
     ConfirmationQuestion,
     ContinuationId,
     ContinuationRevisionBinding,
     ContinuationSnapshot,
+    DeclinedResolution,
     ExecutionDefinitionRef,
     ExecutionOrigin,
+    ExpiredResolution,
     InputRequest,
     InputRequestId,
+    InputResolution,
     InteractionStoreRevision,
     ModelCallId,
     ModelConfigRevision,
@@ -94,11 +100,15 @@ from avalan.interaction.entities import (
     RequestState,
     RequirementMode,
     ResolutionIdempotencyKey,
+    ResumeInputContinuation,
     RunId,
     StateRevision,
     StreamSessionId,
+    SupersededResolution,
     TaskId,
+    TimedOutResolution,
     TurnId,
+    UnavailableResolution,
     UserId,
 )
 from avalan.interaction.error import InputErrorCode, InputValidationError
@@ -166,6 +176,7 @@ class _Adapter:
         self.imported: list[ContinuationSnapshot] = []
         self.validated: list[ContinuationSnapshot] = []
         self.validation_failure: BaseException | None = None
+        self.expected_mode = RequirementMode.REQUIRED
 
     def validate_continuation_snapshot_call(
         self,
@@ -182,7 +193,7 @@ class _Adapter:
             == provider_call_correlation_id
         )
         assert expected_provider_name == "request_user_input"
-        assert expected_arguments["mode"] == RequirementMode.REQUIRED.value
+        assert expected_arguments["mode"] == self.expected_mode.value
         self.validated.append(snapshot)
         if self.validation_failure is not None:
             raise self.validation_failure
@@ -696,6 +707,24 @@ def _terminal_request(origin: ExecutionOrigin) -> InputRequest:
     )
 
 
+def _request_with_resolution(
+    request: InputRequest,
+    resolution: InputResolution,
+) -> InputRequest:
+    advisory = type(resolution) is TimedOutResolution
+    return replace(
+        request,
+        mode=(
+            RequirementMode.ADVISORY if advisory else RequirementMode.REQUIRED
+        ),
+        advisory_wait_seconds=5 if advisory else None,
+        advisory_deadline=resolution.resolved_at if advisory else None,
+        state=RequestState(resolution.status.value),
+        state_revision=StateRevision(2),
+        resolution=resolution,
+    )
+
+
 def _portable(
     request: InputRequest,
     binding: ContinuationRevisionBinding,
@@ -840,6 +869,16 @@ def _harness() -> _Harness:
     )
 
 
+def _set_harness_terminal_request(
+    harness: _Harness,
+    request: InputRequest,
+) -> None:
+    record = replace(harness.store.interaction_record)
+    object.__setattr__(record, "request", request)
+    harness.store.interaction_record = record
+    harness.adapter.expected_mode = request.mode
+
+
 async def _admit(
     harness: _Harness,
 ) -> DurableAgentContinuationAdmission:
@@ -885,6 +924,90 @@ async def test_resume_claims_restores_dispatches_and_completes_once() -> None:
         "mark_dispatched",
         "complete",
     ]
+
+
+@_async_test
+async def test_resume_admits_every_canonical_resumable_terminal_outcome() -> (
+    None
+):
+    resolved_at = _NOW + timedelta(seconds=5)
+    resolutions: tuple[InputResolution, ...] = (
+        DeclinedResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.HUMAN,
+            resolved_at=resolved_at,
+        ),
+        CancelledResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.HUMAN,
+            resolved_at=resolved_at,
+            scope=CancellationScope.REQUEST,
+        ),
+        TimedOutResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=resolved_at,
+        ),
+        UnavailableResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=resolved_at,
+        ),
+    )
+    for resolution in resolutions:
+        harness = _harness()
+        request = _request_with_resolution(harness.request, resolution)
+        _set_harness_terminal_request(harness, request)
+
+        admission = await _admit(harness)
+        expected = continuation_module.project_resolution_to_model(
+            request,
+            containing_run_exists=True,
+        )
+        assert type(expected) is ResumeInputContinuation
+        assert admission.command.model_result == expected.result
+        assert await admission.dispatch() == {"answer": "resumed"}
+        await admission.complete(_RESULT_DIGEST)
+        assert len(harness.executor.commands) == 1
+
+
+@_async_test
+async def test_resume_rejects_canonical_termination_before_provider_work() -> (
+    None
+):
+    resolved_at = _NOW + timedelta(seconds=5)
+    resolutions: tuple[InputResolution, ...] = (
+        ExpiredResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=resolved_at,
+        ),
+        SupersededResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=resolved_at,
+        ),
+        CancelledResolution(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=resolved_at,
+            scope=CancellationScope.CONTAINING_RUN,
+        ),
+    )
+    for resolution in resolutions:
+        harness = _harness()
+        request = _request_with_resolution(harness.request, resolution)
+        _set_harness_terminal_request(harness, request)
+
+        with pytest.raises(InputValidationError) as raised:
+            await _admit(harness)
+
+        assert raised.value.path == "resume.interaction.resolution"
+        assert harness.store.calls == ["lookup"]
+        assert harness.loader.calls == []
+        assert harness.adapter.validated == []
+        assert harness.adapter.imported == []
+        assert harness.executor.commands == []
 
 
 @_async_test
@@ -2673,6 +2796,17 @@ def test_runtime_catalog_snapshot_and_reserved_call_checks_fail_closed() -> (
 async def test_portable_stager_and_runtime_ownership_validate_boundaries() -> (
     None
 ):
+    assert (
+        durable_runtime_module.PortableAgentContinuationStager
+        is continuation_stager_module.PortableAgentContinuationStager
+    )
+    for disconnected_binding in (
+        "_encode_message_record",
+        "_json_default",
+        "_portable_json_mapping",
+        "datetime",
+    ):
+        assert not hasattr(durable_runtime_module, disconnected_binding)
     with pytest.raises(TypeError, match="clock must be callable"):
         durable_runtime_module.PortableAgentContinuationStager(
             clock=cast(Any, object())
@@ -2769,6 +2903,27 @@ async def test_portable_stager_and_runtime_ownership_validate_boundaries() -> (
             staging=corrupt_staging,
         )
 
+    with patch.object(
+        continuation_stager_module,
+        "datetime",
+    ) as wall_datetime:
+        wall_datetime.now.return_value = _NOW
+        default_clock_stager = (
+            continuation_stager_module.PortableAgentContinuationStager()
+        )
+        with pytest.raises(
+            ExecutionCorrelationError,
+            match="changed its active interaction",
+        ):
+            await default_clock_stager(
+                request,
+                execution=execution,
+                response=response,
+                stream_sequence=0,
+                staging=corrupt_staging,
+            )
+        wall_datetime.now.assert_called_once_with(UTC)
+
     with pytest.raises(TypeError, match="event_manager"):
         durable_runtime_module._TrustedContinuationEventListenerRegistration(
             cast(Any, object()),
@@ -2831,11 +2986,11 @@ def _durable_runtime_resume_command(
     interaction_count: int,
 ) -> AgentContinuationResumeCommand:
     transcript = (
-        durable_runtime_module._encode_message_record(
+        continuation_stager_module._encode_message_record(
             Message(role=MessageRole.USER, content="hello")
         ),
     )
-    assistant = durable_runtime_module._encode_message_record(
+    assistant = continuation_stager_module._encode_message_record(
         Message(role=MessageRole.ASSISTANT, content="input required")
     )
     observation = cast(
@@ -3100,10 +3255,10 @@ async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
 
 
 def test_durable_runtime_decoders_reject_every_malformed_shape() -> None:
-    encoded_user = durable_runtime_module._encode_message_record(
+    encoded_user = continuation_stager_module._encode_message_record(
         Message(role=MessageRole.USER, content="hello")
     )
-    encoded_assistant = durable_runtime_module._encode_message_record(
+    encoded_assistant = continuation_stager_module._encode_message_record(
         Message(role=MessageRole.ASSISTANT, content="input required")
     )
     transcript_cases = (
@@ -3186,18 +3341,35 @@ def test_portable_json_conversion_accepts_declared_values_only() -> None:
     class ExampleData:
         value: int
 
-    assert durable_runtime_module._json_default(ExampleEnum.VALUE) == "value"
-    assert durable_runtime_module._json_default(ExampleData(1)) == {"value": 1}
+    assert (
+        continuation_stager_module._json_default(ExampleEnum.VALUE) == "value"
+    )
+    assert continuation_stager_module._json_default(ExampleData(1)) == {
+        "value": 1
+    }
     with pytest.raises(TypeError, match="not portable JSON"):
-        durable_runtime_module._json_default(object())
+        continuation_stager_module._json_default(object())
+
+    patched_value = object()
+    with patch.object(
+        continuation_stager_module,
+        "_json_default",
+        return_value="patched",
+    ) as json_default:
+        assert continuation_stager_module._portable_json_mapping(
+            {"value": patched_value},
+            "settings",
+        ) == {"value": "patched"}
+        json_default.assert_called_once_with(patched_value)
+
     with pytest.raises(InputValidationError) as raised:
-        durable_runtime_module._portable_json_mapping(
+        continuation_stager_module._portable_json_mapping(
             {"value": object()},
             "settings",
         )
     assert raised.value.code is InputErrorCode.NON_JSON_VALUE
     with pytest.raises(InputValidationError, match="JSON object"):
-        durable_runtime_module._portable_json_mapping(
+        continuation_stager_module._portable_json_mapping(
             cast(Any, [1, 2]),
             "settings",
         )

@@ -1282,7 +1282,7 @@ class DurableRuntimeTest(IsolatedAsyncioTestCase):
                     side_effect=factory,
                 ),
                 patch(
-                    "avalan.agent.durable_runtime.datetime"
+                    "avalan.agent.continuation_stager.datetime"
                 ) as wall_datetime,
             ):
                 outcome = await runner.run(

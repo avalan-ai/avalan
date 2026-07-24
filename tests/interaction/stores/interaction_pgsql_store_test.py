@@ -58,6 +58,7 @@ from avalan.interaction import (
     InputRequestId,
     InputResumer,
     InputResumptionNotification,
+    InputTransitionError,
     InputValidationError,
     InteractionActor,
     InteractionAuthorizationDecision,
@@ -114,6 +115,7 @@ from avalan.interaction import (
     TaskInputClassifier,
     TenantId,
     TerminateInputContinuation,
+    TimedOutResolution,
     TurnId,
     UserId,
     WaitForDeadlineChangeCommand,
@@ -129,6 +131,7 @@ from avalan.interaction.store import (
     CreateInteractionApplied,
     CreateInteractionCommand,
     DueInteractionsApplied,
+    DueInteractionsRejected,
     InteractionBranchRegistrationApplied,
     SupersedeInteractionScopeCommand,
     TerminalizeDueInteractionsCommand,
@@ -602,6 +605,23 @@ def _request(
     )
 
 
+def _advisory_request(
+    run_id: str = "run",
+    *,
+    advisory_wait_seconds: int = 60,
+    continuation_ttl_seconds: int = 600,
+) -> InputRequest:
+    request = _request(
+        run_id,
+        continuation_ttl_seconds=continuation_ttl_seconds,
+    )
+    return replace(
+        request,
+        mode=RequirementMode.ADVISORY,
+        advisory_wait_seconds=advisory_wait_seconds,
+    )
+
+
 def _deadline_worker_definition() -> TaskDefinition:
     return TaskDefinition(
         task=TaskMetadata(name="deadline-worker", version="1"),
@@ -906,6 +926,7 @@ async def _create_suspended_task(
     *,
     run_id: str,
     suffix: str,
+    request: InputRequest | None = None,
 ) -> CreateInteractionApplied:
     attempt_id = f"attempt-{suffix}"
     segment_id = f"segment-{suffix}"
@@ -919,7 +940,7 @@ async def _create_suspended_task(
         queue_item_id=queue_item_id,
         claim_token=claim_token,
     )
-    request = _request(run_id)
+    request = request or _request(run_id)
     suspended = await PgsqlDurableTaskCoordinator(
         store,
         task_store,
@@ -933,6 +954,33 @@ async def _create_suspended_task(
         checkpoint_id=f"checkpoint-{suffix}",
     )
     return suspended.interaction
+
+
+async def _create_suspended_advisory_task(
+    database: FakePgsqlDatabase,
+    store: PgsqlInteractionStore,
+    task_store: PgsqlTaskStore,
+    *,
+    run_id: str,
+    suffix: str,
+) -> CreateInteractionApplied:
+    interaction = await _create_suspended_task(
+        database,
+        store,
+        task_store,
+        run_id=run_id,
+        suffix=suffix,
+        request=_advisory_request(run_id),
+    )
+    presented = await store.mark_presented(
+        PresentInteractionCommand(
+            actor=interaction.command.actor,
+            correlation=interaction.record.correlation,
+            expected_store_revision=interaction.record.store_revision,
+        )
+    )
+    assert presented.store_mutation_applied
+    return interaction
 
 
 async def _commit_resolution_before_task_reentry(
@@ -3842,6 +3890,279 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 TaskInteractionEventType.INPUT_REQUIRED.value,
                 TaskInteractionEventType.INPUT_RESUMED.value,
             ],
+        )
+
+    async def test_advisory_timeout_atomically_requeues_and_replays(
+        self,
+    ) -> None:
+        database = FakePgsqlDatabase()
+        clock = _Clock()
+        store = await _store(database, clock=clock)
+        task_store = PgsqlTaskStore(database, clock=lambda: clock.now)
+        interaction = await _create_suspended_advisory_task(
+            database,
+            store,
+            task_store,
+            run_id="advisory-timeout",
+            suffix="advisory-timeout",
+        )
+        coordinator = PgsqlDurableTaskCoordinator(store, task_store)
+        lookup = ScopedInteractionLookup(
+            actor=interaction.command.actor,
+            correlation=interaction.record.correlation,
+        )
+        before_early_timeout = database.snapshot()
+
+        with self.assertRaises(PgsqlInteractionStoreError) as early:
+            await coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="advisory-timeout",
+                now=clock.now,
+            )
+
+        self.assertEqual(
+            early.exception.code, InputErrorCode.ILLEGAL_TRANSITION
+        )
+        self.assertEqual(database.snapshot(), before_early_timeout)
+
+        clock.now += timedelta(seconds=60)
+        clock.monotonic += 60
+        timed_out = await coordinator.timeout_advisory_and_requeue(
+            lookup,
+            task_run_id="advisory-timeout",
+            now=clock.now,
+        )
+
+        self.assertEqual(
+            timed_out.record.request.state, RequestState.TIMED_OUT
+        )
+        self.assertIs(
+            type(timed_out.record.request.resolution),
+            TimedOutResolution,
+        )
+        self.assertTrue(timed_out.interaction.store_mutation_applied)
+        self.assertEqual(timed_out.reentry.run.state, TaskRunState.QUEUED)
+        self.assertEqual(
+            timed_out.reentry.queue_item.state,
+            TaskQueueItemState.AVAILABLE,
+        )
+        self.assertEqual(
+            database.continuations[
+                str(interaction.record.request.continuation_id)
+            ]["lifecycle_state"],
+            DurableContinuationLifecycle.READY.value,
+        )
+        self.assertEqual(len(database.outbox), 1)
+        self.assertEqual(
+            [row["event_type"] for row in database.events.values()].count(
+                TaskInteractionEventType.INPUT_RESUMED.value
+            ),
+            1,
+        )
+        committed = database.snapshot()
+
+        replayed = await coordinator.timeout_advisory_and_requeue(
+            lookup,
+            task_run_id="advisory-timeout",
+            now=clock.now + timedelta(seconds=1),
+        )
+
+        self.assertFalse(replayed.interaction.store_mutation_applied)
+        self.assertEqual(replayed.record, timed_out.record)
+        self.assertEqual(replayed.reentry, timed_out.reentry)
+        self.assertEqual(database.snapshot(), committed)
+
+    async def test_advisory_timeout_rejects_wrong_scope_and_task_state(
+        self,
+    ) -> None:
+        database = FakePgsqlDatabase()
+        clock = _Clock()
+        store = await _store(database, clock=clock)
+        task_store = PgsqlTaskStore(database, clock=lambda: clock.now)
+        interaction = await _create_suspended_advisory_task(
+            database,
+            store,
+            task_store,
+            run_id="advisory-negative",
+            suffix="advisory-negative",
+        )
+        coordinator = PgsqlDurableTaskCoordinator(store, task_store)
+        lookup = ScopedInteractionLookup(
+            actor=interaction.command.actor,
+            correlation=interaction.record.correlation,
+        )
+
+        with self.assertRaisesRegex(InputValidationError, "lookup"):
+            await coordinator.timeout_advisory_and_requeue(
+                cast(ScopedInteractionLookup, object()),
+                task_run_id="advisory-negative",
+                now=clock.now,
+            )
+
+        rejected_due = DueInteractionsRejected(
+            command=TerminalizeDueInteractionsCommand(maximum_results=1),
+            error=InputTransitionError(
+                code=InputErrorCode.ILLEGAL_TRANSITION,
+                path="interaction.timeout",
+                message="forced due-interaction rejection",
+            ),
+        )
+        before_rejected_due = database.snapshot()
+        with (
+            patch.object(
+                interaction_pgsql.MemoryInteractionStore,
+                "terminalize_due",
+                new=AsyncMock(return_value=rejected_due),
+            ),
+            self.assertRaises(
+                PgsqlInteractionStoreError
+            ) as rejected_due_error,
+        ):
+            await coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="advisory-negative",
+                now=clock.now,
+            )
+        self.assertEqual(
+            rejected_due_error.exception.code,
+            InputErrorCode.ILLEGAL_TRANSITION,
+        )
+        self.assertEqual(database.snapshot(), before_rejected_due)
+
+        with self.assertRaises(InputValidationError) as wrong_run:
+            await coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="other-run",
+                now=clock.now,
+            )
+        self.assertEqual(
+            wrong_run.exception.code,
+            InputErrorCode.CORRELATION_MISMATCH,
+        )
+
+        wrong_owner = ScopedInteractionLookup(
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("other-owner"))
+            ),
+            correlation=interaction.record.correlation,
+        )
+        before_wrong_owner = database.snapshot()
+        with self.assertRaises(InteractionNotFoundError):
+            await coordinator.timeout_advisory_and_requeue(
+                wrong_owner,
+                task_run_id="advisory-negative",
+                now=clock.now,
+            )
+        self.assertEqual(database.snapshot(), before_wrong_owner)
+
+        clock.now += timedelta(seconds=60)
+        clock.monotonic += 60
+        database.runs["advisory-negative"]["state"] = TaskRunState.QUEUED.value
+        before_invalid_task = database.snapshot()
+        with self.assertRaises(TaskStoreConflictError):
+            await coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="advisory-negative",
+                now=clock.now,
+            )
+        self.assertEqual(database.snapshot(), before_invalid_task)
+        self.assertEqual(
+            database.records[str(interaction.record.request.request_id)][
+                "request_state"
+            ],
+            RequestState.PENDING.value,
+        )
+        self.assertEqual(database.outbox, {})
+
+    async def test_advisory_timeout_rejects_required_expiry_and_converges(
+        self,
+    ) -> None:
+        required_database = FakePgsqlDatabase()
+        required_clock = _Clock()
+        required_store = await _store(
+            required_database,
+            clock=required_clock,
+        )
+        required_task_store = PgsqlTaskStore(
+            required_database,
+            clock=lambda: required_clock.now,
+        )
+        required = await _create_suspended_task(
+            required_database,
+            required_store,
+            required_task_store,
+            run_id="required-expiry",
+            suffix="required-expiry",
+        )
+        required_clock.now += timedelta(minutes=10)
+        required_clock.monotonic += 600
+        required_before = required_database.snapshot()
+
+        with self.assertRaises(PgsqlInteractionStoreError) as required_error:
+            await PgsqlDurableTaskCoordinator(
+                required_store,
+                required_task_store,
+            ).timeout_advisory_and_requeue(
+                ScopedInteractionLookup(
+                    actor=required.command.actor,
+                    correlation=required.record.correlation,
+                ),
+                task_run_id="required-expiry",
+                now=required_clock.now,
+            )
+
+        self.assertEqual(
+            required_error.exception.code,
+            InputErrorCode.ILLEGAL_TRANSITION,
+        )
+        self.assertEqual(required_database.snapshot(), required_before)
+
+        database = FakePgsqlDatabase()
+        clock = _Clock()
+        store = await _store(database, clock=clock)
+        task_store = PgsqlTaskStore(database, clock=lambda: clock.now)
+        interaction = await _create_suspended_advisory_task(
+            database,
+            store,
+            task_store,
+            run_id="advisory-race",
+            suffix="advisory-race",
+        )
+        clock.now += timedelta(seconds=60)
+        clock.monotonic += 60
+        coordinator = PgsqlDurableTaskCoordinator(store, task_store)
+        lookup = ScopedInteractionLookup(
+            actor=interaction.command.actor,
+            correlation=interaction.record.correlation,
+        )
+
+        results = await gather(
+            coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="advisory-race",
+                now=clock.now,
+            ),
+            coordinator.timeout_advisory_and_requeue(
+                lookup,
+                task_run_id="advisory-race",
+                now=clock.now,
+            ),
+        )
+
+        self.assertEqual(
+            [result.interaction.store_mutation_applied for result in results],
+            [True, False],
+        )
+        self.assertEqual(
+            {result.record.request.state for result in results},
+            {RequestState.TIMED_OUT},
+        )
+        self.assertEqual(len(database.outbox), 1)
+        self.assertEqual(
+            [row["event_type"] for row in database.events.values()].count(
+                TaskInteractionEventType.INPUT_RESUMED.value
+            ),
+            1,
         )
 
     async def test_atomic_completion_and_successor_suspension(self) -> None:

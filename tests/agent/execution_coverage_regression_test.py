@@ -1404,6 +1404,11 @@ class ExecutionMutationDefenseTest(IsolatedAsyncioTestCase):
                 required,
                 durable=cast(DurableInteractionSuspension, object()),
             )
+        with self.assertRaisesRegex(TypeError, "request must"):
+            ExecutionInputRequiredError(
+                required,
+                request=cast(InputRequest, object()),
+            )
         for mismatched in (
             replace(required, request_id=InputRequestId("request-other")),
             replace(required, detached_resumption_available=False),
@@ -1416,3 +1421,32 @@ class ExecutionMutationDefenseTest(IsolatedAsyncioTestCase):
                 ),
             ):
                 ExecutionInputRequiredError(mismatched, durable=durable)
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "request does not match durable input suspension",
+        ):
+            ExecutionInputRequiredError(
+                required,
+                request=replace(created, reason="A different response."),
+                durable=durable,
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "request does not match input-required result",
+        ):
+            ExecutionInputRequiredError(
+                replace(
+                    required,
+                    request_id=InputRequestId("request-other"),
+                ),
+                request=created,
+            )
+        direct = ExecutionInputRequiredError(required, request=created)
+        self.assertIs(direct.request, created)
+        bound = ExecutionInputRequiredError(
+            required,
+            request=created,
+            durable=durable,
+        )
+        self.assertIs(bound.request, created)
+        self.assertIs(bound.durable, durable)

@@ -26,14 +26,16 @@ from .error import (
     InteractionStoreClosedError,
 )
 from .handler import (
-    InputHandler,
     InputHandlerContext,
     InputHandlerDetached,
     InputHandlerDisconnected,
-    InputHandlerOutcome,
     InputHandlerResolution,
     InputResumer,
     InputResumptionNotification,
+    _InputHandler,
+    _InputHandlerOutcome,
+    _TrustedInputHandlerResolution,
+    _validate_trusted_input_handler_resolution,
 )
 from .policy import (
     HandlerLossDisposition,
@@ -105,11 +107,13 @@ from .store import (
     TrustedDefaultResolutionResult,
     WaitForDeadlineChangeCommand,
     WaitForInteractionChangeCommand,
+    _CandidateResolutionCommand,
     _InteractionAdmissionCleanupCommand,
     _InteractionAdmissionCleanupDisposition,
     _InteractionAdmissionCreateCommand,
     _new_interaction_admission_commands,
     _new_trusted_default_resolution_command,
+    _new_trusted_policy_resolution_command,
     _validate_interaction_admission_cleanup_command,
     _validate_interaction_admission_cleanup_result,
     _validate_interaction_admission_create_command,
@@ -143,6 +147,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from inspect import iscoroutinefunction
 from typing import Callable, Protocol, TypeAlias, cast, final
+
+_MAX_ATTACHED_HANDLER_RESOLUTION_ATTEMPTS = 2
 
 
 class InteractionObserverEventKind(StrEnum):
@@ -307,7 +313,7 @@ class InteractionBrokerRequest:
     mode: RequirementMode
     reason: str
     questions: tuple[InputQuestion, ...]
-    handler: InputHandler | None = field(default=None, repr=False)
+    handler: _InputHandler | None = field(default=None, repr=False)
     resumer: InputResumer | None = field(default=None, repr=False)
     continuation_ttl_seconds: int = 86_400
     advisory_wait_seconds: int | None = None
@@ -392,15 +398,19 @@ class InteractionBrokerRequest:
                     "broker_request.advisory_wait_seconds",
                     "required requests cannot have an advisory wait",
                 )
-        elif self.advisory_wait_seconds is not None:
+        else:
             object.__setattr__(
                 self,
                 "advisory_wait_seconds",
-                validate_int(
-                    self.advisory_wait_seconds,
-                    "broker_request.advisory_wait_seconds",
-                    minimum=1,
-                    maximum=3_600,
+                (
+                    60
+                    if self.advisory_wait_seconds is None
+                    else validate_int(
+                        self.advisory_wait_seconds,
+                        "broker_request.advisory_wait_seconds",
+                        minimum=1,
+                        maximum=3_600,
+                    )
                 ),
             )
         if self.handler is not None:
@@ -772,7 +782,7 @@ class AsyncInteractionBroker:
         ] = {}
         self._handler_tasks: dict[
             InputRequestId,
-            Task[InputHandlerOutcome],
+            Task[_InputHandlerOutcome],
         ] = {}
         self._watcher_tasks: dict[InputRequestId, Task[None]] = {}
         self._resumers: dict[ContinuationId, InputResumer] = {}
@@ -1477,7 +1487,7 @@ class AsyncInteractionBroker:
         actor: InteractionActor,
         correlation: InteractionCorrelation,
         record: InteractionRecord,
-        handler: InputHandler,
+        handler: _InputHandler,
     ) -> tuple[InteractionRecord, int]:
         validation_error: InputTransitionError | None = None
         attempts = 0
@@ -1485,6 +1495,12 @@ class AsyncInteractionBroker:
         while True:
             if _is_terminal_record(latest):
                 await self._settle_record(latest)
+                return latest, attempts
+            if (
+                validation_error is not None
+                and attempts >= _MAX_ATTACHED_HANDLER_RESOLUTION_ATTEMPTS
+            ):
+                latest = await self._apply_handler_loss(actor, latest)
                 return latest, attempts
             context = InputHandlerContext(
                 request=latest.request,
@@ -1510,17 +1526,71 @@ class AsyncInteractionBroker:
             except Exception:
                 latest = await self._apply_handler_loss(actor, latest)
                 return latest, attempts
-            if isinstance(outcome, InputHandlerResolution):
+            if isinstance(
+                outcome,
+                (InputHandlerResolution, _TrustedInputHandlerResolution),
+            ):
                 try:
-                    command = ResolveInteractionCommand(
-                        actor=actor,
-                        correlation=correlation,
-                        expected_state_revision=latest.request.state_revision,
-                        idempotency_key=(
-                            await self._id_factory.new_idempotency_key()
-                        ),
-                        proposed_resolution=outcome.resolution,
-                    )
+                    command: _CandidateResolutionCommand
+                    if isinstance(
+                        outcome,
+                        _TrustedInputHandlerResolution,
+                    ):
+                        trusted_outcome = (
+                            _validate_trusted_input_handler_resolution(outcome)
+                        )
+                        if trusted_outcome.trusted_default:
+                            default_result = (
+                                await self._store.resolve_trusted_default(
+                                    _new_trusted_default_resolution_command(
+                                        TrustedDefaultResolutionRequest(
+                                            actor=actor,
+                                            correlation=correlation,
+                                            expected_state_revision=(
+                                                latest.request.state_revision
+                                            ),
+                                        )
+                                    )
+                                )
+                            )
+                            await self._settle_store_result(default_result)
+                            result_record = _single_result_record(
+                                default_result
+                            )
+                            latest = (
+                                result_record
+                                if result_record is not None
+                                else await self._latest_record(
+                                    actor,
+                                    correlation,
+                                )
+                            )
+                            return latest, attempts
+                        resolution = trusted_outcome.resolution
+                        assert resolution is not None
+                        command = _new_trusted_policy_resolution_command(
+                            actor=actor,
+                            correlation=correlation,
+                            expected_state_revision=(
+                                latest.request.state_revision
+                            ),
+                            idempotency_key=(
+                                await self._id_factory.new_idempotency_key()
+                            ),
+                            proposed_resolution=resolution,
+                        )
+                    else:
+                        command = ResolveInteractionCommand(
+                            actor=actor,
+                            correlation=correlation,
+                            expected_state_revision=(
+                                latest.request.state_revision
+                            ),
+                            idempotency_key=(
+                                await self._id_factory.new_idempotency_key()
+                            ),
+                            proposed_resolution=outcome.resolution,
+                        )
                 except InputContractError as error:
                     validation_error = InputTransitionError(
                         code=error.code,
@@ -1564,9 +1634,9 @@ class AsyncInteractionBroker:
     async def _invoke_handler(
         self,
         request_id: InputRequestId,
-        handler: InputHandler,
+        handler: _InputHandler,
         context: InputHandlerContext,
-    ) -> InputHandlerOutcome:
+    ) -> _InputHandlerOutcome:
         async with self._state_lock:
             self._ensure_open()
             previous = self._handler_tasks.get(request_id)
@@ -1593,6 +1663,7 @@ class AsyncInteractionBroker:
                 InputHandlerResolution,
                 InputHandlerDetached,
                 InputHandlerDisconnected,
+                _TrustedInputHandlerResolution,
             ),
         ):
             raise InputValidationError(

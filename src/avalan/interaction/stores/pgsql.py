@@ -77,6 +77,7 @@ from ..entities import (
     ResolutionIdempotencyKey,
     RunId,
     StateRevision,
+    TimedOutResolution,
 )
 from ..error import (
     InputContractError,
@@ -99,6 +100,7 @@ from ..store import (
     _ADMISSION_CLEANUP_RESOLVER,
     _DEADLINE_RESOLVER,
     _TRUSTED_DEFAULT_RESOLVER,
+    _TRUSTED_POLICY_RESOLVER,
     AdvisoryWaitState,
     AdvisoryWaitStatus,
     CancelInteractionCommand,
@@ -109,6 +111,7 @@ from ..store import (
     CreateInteractionRejected,
     CreateInteractionResult,
     DetachInteractionCommand,
+    DueInteractionsApplied,
     DueInteractionsResult,
     InteractionBranchRecord,
     InteractionBranchRegistration,
@@ -142,6 +145,7 @@ from ..store import (
     TrustedDefaultResolutionResult,
     WaitForDeadlineChangeCommand,
     WaitForInteractionChangeCommand,
+    _CandidateResolutionCommand,
     _InteractionAdmissionCapability,
     _InteractionAdmissionCleanupCommand,
     _InteractionAdmissionCleanupResult,
@@ -412,6 +416,37 @@ class PgsqlDurableTaskReentry:
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PgsqlDurableTaskAdvisoryReentry:
+    """Return one atomically timed-out advisory and task reentry."""
+
+    interaction: DueInteractionsResult
+    record: InteractionRecord
+    reentry: TaskQueueReentry
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.interaction, DueInteractionsApplied)
+        assert isinstance(self.record, InteractionRecord)
+        assert self.record in (
+            self.interaction.records or self.interaction.previous
+        )
+        assert self.record.request.state is RequestState.TIMED_OUT
+        assert type(self.record.request.resolution) is TimedOutResolution
+        assert isinstance(self.reentry, TaskQueueReentry)
+        assert (
+            str(self.record.request.origin.run_id) == self.reentry.run.run_id
+        )
+        assert (
+            str(self.record.request.request_id)
+            == self.reentry.previous_segment.request_id
+        )
+        assert (
+            str(self.record.request.continuation_id)
+            == self.reentry.previous_segment.continuation_id
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PgsqlDurableTaskResuspension:
     """Return one atomically completed continuation and new suspension."""
 
@@ -587,6 +622,7 @@ class _PgsqlTaskTransactionStore(Protocol):
         resolution_revision: int,
         observed_at: datetime,
         metadata: Mapping[str, object],
+        interaction_state: str = "answered",
     ) -> TaskQueueReentry:
         """Requeue one suspension inside the supplied transaction."""
         ...
@@ -1292,7 +1328,7 @@ class PgsqlInteractionStore:
 
     async def resolve(
         self,
-        command: ResolveInteractionCommand,
+        command: _CandidateResolutionCommand,
     ) -> InteractionResolutionResult:
         """Resolve and expose one continuation-ready outbox atomically."""
 
@@ -4905,6 +4941,7 @@ class PgsqlDurableTaskCoordinator:
                 resolution_revision=record.request.state_revision,
                 observed_at=observed_at,
                 metadata=safe_metadata,
+                interaction_state=RequestState.ANSWERED.value,
             )
 
         resolution = await self._interaction_store._run_memory_with_unit(
@@ -4920,6 +4957,103 @@ class PgsqlDurableTaskCoordinator:
         assert reentry is not None
         return PgsqlDurableTaskReentry(
             resolution=resolution,
+            reentry=reentry,
+        )
+
+    async def timeout_advisory_and_requeue(
+        self,
+        lookup: ScopedInteractionLookup,
+        *,
+        task_run_id: str,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> PgsqlDurableTaskAdvisoryReentry:
+        """Time out one due advisory and expose its task atomically."""
+        if not isinstance(lookup, ScopedInteractionLookup):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "lookup",
+                "value must be a scoped interaction lookup",
+            )
+        _assert_opaque(task_run_id, "task_run_id")
+        if str(lookup.correlation.run_id) != task_run_id:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "task_run_id",
+                "task run does not match the interaction correlation",
+            )
+        observed_at = await self._observed_at(now)
+        safe_metadata = freeze_snapshot_metadata(metadata)
+        timed_out_record: InteractionRecord | None = None
+        reentry: TaskQueueReentry | None = None
+
+        async def timeout(
+            store: MemoryInteractionStore,
+            _unit: PgsqlUnitOfWork,
+        ) -> DueInteractionsResult:
+            nonlocal timed_out_record
+            result = await store.terminalize_due(
+                TerminalizeDueInteractionsCommand(maximum_results=1)
+            )
+            if not isinstance(result, DueInteractionsApplied):
+                raise PgsqlInteractionStoreError(
+                    InputErrorCode.ILLEGAL_TRANSITION,
+                    "interaction.timeout",
+                    "advisory timeout could not be applied",
+                )
+            if len(result.previous) != 1:
+                raise InteractionNotFoundError()
+            record = (
+                result.records[0] if result.records else result.previous[0]
+            )
+            if (
+                len(result.records) > 1
+                or record.request.state is not RequestState.TIMED_OUT
+                or type(record.request.resolution) is not TimedOutResolution
+            ):
+                raise PgsqlInteractionStoreError(
+                    InputErrorCode.ILLEGAL_TRANSITION,
+                    "interaction.timeout",
+                    "advisory interaction is not due",
+                )
+            timed_out_record = record
+            return result
+
+        async def persist(
+            unit: PgsqlUnitOfWork,
+            _result: DueInteractionsResult,
+        ) -> None:
+            nonlocal reentry
+            record = timed_out_record
+            assert record is not None
+            await self._interaction_store._ready_continuation(unit, record)
+            await self._interaction_store._sync_resolution_keys(unit, record)
+            reentry = await self._task_store._requeue_suspended_in_unit(
+                unit,
+                run_id=task_run_id,
+                request_id=str(record.request.request_id),
+                continuation_id=str(record.request.continuation_id),
+                resolution_revision=record.request.state_revision,
+                observed_at=observed_at,
+                metadata=safe_metadata,
+                interaction_state=RequestState.TIMED_OUT.value,
+            )
+
+        interaction = await self._interaction_store._run_memory_with_unit(
+            "durable_task_timeout_advisory_and_requeue",
+            timeout,
+            mutate=True,
+            after_persist=persist,
+            selection=_correlation_snapshot(
+                lookup.actor,
+                lookup.correlation,
+            ),
+        )
+        assert timed_out_record is not None
+        assert reentry is not None
+        return PgsqlDurableTaskAdvisoryReentry(
+            interaction=interaction,
+            record=timed_out_record,
             reentry=reentry,
         )
 
@@ -5885,6 +6019,7 @@ def _encode_resolver(value: object | None) -> object:
     for resolver, name in (
         (_DEADLINE_RESOLVER, "deadline"),
         (_TRUSTED_DEFAULT_RESOLVER, "trusted_default"),
+        (_TRUSTED_POLICY_RESOLVER, "trusted_policy"),
         (_ADMISSION_CLEANUP_RESOLVER, "admission_cleanup"),
     ):
         if value is resolver:
@@ -5906,6 +6041,7 @@ def _decode_resolver(
     resolvers = {
         "deadline": _DEADLINE_RESOLVER,
         "trusted_default": _TRUSTED_DEFAULT_RESOLVER,
+        "trusted_policy": _TRUSTED_POLICY_RESOLVER,
         "admission_cleanup": _ADMISSION_CLEANUP_RESOLVER,
     }
     resolver = resolvers.get(kind)

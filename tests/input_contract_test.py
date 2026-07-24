@@ -306,9 +306,9 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         node["node_id"] for node in nodes if node["lifecycle"] == "active"
     ]
     assert manifest["current_phase"] == snapshots[-1]["phase"]
-    assert manifest["current_phase"] == 5
-    assert len(active) == 788
-    current_behavioral = [
+    assert manifest["current_phase"] == 6
+    assert len(active) == 814
+    phase5_behavioral = [
         node
         for node in nodes
         if node["active_from_phase"] == 5
@@ -317,11 +317,17 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
             for requirement_id in node["requirement_ids"]
         )
     ]
-    assert len(current_behavioral) == _CURRENT_RUNTIME_NODE_COUNT
+    assert len(phase5_behavioral) == _CURRENT_RUNTIME_NODE_COUNT
     assert {
-        node["node_id"].split("::", 1)[0] for node in current_behavioral
+        node["node_id"].split("::", 1)[0] for node in phase5_behavioral
     } == set(_CURRENT_RUNTIME_FILES)
-    assert sum(node["lifecycle"] == "planned" for node in nodes) == 156
+    phase6_nodes = [
+        node
+        for node in nodes
+        if node["lifecycle"] == "active" and node["active_from_phase"] == 6
+    ]
+    assert len(phase6_nodes) == 26
+    assert sum(node["lifecycle"] == "planned" for node in nodes) == 130
     assert set(active) == set(snapshots[-1]["node_ids"])
     assert len(active) == len(snapshots[-1]["node_ids"])
     assert (
@@ -335,9 +341,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         item["phase"] for item in snapshots
     ]
     assert set(history[-1]["node_ids"]) == {
-        node["id"]
-        for node in nodes
-        if node["lifecycle"] == "active" and node["active_from_phase"] == 5
+        node["id"] for node in phase6_nodes
     }
     nodes_by_id = {node["id"]: node for node in nodes}
     assert (
@@ -450,26 +454,37 @@ def test_failure_matrix_is_complete() -> None:
     )
     assert len(cells) == len(expected_pairs) == 1260
     corrections = matrix["activation_schedule_corrections"]
-    assert len(corrections) == 4
+    assert len(corrections) == 5
     assert (
         sum(correction["corrected_cell_count"] for correction in corrections)
-        == 58
+        == 62
     )
     assert all(
-        correction["reviewed_in_phase"] == 5
-        and correction["previous_active_from_phase"] == 5
-        and correction["corrected_active_from_phase"] > 5
-        and correction["corrected_cell_count"]
+        correction["corrected_cell_count"]
         == len(correction["condition_ids"]) * len(correction["surface_ids"])
         for correction in corrections
     )
+    assert [
+        (
+            correction["reviewed_in_phase"],
+            correction["previous_active_from_phase"],
+            correction["corrected_active_from_phase"],
+        )
+        for correction in corrections
+    ] == [
+        (5, 5, 7),
+        (5, 5, 6),
+        (5, 5, 9),
+        (5, 5, 12),
+        (6, 6, 9),
+    ]
     corrected_cells = {
         (condition_id, surface_id): correction["corrected_active_from_phase"]
         for correction in corrections
         for condition_id in correction["condition_ids"]
         for surface_id in correction["surface_ids"]
     }
-    assert len(corrected_cells) == 58
+    assert len(corrected_cells) == 62
     assert all(
         cell["active_from_phase"]
         == corrected_cells.get(
@@ -818,7 +833,8 @@ def test_contract_decisions_are_frozen() -> None:
     examples = error_status["public_envelope_examples"]
     contract = error_status["public_envelope_catalog_contract"]
     assert set(catalog) == set(examples)
-    assert len(catalog) == 107
+    assert len(catalog) == 108
+    assert "sdk.failed.v1" in catalog
     assert contract["mutation_requirements"] == [
         "missing_required_field",
         "extra_field",
@@ -949,15 +965,25 @@ def test_baseline_evidence_is_complete() -> None:
     """Require explicit pending or current-tree-bound gate evidence."""
     evidence = _fixture("baseline_evidence.json")
     manifest = _fixture("acceptance_manifest.json")
-    active_test_node_ids = [
+    current_active_test_node_ids = [
         node["node_id"]
         for node in manifest["nodes"]
         if node["lifecycle"] == "active"
     ]
+    sealed_active_test_node_ids = next(
+        snapshot["node_ids"]
+        for snapshot in manifest["activation_snapshots"]
+        if snapshot["phase"] == 5
+    )
+    phase6_test_node_ids = [
+        node["node_id"]
+        for node in manifest["nodes"]
+        if node["lifecycle"] == "active" and node["active_from_phase"] == 6
+    ]
     assert evidence["implementation_owner"] == "/root"
     assert evidence["independent_reviewer"] == "/root/input_contract_audit"
     assert evidence["implementation_owner"] != evidence["independent_reviewer"]
-    assert evidence["recorded_at"] == "2026-07-24T01:43:55Z"
+    assert evidence["recorded_at"] == "2026-07-24T11:25:16Z"
     assert evidence["review_history"][0] == {
         "sequence": 0,
         "phase": 0,
@@ -1190,7 +1216,7 @@ def test_baseline_evidence_is_complete() -> None:
             record["reviewer"],
             record["status"],
         )
-        for record in evidence["review_history"][-4:]
+        for record in evidence["review_history"][18:22]
     ] == [
         (
             5,
@@ -1207,6 +1233,129 @@ def test_baseline_evidence_is_complete() -> None:
         ),
         (5, "gate", "/root/continuation_r5_review", "approved"),
     ]
+    assert evidence["review_history"][22:24] == [
+        {
+            "sequence": 22,
+            "phase": 6,
+            "role": "semantic",
+            "reviewer": "/root/public_sdk_surface",
+            "status": "approved",
+            "recorded_at": "2026-07-24T06:43:30Z",
+            "evidence": (
+                "Independent review 53 approved the public SDK annotation"
+                " correction with zero P1, P2, or P3 findings after auditing"
+                " 47 SDK symbols, 74 annotated targets, and 381 leaves with"
+                " zero missing root exports; six focused tests, 34 strict type"
+                " fixtures, Ruff, and git diff --check passed."
+            ),
+        },
+        {
+            "sequence": 23,
+            "phase": 6,
+            "role": "gate",
+            "reviewer": "/root/public_sdk_gate_review",
+            "status": "pending",
+            "recorded_at": "2026-07-24T06:43:31Z",
+            "evidence": (
+                "The independent final gate review is pending until the"
+                " ordered lint, strict type, provisioned PostgreSQL exact"
+                " coverage and acceptance, and diff commands produce"
+                " current-tree evidence."
+            ),
+        },
+    ]
+    assert evidence["review_history"][24:26] == [
+        {
+            "sequence": 24,
+            "phase": 6,
+            "role": "cold-import-closure",
+            "reviewer": "/root/public_sdk_surface",
+            "status": "pending",
+            "recorded_at": "2026-07-24T07:43:02Z",
+            "evidence": (
+                "Independent review 54 found zero P1, one P2, and zero P3"
+                " findings at disconnected copied patch seams that made the"
+                " public SDK cold import pull optional service dependencies;"
+                " a bounded canonical-ownership correction began."
+            ),
+        },
+        {
+            "sequence": 25,
+            "phase": 6,
+            "role": "cold-import-closure",
+            "reviewer": "/root/public_sdk_surface",
+            "status": "approved",
+            "recorded_at": "2026-07-24T07:43:14Z",
+            "evidence": (
+                "Independent review 55 approved the correction with zero P1,"
+                " P2, or P3 findings after copied bindings were removed and"
+                " tests were canonicalized; nine seam, cold-import, and"
+                " failure tests, six public tests, 34 strict type fixtures,"
+                " mypy, Ruff, and git diff --check passed."
+            ),
+        },
+    ]
+    assert evidence["review_history"][26:28] == [
+        {
+            "sequence": 26,
+            "phase": 6,
+            "role": "independent_public_sdk_surface_reviewer",
+            "reviewer": "/root/public_sdk_surface",
+            "status": "approved",
+            "recorded_at": "2026-07-24T08:17:34Z",
+            "evidence": (
+                "Independent review #56 approved both exact-gate corrections"
+                " with P1=0, P2=0, and P3=0. The exact CLI-startup and"
+                " store-authority command passed 2 tests in 2.36 seconds;"
+                " focused suite A passed 31 tests and 3 subtests in 4.83"
+                " seconds; focused suite B passed 88 tests in 8.55 seconds;"
+                " the phase-6 type verifier passed 34 fixtures; the 47-symbol"
+                " and 74-target annotation audit found no missing roots and"
+                " canonical run_agent; scoped seven-file mypy, scoped Ruff,"
+                " git diff --check, identity and runtime probes, and the"
+                " scoped Jinja CLI probe passed. Exploratory broader mypy and"
+                " SQLAlchemy-blocking probes exposed pre-existing CLI typing"
+                " and database-settings import boundaries and are not claimed"
+                " as gate successes. This focused review does not approve the"
+                " common quality gate."
+            ),
+        },
+        {
+            "sequence": 27,
+            "phase": 6,
+            "role": "gate-correction-closure",
+            "reviewer": "/root",
+            "status": "approved",
+            "recorded_at": "2026-07-24T08:17:34Z",
+            "evidence": (
+                "Root closed the two exact-gate correction lanes after make"
+                " lint completed Ruff format, Black, Ruff check, full mypy"
+                " for 440 files, and verifier-script mypy for 6 files, and"
+                " make typecheck-input-contract INPUT_PHASE=6 passed 34"
+                " fixtures. This is a pre-gate validation record, not an"
+                " independent review or common-gate approval; the exact"
+                " PostgreSQL coverage and acceptance gate plus final tree and"
+                " coverage bindings remain pending."
+            ),
+        },
+    ]
+    assert evidence["review_history"][28] == {
+        "sequence": 28,
+        "phase": 6,
+        "role": "gate",
+        "reviewer": "/root/public_sdk_gate_review",
+        "status": "approved",
+        "recorded_at": "2026-07-24T11:25:16Z",
+        "evidence": (
+            "Independent review #57 returned verdict APPROVE with P1=0,"
+            " P2=0, and P3=0 after validating the ordered final quality"
+            " results, exact JSON and XML coverage artifacts, normalized"
+            " final tree, focused evidence and verifier suite, and phase-6"
+            " production verifier; this append-only record seals the"
+            " already-reviewed gate without changing implementation"
+            " behavior."
+        ),
+    }
     assert evidence["review_history_sha256"] == _digest(
         evidence["review_history"]
     )
@@ -1267,11 +1416,28 @@ def test_baseline_evidence_is_complete() -> None:
                 "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
             ),
         },
+        {
+            "phase": 5,
+            "state": "complete",
+            "quality_gate_sha256": (
+                "6f02f22e439d6b1ec34a291f1b22c4fe26d429b8d01c0b1e3453a1730424c3c5"
+            ),
+            "evidence_sha256": (
+                "97987b255baca02760ec1d3701db4ff7fcf92316abac6ab399b518cdb48f68f1"
+            ),
+        },
     ]
     assert evidence["quality_history_sha256"] == _digest(
         evidence["quality_history"]
     )
-    assert evidence["active_test_node_ids"] == active_test_node_ids
+    assert evidence["active_test_node_ids"] == current_active_test_node_ids
+    assert len(sealed_active_test_node_ids) == 788
+    assert len(current_active_test_node_ids) == 814
+    assert len(phase6_test_node_ids) == 26
+    assert set(sealed_active_test_node_ids) < set(current_active_test_node_ids)
+    assert set(current_active_test_node_ids) - set(
+        sealed_active_test_node_ids
+    ) == set(phase6_test_node_ids)
     prior_quality_gate = {
         "state": "complete",
         "required_commands": [
@@ -1533,13 +1699,17 @@ def test_baseline_evidence_is_complete() -> None:
     }
     assert evidence["pending_structural_inventory"] == {
         "source_inventory_sha256": (
-            "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23"
+            "924cbf18b65fb91c3b438a4cb7bec757ba7843e97b5ac0bd89b68072f7edc943"
         ),
-        "source_file_count": 435,
-        "statement_count": 118256,
-        "excluded_line_count": 1736,
+        "source_file_count": 440,
+        "statement_count": 119485,
+        "excluded_line_count": 1834,
     }
     regression = evidence["current_regression_classification"]
+    assert (
+        regression["catalog_sha256"]
+        == "e26844f278d2ba186211e137cecbb23100ee950dcaec3ded80a3c81b241b7814"
+    )
     assert regression["catalog_sha256"] == _digest(
         {
             "mechanical_nodes": regression["mechanical_nodes"],
@@ -1549,92 +1719,238 @@ def test_baseline_evidence_is_complete() -> None:
             "support_surfaces": regression["support_surfaces"],
         }
     )
-    semantic_support_nodes = {
-        entry["node_id"]: entry["evidence"]
+    dispositions = {
+        disposition: [
+            entry
+            for entry in regression["reviewed_nonsemantic_nodes"]
+            if entry["disposition"] == disposition
+        ]
+        for disposition in ("gate_support", "semantic_support")
+    }
+    assert len(dispositions["gate_support"]) == 4
+    assert len(dispositions["semantic_support"]) == 56
+    focused_coverage_node_ids = {
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_completed_json_rejects_every_non_finite_float"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_durable_handoff_rejects_untyped_and_mismatched_acknowledgements"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_durable_integration_rejects_unowned_components"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_legacy_async_controller_aliases_and_projection_failures"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_opaque_references_reject_type_shape_payload_and_pair_mismatches"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_owned_runtime_and_policy_factories_validate_callbacks"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_principal_clock_identifiers_authorization_and_classifier"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_public_controller_aliases_and_bridge_validation"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_public_handler_adapters_preserve_each_typed_outcome"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_public_persistence_values_reject_empty_payloads_and_bad_digests"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_public_state_errors_map_to_exact_exception_classes"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_public_value_objects_reject_each_invalid_member"
+        ),
+        (
+            "tests/input/public_sdk_coverage_test.py::"
+            "test_run_agent_maps_untyped_values_failures_and_input_handoff"
+        ),
+        (
+            "tests/interaction/interaction_store_validation_coverage_test.py::"
+            "test_record_resolution_validation_rejects_corrupt_authority"
+        ),
+        (
+            "tests/interaction/interaction_store_validation_coverage_test.py::"
+            "test_replay_branch_and_basic_identity_validators_fail_closed"
+        ),
+        (
+            "tests/interaction/stores/interaction_pgsql_store_test.py::"
+            "PgsqlInteractionStoreTest::"
+            "test_advisory_timeout_rejects_wrong_scope_and_task_state"
+        ),
+    }
+    focused_coverage_entries = [
+        entry
         for entry in regression["reviewed_nonsemantic_nodes"]
-        if entry["disposition"] == "semantic_support"
-    }
-    assert set(semantic_support_nodes) == {
-        (
-            "tests/agent/loader_test.py::"
-            "LoaderFromFileTestCase::"
-            "test_runtime_container_delegates_to_agent_envelope_loader"
-        ),
-        (
-            "tests/agent/loader_test.py::"
-            "LoadJsonOrchestratorVariantsTestCase::"
-            "test_run_reasoning_summary_file_entry_points_match"
-        ),
-        (
-            "tests/task/client_test.py::TaskClientTest::"
-            "test_inspection_snapshot_includes_safe_optional_fields"
-        ),
-        (
-            "tests/task/stores/in_memory_task_store_test.py::"
-            "InMemoryTaskStoreTest::"
-            "test_lookup_methods_raise_stable_not_found_errors"
-        ),
-        (
-            "tests/task/stores/pgsql_migration_test.py::"
-            "PgsqlMigrationRevisionTest::"
-            "test_revision_downgrade_is_forward_only"
-        ),
-    }
+        if entry["node_id"] in focused_coverage_node_ids
+    ]
+    assert {
+        entry["node_id"] for entry in focused_coverage_entries
+    } == focused_coverage_node_ids
     assert all(
-        "unrelated to structured-input requirements" in evidence
-        for evidence in semantic_support_nodes.values()
+        entry["disposition"] == "semantic_support"
+        and entry["reviewed_by"] == "/root"
+        and entry["baseline_ast_sha256"] != entry["current_ast_sha256"]
+        and "coverage" in entry["evidence"].lower()
+        for entry in focused_coverage_entries
     )
-    assert evidence["inventory"]["active_acceptance_nodes"] == 788
-    assert evidence["inventory"]["active_pytest_instances"] == 962
-    assert evidence["inventory"]["planned_acceptance_nodes"] == 156
+    sdk_coverage_entries = [
+        entry
+        for entry in focused_coverage_entries
+        if entry["node_id"].startswith(
+            "tests/input/public_sdk_coverage_test.py::"
+        )
+    ]
+    assert len(sdk_coverage_entries) == 13
+    assert all(
+        entry["baseline_ast_sha256"]
+        == "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479"
+        for entry in sdk_coverage_entries
+    )
+    assert all(
+        entry["evidence"]
+        == "Exact live support definition for the public SDK boundary is"
+        " classified outside the acceptance manifest."
+        for entry in regression["reviewed_nonsemantic_nodes"]
+        if entry["node_id"] not in focused_coverage_node_ids
+    )
+    assert len(regression["support_surfaces"]) == 14
+    assert any(
+        entry["path"] == "tests/input/public_sdk_coverage_test.py"
+        and entry["baseline_ast_sha256"]
+        == "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872"
+        and entry["current_ast_sha256"]
+        == "ea1eea6cdd3ba158c892192ae3677923b828f488685309405675dc5f5ffe3d9a"
+        for entry in regression["support_surfaces"]
+    )
+    assert evidence["inventory"]["active_acceptance_nodes"] == 814
+    assert evidence["inventory"]["active_pytest_instances"] == 988
+    assert evidence["inventory"]["planned_acceptance_nodes"] == 130
     assert evidence["inventory"]["failure_surfaces"] == 84
     assert evidence["inventory"]["failure_cells"] == 1260
-    assert evidence["typing_async_audit"]["strict_type_fixture_count"] == 28
+    assert evidence["typing_async_audit"]["strict_type_fixture_count"] == 34
     quality_gate = evidence["quality_gate"]
     assert quality_gate["state"] == "complete"
     assert quality_gate["required_commands"] == [
         "make lint",
-        "make typecheck-input-contract INPUT_PHASE=5",
-        "make test-pgsql-exact no-install INPUT_PHASE=5",
+        "make typecheck-input-contract INPUT_PHASE=6",
+        "make test-pgsql-exact no-install INPUT_PHASE=6",
         "git diff --check",
     ]
-    assert quality_gate["state_details"] == {
-        "completed_at": "2026-07-24T01:43:55Z",
-        "gate_run_id": "phase5-pgsql-exact-dc59b953c8ca",
+    details = quality_gate["state_details"]
+    assert details["completed_at"] == "2026-07-24T10:45:19Z"
+    assert details["gate_run_id"] == "final-quality-evidence-91a820e283d1"
+    assert details["final_review"] == {
+        "reviewer": "/root/public_sdk_gate_review",
+        "status": "approved",
+        "approval_sealed": True,
+    }
+    assert [
+        (
+            attempt["attempt"],
+            attempt["outcome"],
+            attempt["passed"],
+            attempt["skipped"],
+            attempt["subtests_passed"],
+            attempt["seconds"],
+            attempt["failure_stage"],
+        )
+        for attempt in details["prior_failed_attempts"]
+    ] == [
+        (
+            1,
+            "failed",
+            12000,
+            59,
+            8678,
+            366.53,
+            "coverage_exclusion_verification",
+        ),
+        (
+            2,
+            "failed",
+            12000,
+            59,
+            8678,
+            362.09,
+            "coverage_exclusion_verification",
+        ),
+        (
+            3,
+            "failed",
+            12000,
+            59,
+            8678,
+            366.48,
+            "exact_source_coverage",
+        ),
+    ]
+    assert details["diagnostic_coverage"] == {
+        "purpose": "diagnostic_only",
+        "passed": 12000,
+        "skipped": 59,
+        "subtests_passed": 8678,
+        "seconds": 368.56,
+        "report_sha256": (
+            "48b0587756849bc1c22fdf437f0f03643ad9e2c9788e4166168239e31be2cf7f"
+        ),
+    }
+    assert details["hard_coverage_audit"] == {
+        "command": "make test-coverage -- -100 src/",
+        "exit_code": 0,
+        "below_threshold_files": [],
     }
     assert quality_gate["results"] == [
         {
             "command": "make lint",
             "exit_code": 0,
-            "source_files_typechecked": 435,
+            "source_files_typechecked": 440,
             "script_files_typechecked": 6,
         },
         {
-            "command": "make typecheck-input-contract INPUT_PHASE=5",
+            "command": "make typecheck-input-contract INPUT_PHASE=6",
             "exit_code": 0,
-            "active_fixtures": 28,
+            "active_fixtures": 34,
         },
         {
-            "command": "make test-pgsql-exact no-install INPUT_PHASE=5",
+            "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
             "exit_code": 0,
-            "active_nodes": 788,
-            "active_instances": 962,
-            "covered_statements": 118256,
-            "total_statements": 118256,
-            "source_files": 435,
+            "active_nodes": 814,
+            "active_instances": 988,
+            "covered_statements": 119485,
+            "total_statements": 119485,
+            "source_files": 440,
             "missing_lines": 0,
             "missing_files": 0,
-            "passed": 11932,
+            "passed": 12013,
             "skipped": 59,
-            "subtests_passed": 8663,
-            "seconds": 501.02,
+            "subtests_passed": 8678,
+            "seconds": 380.35,
             "deselected": 0,
             "xfail": 0,
             "xpass": 0,
         },
         {"command": "git diff --check", "exit_code": 0},
     ]
-    assert set(quality_gate["tree_binding"]) == {
+    tree_binding = quality_gate["tree_binding"]
+    assert set(tree_binding) == {
         "baseline_head",
         "inventory_file_count",
         "inventory_sha256",
@@ -1642,18 +1958,58 @@ def test_baseline_evidence_is_complete() -> None:
         "normalized_evidence_sha256",
         "normalized_verifier_kind",
         "normalized_verifier_sha256",
+        "source_tree_file_count",
+        "source_tree_inventory_sha256",
+        "test_tree_file_count",
+        "test_tree_inventory_sha256",
+        "script_tree_file_count",
+        "script_tree_inventory_sha256",
+        "support_tree_boundary",
+        "support_tree_file_count",
+        "support_tree_inventory_sha256",
         "tree_sha256",
     }
+    assert tree_binding["inventory_file_count"] == 1352
+    assert tree_binding["source_tree_file_count"] == 444
+    assert tree_binding["test_tree_file_count"] == 749
+    assert tree_binding["script_tree_file_count"] == 10
+    assert tree_binding["support_tree_file_count"] == 149
+    assert (
+        tree_binding["source_tree_file_count"]
+        + tree_binding["test_tree_file_count"]
+        + tree_binding["script_tree_file_count"]
+        + tree_binding["support_tree_file_count"]
+        == tree_binding["inventory_file_count"]
+    )
+    assert (
+        tree_binding["support_tree_boundary"]
+        == "all normalized files outside src/, tests/, and scripts/"
+    )
+    for field in (
+        "inventory_sha256",
+        "normalized_evidence_sha256",
+        "normalized_verifier_sha256",
+        "source_tree_inventory_sha256",
+        "test_tree_inventory_sha256",
+        "script_tree_inventory_sha256",
+        "support_tree_inventory_sha256",
+        "tree_sha256",
+    ):
+        assert len(tree_binding[field]) == 64
+        int(tree_binding[field], 16)
     assert quality_gate["coverage_binding"] == {
         "report_sha256": (
-            "dc59b953c8ca740cf319cc7f23c8f1faa186ea88360158a37c7f60b8a2003acc"
+            "91a820e283d1dfa48073feaa008cf29c5730640767dd9f48c630c3d1157fba34"
+        ),
+        "xml_report_sha256": (
+            "497870de64efb4b142db041e604d2cb9be8390561f1bda4480b44cedf6b5d170"
         ),
         "source_inventory_sha256": (
-            "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23"
+            "924cbf18b65fb91c3b438a4cb7bec757ba7843e97b5ac0bd89b68072f7edc943"
         ),
-        "source_file_count": 435,
-        "statement_count": 118256,
-        "excluded_line_count": 1736,
+        "source_file_count": 440,
+        "statement_count": 119485,
+        "excluded_line_count": 1834,
     }
     assert evidence["unresolved_risks"] == [
         (
@@ -1682,6 +2038,7 @@ def test_capability_remains_dormant() -> None:
         {"phase": 3, "state": "dormant_unadvertised"},
         {"phase": 4, "state": "dormant_unadvertised"},
         {"phase": 5, "state": "dormant_unadvertised"},
+        {"phase": 6, "state": "dormant_unadvertised"},
     ]
     assert evidence["boundary"]["production_source_changes"]
     assert all(

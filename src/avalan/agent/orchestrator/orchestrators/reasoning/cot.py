@@ -30,6 +30,9 @@ class ReasoningOrchestrator(Orchestrator):
             call_options=orchestrator._call_options,
             exit_memory=orchestrator._exit_memory,
             id=orchestrator.id,
+            interaction_runtime=orchestrator.__dict__.get(
+                "_interaction_runtime"
+            ),
             name=orchestrator.name,
             renderer=orchestrator.renderer,
         )

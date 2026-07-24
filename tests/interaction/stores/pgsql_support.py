@@ -1715,7 +1715,13 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
-        request_id, continuation_id, run_id, revision = params
+        (
+            request_id,
+            continuation_id,
+            run_id,
+            revision,
+            interaction_state,
+        ) = params
         record = self.database.records.get(cast(str, request_id))
         continuation = self.database.continuations.get(
             cast(str, continuation_id)
@@ -1733,7 +1739,7 @@ class FakeCursor:
                 and continuation["lifecycle_state"]
                 in {"ready", "claimed", "dispatching", "completed"}
                 and record is not None
-                and record["request_state"] == "answered"
+                and record["request_state"] == interaction_state
                 and record["state_revision"] == revision
             ),
             None,
@@ -1755,7 +1761,7 @@ class FakeCursor:
             or continuation["task_run_id"] != run_id
             or continuation["checkpoint_id"] != checkpoint_id
             or continuation["lifecycle_state"] != "ready"
-            or record["request_state"] != "answered"
+            or record["request_state"] not in {"answered", "timed_out"}
         ):
             return None
         return {"continuation_id": continuation_id}

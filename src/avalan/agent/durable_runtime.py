@@ -2,21 +2,13 @@
 
 from ..entities import Message, MessageRole
 from ..event.manager import EventManager, Listener
-from ..interaction.broker import InteractionBrokerRequest
 from ..interaction.continuation import (
-    ContinuationClaim,
-    ContinuationFencingToken,
-    ContinuationStoreRevision,
-    PortableContinuation,
     ResolvedContinuationRuntime,
 )
-from ..interaction.durable import DurableInteractionSuspension
 from ..interaction.entities import (
     ContinuationRevisionBinding,
     ExecutionDefinitionRef,
-    InputRequestId,
     InputRequiredResult,
-    StateRevision,
     create_input_request,
 )
 from ..interaction.error import (
@@ -24,25 +16,26 @@ from ..interaction.error import (
     InputValidationError,
 )
 from ..interaction.policy import InteractionActor
-from ..interaction.store import CreateInteractionCommand
-from ..interaction.validation import validate_aware_datetime
-from ..memory.permanent.codec import (
-    decode_message_data,
-    encode_message_data,
-)
+from ..memory.permanent.codec import decode_message_data
 from ..model.capability import ModelCapabilityCatalog
 from ..tool.context import ToolSettingsContext
 from ..types import JsonValue
+from . import continuation_stager as continuation_stager_module
 from .continuation import (
     AgentContinuationEventListenerRegistration,
     AgentContinuationResumeCommand,
 )
+from .continuation_stager import (
+    PortableAgentContinuationStager as PortableAgentContinuationStager,
+)
 from .execution import (
     AgentExecution,
     DurableInteractionRuntime,
-    DurableInteractionStagingContext,
     ExecutionCorrelationError,
     UuidExecutionIdFactory,
+)
+from .execution import (
+    DurableInteractionStagingContext as DurableInteractionStagingContext,
 )
 from .loader import OrchestratorLoader
 from .orchestrator import Orchestrator
@@ -51,152 +44,11 @@ from .orchestrator.response.orchestrator_response import (
 )
 
 from asyncio import Lock, Task, create_task, shield
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
-from dataclasses import asdict, is_dataclass
-from datetime import UTC, datetime, timedelta
-from enum import Enum
-from json import dumps, loads
 from pathlib import Path
 from typing import NoReturn, cast, final
 from urllib.parse import unquote, urlsplit
-from uuid import uuid4
-
-_TRANSCRIPT_VERSION = 1
-_OBSERVATION_VERSION = 1
-_EXECUTION_OBSERVATION_KIND = "agent_execution"
-
-
-@final
-class PortableAgentContinuationStager:
-    """Build portable continuation state before durable persistence."""
-
-    def __init__(
-        self,
-        *,
-        clock: Callable[[], datetime] | None = None,
-    ) -> None:
-        if clock is not None and not callable(clock):
-            raise TypeError("clock must be callable")
-        self._clock = clock or (lambda: datetime.now(UTC))
-
-    async def __call__(
-        self,
-        request: InteractionBrokerRequest,
-        *,
-        execution: AgentExecution,
-        response: object,
-        stream_sequence: int,
-        staging: DurableInteractionStagingContext,
-    ) -> DurableInteractionSuspension:
-        """Return one exact uncommitted request and portable checkpoint."""
-        if type(request) is not InteractionBrokerRequest:
-            raise TypeError("request must be an interaction broker request")
-        if not isinstance(execution, AgentExecution):
-            raise TypeError("execution must be an agent execution")
-        if not isinstance(response, OrchestratorResponse):
-            raise TypeError("response must be an orchestrator response")
-        if type(staging) is not DurableInteractionStagingContext:
-            raise TypeError("staging must be a durable staging context")
-        now = validate_aware_datetime(
-            self._clock(),
-            "continuation_stager.clock",
-        )
-        request_id = InputRequestId(f"request-{uuid4()}")
-        continuation_id = staging.continuation_id
-        created = create_input_request(
-            request_id=request_id,
-            continuation_id=continuation_id,
-            origin=request.origin,
-            mode=request.mode,
-            reason=request.reason,
-            questions=request.questions,
-            created_at=now,
-            continuation_ttl_seconds=request.continuation_ttl_seconds,
-            advisory_wait_seconds=request.advisory_wait_seconds,
-        )
-        snapshot = execution.snapshot
-        reservation = next(
-            (
-                entry
-                for entry in reversed(snapshot.ledger)
-                if entry.task_input_call is not None
-                and entry.interaction_assistant_message is not None
-            ),
-            None,
-        )
-        if (
-            reservation is None
-            or reservation.task_input_call != staging.task_input_call
-            or snapshot.active_interaction_fingerprint is None
-        ):
-            raise ExecutionCorrelationError(
-                "durable checkpoint changed its active interaction"
-            )
-        assistant_message = reservation.interaction_assistant_message
-        assert assistant_message is not None
-        transcript = tuple(
-            _encode_message_record(message) for message in execution.messages
-        )
-        observations = (
-            cast(
-                Mapping[str, JsonValue],
-                {
-                    "version": _OBSERVATION_VERSION,
-                    "kind": _EXECUTION_OBSERVATION_KIND,
-                    "active_interaction_fingerprint": (
-                        snapshot.active_interaction_fingerprint
-                    ),
-                    "interaction_fingerprint_counts": [
-                        {"fingerprint": fingerprint, "count": count}
-                        for fingerprint, count in (
-                            snapshot.interaction_fingerprint_counts
-                        )
-                    ],
-                    "assistant_message": _encode_message_record(
-                        assistant_message
-                    ),
-                },
-            ),
-        )
-        generation_settings = _portable_json_mapping(
-            response.continuation_generation_settings,
-            "continuation.generation_settings",
-        )
-        continuation = PortableContinuation(
-            continuation_id=continuation_id,
-            request_id=request_id,
-            origin=request.origin,
-            provider_call_id=request.origin.model_call_id,
-            provider_call_correlation_id=(
-                staging.provider_call_correlation_id
-            ),
-            definition=execution.definition,
-            operation_cursor=execution.operation_index,
-            generation_settings=generation_settings,
-            transcript=transcript,
-            observations=observations,
-            revision_binding=staging.revision_binding,
-            interaction_count=execution.interaction_count,
-            tool_loop_count=response.continuation_tool_loop_count,
-            stream_sequence=stream_sequence,
-            state_revision=StateRevision(execution.revision),
-            store_revision=ContinuationStoreRevision(0),
-            created_at=now,
-            updated_at=now,
-            expires_at=now
-            + timedelta(seconds=request.continuation_ttl_seconds),
-            claim=ContinuationClaim(),
-            fencing_token=ContinuationFencingToken(0),
-            provider_snapshot=staging.provider_snapshot,
-        )
-        return DurableInteractionSuspension(
-            command=CreateInteractionCommand(
-                actor=request.actor,
-                request=created,
-            ),
-            continuation=continuation,
-        )
 
 
 @final
@@ -605,17 +457,6 @@ class TrustedAgentContinuationRuntimeLoader:
         return path
 
 
-def _encode_message_record(message: Message) -> Mapping[str, JsonValue]:
-    return cast(
-        Mapping[str, JsonValue],
-        {
-            "version": _TRANSCRIPT_VERSION,
-            "role": message.role.value,
-            "data": encode_message_data(message),
-        },
-    )
-
-
 def _decode_transcript(
     records: tuple[Mapping[str, JsonValue], ...],
 ) -> tuple[Message, ...]:
@@ -624,7 +465,7 @@ def _decode_transcript(
         path = f"continuation.transcript[{index}]"
         if set(record) != {"version", "role", "data"}:
             _invalid(path, "transcript record fields do not match")
-        if record["version"] != _TRANSCRIPT_VERSION:
+        if record["version"] != continuation_stager_module._TRANSCRIPT_VERSION:
             _invalid(path, "transcript record version is unsupported")
         role = record["role"]
         data = record["data"]
@@ -666,8 +507,10 @@ def _decode_execution_observation(
             "execution observation fields do not match",
         )
     if (
-        observation["version"] != _OBSERVATION_VERSION
-        or observation["kind"] != _EXECUTION_OBSERVATION_KIND
+        observation["version"]
+        != continuation_stager_module._OBSERVATION_VERSION
+        or observation["kind"]
+        != continuation_stager_module._EXECUTION_OBSERVATION_KIND
     ):
         _invalid(
             "continuation.observations[0]",
@@ -714,41 +557,6 @@ def _decode_execution_observation(
             "originating message must be an assistant message",
         )
     return active, counts, assistant
-
-
-def _portable_json_mapping(
-    value: Mapping[str, object],
-    path: str,
-) -> Mapping[str, JsonValue]:
-    try:
-        encoded = dumps(
-            value,
-            default=_json_default,
-            allow_nan=False,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        )
-        decoded = loads(encoded)
-    except (TypeError, ValueError) as error:
-        raise InputValidationError(
-            InputErrorCode.NON_JSON_VALUE,
-            path,
-            "value must contain only portable JSON settings",
-        ) from error
-    if not isinstance(decoded, dict) or any(
-        not isinstance(key, str) for key in decoded
-    ):
-        _invalid(path, "value must be a JSON object")
-    return cast(Mapping[str, JsonValue], decoded)
-
-
-def _json_default(value: object) -> object:
-    if isinstance(value, Enum):
-        return value.value
-    if is_dataclass(value) and not isinstance(value, type):
-        return asdict(value)
-    raise TypeError(f"{type(value).__name__} is not portable JSON")
 
 
 def _invalid(path: str, message: str) -> NoReturn:

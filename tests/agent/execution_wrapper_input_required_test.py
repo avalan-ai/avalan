@@ -12,6 +12,13 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 from uuid import uuid4
 
+from avalan import (
+    AgentRunCancelled,
+    AgentRunCompleted,
+    AgentRunFailed,
+    AgentRunInputRequired,
+    run_agent,
+)
 from avalan.agent.engine import EngineAgent
 from avalan.agent.execution import (
     AgentExecution,
@@ -21,13 +28,17 @@ from avalan.agent.execution import (
     DurableInteractionStagingContext,
     ExecutionCorrelationError,
     ExecutionInputRequiredError,
+    ExecutionTerminatedError,
     UuidExecutionIdFactory,
 )
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.orchestrators.default import (
     DefaultOrchestrator,
 )
-from avalan.agent.orchestrator.orchestrators.json import JsonOrchestrator
+from avalan.agent.orchestrator.orchestrators.json import (
+    JsonOrchestrator,
+    JsonOrchestratorOutput,
+)
 from avalan.agent.orchestrator.orchestrators.reasoning.cot import (
     ReasoningOrchestrator,
 )
@@ -35,6 +46,7 @@ from avalan.entities import (
     EngineUri,
     Message,
     MessageRole,
+    ReasoningOrchestratorResponse,
     TransformerEngineSettings,
 )
 from avalan.event import EventPayloadKind, EventType
@@ -79,8 +91,10 @@ from avalan.interaction import (
     RequestState,
     RequirementMode,
     ResolutionIdempotencyKey,
+    ResolutionStatus,
     StateRevision,
     TaskId,
+    TerminateInputContinuation,
     TextAnswer,
     UserId,
     apply_candidate_resolution,
@@ -144,6 +158,7 @@ class _ResponsePlan:
     arguments: dict[str, object] | None = None
     preamble: str | None = None
     answer: str | None = None
+    failure: BaseException | None = None
 
 
 def _durable_binding() -> ContinuationRevisionBinding:
@@ -615,10 +630,13 @@ class _ScriptedModelManager:
         self.calls.append(call)
         if index >= len(self.plans):
             raise AssertionError("unexpected model continuation")
+        plan = self.plans[index]
+        if plan.failure is not None:
+            raise plan.failure
         return _provider_response(
             call,
             index,
-            self.plans[index],
+            plan,
             snapshot_adapter=self.snapshot_adapter,
             source_close=self.source_close,
         )
@@ -1220,6 +1238,123 @@ class ExecutionWrapperInputRequiredTest(IsolatedAsyncioTestCase):
                     self.assertFalse(
                         failure.result.detached_resumption_available
                     )
+                    self.assertEqual(len(harness.model_manager.calls), 1)
+                finally:
+                    await harness.close()
+
+    async def test_public_sdk_preserves_noncompleted_wrapper_results(
+        self,
+    ) -> None:
+        for wrapper in ("json", "reasoning"):
+            for outcome in ("input_required", "cancelled", "failed"):
+                with self.subTest(wrapper=wrapper, outcome=outcome):
+                    plan = _ResponsePlan(arguments=_input_arguments())
+                    if outcome == "cancelled":
+                        plan = _ResponsePlan(
+                            failure=ExecutionTerminatedError(
+                                TerminateInputContinuation(
+                                    request_id=InputRequestId(
+                                        "wrapper-cancelled"
+                                    ),
+                                    status=ResolutionStatus.CANCELLED,
+                                )
+                            )
+                        )
+                    elif outcome == "failed":
+                        plan = _ResponsePlan(
+                            failure=RuntimeError("private provider failure")
+                        )
+                    harness = _Harness(
+                        wrapper=wrapper,
+                        plans=[plan],
+                        broker=_PendingBroker(),
+                        handler=_DetachedHandler(),
+                    )
+                    try:
+                        result = await run_agent(
+                            cast(Orchestrator, harness.public),
+                            _PROMPT,
+                            interaction_runtime=harness.runtime,
+                        )
+                        if outcome == "input_required":
+                            self.assertIsInstance(
+                                result,
+                                AgentRunInputRequired,
+                            )
+                            assert isinstance(result, AgentRunInputRequired)
+                            self.assertFalse(
+                                result.detached_resumption_available
+                            )
+                            self.assertIsNone(result.request_id)
+                            self.assertIsNone(result.continuation_id)
+                            self.assertEqual(
+                                result.request.reason,
+                                "Need one bounded decision.",
+                            )
+                        elif outcome == "cancelled":
+                            self.assertIsInstance(result, AgentRunCancelled)
+                        else:
+                            self.assertIsInstance(result, AgentRunFailed)
+                            assert isinstance(result, AgentRunFailed)
+                            self.assertEqual(
+                                result.code,
+                                "agent.execution_failed",
+                            )
+                            self.assertEqual(
+                                result.message,
+                                "agent execution failed",
+                            )
+                            self.assertFalse(result.retryable)
+                        self.assertEqual(len(harness.model_manager.calls), 1)
+                    finally:
+                        await harness.close()
+
+    async def test_public_sdk_preserves_completed_wrapper_values(
+        self,
+    ) -> None:
+        cases = (
+            ("json", '{"answer":"structured"}'),
+            ("reasoning", "Reasoning: checked\nAnswer: explained"),
+        )
+        for wrapper, answer in cases:
+            with self.subTest(wrapper=wrapper):
+                harness = _Harness(
+                    wrapper=wrapper,
+                    plans=[_ResponsePlan(answer=answer)],
+                    broker=_PendingBroker(),
+                    handler=_DetachedHandler(),
+                )
+                try:
+                    result = await run_agent(
+                        cast(Orchestrator, harness.public),
+                        _PROMPT,
+                        interaction_runtime=harness.runtime,
+                    )
+                    self.assertIsInstance(result, AgentRunCompleted)
+                    assert isinstance(result, AgentRunCompleted)
+                    if wrapper == "json":
+                        self.assertIsInstance(
+                            result.value,
+                            JsonOrchestratorOutput,
+                        )
+                        self.assertEqual(
+                            result.value,
+                            '{"answer":"structured"}',
+                        )
+                        self.assertIs(result.to_str(), result.value)
+                        self.assertIs(result.to_json(), result.value)
+                    else:
+                        self.assertEqual(
+                            result.value,
+                            ReasoningOrchestratorResponse(
+                                answer="explained",
+                                reasoning="checked",
+                            ),
+                        )
+                        with self.assertRaises(TypeError):
+                            result.to_str()
+                        with self.assertRaises(TypeError):
+                            result.to_json()
                     self.assertEqual(len(harness.model_manager.calls), 1)
                 finally:
                     await harness.close()

@@ -41,7 +41,7 @@ from ....interaction.entities import (
 )
 from ....interaction.handler import (
     InputHandlerContext,
-    InputHandlerOutcome,
+    _InputHandlerOutcome,
 )
 from ....interaction.state import project_resolution_to_model
 from ....interaction.store import (
@@ -111,6 +111,7 @@ from ...execution import (
     ExecutionInputRequiredError,
     ExecutionTerminatedError,
 )
+from ...orchestrator_response_contract import DurableOrchestratorResponse
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -172,7 +173,10 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
 _INVALID_TOOL_CALL_ARGUMENTS = object()
 
 
-class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
+class OrchestratorResponse(
+    DurableOrchestratorResponse,
+    AsyncIterator[CanonicalStreamItem],
+):
     """Async iterator handling tool execution during streaming."""
 
     _LEGACY_STREAM_ERROR = (
@@ -2790,13 +2794,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 self._pending_interaction_assistant_text = ""
                 raise ExecutionInputRequiredError(
                     required,
+                    request=request,
                     durable=durable,
                 )
             assert isinstance(runtime, AttachedInteractionRuntime)
 
             async def attached_handler(
                 context: InputHandlerContext,
-            ) -> InputHandlerOutcome:
+            ) -> _InputHandlerOutcome:
                 await self._publish_interaction_wait(context.request)
                 return await runtime.handler(context)
 
@@ -3101,7 +3106,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 await self._event_manager.trigger_stream_item(terminal_item)
             self._pending_interaction_published = False
             if raise_on_noncompletion:
-                raise ExecutionInputRequiredError(required)
+                raise ExecutionInputRequiredError(
+                    required,
+                    request=request,
+                )
             return None
 
         await self._append_interaction_terminal(request)

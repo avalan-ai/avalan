@@ -1316,8 +1316,14 @@ class PgsqlTaskStore:
         resolution_revision: int,
         observed_at: datetime,
         metadata: Mapping[str, object],
+        interaction_state: str = "answered",
     ) -> TaskQueueReentry:
         """Requeue suspended work inside an existing transaction."""
+        _assert_non_empty_string(interaction_state, "interaction_state")
+        if interaction_state not in {"answered", "timed_out"}:
+            raise AssertionError(
+                "interaction_state must be answered or timed_out"
+            )
         run = await _lock_run_or_raise(unit, run_id)
         await unit.cursor.execute(
             _SELECT_SUSPENDED_QUEUE_FOR_UPDATE_SQL,
@@ -1352,6 +1358,7 @@ class PgsqlTaskStore:
                 continuation_id,
                 run_id,
                 resolution_revision,
+                interaction_state,
             ),
         )
         outbox_row = await unit.cursor.fetchone()
@@ -4122,7 +4129,7 @@ WHERE outbox."request_id" = %s
       'dispatching',
       'completed'
   )
-  AND interaction."request_state" = 'answered'
+  AND interaction."request_state" = %s
   AND interaction."state_revision" = outbox."resolution_revision"
 FOR UPDATE OF outbox, continuation, interaction
 """
@@ -4136,7 +4143,7 @@ WHERE continuation."request_id" = %s
   AND continuation."task_run_id" = %s
   AND continuation."checkpoint_id" = %s
   AND continuation."lifecycle_state" = 'ready'
-  AND interaction."request_state" = 'answered'
+  AND interaction."request_state" IN ('answered', 'timed_out')
 FOR KEY SHARE OF continuation, interaction
 """
 _REQUEUE_RUN_SQL = """

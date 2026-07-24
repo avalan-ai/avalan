@@ -74,7 +74,6 @@ from ..store import (
     ResolutionDecisionStage,
     ResolutionIdempotencyDisposition,
     ResolveInteractionApplied,
-    ResolveInteractionCommand,
     ResolveInteractionRejected,
     ScopeCancellationApplied,
     ScopeCancellationRejected,
@@ -97,6 +96,7 @@ from ..store import (
     _apply_scope_supersession,
     _begin_scope_transaction,
     _bind_task_input_classifications,
+    _CandidateResolutionCommand,
     _insert_interaction_store_backing_branch_record,
     _insert_interaction_store_backing_record,
     _InteractionAdmissionCapability,
@@ -651,7 +651,7 @@ class MemoryInteractionStore:
 
     async def resolve(
         self,
-        command: ResolveInteractionCommand,
+        command: _CandidateResolutionCommand,
     ) -> InteractionResolutionResult:
         """Resolve with exact deadline, replay, CAS, and validation order."""
         async with self._state.lock:
@@ -1579,7 +1579,7 @@ class MemoryInteractionStore:
     def _resolution_replay_locked(
         self,
         current: InteractionRecord,
-        command: ResolveInteractionCommand,
+        command: _CandidateResolutionCommand,
     ) -> tuple[InteractionResolutionResult | None, _CommitEffects]:
         disposition = evaluate_resolution_idempotency(
             current,
@@ -1652,7 +1652,7 @@ class MemoryInteractionStore:
     def _apply_candidate_locked(
         self,
         current: InteractionRecord,
-        command: ResolveInteractionCommand,
+        command: _CandidateResolutionCommand,
         classifications: tuple[TaskInputClassification, ...],
         observed_at: InteractionTime,
     ) -> ResolveInteractionApplied | ControllerLeaseExpiredApplied:
@@ -2043,7 +2043,7 @@ def _not_found_error() -> InputTransitionError:
 
 
 def _resolve_rejected(
-    command: ResolveInteractionCommand,
+    command: _CandidateResolutionCommand,
     error: InputTransitionError,
     stage: ResolutionDecisionStage,
 ) -> ResolveInteractionRejected:
