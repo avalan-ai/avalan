@@ -1,4 +1,5 @@
 from ...entities import GenerationSettings
+from ...interaction import ProviderContinuationSnapshotAdapter
 from ..stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
@@ -173,6 +174,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _can_think: bool = False
     _is_thinking: bool = False
     _manual_thinking: bool = False
+    _continuation_snapshot_adapter: (
+        ProviderContinuationSnapshotAdapter | None
+    ) = None
 
     def __init__(
         self,
@@ -183,6 +187,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         generation_settings: GenerationSettings | None = None,
         bos_token: str | None = None,
         provider_family: str | None = None,
+        continuation_snapshot_adapter: (
+            ProviderContinuationSnapshotAdapter | None
+        ) = None,
         **kwargs: Any,
     ) -> None:
         self._args = args
@@ -193,6 +200,35 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._generation_settings = generation_settings
         self._bos_token = bos_token
         self._provider_family = provider_family
+        if continuation_snapshot_adapter is not None:
+            if (
+                not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "export_continuation_snapshot",
+                        None,
+                    )
+                )
+                or not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "import_continuation_snapshot",
+                        None,
+                    )
+                )
+                or not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "validate_continuation_snapshot_call",
+                        None,
+                    )
+                )
+            ):
+                raise TypeError(
+                    "continuation_snapshot_adapter must export, import, and "
+                    "validate reserved calls"
+                )
+        self._continuation_snapshot_adapter = continuation_snapshot_adapter
         self._on_consumed_callbacks = []
         self._final_text = None
         self._output_closed = False
@@ -340,6 +376,13 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             if usage is not None:
                 return cast(object, usage)
         return self._provider_usage()
+
+    @property
+    def continuation_snapshot_adapter(
+        self,
+    ) -> ProviderContinuationSnapshotAdapter | None:
+        """Return explicit provider-owned durable replay support."""
+        return self._continuation_snapshot_adapter
 
     def _provider_usage(self) -> object | None:
         usage = getattr(self._output_fn, "usage", None)

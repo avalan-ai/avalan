@@ -23,9 +23,15 @@ from ....interaction.broker import (
     InteractionBrokerRequest,
     InteractionRequestResult,
 )
+from ....interaction.continuation import (
+    derive_continuation_dispatch_id,
+    derive_provider_idempotency_key,
+)
+from ....interaction.durable import DurableInteractionSuspension
 from ....interaction.entities import (
     RESERVED_INPUT_CAPABILITY_NAME,
     AnswerProvenance,
+    ContinuationId,
     InputModelResult,
     InputRequest,
     InputRequiredResult,
@@ -99,6 +105,9 @@ from ...engine import EngineAgent
 from ...execution import (
     AgentExecution,
     AgentExecutionStatus,
+    AttachedInteractionRuntime,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
     ExecutionInputRequiredError,
     ExecutionTerminatedError,
 )
@@ -278,11 +287,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         block_repeated_tool_calls: bool = False,
         enable_tool_parsing: bool = True,
         maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
+        initial_tool_cycle_count: int = 0,
         capability: ModelCapabilityCatalog | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         assert type(block_repeated_tool_calls) is bool
         maximum_tool_cycles = validate_maximum_tool_cycles(maximum_tool_cycles)
+        assert (
+            type(initial_tool_cycle_count) is int
+            and initial_tool_cycle_count >= 0
+        ), "initial_tool_cycle_count must be a non-negative integer"
+        assert (
+            maximum_tool_cycles == UNLIMITED_TOOL_CYCLES
+            or initial_tool_cycle_count <= maximum_tool_cycles
+        ), "initial tool cycles exceed the configured maximum"
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -311,7 +329,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._call_history = []
         self._attempted_call_signatures = set()
         self._tool_cycle_signatures = set()
-        self._tool_cycle_count = 0
+        self._tool_cycle_count = initial_tool_cycle_count
         self._consecutive_non_executed_cycles = 0
         self._agent_id = agent_id
         self._participant_id = participant_id
@@ -424,6 +442,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         return self._execution
 
     @property
+    def continuation_generation_settings(self) -> dict[str, Any]:
+        """Return provider-neutral settings for durable continuation."""
+        settings = self._continuation_engine_args()
+        settings["maximum_tool_cycles"] = self._maximum_tool_cycles
+        settings["block_repeated_tool_calls"] = self._block_repeated_tool_calls
+        return settings
+
+    @property
+    def continuation_tool_loop_count(self) -> int:
+        """Return completed domain-tool cycles before suspension."""
+        return self._tool_cycle_count
+
+    @property
     def ownership_cleanup_complete(self) -> bool:
         """Return whether terminal cleanup permits ownership release."""
         execution = self._execution
@@ -455,6 +486,18 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             or execution.status is AgentExecutionStatus.COMPLETED
         ):
             await self._response.aclose()
+            return
+        if execution.status is AgentExecutionStatus.INPUT_REQUIRED:
+            if (
+                isinstance(
+                    execution.interaction_runtime,
+                    AttachedInteractionRuntime,
+                )
+                and self._pending_interaction_task is not None
+            ):
+                await self._converge_stream_cancellation()
+            else:
+                await self._close_provider_response()
             return
         if execution.status is AgentExecutionStatus.ERRORED:
             await self._converge_stream_error_cleanup()
@@ -1090,7 +1133,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         provider_family: str | None,
         provider_event_type: str | None,
     ) -> CanonicalStreamItem:
-        """Stage one model-authored tool-call lifecycle item privately."""
+        """Stage a model-authored tool-call lifecycle item privately."""
         assert kind in _TOOL_CALL_LIFECYCLE_KINDS
         item = CanonicalStreamItem(
             stream_session_id=self._canonical_stream_session_id,
@@ -1579,6 +1622,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def can_think(self) -> bool:
         return self._response.can_think
 
+    @property
+    def event_manager(self) -> EventManager | None:
+        """Return the event manager owned by this response runtime."""
+        return self._event_manager
+
     def set_cancellation_checker(
         self,
         checker: Callable[[], Awaitable[None]] | None,
@@ -1681,6 +1729,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             await self._settle_cancellation_failure(exc)
             raise
         except StopAsyncIteration:
+            raise
+        except ExecutionInputRequiredError:
             raise
         except BaseException as exc:
             await self._settle_stream_failure(exc)
@@ -1885,8 +1935,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 canonical_item
             )
             if task_input is not None:
-                await self._response.aclose()
-                self._response_drained = True
+                execution = self._execution
+                durable_runtime = execution is not None and isinstance(
+                    execution.interaction_runtime,
+                    DurableInteractionRuntime,
+                )
+                if not durable_runtime:
+                    await self._response.aclose()
+                    self._response_drained = True
                 self._finish_active_model_continuation(
                     StreamItemKind.MODEL_CONTINUATION_COMPLETED
                 )
@@ -1934,6 +1990,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             raise
         except CancelledError as exc:
             await self._settle_cancellation_failure(exc)
+            raise
+        except ExecutionInputRequiredError:
             raise
         except Exception as exc:
             await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
@@ -2574,6 +2632,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 self._task_input_call = None
                 if delta:
                     attached_answer_prefixes.append(delta)
+                if isinstance(
+                    execution.interaction_runtime,
+                    DurableInteractionRuntime,
+                ):
+                    await self._start_task_input(call)
+                    raise AssertionError(
+                        "durable task input must suspend the execution"
+                    )
                 current_response = await self._run_attached_task_input(call)
                 self._response = current_response
                 (
@@ -2630,11 +2696,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self,
         call: TaskInputCapabilityCall,
     ) -> None:
-        """Start one attached interaction without dispatching more work."""
+        """Start attached handling or stage a durable suspension."""
         execution = self._execution
         if execution is None or execution.interaction_runtime is None:
             raise RuntimeError(
-                "task input requires an explicitly attached runtime"
+                "task input requires an explicit interaction runtime"
             )
         assert self._pending_interaction_task is None
         fingerprint = sha256(
@@ -2662,6 +2728,71 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._pending_interaction_assistant_text = assistant_text
             self._pending_interaction_published = False
             runtime = execution.interaction_runtime
+            if isinstance(runtime, DurableInteractionRuntime):
+                try:
+                    staging = self._durable_staging_context(call, execution)
+                    request_spec = InteractionBrokerRequest(
+                        actor=runtime.actor,
+                        origin=execution.origin,
+                        mode=call.mode,
+                        reason=call.reason,
+                        questions=call.questions,
+                    )
+                    durable = await runtime.stager(
+                        request_spec,
+                        execution=execution,
+                        response=self,
+                        stream_sequence=self._canonical_sequence,
+                        staging=staging,
+                    )
+                    self._validate_durable_staging(
+                        request_spec,
+                        durable,
+                        staging=staging,
+                    )
+                except BaseException as error:
+                    try:
+                        await self._response.aclose()
+                    except BaseException as cleanup_failure:
+                        self._attach_cleanup_failures(
+                            error,
+                            [cleanup_failure],
+                        )
+                    raise
+                await self._response.aclose()
+                self._response_drained = True
+                request = durable.command.request
+                required = InputRequiredResult(
+                    request_id=request.request_id,
+                    continuation_id=request.continuation_id,
+                    detached_resumption_available=True,
+                )
+                await execution.stage_durable_input_required(
+                    request,
+                    required,
+                )
+                self._active_interaction_request = request
+                self._input_required_result = required
+                terminal_index = len(self._canonical_items)
+                self._finish_canonical_stream(
+                    StreamItemKind.STREAM_INPUT_REQUIRED,
+                    correlation=self._interaction_correlation(request),
+                )
+                terminal_item = self._canonical_items[terminal_index]
+                assert (
+                    terminal_item.kind is StreamItemKind.STREAM_INPUT_REQUIRED
+                )
+                if self._event_manager is not None:
+                    await self._event_manager.trigger_stream_item(
+                        terminal_item
+                    )
+                self._pending_interaction_call = None
+                self._pending_interaction_assistant_text = ""
+                raise ExecutionInputRequiredError(
+                    required,
+                    durable=durable,
+                )
+            assert isinstance(runtime, AttachedInteractionRuntime)
 
             async def attached_handler(
                 context: InputHandlerContext,
@@ -2669,7 +2800,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 await self._publish_interaction_wait(context.request)
                 return await runtime.handler(context)
 
-            request = InteractionBrokerRequest(
+            broker_request = InteractionBrokerRequest(
                 actor=runtime.actor,
                 origin=execution.origin,
                 mode=call.mode,
@@ -2680,26 +2811,149 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             broker = execution.interaction_broker
             assert broker is not None
             self._pending_interaction_task = create_task(
-                broker.request(request),
+                broker.request(broker_request),
                 name=f"agent-input-{call.call_id}",
             )
+        except ExecutionInputRequiredError:
+            raise
         except Exception:
             self._pending_interaction_call = None
             self._pending_interaction_assistant_text = ""
             self._pending_interaction_published = False
-            await execution.abandon_interaction()
+            if execution.status is AgentExecutionStatus.PREPARING_INPUT:
+                await execution.abandon_interaction()
             raise
+
+    @staticmethod
+    def _validate_durable_staging(
+        request_spec: InteractionBrokerRequest,
+        durable: DurableInteractionSuspension,
+        *,
+        staging: DurableInteractionStagingContext,
+    ) -> None:
+        """Reject staging output that changes the reserved request."""
+        if type(durable) is not DurableInteractionSuspension:
+            raise TypeError(
+                "durable interaction stager returned an invalid suspension"
+            )
+        command = durable.command
+        request = command.request
+        if command.actor != request_spec.actor:
+            raise RuntimeError("durable interaction actor changed in staging")
+        expected = (
+            request_spec.origin,
+            request_spec.mode,
+            request_spec.reason,
+            request_spec.questions,
+            request_spec.continuation_ttl_seconds,
+            request_spec.advisory_wait_seconds,
+        )
+        actual = (
+            request.origin,
+            request.mode,
+            request.reason,
+            request.questions,
+            request.continuation_ttl_seconds,
+            request.advisory_wait_seconds,
+        )
+        if actual != expected or request.state is not RequestState.CREATED:
+            raise RuntimeError(
+                "durable interaction request changed in staging"
+            )
+        continuation = durable.continuation
+        if (
+            request.continuation_id != staging.continuation_id
+            or continuation.provider_snapshot != staging.provider_snapshot
+            or continuation.revision_binding != staging.revision_binding
+            or continuation.provider_call_correlation_id
+            != staging.provider_call_correlation_id
+            or continuation.provider_call_id
+            != staging.provider_snapshot.model_call_id
+        ):
+            raise RuntimeError(
+                "durable continuation changed provider replay state"
+            )
+
+    def _durable_staging_context(
+        self,
+        call: TaskInputCapabilityCall,
+        execution: AgentExecution,
+    ) -> DurableInteractionStagingContext:
+        """Export one provider-owned replay snapshot before source close."""
+        capability = self._capability_catalog
+        if capability is None:
+            raise RuntimeError("durable staging requires a capability catalog")
+        support = capability.support
+        binding = capability.revision_binding
+        registry = support.continuation_snapshot_codec_registry
+        codec = support.continuation_snapshot_codec
+        adapter = self._response.continuation_snapshot_adapter
+        if (
+            binding is None
+            or registry is None
+            or codec is None
+            or adapter is None
+        ):
+            raise RuntimeError(
+                "durable staging requires registered provider replay"
+            )
+        continuation_id = ContinuationId(f"continuation-{uuid4()}")
+        dispatch_id = derive_continuation_dispatch_id(continuation_id)
+        idempotency_key = derive_provider_idempotency_key(
+            continuation_id,
+            dispatch_id,
+        )
+        correlation_id = str(call.call_id)
+        snapshot = adapter.export_continuation_snapshot(
+            revision_binding=binding,
+            model_call_id=execution.origin.model_call_id,
+            provider_idempotency_key=idempotency_key,
+            provider_call_correlation_id=correlation_id,
+        )
+        adapter.validate_continuation_snapshot_call(
+            snapshot,
+            expected_binding=binding,
+            provider_call_correlation_id=correlation_id,
+            expected_provider_name=call.provider_name,
+            expected_arguments=call.arguments,
+        )
+        if snapshot.model_call_id != execution.origin.model_call_id:
+            raise RuntimeError(
+                "provider snapshot changed the execution model call"
+            )
+        return DurableInteractionStagingContext(
+            task_input_call=call,
+            continuation_id=continuation_id,
+            dispatch_id=dispatch_id,
+            revision_binding=binding,
+            codec_registry=registry,
+            codec=codec,
+            provider_snapshot=snapshot,
+            provider_idempotency_key=idempotency_key,
+            provider_call_correlation_id=correlation_id,
+        )
 
     async def _run_attached_task_input(
         self,
         call: TaskInputCapabilityCall,
     ) -> TextGenerationResponse:
         """Await one attached interaction for a materialized response."""
+        execution = self._execution
+        assert execution is not None
+        assert isinstance(
+            execution.interaction_runtime,
+            AttachedInteractionRuntime,
+        )
         try:
             await self._start_task_input(call)
             task = self._pending_interaction_task
             assert task is not None
-            result = await self._await_with_session_cancellation(task)
+            broker_wait: Awaitable[InteractionRequestResult] = (
+                shield(task)
+                if self._cancellation_checker is not None
+                else task
+            )
+            result = await self._await_with_session_cancellation(broker_wait)
             response = await self._finish_task_input(
                 result,
                 raise_on_noncompletion=True,
@@ -2930,6 +3184,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         execution = self._execution
         assert capability is not None and execution is not None
         correlated = capability.project_result(call, result)
+        arguments = normalize_tool_arguments(call.arguments)
         messages = (
             Message(
                 role=MessageRole.ASSISTANT,
@@ -2938,11 +3193,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     MessageToolCall(
                         id=str(call.call_id),
                         name=call.provider_name,
-                        arguments=normalize_tool_arguments(call.arguments),
+                        arguments=arguments,
                     )
                 ],
             ),
-            correlated.local_message(),
+            correlated.tool_result_message(call),
         )
         committed = await execution.record_interaction_result(
             request,
@@ -3021,21 +3276,21 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         """Cancel broker wait and containing branch exactly once."""
         task = self._pending_interaction_task
         cleanup_failures: list[BaseException] = []
-        if task is not None:
-            try:
-                await self._cancel_task_with_deadline(
-                    task,
-                    "pending interaction",
-                )
-            except BaseException as error:
-                cleanup_failures.append(error)
-            if task.done() and self._pending_interaction_task is task:
-                self._pending_interaction_task = None
-                self._pending_interaction_call = None
-                self._pending_interaction_assistant_text = ""
-                self._pending_interaction_published = False
         execution = self._execution
         if execution is None or execution.interaction_runtime is None:
+            if task is not None:
+                try:
+                    await self._cancel_task_with_deadline(
+                        task,
+                        "pending interaction",
+                    )
+                except BaseException as error:
+                    cleanup_failures.append(error)
+                if task.done() and self._pending_interaction_task is task:
+                    self._pending_interaction_task = None
+                    self._pending_interaction_call = None
+                    self._pending_interaction_assistant_text = ""
+                    self._pending_interaction_published = False
             self._raise_cleanup_failures(cleanup_failures)
             return
         active_request = (
@@ -3064,6 +3319,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             await self._finalize_interaction_cleanup(execution)
         except BaseException as error:
             cleanup_failures.append(error)
+        if task is not None and self._interaction_cleanup_complete:
+            try:
+                await self._cancel_task_with_deadline(
+                    task,
+                    "pending interaction",
+                )
+            except BaseException as error:
+                cleanup_failures.append(error)
+            if task.done() and self._pending_interaction_task is task:
+                self._pending_interaction_task = None
+                self._pending_interaction_call = None
+                self._pending_interaction_assistant_text = ""
+                self._pending_interaction_published = False
         self._raise_cleanup_failures(cleanup_failures)
 
     async def _finalize_interaction_cleanup(
@@ -3093,6 +3361,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         """Terminalize one attached interaction scope and claim cleanup."""
         runtime = execution.interaction_runtime
         assert runtime is not None
+        if isinstance(runtime, DurableInteractionRuntime):
+            await execution.claim_cleanup()
+            self._interaction_cleanup_complete = True
+            return
+        assert isinstance(runtime, AttachedInteractionRuntime)
         origin = execution.origin
         broker = execution.interaction_broker
         assert broker is not None
@@ -3942,7 +4215,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     )
                     is not None
                 ):
-                    await response.aclose()
+                    execution = self._execution
+                    if execution is None or not isinstance(
+                        execution.interaction_runtime,
+                        DurableInteractionRuntime,
+                    ):
+                        await response.aclose()
                     break
                 if (
                     appended_item.kind is StreamItemKind.ANSWER_DELTA

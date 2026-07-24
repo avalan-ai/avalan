@@ -202,6 +202,20 @@ def test_phase3_live_exclusion_fixtures_match_reviewed_relocations() -> None:
     assert current_ledger["current_snapshot_sha256"] == (
         current["snapshot_sha256"]
     )
+    assert current_ledger["schema_version"] == 5
+    assert current_ledger["directive_count_before"] == 55
+    assert current_ledger["directive_count_after"] == 67
+    assert current_ledger["report_excluded_line_count_before"] == 1327
+    assert current_ledger["report_excluded_line_count_after"] == 1736
+    assert len(current_ledger["directive_relocations"]) == 5
+    assert len(current_ledger["directive_additions"]) == 12
+    assert current_ledger["directive_removals"] == []
+    assert len(current_ledger["report_exclusion_relocations"]) == 17
+    assert len(current_ledger["report_exclusion_additions"]) == 25
+    assert len(current_ledger["report_exclusion_removals"]) == 16
+    assert {
+        entry["path"] for entry in current_ledger["directive_additions"]
+    } == {"src/avalan/task/worker.py"}
     assert current_ledger["ledger_sha256"] == _canonical_digest(
         {
             key: value
@@ -216,6 +230,8 @@ def test_phase3_live_exclusion_fixtures_match_reviewed_relocations() -> None:
         entry
         for field in (
             "directive_relocations",
+            "directive_additions",
+            "directive_removals",
             "report_exclusion_relocations",
             "report_exclusion_additions",
             "report_exclusion_removals",
@@ -455,11 +471,27 @@ def _synthetic_phase3_repository(tmp_path: Path) -> dict[str, Any]:
         "        *,\n"
         "        retry: bool = False,\n"
         "    ) -> int: ...\n\n"
-        "VALUE = 1\n",
+        f"VALUE = 1  {_NO_COVER_DIRECTIVE}\n",
         encoding="utf-8",
     )
     _, statements, current_excluded, _, _ = analyzer.analysis2(str(protocol))
     current = deepcopy(phase3)
+    added_directive_text = f"VALUE = 1  {_NO_COVER_DIRECTIVE}"
+    current["exclusions"] = sorted(
+        [
+            *current["exclusions"],
+            {
+                "path": normalized,
+                "line": 12,
+                "text": added_directive_text,
+            },
+        ],
+        key=lambda entry: (
+            entry["path"],
+            entry["line"],
+            entry["text"],
+        ),
+    )
     current["report_excluded_lines"][normalized] = current_excluded
     _set_snapshot_digest(current, "snapshot_sha256")
     current_added = sorted(set(current_excluded) - set(excluded))
@@ -467,7 +499,7 @@ def _synthetic_phase3_repository(tmp_path: Path) -> dict[str, Any]:
     assert current_added
     assert current_removed
     current_ledger = {
-        "schema_version": 4,
+        "schema_version": 5,
         "baseline_snapshot_sha256": phase3["snapshot_sha256"],
         "current_snapshot_sha256": current["snapshot_sha256"],
         "directive_count_before": len(phase3["exclusions"]),
@@ -479,6 +511,25 @@ def _synthetic_phase3_repository(tmp_path: Path) -> dict[str, Any]:
             len(lines) for lines in current["report_excluded_lines"].values()
         ),
         "directive_relocations": [],
+        "directive_additions": [
+            {
+                "identity": _VERIFIER._directive_identity(
+                    normalized,
+                    added_directive_text,
+                    1,
+                ),
+                "path": normalized,
+                "text": added_directive_text,
+                "occurrence": 1,
+                "line": 12,
+                "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                "reason": (
+                    "The synthetic current link adds one exact reviewed"
+                    " directive."
+                ),
+            }
+        ],
+        "directive_removals": [],
         "report_exclusion_relocations": [
             {
                 "path": normalized,
@@ -723,7 +774,7 @@ def test_current_history_link_fails_closed(
         ("missing", "missing, extra, or unreviewed"),
         ("unreviewed", "relocation is unreviewed"),
         ("reference", "snapshot references changed"),
-        ("schema_downgrade", "requires schema_version 4"),
+        ("schema_downgrade", "requires schema_version 5"),
     ):
         ledger = deepcopy(history["current_ledger"])
         if mutation == "missing":
@@ -735,7 +786,9 @@ def test_current_history_link_fails_closed(
         elif mutation == "reference":
             ledger["baseline_snapshot_sha256"] = "0" * 64
         else:
-            ledger["schema_version"] = 3
+            ledger["schema_version"] = 4
+            del ledger["directive_additions"]
+            del ledger["directive_removals"]
         _set_ledger_digest(ledger)
         _write_json(history["current_ledger_path"], ledger)
         monkeypatch.setattr(
@@ -790,6 +843,69 @@ def test_current_history_link_fails_closed(
         _VERIFIER.verify_src_coverage(
             history["report_path"], repo_root=tmp_path
         )
+    _assert_current_directive_change_ledger_fails_closed(
+        tmp_path / "directive-changes",
+        monkeypatch,
+    )
+
+
+def _assert_current_directive_change_ledger_fails_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject malformed, unreviewed, or inexact current directive deltas."""
+    history = _synthetic_phase3_repository(tmp_path)
+    _pin_phase3_history(history, monkeypatch)
+
+    for mutation, message in (
+        ("missing", "changed exclusion counts"),
+        ("unreviewed", "relocation is unreviewed"),
+        ("duplicate", "addition is duplicated"),
+        ("wrong_line", "addition differs from snapshots"),
+        ("extra_removal", "changed exclusion counts"),
+    ):
+        ledger = deepcopy(history["current_ledger"])
+        if mutation == "missing":
+            ledger["directive_additions"] = []
+        elif mutation == "unreviewed":
+            ledger["directive_additions"][0]["reviewed_by"] = "pending"
+        elif mutation == "duplicate":
+            ledger["directive_additions"].append(
+                deepcopy(ledger["directive_additions"][0])
+            )
+        elif mutation == "wrong_line":
+            ledger["directive_additions"][0]["line"] += 1
+        else:
+            baseline_entry = history["phase3"]["exclusions"][0]
+            ledger["directive_removals"] = [
+                {
+                    "identity": _VERIFIER._directive_identity(
+                        baseline_entry["path"],
+                        baseline_entry["text"],
+                        1,
+                    ),
+                    **baseline_entry,
+                    "occurrence": 1,
+                    "reviewed_by": _VERIFIER._EXPECTED_EXCLUSION_REVIEWER,
+                    "reason": (
+                        "An extra synthetic directive removal must be"
+                        " rejected."
+                    ),
+                }
+            ]
+        _set_ledger_digest(ledger)
+        _write_json(history["current_ledger_path"], ledger)
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_EXCLUSION_RELOCATION_SHA256",
+            ledger["ledger_sha256"],
+        )
+        with pytest.raises(
+            _VERIFIER.CoverageVerificationError,
+            match=message,
+        ):
+            _VERIFIER.verify_src_coverage(
+                history["report_path"], repo_root=tmp_path
+            )
 
 
 def test_phase3_removal_ledger_fails_closed(

@@ -196,6 +196,20 @@ class TextGenerationResponseAdditionalTestCase(IsolatedAsyncioTestCase):
             ["post-provider cleanup failure: RuntimeError: cleanup"],
         )
 
+    def test_continuation_snapshot_adapter_requires_complete_contract(
+        self,
+    ) -> None:
+        with self.assertRaisesRegex(
+            TypeError,
+            "must export, import, and validate reserved calls",
+        ):
+            TextGenerationResponse(
+                lambda **_: "ok",
+                logger=getLogger(),
+                use_async_generator=False,
+                continuation_snapshot_adapter=object(),
+            )
+
     async def test_interrupted_iteration_preserves_cancel_cleanup_failure(
         self,
     ) -> None:

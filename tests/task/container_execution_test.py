@@ -76,12 +76,14 @@ from avalan.task import (
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationCategory,
     TaskValidationContext,
     TaskValidationError,
     TaskValidationIssue,
     TaskWorker,
+    completed_task_target_outcome,
 )
 from avalan.task.artifacts.local import LocalArtifactStore
 from avalan.task.canonical import canonical_definition, spec_hash
@@ -130,10 +132,13 @@ class RecordingTarget(TaskTargetRunner):
     ) -> tuple[TaskValidationIssue, ...]:
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.contexts.append(context)
         await context.check_cancelled()
-        return self.output
+        return completed_task_target_outcome(self.output)
 
 
 class StaticHmacProvider:
@@ -151,11 +156,14 @@ class StaticHmacProvider:
 
 
 class FailingThenSucceedingTarget(RecordingTarget):
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.contexts.append(context)
         if len(self.contexts) == 1:
             raise RuntimeError("first attempt")
-        return self.output
+        return completed_task_target_outcome(self.output)
 
 
 class WaitingTarget(RecordingTarget):
@@ -163,7 +171,10 @@ class WaitingTarget(RecordingTarget):
         super().__init__("done")
         self.started = Event()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.contexts.append(context)
         self.started.set()
         while True:

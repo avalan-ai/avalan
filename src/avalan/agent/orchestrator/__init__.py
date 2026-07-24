@@ -17,14 +17,22 @@ from ...event import Event, EventType
 from ...event.manager import EventManager
 from ...interaction.entities import (
     AgentId,
+    CapabilityRevision,
+    ContinuationRevisionBinding,
     ExecutionDefinitionRef,
+    ModelConfigRevision,
+    ModelId,
     PrincipalScope,
+    ProviderConfigRevision,
+    ProviderFamilyName,
 )
+from ...interaction.error import InputErrorCode, InputSnapshotError
 from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
 from ...model.capability import (
     ModelCapabilityCatalog,
     ProviderCapabilitySupport,
+    TaskInputCapabilityAdvertisement,
 )
 from ...model.engine import Engine
 from ...model.manager import ModelManager
@@ -51,7 +59,9 @@ from ..execution import (
     AgentExecution,
     AgentExecutionStatus,
     AttachedInteractionRuntime,
+    DurableInteractionRuntime,
     ExecutionIdFactory,
+    InteractionRuntime,
     create_agent_execution,
     snapshot_execution_messages,
 )
@@ -81,6 +91,7 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
         AgentExecutionStatus.COMPLETED,
         AgentExecutionStatus.CANCELLED,
         AgentExecutionStatus.ERRORED,
+        AgentExecutionStatus.INPUT_REQUIRED,
     }
 )
 _PROVIDER_CLEANUP_TIMEOUT_SECONDS = 5.0
@@ -435,6 +446,7 @@ class Orchestrator:
         self._pending_responses_lock = Lock()
         self._pending_response_syncs = {}
         self._exiting = False
+        self._execution_definition_locator: str | None = None
 
     @staticmethod
     def _pop_maximum_tool_cycles(
@@ -518,13 +530,72 @@ class Orchestrator:
         """Return the renderer used by the orchestrator."""
         return self._renderer
 
+    def bind_execution_definition_locator(self, locator: str) -> None:
+        """Bind one trusted reloadable locator before execution starts."""
+        if not isinstance(locator, str) or not locator.startswith("file://"):
+            raise ValueError("execution definition locator must be a file URI")
+        current = self._execution_definition_locator
+        if current is not None and current != locator:
+            raise RuntimeError("execution definition locator is already bound")
+        if self._engine_agents or self._pending_responses:
+            raise RuntimeError(
+                "execution definition locator must be bound before startup"
+            )
+        self._execution_definition_locator = locator
+
+    def engine_agent_for_operation(
+        self,
+        operation_index: int,
+    ) -> EngineAgent:
+        """Return the loaded engine agent for one exact operation."""
+        if (
+            type(operation_index) is not int
+            or operation_index < 0
+            or operation_index >= self._total_operations
+        ):
+            raise NoOperationAvailableException()
+        operation = self._operations[operation_index]
+        environment_hash = dumps(asdict(operation.environment))
+        engine_agent = self._engine_agents.get(environment_hash)
+        if engine_agent is None:
+            raise RuntimeError("orchestrator operation is not loaded")
+        return engine_agent
+
+    def continuation_execution_contract(
+        self,
+        operation_index: int,
+    ) -> tuple[
+        ExecutionDefinitionRef,
+        ContinuationRevisionBinding,
+        ModelCapabilityCatalog,
+    ]:
+        """Return exact durable identity after native codec registration."""
+        if self._execution_definition_locator is None:
+            raise RuntimeError(
+                "durable execution requires a reloadable definition locator"
+            )
+        definition, capability = self._execution_contract(
+            operation_index,
+            TaskInputCapabilityAdvertisement.DURABLE,
+        )
+        binding = capability.revision_binding
+        if (
+            capability.task_input_advertisement
+            is not TaskInputCapabilityAdvertisement.DURABLE
+            or binding is None
+        ):
+            raise RuntimeError(
+                "operation lacks an exact durable provider continuation codec"
+            )
+        return definition, binding, capability
+
     async def __call__(
         self,
         input: Input,
         *,
         generation_options_override: Mapping[str, Any] | None = None,
         operation_index: int = 0,
-        interaction_runtime: AttachedInteractionRuntime | None = None,
+        interaction_runtime: InteractionRuntime | None = None,
         execution_id_factory: ExecutionIdFactory | None = None,
         **kwargs: Any,
     ) -> OrchestratorResponse:
@@ -587,36 +658,26 @@ class Orchestrator:
         self._logger.info(
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
-        capability_seed = self._tool.export_model_capability_seed()
-        tokenizer = engine_agent.engine.tokenizer
-        eos_token = tokenizer.eos_token if tokenizer else None
-        parser_seed = capability_seed.get("parser")
-        if eos_token and isinstance(parser_seed, dict):
-            parser_seed["eos_token"] = eos_token
-        provider_support = getattr(
-            engine_agent.engine,
-            "provider_capability_support",
-            ProviderCapabilitySupport(),
+        attached_runtime = isinstance(
+            interaction_runtime,
+            AttachedInteractionRuntime,
         )
-        if type(provider_support) is not ProviderCapabilitySupport:
-            raise TypeError(
-                "engine provider_capability_support must be trusted support"
+        durable_runtime = isinstance(
+            interaction_runtime,
+            DurableInteractionRuntime,
+        )
+        requested_advertisement = (
+            TaskInputCapabilityAdvertisement.DURABLE
+            if durable_runtime
+            else (
+                TaskInputCapabilityAdvertisement.ATTACHED
+                if attached_runtime
+                else TaskInputCapabilityAdvertisement.INCAPABLE
             )
-        support = ProviderCapabilitySupport(
-            structured_invocation=provider_support.structured_invocation,
-            stable_call_ids=provider_support.stable_call_ids,
-            correlated_results=provider_support.correlated_results,
-            attached_resolution=interaction_runtime is not None,
         )
-        capability = ModelCapabilityCatalog.create(
-            capability_seed,
-            support=support,
-        )
-        definition = self._execution_definition(
-            operation,
-            operation_index=operation_index,
-            capability_seed=capability_seed,
-            attached=interaction_runtime is not None,
+        definition, capability = self._execution_contract(
+            operation_index,
+            requested_advertisement,
         )
         execution = await create_agent_execution(
             definition=definition,
@@ -648,6 +709,124 @@ class Orchestrator:
             execution_origin=execution.origin,
             interaction_broker=execution.interaction_broker,
         )
+        return await self._dispatch_execution(
+            engine_agent=engine_agent,
+            operation=operation,
+            engine_args=engine_args,
+            execution=execution,
+            context=context,
+            messages=messages,
+            started=start,
+            tool_confirm=tool_confirm,
+            agent_id=self._id,
+            participant_id=participant_id,
+            session_id=session_id,
+            block_repeated_tool_calls=block_repeated_tool_calls,
+            maximum_tool_cycles=maximum_tool_cycles,
+        )
+
+    async def resume_agent_execution(
+        self,
+        execution: AgentExecution,
+        *,
+        operation_index: int,
+        capability: ModelCapabilityCatalog,
+        generation_settings: Mapping[str, object],
+        initial_tool_cycle_count: int,
+    ) -> OrchestratorResponse:
+        """Dispatch one reconstructed continuation without initial input."""
+        if execution.status is not AgentExecutionStatus.RESUMING:
+            raise RuntimeError(
+                "resumed execution must contain one correlated input result"
+            )
+        (
+            definition,
+            _revision_binding,
+            expected_capability,
+        ) = self.continuation_execution_contract(operation_index)
+        if (
+            execution.definition != definition
+            or capability.revision_binding
+            != expected_capability.revision_binding
+            or capability.task_input_advertisement
+            is not TaskInputCapabilityAdvertisement.DURABLE
+        ):
+            raise RuntimeError("resumed execution contract has drifted")
+        engine_agent = self.engine_agent_for_operation(operation_index)
+        operation = self._operations[operation_index]
+        engine_args = dict(generation_settings)
+        maximum_tool_cycles = self._pop_maximum_tool_cycles(engine_args)
+        block_repeated_tool_calls = self._pop_block_repeated_tool_calls(
+            engine_args
+        )
+        origin = await execution.advance_model_turn()
+        resumed_agent_id = UUID(str(execution.initial_origin.agent_id))
+        messages = cast(Input, list(execution.messages))
+        participant_id = getattr(self._memory, "participant_id", None)
+        session_id = (
+            self._memory.permanent_message.session_id
+            if self._memory.permanent_message
+            else None
+        )
+        context = ModelCallContext(
+            specification=operation.specification,
+            input=messages,
+            capability=capability,
+            engine_args=engine_args,
+            agent_id=resumed_agent_id,
+            participant_id=participant_id,
+            session_id=session_id,
+            execution=execution,
+            execution_origin=origin,
+            interaction_broker=execution.interaction_broker,
+        )
+        started = perf_counter()
+        await self._event_manager.trigger(
+            Event(
+                type=EventType.ENGINE_RUN_BEFORE,
+                payload={
+                    "input": messages,
+                    "specification": operation.specification,
+                },
+                started=started,
+            )
+        )
+        return await self._dispatch_execution(
+            engine_agent=engine_agent,
+            operation=operation,
+            engine_args=engine_args,
+            execution=execution,
+            context=context,
+            messages=messages,
+            started=started,
+            tool_confirm=None,
+            agent_id=resumed_agent_id,
+            participant_id=participant_id,
+            session_id=session_id,
+            block_repeated_tool_calls=block_repeated_tool_calls,
+            maximum_tool_cycles=maximum_tool_cycles,
+            initial_tool_cycle_count=initial_tool_cycle_count,
+        )
+
+    async def _dispatch_execution(
+        self,
+        *,
+        engine_agent: EngineAgent,
+        operation: AgentOperation,
+        engine_args: dict[str, Any],
+        execution: AgentExecution,
+        context: ModelCallContext,
+        messages: Input,
+        started: float,
+        tool_confirm: Any,
+        agent_id: UUID,
+        participant_id: UUID | None,
+        session_id: UUID | None,
+        block_repeated_tool_calls: bool,
+        maximum_tool_cycles: MaximumToolCycles,
+        initial_tool_cycle_count: int = 0,
+    ) -> OrchestratorResponse:
+        """Transfer one provider result into an owned response wrapper."""
         try:
             result = cast(TextGenerationResponse, await engine_agent(context))
         except BaseException as error:
@@ -682,8 +861,7 @@ class Orchestrator:
                 "Engine agent %s responded to orchestrator",
                 str(engine_agent),
             )
-
-            end = perf_counter()
+            finished = perf_counter()
             await self._event_manager.trigger(
                 Event(
                     type=EventType.ENGINE_RUN_AFTER,
@@ -693,12 +871,11 @@ class Orchestrator:
                         "specification": operation.specification,
                         "context": context,
                     },
-                    started=start,
-                    finished=end,
-                    elapsed=end - start,
+                    started=started,
+                    finished=finished,
+                    elapsed=finished - started,
                 )
             )
-
             last_prompt = execution.last_prompt
             response_input = cast(
                 Input,
@@ -713,7 +890,6 @@ class Orchestrator:
                     )
                 ),
             )
-
             response = OrchestratorResponse(
                 response_input,
                 result,
@@ -725,11 +901,12 @@ class Orchestrator:
                 event_manager=self._event_manager,
                 tool=self._tool,
                 tool_confirm=tool_confirm,
-                agent_id=self._id,
+                agent_id=agent_id,
                 participant_id=participant_id,
                 session_id=session_id,
                 block_repeated_tool_calls=block_repeated_tool_calls,
                 maximum_tool_cycles=maximum_tool_cycles,
+                initial_tool_cycle_count=initial_tool_cycle_count,
             )
             async with self._pending_responses_lock:
                 if self._exiting:
@@ -1208,13 +1385,182 @@ class Orchestrator:
         failures = [failure for result in results for failure in result]
         self._raise_cleanup_failures(failures)
 
+    def _execution_contract(
+        self,
+        operation_index: int,
+        requested_advertisement: TaskInputCapabilityAdvertisement,
+    ) -> tuple[ExecutionDefinitionRef, ModelCapabilityCatalog]:
+        """Build one exact definition and host/provider capability catalog."""
+        if not isinstance(
+            requested_advertisement,
+            TaskInputCapabilityAdvertisement,
+        ):
+            raise TypeError(
+                "requested_advertisement must be a task-input advertisement"
+            )
+        engine_agent = self.engine_agent_for_operation(operation_index)
+        operation = self._operations[operation_index]
+        capability_seed = self._tool.export_model_capability_seed()
+        tokenizer = engine_agent.engine.tokenizer
+        eos_token = tokenizer.eos_token if tokenizer else None
+        parser_seed = capability_seed.get("parser")
+        if eos_token and isinstance(parser_seed, dict):
+            parser_seed["eos_token"] = eos_token
+
+        provider_support = getattr(
+            engine_agent.engine,
+            "provider_capability_support",
+            ProviderCapabilitySupport(),
+        )
+        if type(provider_support) is not ProviderCapabilitySupport:
+            raise TypeError(
+                "engine provider_capability_support must be trusted support"
+            )
+
+        revision_binding: ContinuationRevisionBinding | None = None
+        provisional_definition: ExecutionDefinitionRef | None = None
+        if requested_advertisement is TaskInputCapabilityAdvertisement.DURABLE:
+            registered_codec = provider_support.continuation_snapshot_codec
+            if registered_codec is not None:
+                revision_binding = registered_codec.revision_binding
+            else:
+                if self._execution_definition_locator is None:
+                    raise RuntimeError(
+                        "durable execution requires a reloadable definition "
+                        "locator"
+                    )
+                provisional_definition = self._execution_definition(
+                    operation,
+                    operation_index=operation_index,
+                    capability_seed=capability_seed,
+                    interaction_mode=(
+                        TaskInputCapabilityAdvertisement.DURABLE.value
+                    ),
+                )
+                revision_binding = self._continuation_revision_binding(
+                    operation,
+                    provisional_definition,
+                )
+                register_codec = getattr(
+                    engine_agent.engine,
+                    "register_continuation_snapshot_codec",
+                    None,
+                )
+                if callable(register_codec):
+                    try:
+                        registered_support = register_codec(revision_binding)
+                    except InputSnapshotError:
+                        registered_support = None
+                    if registered_support is not None:
+                        if (
+                            type(registered_support)
+                            is not ProviderCapabilitySupport
+                        ):
+                            raise TypeError(
+                                "provider codec registration returned invalid "
+                                "support"
+                            )
+                        provider_support = registered_support
+
+        attached = (
+            requested_advertisement
+            is TaskInputCapabilityAdvertisement.ATTACHED
+        )
+        durable = (
+            requested_advertisement is TaskInputCapabilityAdvertisement.DURABLE
+        )
+        support = ProviderCapabilitySupport(
+            structured_invocation=provider_support.structured_invocation,
+            stable_call_ids=provider_support.stable_call_ids,
+            correlated_results=provider_support.correlated_results,
+            attached_resolution=attached,
+            durable_store=durable,
+            registered_resumer=durable,
+            continuation_snapshot_codec_registry=(
+                provider_support.continuation_snapshot_codec_registry
+            ),
+            continuation_snapshot_codec=(
+                provider_support.continuation_snapshot_codec
+            ),
+        )
+        codec = provider_support.continuation_snapshot_codec
+        capability = ModelCapabilityCatalog.create(
+            capability_seed,
+            support=support,
+            revision_binding=(
+                revision_binding
+                if codec is not None
+                and codec.revision_binding == revision_binding
+                else None
+            ),
+        )
+        definition = self._execution_definition(
+            operation,
+            operation_index=operation_index,
+            capability_seed=capability_seed,
+            interaction_mode=capability.task_input_advertisement.value,
+        )
+        if (
+            capability.task_input_advertisement
+            is TaskInputCapabilityAdvertisement.DURABLE
+            and provisional_definition is not None
+            and definition != provisional_definition
+        ):
+            raise RuntimeError(
+                "durable capability registration changed execution identity"
+            )
+        return definition, capability
+
+    @staticmethod
+    def _continuation_revision_binding(
+        operation: AgentOperation,
+        definition: ExecutionDefinitionRef,
+    ) -> ContinuationRevisionBinding:
+        """Derive content-safe exact provider and model revision identity."""
+        engine_uri = operation.environment.engine_uri
+        model_id = engine_uri.model_id
+        provider_family = engine_uri.vendor
+        if not provider_family or not model_id:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.provider",
+                "durable replay requires a versioned provider model",
+            )
+        provider_payload = dumps(
+            {
+                "vendor": provider_family,
+                "host": engine_uri.host,
+                "port": engine_uri.port,
+                "params": engine_uri.params,
+                "settings": asdict(operation.environment.settings),
+            },
+            default=str,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+        return ContinuationRevisionBinding(
+            provider_family=ProviderFamilyName(provider_family),
+            model_id=ModelId(model_id),
+            provider_config_revision=ProviderConfigRevision(
+                "provider-config:"
+                + sha256(provider_payload.encode()).hexdigest()
+            ),
+            model_config_revision=ModelConfigRevision(
+                definition.model_config_reference
+            ),
+            capability_revision=CapabilityRevision(
+                definition.capability_revision
+            ),
+        )
+
     def _execution_definition(
         self,
         operation: AgentOperation,
         *,
         operation_index: int,
         capability_seed: Mapping[str, object],
-        attached: bool,
+        interaction_mode: str,
     ) -> ExecutionDefinitionRef:
         """Return the immutable trusted definition for one invocation."""
         operation_payload = dumps(
@@ -1242,13 +1588,15 @@ class Orchestrator:
         )
         tool_revision = sha256(capability_payload.encode()).hexdigest()
         capability_revision = sha256(
-            f"{tool_revision}:{int(attached)}".encode()
+            f"{tool_revision}:{interaction_mode}".encode()
         ).hexdigest()
         model_reference = sha256(
             repr(operation.environment).encode()
         ).hexdigest()
         return ExecutionDefinitionRef(
-            agent_definition_locator=f"agent:{self._id}",
+            agent_definition_locator=(
+                self._execution_definition_locator or f"agent:{self._id}"
+            ),
             agent_definition_revision=agent_revision,
             operation_id=f"operation:{operation_digest}",
             operation_index=operation_index,

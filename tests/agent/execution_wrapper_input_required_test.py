@@ -1,20 +1,25 @@
 """Exercise input-required semantics through public orchestrator wrappers."""
 
 from asyncio import wait_for
-from collections.abc import AsyncIterator, Callable
-from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from collections.abc import AsyncIterator, Callable, Mapping
+from dataclasses import asdict, dataclass, replace
+from datetime import UTC, datetime, timedelta
 from json import dumps, loads
 from logging import getLogger
 from types import SimpleNamespace
 from typing import Annotated, Any, cast
-from unittest import IsolatedAsyncioTestCase
+from unittest import IsolatedAsyncioTestCase, TestCase
+from unittest.mock import patch
 from uuid import uuid4
 
 from avalan.agent.engine import EngineAgent
 from avalan.agent.execution import (
+    AgentExecution,
     AgentExecutionStatus,
     AttachedInteractionRuntime,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+    ExecutionCorrelationError,
     ExecutionInputRequiredError,
     UuidExecutionIdFactory,
 )
@@ -38,7 +43,14 @@ from avalan.interaction import (
     AnsweredResolution,
     AnswerProvenance,
     BranchId,
+    CapabilityRevision,
+    ConfirmationQuestion,
+    ContinuationClaim,
+    ContinuationFencingToken,
     ContinuationId,
+    ContinuationRevisionBinding,
+    ContinuationSnapshot,
+    ContinuationStoreRevision,
     CreateInteractionApplied,
     CreateInteractionCommand,
     DeclinedResolution,
@@ -54,18 +66,36 @@ from avalan.interaction import (
     InteractionPolicy,
     InteractionRequestResult,
     InteractionTime,
+    ModelCallId,
+    ModelConfigRevision,
+    ModelId,
+    PortableContinuation,
     PrincipalScope,
+    ProviderConfigRevision,
+    ProviderContinuationSnapshotAdapter,
+    ProviderFamilyName,
+    ProviderIdempotencyKey,
+    QuestionId,
     RequestState,
+    RequirementMode,
     ResolutionIdempotencyKey,
+    StateRevision,
     TaskId,
     TextAnswer,
     UserId,
     apply_candidate_resolution,
     apply_create_interaction,
     create_input_request,
+    decode_continuation_snapshot,
+    encode_continuation_snapshot,
     resolve_request,
 )
 from avalan.interaction.broker import InteractionBroker
+from avalan.interaction.continuation import (
+    derive_continuation_dispatch_id,
+    derive_provider_idempotency_key,
+)
+from avalan.interaction.durable import DurableInteractionSuspension
 from avalan.interaction.entities import RESERVED_INPUT_CAPABILITY_NAME
 from avalan.interaction.store import (
     ResolveInteractionApplied,
@@ -74,14 +104,22 @@ from avalan.interaction.store import (
 from avalan.memory import RecentMessageMemory
 from avalan.memory.manager import MemoryManager
 from avalan.model.call import ModelCall, ModelCallContext
-from avalan.model.capability import ProviderCapabilitySupport
+from avalan.model.capability import (
+    ContinuationSnapshotCodecRegistry,
+    ProviderCapabilitySupport,
+    TaskInputCapabilityAdvertisement,
+    TaskInputCapabilityCall,
+)
 from avalan.model.manager import ModelManager
+from avalan.model.nlp.text.vendor import openai as openai_module
+from avalan.model.nlp.text.vendor.openai import OpenAIClient
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamRetentionPolicy,
     StreamTerminalOutcome,
 )
 from avalan.tool.manager import ToolManager
@@ -106,6 +144,432 @@ class _ResponsePlan:
     arguments: dict[str, object] | None = None
     preamble: str | None = None
     answer: str | None = None
+
+
+def _durable_binding() -> ContinuationRevisionBinding:
+    """Return the exact provider revision used by the durable harness."""
+    return ContinuationRevisionBinding(
+        provider_family=ProviderFamilyName("openai"),
+        model_id=ModelId("wrapper-input-required"),
+        provider_config_revision=ProviderConfigRevision("provider-v1"),
+        model_config_revision=ModelConfigRevision("model-v1"),
+        capability_revision=CapabilityRevision("capability-v1"),
+    )
+
+
+def _durable_support(
+    binding: ContinuationRevisionBinding,
+) -> ProviderCapabilitySupport:
+    """Return fully registered durable provider support."""
+    registry = ContinuationSnapshotCodecRegistry("wrapper-codec-registry")
+    registry.register(
+        codec_id="wrapper-codec-v1",
+        revision_binding=binding,
+        snapshot_kind="wrapper.provider-response",
+        export_snapshot=encode_continuation_snapshot,
+        restore_snapshot=lambda value, expected: decode_continuation_snapshot(
+            value,
+            expected_binding=expected,
+        ),
+    )
+    return ProviderCapabilitySupport(
+        structured_invocation=True,
+        stable_call_ids=True,
+        correlated_results=True,
+        durable_store=True,
+        registered_resumer=True,
+        continuation_snapshot_codec_registry=registry,
+        continuation_snapshot_codec=registry.reference("wrapper-codec-v1"),
+    )
+
+
+def _openai_durable_support(
+    binding: ContinuationRevisionBinding,
+) -> ProviderCapabilitySupport:
+    """Return registered native OpenAI continuation support."""
+    registry = ContinuationSnapshotCodecRegistry("openai-codec-registry")
+    codec = OpenAIClient.register_continuation_snapshot_codec(
+        registry,
+        codec_id="openai-responses-v1",
+        revision_binding=binding,
+    )
+    return ProviderCapabilitySupport(
+        structured_invocation=True,
+        stable_call_ids=True,
+        correlated_results=True,
+        durable_store=True,
+        registered_resumer=True,
+        continuation_snapshot_codec_registry=registry,
+        continuation_snapshot_codec=codec,
+    )
+
+
+def _durable_staging_context() -> DurableInteractionStagingContext:
+    """Return one fully correlated provider staging context."""
+    binding = _durable_binding()
+    support = _durable_support(binding)
+    registry = support.continuation_snapshot_codec_registry
+    codec = support.continuation_snapshot_codec
+    assert registry is not None and codec is not None
+    continuation_id = ContinuationId("staging-continuation")
+    dispatch_id = derive_continuation_dispatch_id(continuation_id)
+    provider_idempotency_key = derive_provider_idempotency_key(
+        continuation_id,
+        dispatch_id,
+    )
+    task_input_call = TaskInputCapabilityCall(
+        call_id="staging-input-call",
+        provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+        arguments=_input_arguments(),
+        mode=RequirementMode.REQUIRED,
+        reason="Need one bounded decision.",
+        questions=(
+            ConfirmationQuestion(
+                question_id=QuestionId("continue"),
+                prompt="Continue?",
+                required=True,
+            ),
+        ),
+        advertisement=TaskInputCapabilityAdvertisement.DURABLE,
+    )
+    snapshot = ContinuationSnapshot(
+        snapshot_kind="wrapper.provider-response",
+        revision_binding=binding,
+        model_call_id=ModelCallId("staging-model-call"),
+        provider_idempotency_key=provider_idempotency_key,
+        payload={
+            "reserved_capability_call_id": str(task_input_call.call_id),
+            "replay_items": (),
+        },
+    )
+    return DurableInteractionStagingContext(
+        task_input_call=task_input_call,
+        continuation_id=continuation_id,
+        dispatch_id=dispatch_id,
+        revision_binding=binding,
+        codec_registry=registry,
+        codec=codec,
+        provider_snapshot=snapshot,
+        provider_idempotency_key=provider_idempotency_key,
+        provider_call_correlation_id=str(task_input_call.call_id),
+    )
+
+
+def _openai_client() -> OpenAIClient:
+    """Return an unconnected native client with real replay ownership."""
+    client = object.__new__(OpenAIClient)
+    client._base_url = "https://api.openai.com/v1"  # noqa: SLF001
+    client._is_azure = False  # noqa: SLF001
+    client._stream_retention_policy = StreamRetentionPolicy()  # noqa: SLF001
+    client._replay_owners_by_call_id = {}  # noqa: SLF001
+    client._active_replay_owners = {}  # noqa: SLF001
+    client._active_replay_streams = {}  # noqa: SLF001
+    client._active_replay_call_ids = {}  # noqa: SLF001
+    client._ambiguous_replay_call_ids = {}  # noqa: SLF001
+    client._replay_association_poisoned = False  # noqa: SLF001
+    client._closed = False  # noqa: SLF001
+    return client
+
+
+class DurableInteractionStagingContextValidationTest(TestCase):
+    """Exercise every fail-closed provider staging boundary."""
+
+    def test_rejects_invalid_identity_and_codec_components(self) -> None:
+        valid = _durable_staging_context()
+        invalid_values = (
+            (
+                "task_input_call",
+                object(),
+                TypeError,
+                "task_input_call must",
+            ),
+            (
+                "task_input_call",
+                replace(
+                    valid.task_input_call,
+                    advertisement=TaskInputCapabilityAdvertisement.ATTACHED,
+                ),
+                ExecutionCorrelationError,
+                "durable reserved call",
+            ),
+            (
+                "dispatch_id",
+                "wrong-dispatch",
+                ExecutionCorrelationError,
+                "dispatch does not match",
+            ),
+            (
+                "revision_binding",
+                object(),
+                TypeError,
+                "revision_binding must",
+            ),
+            (
+                "codec_registry",
+                object(),
+                TypeError,
+                "codec registry",
+            ),
+            (
+                "codec",
+                object(),
+                ExecutionCorrelationError,
+                "codec is not registered",
+            ),
+            (
+                "provider_snapshot",
+                object(),
+                TypeError,
+                "continuation snapshot",
+            ),
+            (
+                "provider_snapshot",
+                replace(
+                    valid.provider_snapshot,
+                    snapshot_kind="other.provider-response",
+                ),
+                ExecutionCorrelationError,
+                "snapshot does not match",
+            ),
+        )
+        for field_name, value, error_type, message in invalid_values:
+            with (
+                self.subTest(field_name=field_name, value=value),
+                self.assertRaisesRegex(error_type, message),
+            ):
+                replace(valid, **cast(Any, {field_name: value}))
+
+    def test_rejects_invalid_provider_correlations(self) -> None:
+        valid = _durable_staging_context()
+        invalid_values = (
+            (
+                "provider_idempotency_key",
+                1,
+                TypeError,
+                "must be non-empty",
+            ),
+            (
+                "provider_idempotency_key",
+                ProviderIdempotencyKey("wrong-key"),
+                ExecutionCorrelationError,
+                "does not match durable dispatch",
+            ),
+            (
+                "provider_call_correlation_id",
+                "wrong-call",
+                ExecutionCorrelationError,
+                "does not match the reserved call",
+            ),
+            (
+                "provider_snapshot",
+                replace(
+                    valid.provider_snapshot,
+                    provider_idempotency_key=ProviderIdempotencyKey(
+                        "wrong-key"
+                    ),
+                ),
+                ExecutionCorrelationError,
+                "changed its idempotency key",
+            ),
+            (
+                "provider_snapshot",
+                replace(
+                    valid.provider_snapshot,
+                    payload={
+                        "reserved_capability_call_id": "wrong-call",
+                        "replay_items": (),
+                    },
+                ),
+                ExecutionCorrelationError,
+                "changed the reserved call",
+            ),
+        )
+        for field_name, value, error_type, message in invalid_values:
+            with (
+                self.subTest(field_name=field_name, value=value),
+                self.assertRaisesRegex(error_type, message),
+            ):
+                replace(valid, **cast(Any, {field_name: value}))
+
+    def test_rejects_codec_round_trip_drift(self) -> None:
+        valid = _durable_staging_context()
+        drifted = replace(
+            valid.provider_snapshot,
+            payload={
+                "reserved_capability_call_id": (
+                    valid.provider_call_correlation_id
+                ),
+                "replay_items": ({"type": "reasoning"},),
+            },
+        )
+        with (
+            patch.object(
+                ContinuationSnapshotCodecRegistry,
+                "restore_snapshot",
+                return_value=drifted,
+            ),
+            self.assertRaisesRegex(
+                ExecutionCorrelationError,
+                "changed durable replay state",
+            ),
+        ):
+            replace(valid)
+
+
+class _DurableStager:
+    """Build one uncommitted portable interaction or fail before staging."""
+
+    def __init__(
+        self,
+        binding: ContinuationRevisionBinding,
+        *,
+        failure: BaseException | None = None,
+        mutation: str | None = None,
+    ) -> None:
+        self.binding = binding
+        self.failure = failure
+        self.mutation = mutation
+        self.requests: list[InteractionBrokerRequest] = []
+        self.suspensions: list[DurableInteractionSuspension] = []
+        self.staging_contexts: list[DurableInteractionStagingContext] = []
+
+    async def __call__(
+        self,
+        request: InteractionBrokerRequest,
+        *,
+        execution: AgentExecution,
+        response: object,
+        stream_sequence: int,
+        staging: DurableInteractionStagingContext,
+    ) -> DurableInteractionSuspension:
+        """Return an exact unpersisted request and continuation."""
+        del response
+        self.requests.append(request)
+        self.staging_contexts.append(staging)
+        if self.failure is not None:
+            raise self.failure
+        created = create_input_request(
+            request_id=InputRequestId("durable-wrapper-request"),
+            continuation_id=staging.continuation_id,
+            origin=request.origin,
+            mode=request.mode,
+            reason=request.reason,
+            questions=request.questions,
+            created_at=_NOW,
+            continuation_ttl_seconds=request.continuation_ttl_seconds,
+            advisory_wait_seconds=request.advisory_wait_seconds,
+        )
+        continuation = PortableContinuation(
+            continuation_id=created.continuation_id,
+            request_id=created.request_id,
+            origin=created.origin,
+            provider_call_id=created.origin.model_call_id,
+            provider_call_correlation_id=(
+                staging.provider_call_correlation_id
+            ),
+            definition=created.origin.definition,
+            operation_cursor=execution.operation_index,
+            generation_settings={},
+            transcript=(),
+            observations=(),
+            revision_binding=staging.revision_binding,
+            interaction_count=execution.interaction_count,
+            tool_loop_count=0,
+            stream_sequence=stream_sequence,
+            state_revision=StateRevision(execution.revision),
+            store_revision=ContinuationStoreRevision(0),
+            created_at=_NOW,
+            updated_at=_NOW,
+            expires_at=_NOW + timedelta(days=1),
+            claim=ContinuationClaim(),
+            fencing_token=ContinuationFencingToken(0),
+            provider_snapshot=staging.provider_snapshot,
+        )
+        if self.mutation == "missing_snapshot":
+            continuation = replace(
+                continuation,
+                provider_snapshot=None,
+            )
+        elif self.mutation == "wrong_snapshot":
+            continuation = replace(
+                continuation,
+                provider_snapshot=replace(
+                    staging.provider_snapshot,
+                    payload={
+                        "reserved_capability_call_id": "wrong-call",
+                        "replay_items": (),
+                    },
+                ),
+            )
+        elif self.mutation == "wrong_call":
+            continuation = replace(
+                continuation,
+                provider_call_correlation_id="wrong-call",
+            )
+        elif self.mutation is not None:
+            raise AssertionError("unknown durable staging mutation")
+        suspension = DurableInteractionSuspension(
+            command=CreateInteractionCommand(
+                actor=request.actor,
+                request=created,
+            ),
+            continuation=continuation,
+        )
+        self.suspensions.append(suspension)
+        return suspension
+
+
+class _WrapperSnapshotAdapter:
+    """Export a provider-owned snapshot for the exact reserved call."""
+
+    def export_continuation_snapshot(
+        self,
+        *,
+        revision_binding: ContinuationRevisionBinding,
+        model_call_id: ModelCallId,
+        provider_idempotency_key: ProviderIdempotencyKey,
+        provider_call_correlation_id: str,
+    ) -> ContinuationSnapshot:
+        return ContinuationSnapshot(
+            snapshot_kind="wrapper.provider-response",
+            revision_binding=revision_binding,
+            model_call_id=model_call_id,
+            provider_idempotency_key=provider_idempotency_key,
+            payload={
+                "reserved_capability_call_id": provider_call_correlation_id,
+                "replay_items": (),
+            },
+        )
+
+    def import_continuation_snapshot(
+        self,
+        snapshot: ContinuationSnapshot,
+        *,
+        expected_binding: ContinuationRevisionBinding,
+        provider_call_correlation_id: str,
+    ) -> None:
+        assert snapshot.revision_binding == expected_binding
+        assert (
+            snapshot.payload["reserved_capability_call_id"]
+            == provider_call_correlation_id
+        )
+
+    def validate_continuation_snapshot_call(
+        self,
+        snapshot: ContinuationSnapshot,
+        *,
+        expected_binding: ContinuationRevisionBinding,
+        provider_call_correlation_id: str,
+        expected_provider_name: str,
+        expected_arguments: Mapping[str, object],
+    ) -> None:
+        assert snapshot.revision_binding == expected_binding
+        assert (
+            snapshot.payload["reserved_capability_call_id"]
+            == provider_call_correlation_id
+        )
+        assert expected_provider_name == RESERVED_INPUT_CAPABILITY_NAME
+        assert set(expected_arguments) == {"mode", "reason", "questions"}
 
 
 class _Engine:
@@ -134,16 +598,30 @@ class _Agent(EngineAgent):
 class _ScriptedModelManager:
     """Dispatch a finite sequence of deterministic provider responses."""
 
-    def __init__(self, plans: list[_ResponsePlan]) -> None:
+    def __init__(
+        self,
+        plans: list[_ResponsePlan],
+        *,
+        snapshot_adapter: ProviderContinuationSnapshotAdapter | None = None,
+        source_close: Callable[[], None] | None = None,
+    ) -> None:
         self.plans = plans
         self.calls: list[ModelCall] = []
+        self.snapshot_adapter = snapshot_adapter
+        self.source_close = source_close
 
     async def __call__(self, call: ModelCall) -> TextGenerationResponse:
         index = len(self.calls)
         self.calls.append(call)
         if index >= len(self.plans):
             raise AssertionError("unexpected model continuation")
-        return _provider_response(call, index, self.plans[index])
+        return _provider_response(
+            call,
+            index,
+            self.plans[index],
+            snapshot_adapter=self.snapshot_adapter,
+            source_close=self.source_close,
+        )
 
 
 class _DetachedHandler:
@@ -323,6 +801,10 @@ class _Harness:
         plans: list[_ResponsePlan],
         broker: object,
         handler: Callable[[InputHandlerContext], Any],
+        durable_stager: _DurableStager | None = None,
+        durable_support: ProviderCapabilitySupport | None = None,
+        snapshot_adapter: ProviderContinuationSnapshotAdapter | None = None,
+        source_close: Callable[[], None] | None = None,
     ) -> None:
         self.logger = getLogger(__name__)
         self.events = EventManager(mode=EventManagerMode.TEST)
@@ -337,7 +819,11 @@ class _Harness:
             event_manager=self.events,
         )
         self.tool = ToolManager.create_instance(enable_tools=[])
-        self.model_manager = _ScriptedModelManager(plans)
+        self.model_manager = _ScriptedModelManager(
+            plans,
+            snapshot_adapter=snapshot_adapter,
+            source_close=source_close,
+        )
         self.engine_uri = EngineUri(
             host=None,
             port=None,
@@ -349,8 +835,13 @@ class _Harness:
         )
         base = self._base_orchestrator(wrapper)
         operation = base.operations[0]
+        engine = _Engine()
+        if durable_stager is not None:
+            engine.provider_capability_support = (
+                durable_support or _durable_support(durable_stager.binding)
+            )
         self.agent = _Agent(
-            cast(Any, _Engine()),
+            cast(Any, engine),
             self.memory,
             self.tool,
             self.events,
@@ -361,15 +852,26 @@ class _Harness:
         self.public: Any = (
             ReasoningOrchestrator(base) if wrapper == "reasoning" else base
         )
-        self.runtime = AttachedInteractionRuntime(
-            broker=cast(InteractionBroker, broker),
-            actor=InteractionActor(
-                principal=PrincipalScope(user_id=UserId("wrapper-user"))
-            ),
-            handler=cast(Any, handler),
-            id_factory=UuidExecutionIdFactory(),
-            task_id=TaskId("wrapper-task"),
-            branch_id=BranchId("wrapper-branch"),
+        actor = InteractionActor(
+            principal=PrincipalScope(user_id=UserId("wrapper-user"))
+        )
+        self.runtime = (
+            DurableInteractionRuntime(
+                actor=actor,
+                stager=durable_stager,
+                id_factory=UuidExecutionIdFactory(),
+                task_id=TaskId("wrapper-task"),
+                branch_id=BranchId("wrapper-branch"),
+            )
+            if durable_stager is not None
+            else AttachedInteractionRuntime(
+                broker=cast(InteractionBroker, broker),
+                actor=actor,
+                handler=cast(Any, handler),
+                id_factory=UuidExecutionIdFactory(),
+                task_id=TaskId("wrapper-task"),
+                branch_id=BranchId("wrapper-branch"),
+            )
         )
 
     def _base_orchestrator(self, wrapper: str) -> Orchestrator:
@@ -462,6 +964,9 @@ def _provider_response(
     call: ModelCall,
     index: int,
     plan: _ResponsePlan,
+    *,
+    snapshot_adapter: ProviderContinuationSnapshotAdapter | None = None,
+    source_close: Callable[[], None] | None = None,
 ) -> TextGenerationResponse:
     """Return one canonical provider stream for a scripted model call."""
     capability = call.context.capability
@@ -471,7 +976,7 @@ def _provider_response(
         provider_family="openai",
     )
 
-    async def items() -> AsyncIterator[CanonicalStreamItem]:
+    async def provider_items() -> AsyncIterator[CanonicalStreamItem]:
         common = {
             "stream_session_id": f"provider-stream-{index}",
             "run_id": f"provider-run-{index}",
@@ -563,10 +1068,21 @@ def _provider_response(
             channel=StreamChannel.CONTROL,
         )
 
+    async def items() -> AsyncIterator[CanonicalStreamItem]:
+        try:
+            async for item in provider_items():
+                yield item
+        finally:
+            if source_close is not None:
+                source_close()
+
     return TextGenerationResponse(
         lambda: items(),
         logger=getLogger(__name__),
         use_async_generator=True,
+        continuation_snapshot_adapter=(
+            snapshot_adapter or _WrapperSnapshotAdapter()
+        ),
     )
 
 
@@ -707,6 +1223,410 @@ class ExecutionWrapperInputRequiredTest(IsolatedAsyncioTestCase):
                     self.assertEqual(len(harness.model_manager.calls), 1)
                 finally:
                     await harness.close()
+
+    async def test_durable_materialization_stages_without_broker_mutation(
+        self,
+    ) -> None:
+        binding = _durable_binding()
+        stager = _DurableStager(binding)
+        broker = _PendingBroker()
+        harness = _Harness(
+            wrapper="default",
+            plans=[_ResponsePlan(arguments=_input_arguments())],
+            broker=broker,
+            handler=_DetachedHandler(),
+            durable_stager=stager,
+        )
+        response: Any | None = None
+        try:
+            response = await harness.response()
+            with self.assertRaises(ExecutionInputRequiredError) as raised:
+                await response.to_str()
+
+            failure = raised.exception
+            self.assertIs(failure.durable, stager.suspensions[0])
+            self.assertTrue(failure.result.detached_resumption_available)
+            self.assertEqual(broker.requests, [])
+            self.assertEqual(len(stager.requests), 1)
+            self.assertEqual(len(stager.suspensions), 1)
+            suspension = stager.suspensions[0]
+            staging = stager.staging_contexts[0]
+            self.assertIs(
+                suspension.command.request.state,
+                RequestState.CREATED,
+            )
+            self.assertEqual(
+                int(suspension.continuation.store_revision),
+                0,
+            )
+            self.assertEqual(
+                suspension.continuation.provider_snapshot,
+                staging.provider_snapshot,
+            )
+            self.assertEqual(
+                suspension.command.request.continuation_id,
+                staging.continuation_id,
+            )
+            self.assertEqual(
+                staging.provider_idempotency_key,
+                derive_provider_idempotency_key(
+                    staging.continuation_id,
+                    staging.dispatch_id,
+                ),
+            )
+            self.assertEqual(
+                staging.provider_snapshot.provider_idempotency_key,
+                staging.provider_idempotency_key,
+            )
+            self.assertEqual(
+                suspension.continuation.provider_call_correlation_id,
+                str(staging.task_input_call.call_id),
+            )
+            execution = response.execution
+            assert execution is not None
+            self.assertIsNone(execution.interaction_broker)
+            self.assertIs(
+                execution.status,
+                AgentExecutionStatus.INPUT_REQUIRED,
+            )
+            self.assertEqual(
+                execution.pending_request,
+                suspension.command.request,
+            )
+            capability = harness.model_manager.calls[0].context.capability
+            assert capability is not None
+            self.assertIs(
+                capability.task_input_advertisement,
+                TaskInputCapabilityAdvertisement.DURABLE,
+            )
+            kinds = {item.kind for item in response.canonical_items}
+            self.assertNotIn(StreamItemKind.INTERACTION_CREATED, kinds)
+            self.assertNotIn(StreamItemKind.INTERACTION_PENDING, kinds)
+            self.assertIn(StreamItemKind.STREAM_INPUT_REQUIRED, kinds)
+        finally:
+            if response is not None:
+                await response.aclose()
+            await harness.close()
+
+    async def test_durable_stages_real_openai_owner_before_source_close(
+        self,
+    ) -> None:
+        binding = _durable_binding()
+        first_client = _openai_client()
+        first_owner = openai_module._OpenAIReplayOwner(  # noqa: SLF001
+            first_client._stream_retention_policy  # noqa: SLF001
+        )
+        first_owner.begin_attempt()
+        prior_items = (
+            {
+                "id": "reasoning-prior",
+                "type": "reasoning",
+                "encrypted_content": "encrypted-prior-reasoning",
+                "summary": [],
+            },
+            {
+                "id": "function-prior",
+                "type": "function_call",
+                "call_id": "prior-input-call",
+                "name": RESERVED_INPUT_CAPABILITY_NAME,
+                "arguments": dumps(
+                    _input_arguments(),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            },
+        )
+        for item in prior_items:
+            self.assertTrue(first_owner.admit(cast(dict[str, Any], item)))
+        first_client._activate_replay_owner(first_owner)  # noqa: SLF001
+        first_snapshot = first_client.export_continuation_snapshot(
+            revision_binding=binding,
+            model_call_id=ModelCallId("prior-model-call"),
+            provider_idempotency_key=ProviderIdempotencyKey(
+                "prior-provider-retry"
+            ),
+            provider_call_correlation_id="prior-input-call",
+        )
+        first_client.validate_continuation_snapshot_call(
+            first_snapshot,
+            expected_binding=binding,
+            provider_call_correlation_id="prior-input-call",
+            expected_provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+            expected_arguments=cast(
+                Mapping[str, Any],
+                _input_arguments(),
+            ),
+        )
+
+        client = _openai_client()
+        client.import_continuation_snapshot(
+            first_snapshot,
+            expected_binding=binding,
+            provider_call_correlation_id="prior-input-call",
+        )
+        owner = client._replay_owners_by_call_id.pop(  # noqa: SLF001
+            "prior-input-call"
+        )
+        client._activate_replay_owner(owner)  # noqa: SLF001
+        client._active_replay_call_ids["prior-input-call"] = (
+            owner  # noqa: SLF001
+        )
+        owner.begin_attempt()
+        current_items = (
+            {
+                "id": "reasoning-current",
+                "type": "reasoning",
+                "encrypted_content": "encrypted-current-reasoning",
+                "summary": [],
+            },
+            {
+                "id": "function-current",
+                "type": "function_call",
+                "call_id": "input-call-0",
+                "name": RESERVED_INPUT_CAPABILITY_NAME,
+                "arguments": dumps(
+                    _input_arguments(),
+                    separators=(",", ":"),
+                    sort_keys=True,
+                ),
+            },
+        )
+        for item in current_items:
+            self.assertTrue(owner.admit(cast(dict[str, Any], item)))
+        stager = _DurableStager(binding)
+        harness = _Harness(
+            wrapper="default",
+            plans=[_ResponsePlan(arguments=_input_arguments())],
+            broker=_PendingBroker(),
+            handler=_DetachedHandler(),
+            durable_stager=stager,
+            durable_support=_openai_durable_support(binding),
+            snapshot_adapter=client,
+            source_close=owner.release,
+        )
+        response: Any | None = None
+        try:
+            response = await harness.response()
+            with self.assertRaises(ExecutionInputRequiredError):
+                await response.to_str()
+
+            self.assertTrue(owner.released)
+            self.assertEqual(len(stager.staging_contexts), 1)
+            snapshot = stager.staging_contexts[0].provider_snapshot
+            items = snapshot.payload["replay_items"]
+            self.assertIsInstance(items, tuple)
+            assert isinstance(items, tuple)
+            prior_reasoning = items[0]
+            prior_call = items[1]
+            current_reasoning = items[2]
+            current_call = items[3]
+            assert isinstance(prior_reasoning, Mapping)
+            assert isinstance(prior_call, Mapping)
+            assert isinstance(current_reasoning, Mapping)
+            assert isinstance(current_call, Mapping)
+            self.assertEqual(
+                prior_reasoning["encrypted_content"],
+                "encrypted-prior-reasoning",
+            )
+            self.assertEqual(prior_call["call_id"], "prior-input-call")
+            self.assertEqual(
+                current_reasoning["encrypted_content"],
+                "encrypted-current-reasoning",
+            )
+            self.assertEqual(current_call["call_id"], "input-call-0")
+
+            fresh = _openai_client()
+            fresh.import_continuation_snapshot(
+                snapshot,
+                expected_binding=binding,
+                provider_call_correlation_id="input-call-0",
+            )
+            restored = fresh._replay_owners_by_call_id[  # noqa: SLF001
+                "input-call-0"
+            ].replay_items()
+            self.assertEqual(
+                restored[0]["encrypted_content"],
+                "encrypted-prior-reasoning",
+            )
+            self.assertEqual(restored[1]["call_id"], "prior-input-call")
+            self.assertEqual(
+                restored[2]["encrypted_content"],
+                "encrypted-current-reasoning",
+            )
+            self.assertEqual(restored[3]["call_id"], "input-call-0")
+        finally:
+            if response is not None:
+                await response.aclose()
+            await harness.close()
+
+    async def test_durable_stream_preserves_exact_staged_payload(
+        self,
+    ) -> None:
+        stager = _DurableStager(_durable_binding())
+        broker = _PendingBroker()
+        harness = _Harness(
+            wrapper="default",
+            plans=[_ResponsePlan(arguments=_input_arguments())],
+            broker=broker,
+            handler=_DetachedHandler(),
+            durable_stager=stager,
+        )
+        response: Any | None = None
+        try:
+            response = await harness.response()
+            with self.assertRaises(ExecutionInputRequiredError) as raised:
+                await _consume(response)
+
+            self.assertIs(
+                raised.exception.durable,
+                stager.suspensions[0],
+            )
+            self.assertEqual(broker.requests, [])
+            self.assertEqual(
+                tuple(item.kind for item in response.canonical_items[-2:]),
+                (
+                    StreamItemKind.STREAM_INPUT_REQUIRED,
+                    StreamItemKind.STREAM_CLOSED,
+                ),
+            )
+            execution = response.execution
+            assert execution is not None
+            self.assertEqual(
+                execution.pending_request,
+                stager.suspensions[0].command.request,
+            )
+        finally:
+            if response is not None:
+                await response.aclose()
+            await harness.close()
+
+    async def test_durable_stager_failure_cleans_reservation_and_source(
+        self,
+    ) -> None:
+        staging_failure = RuntimeError("durable stager failed")
+        stager = _DurableStager(
+            _durable_binding(),
+            failure=staging_failure,
+        )
+        broker = _PendingBroker()
+        harness = _Harness(
+            wrapper="default",
+            plans=[_ResponsePlan(arguments=_input_arguments())],
+            broker=broker,
+            handler=_DetachedHandler(),
+            durable_stager=stager,
+        )
+        response: Any | None = None
+        try:
+            response = await harness.response()
+            with self.assertRaises(RuntimeError) as raised:
+                await response.to_str()
+
+            self.assertIs(raised.exception, staging_failure)
+            self.assertEqual(broker.requests, [])
+            self.assertEqual(stager.suspensions, [])
+            execution = response.execution
+            assert execution is not None
+            self.assertIs(
+                execution.status,
+                AgentExecutionStatus.ERRORED,
+            )
+            self.assertIsNone(execution.pending_request)
+            self.assertIsNone(
+                execution.snapshot.active_interaction_fingerprint
+            )
+            self.assertTrue(execution.snapshot.cleanup_started)
+            self.assertTrue(response.ownership_cleanup_complete)
+            self.assertIn(
+                StreamItemKind.STREAM_ERRORED,
+                {item.kind for item in response.canonical_items},
+            )
+        finally:
+            if response is not None:
+                await response.aclose()
+            await harness.close()
+
+    async def test_durable_staging_rejects_incomplete_provider_replay(
+        self,
+    ) -> None:
+        for mutation in (
+            "missing_snapshot",
+            "wrong_snapshot",
+            "wrong_call",
+        ):
+            with self.subTest(mutation=mutation):
+                stager = _DurableStager(
+                    _durable_binding(),
+                    mutation=mutation,
+                )
+                broker = _PendingBroker()
+                harness = _Harness(
+                    wrapper="default",
+                    plans=[_ResponsePlan(arguments=_input_arguments())],
+                    broker=broker,
+                    handler=_DetachedHandler(),
+                    durable_stager=stager,
+                )
+                response: Any | None = None
+                try:
+                    response = await harness.response()
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "changed provider replay state",
+                    ):
+                        await response.to_str()
+
+                    self.assertEqual(broker.requests, [])
+                    self.assertEqual(len(stager.suspensions), 1)
+                    execution = response.execution
+                    assert execution is not None
+                    self.assertIs(
+                        execution.status,
+                        AgentExecutionStatus.ERRORED,
+                    )
+                    self.assertIsNone(execution.pending_request)
+                    self.assertIsNone(
+                        execution.snapshot.active_interaction_fingerprint
+                    )
+                    self.assertTrue(response.ownership_cleanup_complete)
+                finally:
+                    if response is not None:
+                        await response.aclose()
+                    await harness.close()
+
+    async def test_durable_staging_rejects_missing_provider_adapter(
+        self,
+    ) -> None:
+        stager = _DurableStager(_durable_binding())
+        harness = _Harness(
+            wrapper="default",
+            plans=[_ResponsePlan(arguments=_input_arguments())],
+            broker=_PendingBroker(),
+            handler=_DetachedHandler(),
+            durable_stager=stager,
+        )
+        response: Any | None = None
+        try:
+            response = await harness.response()
+            response._response._continuation_snapshot_adapter = (
+                None  # noqa: SLF001
+            )
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "registered provider replay",
+            ):
+                await response.to_str()
+
+            self.assertEqual(stager.requests, [])
+            execution = response.execution
+            assert execution is not None
+            self.assertIs(execution.status, AgentExecutionStatus.ERRORED)
+            self.assertIsNone(execution.pending_request)
+            self.assertTrue(response.ownership_cleanup_complete)
+        finally:
+            if response is not None:
+                await response.aclose()
+            await harness.close()
 
     async def test_malformed_request_invokes_no_broker_or_continuation(
         self,

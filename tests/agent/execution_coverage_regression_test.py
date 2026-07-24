@@ -12,8 +12,10 @@ from avalan.agent.execution import (
     MAXIMUM_EQUIVALENT_INPUT_REQUESTS,
     AgentExecution,
     AgentExecutionStatus,
+    DurableInteractionRuntime,
     ExecutionBranchInteractionBroker,
     ExecutionCorrelationError,
+    ExecutionInputRequiredError,
     ExecutionLedgerEntry,
     ExecutionLedgerEntryKind,
     ExecutionMemoryEntry,
@@ -33,6 +35,7 @@ from avalan.interaction.broker import (
     InteractionRequestResult,
 )
 from avalan.interaction.codec import encode_input_model_result
+from avalan.interaction.durable import DurableInteractionSuspension
 from avalan.interaction.entities import (
     AgentId,
     AnswerProvenance,
@@ -259,7 +262,10 @@ def _correlated_messages(
             encode_input_model_result(result),
         ),
     )
-    return (_task_input_message(), correlated.local_message())
+    return (
+        _task_input_message(),
+        correlated.tool_result_message(call),
+    )
 
 
 def _input_entry(origin: ExecutionOrigin) -> ExecutionLedgerEntry:
@@ -385,6 +391,11 @@ class _IdFactory:
 
     async def new_stream_session_id(self) -> StreamSessionId:
         return StreamSessionId("stream-new")
+
+
+async def _durable_stager() -> DurableInteractionSuspension:
+    """Provide an async callable for runtime validation tests."""
+    raise AssertionError("the validation-only stager must not run")
 
 
 class _CancellationBroker:
@@ -713,6 +724,104 @@ class LedgerReplayDefenseTest(TestCase):
                 reservation,
                 pending_entry,
                 termination_entry,
+            )
+
+    def test_replay_rejects_corrupted_durable_interaction_states(
+        self,
+    ) -> None:
+        origin = _origin()
+        reservation = _reserved_entry(origin, 1)
+        created = _created_request(origin)
+        required = InputRequiredResult(
+            request_id=created.request_id,
+            continuation_id=created.continuation_id,
+            detached_resumption_available=True,
+        )
+
+        persisted_required = ExecutionLedgerEntry(
+            sequence=2,
+            kind=ExecutionLedgerEntryKind.INPUT_REQUIRED,
+            origin=origin,
+            request=replace(
+                created,
+                state=RequestState.PENDING,
+                state_revision=StateRevision(1),
+            ),
+            input_required=required,
+        )
+        with self.assertRaisesRegex(
+            ExecutionStateError,
+            "already persisted",
+        ):
+            _replay(
+                _input_entry(origin),
+                reservation,
+                persisted_required,
+            )
+
+        changed_origin = replace(
+            origin,
+            turn_id=TurnId("turn-other"),
+            model_call_id=ModelCallId("model-call-other"),
+        )
+        changed_origin_required = replace(
+            persisted_required,
+            request=_created_request(changed_origin),
+            input_required=InputRequiredResult(
+                request_id=InputRequestId("request-1"),
+                continuation_id=ContinuationId("continuation-1"),
+                detached_resumption_available=True,
+            ),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "changed execution origin",
+        ):
+            _replay(
+                _input_entry(origin),
+                reservation,
+                changed_origin_required,
+            )
+
+        pending = _pending_request(origin)
+        pending_entry = ExecutionLedgerEntry(
+            sequence=2,
+            kind=ExecutionLedgerEntryKind.INTERACTION_PENDING,
+            origin=origin,
+            request=pending,
+        )
+        required_entry = ExecutionLedgerEntry(
+            sequence=3,
+            kind=ExecutionLedgerEntryKind.INPUT_REQUIRED,
+            origin=origin,
+            request=pending,
+            input_required=InputRequiredResult(
+                request_id=pending.request_id,
+                continuation_id=pending.continuation_id,
+                detached_resumption_available=True,
+            ),
+        )
+        resolved = _resolved_request(pending)
+        result = _result(resolved)
+        result_entry = ExecutionLedgerEntry(
+            sequence=4,
+            kind=ExecutionLedgerEntryKind.INTERACTION_RESULT,
+            origin=origin,
+            messages=_correlated_messages(result),
+            request=resolved,
+            result=result,
+            task_input_call=_task_input_call(),
+        )
+        with self.assertRaisesRegex(
+            ExecutionStateError,
+            "lacks its staged request",
+        ):
+            _replay(
+                _input_entry(origin),
+                reservation,
+                pending_entry,
+                required_entry,
+                result_entry,
             )
 
     def test_replay_rejects_model_turn_while_interaction_is_reserved(
@@ -1146,3 +1255,164 @@ class ExecutionMutationDefenseTest(IsolatedAsyncioTestCase):
             "response synchronization cursor changed",
         ):
             await execution.sync_memory(_ResponseCursorConflictSink(execution))
+
+    async def test_durable_input_staging_rejects_every_invalid_boundary(
+        self,
+    ) -> None:
+        origin = _origin()
+        execution = AgentExecution(
+            origin=origin,
+            id_factory=_IdFactory(),
+            initial_messages=(),
+        )
+        created = _created_request(origin)
+        required = InputRequiredResult(
+            request_id=created.request_id,
+            continuation_id=created.continuation_id,
+            detached_resumption_available=True,
+        )
+
+        with self.assertRaisesRegex(TypeError, "request must"):
+            await execution.stage_durable_input_required(
+                cast(InputRequest, object()),
+                required,
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "remain uncommitted",
+        ):
+            await execution.stage_durable_input_required(
+                replace(
+                    created,
+                    state=RequestState.PENDING,
+                    state_revision=StateRevision(1),
+                ),
+                required,
+            )
+        with self.assertRaisesRegex(TypeError, "result must"):
+            await execution.stage_durable_input_required(
+                created,
+                cast(InputRequiredResult, object()),
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "detached resumption",
+        ):
+            await execution.stage_durable_input_required(
+                created,
+                replace(required, detached_resumption_available=False),
+            )
+
+        await execution.begin_interaction(
+            "durable-fingerprint",
+            _task_input_call(),
+            _task_input_message(),
+        )
+        other_origin = replace(
+            origin,
+            turn_id=TurnId("turn-other"),
+            model_call_id=ModelCallId("model-call-other"),
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "origin does not match",
+        ):
+            await execution.stage_durable_input_required(
+                _created_request(other_origin),
+                required,
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "not correlated",
+        ):
+            await execution.stage_durable_input_required(
+                created,
+                replace(required, request_id=InputRequestId("request-other")),
+            )
+
+        self.assertTrue(
+            await execution.stage_durable_input_required(created, required)
+        )
+        self.assertFalse(
+            await execution.stage_durable_input_required(created, required)
+        )
+        with self.assertRaisesRegex(
+            ExecutionStateError,
+            "expected preparing_input",
+        ):
+            await execution.stage_durable_input_required(
+                created,
+                replace(required, request_id=InputRequestId("request-other")),
+            )
+
+    async def test_durable_runtime_and_suspension_validate_identity(
+        self,
+    ) -> None:
+        origin = _origin()
+        actor = InteractionActor(principal=origin.principal)
+        factory = _IdFactory()
+
+        with self.assertRaisesRegex(TypeError, "actor must"):
+            DurableInteractionRuntime(
+                actor=cast(InteractionActor, object()),
+                stager=_durable_stager,
+                id_factory=factory,
+            )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "parent branch must differ",
+        ):
+            DurableInteractionRuntime(
+                actor=actor,
+                stager=_durable_stager,
+                id_factory=factory,
+                branch_id=BranchId("same-branch"),
+                parent_branch_id=BranchId("same-branch"),
+            )
+
+        runtime = DurableInteractionRuntime(
+            actor=actor,
+            stager=_durable_stager,
+            id_factory=factory,
+            run_id=RunId("run-other"),
+            task_id=origin.task_id,
+            branch_id=origin.branch_id,
+            parent_branch_id=origin.parent_branch_id,
+        )
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "durable run does not match",
+        ):
+            AgentExecution(
+                origin=origin,
+                id_factory=factory,
+                initial_messages=(),
+                interaction_runtime=runtime,
+            )
+
+        created = _created_request(origin)
+        command = CreateInteractionCommand(actor=actor, request=created)
+        durable = object.__new__(DurableInteractionSuspension)
+        object.__setattr__(durable, "command", command)
+        required = InputRequiredResult(
+            request_id=created.request_id,
+            continuation_id=created.continuation_id,
+            detached_resumption_available=True,
+        )
+        with self.assertRaisesRegex(TypeError, "durable must"):
+            ExecutionInputRequiredError(
+                required,
+                durable=cast(DurableInteractionSuspension, object()),
+            )
+        for mismatched in (
+            replace(required, request_id=InputRequestId("request-other")),
+            replace(required, detached_resumption_available=False),
+        ):
+            with (
+                self.subTest(result=mismatched),
+                self.assertRaisesRegex(
+                    ExecutionCorrelationError,
+                    "does not match",
+                ),
+            ):
+                ExecutionInputRequiredError(mismatched, durable=durable)

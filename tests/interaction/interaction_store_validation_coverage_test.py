@@ -41,6 +41,7 @@ from avalan.interaction import (
     InteractionBranchRecord,
     InteractionBranchRegistration,
     InteractionCorrelation,
+    InteractionExecutionScope,
     InteractionPolicy,
     InteractionPresentationApplied,
     InteractionPresentationState,
@@ -1091,6 +1092,278 @@ def test_private_authority_constructors_and_validators_fail_closed() -> None:
     assert backing.value.code is InputErrorCode.FORBIDDEN
     assert invalid_binding.value.code is InputErrorCode.INVALID_TYPE
     assert invalid_backing.value.code is InputErrorCode.INVALID_TYPE
+
+
+def test_private_scope_attestation_constructors_fail_closed() -> None:
+    """Reject forged branch-closure and scope-presence capabilities."""
+    scope = InteractionExecutionScope(run_id=RunId("run-1"))
+    principal = _principal()
+
+    with pytest.raises(InputValidationError) as branch_token:
+        interaction_store._InteractionBranchClosureAttestation(
+            frozenset(),
+            _token=object(),
+        )
+    with pytest.raises(InputValidationError) as scope_token:
+        interaction_store._InteractionScopeOwnershipAttestation(
+            scope=scope,
+            principal=principal,
+            actor_owned_record_match=False,
+            foreign_owned_record_match=False,
+            actor_owned_branch_match=False,
+            foreign_owned_branch_match=False,
+            _token=object(),
+        )
+    with pytest.raises(InputValidationError) as invalid_scope:
+        interaction_store._InteractionScopeOwnershipAttestation(
+            scope=cast(InteractionExecutionScope, object()),
+            principal=principal,
+            actor_owned_record_match=False,
+            foreign_owned_record_match=False,
+            actor_owned_branch_match=False,
+            foreign_owned_branch_match=False,
+            _token=interaction_store._SCOPE_OWNERSHIP_ATTESTATION_TOKEN,
+        )
+    with pytest.raises(InputValidationError) as invalid_principal:
+        interaction_store._InteractionScopeOwnershipAttestation(
+            scope=scope,
+            principal=cast(PrincipalScope, object()),
+            actor_owned_record_match=False,
+            foreign_owned_record_match=False,
+            actor_owned_branch_match=False,
+            foreign_owned_branch_match=False,
+            _token=interaction_store._SCOPE_OWNERSHIP_ATTESTATION_TOKEN,
+        )
+
+    attestation = interaction_store._InteractionScopeOwnershipAttestation(
+        scope=scope,
+        principal=principal,
+        actor_owned_record_match=False,
+        foreign_owned_record_match=False,
+        actor_owned_branch_match=False,
+        foreign_owned_branch_match=False,
+        _token=interaction_store._SCOPE_OWNERSHIP_ATTESTATION_TOKEN,
+    )
+    with pytest.raises(InputValidationError) as combined:
+        _InteractionStoreBacking(
+            records=(),
+            branch_records=(),
+            store_generation=InteractionStoreGeneration(0),
+            scope_ownership_attestation=attestation,
+            _token=interaction_store._PARTIAL_STORE_BACKING_TOKEN,
+        )
+
+    assert branch_token.value.code is InputErrorCode.FORBIDDEN
+    assert scope_token.value.code is InputErrorCode.FORBIDDEN
+    assert invalid_scope.value.code is InputErrorCode.INVALID_TYPE
+    assert invalid_principal.value.code is InputErrorCode.INVALID_TYPE
+    assert combined.value.code is InputErrorCode.INVALID_FORMAT
+
+
+def test_branch_closure_attestation_rejects_graph_drift() -> None:
+    """Reject duplicate, missing, cyclic, and unrelated closure edges."""
+    principal = _principal()
+    pending = _pending_record()
+    child_origin = replace(
+        pending.request.origin,
+        branch_id=BranchId("child"),
+        parent_branch_id=BranchId("root"),
+    )
+    child = replace(
+        pending,
+        request=replace(pending.request, origin=child_origin),
+    )
+    child_registration = InteractionBranchRegistration(
+        run_id=child_origin.run_id,
+        branch_id=child_origin.branch_id,
+        parent_branch_id=BranchId("root"),
+        principal=principal,
+    )
+    child_branch = InteractionBranchRecord(
+        registration=child_registration,
+        store_revision=InteractionStoreRevision(0),
+    )
+    root_branch = InteractionBranchRecord(
+        registration=InteractionBranchRegistration(
+            run_id=child_origin.run_id,
+            branch_id=BranchId("root"),
+            parent_branch_id=BranchId("child"),
+            principal=principal,
+        ),
+        store_revision=InteractionStoreRevision(0),
+    )
+    unrelated_branch = InteractionBranchRecord(
+        registration=InteractionBranchRegistration(
+            run_id=child_origin.run_id,
+            branch_id=BranchId("unrelated"),
+            parent_branch_id=BranchId("other-root"),
+            principal=principal,
+        ),
+        store_revision=InteractionStoreRevision(0),
+    )
+
+    for records, branches, code in (
+        (
+            (child,),
+            (
+                child_branch,
+                replace(
+                    child_branch,
+                    store_revision=InteractionStoreRevision(1),
+                ),
+            ),
+            InputErrorCode.DUPLICATE,
+        ),
+        ((child,), (), InputErrorCode.CORRELATION_MISMATCH),
+        (
+            (child,),
+            (child_branch, root_branch),
+            InputErrorCode.INVALID_FORMAT,
+        ),
+        (
+            (child,),
+            (child_branch, unrelated_branch),
+            InputErrorCode.CORRELATION_MISMATCH,
+        ),
+    ):
+        with pytest.raises(InputValidationError) as error:
+            interaction_store._derive_interaction_branch_closure_roots(
+                records,
+                branches,
+            )
+        assert error.value.code is code
+
+    closure = interaction_store._InteractionBranchClosureAttestation(
+        frozenset(),
+        _token=interaction_store._BRANCH_CLOSURE_ATTESTATION_TOKEN,
+    )
+    with pytest.raises(InputValidationError) as wrong_type:
+        interaction_store._validate_interaction_branch_closure_attestation(
+            cast(
+                interaction_store._InteractionBranchClosureAttestation,
+                object(),
+            ),
+            (),
+            (),
+        )
+    object.__setattr__(
+        closure,
+        "authoritative_branch_roots",
+        frozenset(
+            {
+                (
+                    RunId("run-1"),
+                    principal,
+                    BranchId("unexpected-root"),
+                )
+            }
+        ),
+    )
+    with pytest.raises(InputValidationError) as roots_changed:
+        interaction_store._validate_interaction_branch_closure_attestation(
+            closure,
+            (),
+            (),
+        )
+    assert wrong_type.value.code is InputErrorCode.INVALID_TYPE
+    assert roots_changed.value.code is InputErrorCode.CORRELATION_MISMATCH
+
+
+def test_scope_ownership_attestation_rejects_forgery_and_drift() -> None:
+    """Reject forged fields, mismatched scope, and false actor presence."""
+    scope = InteractionExecutionScope(run_id=RunId("run-1"))
+    principal = _principal()
+
+    def attestation() -> (
+        interaction_store._InteractionScopeOwnershipAttestation
+    ):
+        return interaction_store._InteractionScopeOwnershipAttestation(
+            scope=scope,
+            principal=principal,
+            actor_owned_record_match=False,
+            foreign_owned_record_match=False,
+            actor_owned_branch_match=False,
+            foreign_owned_branch_match=False,
+            _token=interaction_store._SCOPE_OWNERSHIP_ATTESTATION_TOKEN,
+        )
+
+    with pytest.raises(InputValidationError) as wrong_type:
+        interaction_store._validate_interaction_scope_ownership_attestation(
+            cast(
+                interaction_store._InteractionScopeOwnershipAttestation,
+                object(),
+            )
+        )
+    invalid_scope = attestation()
+    object.__setattr__(invalid_scope, "scope", object())
+    with pytest.raises(InputValidationError) as forged_scope:
+        interaction_store._validate_interaction_scope_ownership_attestation(
+            invalid_scope
+        )
+    invalid_principal = attestation()
+    object.__setattr__(invalid_principal, "principal", object())
+    with pytest.raises(InputValidationError) as forged_principal:
+        interaction_store._validate_interaction_scope_ownership_attestation(
+            invalid_principal
+        )
+
+    mismatched = _InteractionStoreBacking(
+        records=(),
+        branch_records=(),
+        store_generation=InteractionStoreGeneration(0),
+        scope_ownership_attestation=attestation(),
+        _token=interaction_store._STORE_BACKING_TOKEN,
+    )
+    with pytest.raises(InputValidationError) as scope_drift:
+        interaction_store._validate_scope_ownership_presence(
+            _snapshot_interaction_store_backing(mismatched),
+            InteractionExecutionScope(run_id=RunId("other-run")),
+            principal,
+            (),
+        )
+
+    pending = _pending_record()
+    false_presence = _InteractionStoreBacking(
+        records=(pending,),
+        branch_records=(),
+        store_generation=InteractionStoreGeneration(0),
+        scope_ownership_attestation=attestation(),
+        _token=interaction_store._STORE_BACKING_TOKEN,
+    )
+    with pytest.raises(InputValidationError) as presence_drift:
+        interaction_store._validate_scope_ownership_presence(
+            _snapshot_interaction_store_backing(false_presence),
+            scope,
+            principal,
+            (pending,),
+        )
+
+    foreign = replace(
+        pending,
+        request=replace(
+            pending.request,
+            origin=replace(
+                pending.request.origin,
+                principal=_principal("other-user"),
+            ),
+        ),
+    )
+    with pytest.raises(InputValidationError) as foreign_selected:
+        interaction_store._validate_scope_ownership(
+            (foreign,),
+            (),
+            frozenset(),
+            scope,
+            principal,
+            (foreign,),
+        )
+
+    assert wrong_type.value.code is InputErrorCode.INVALID_TYPE
+    assert forged_scope.value.code is InputErrorCode.INVALID_TYPE
+    assert forged_principal.value.code is InputErrorCode.INVALID_TYPE
+    assert scope_drift.value.code is InputErrorCode.CORRELATION_MISMATCH
+    assert presence_drift.value.code is InputErrorCode.CORRELATION_MISMATCH
+    assert foreign_selected.value.code is InputErrorCode.FORBIDDEN
 
 
 def test_backing_inventory_mutations_are_exact_cas_operations() -> None:

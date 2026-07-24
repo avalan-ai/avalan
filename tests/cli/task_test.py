@@ -5244,7 +5244,7 @@ class CliTaskPgsqlTestCase(TestCase):
         self.assertTrue(result)
         self.assertIn("configured", output)
         self.assertIn("tenant_tasks", output)
-        self.assertIn("20260530_0001", output)
+        self.assertIn("20260723_0002", output)
         self.assertNotIn("secret", output)
         self.assertNotIn("db.example.com", output)
 

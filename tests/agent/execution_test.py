@@ -248,7 +248,7 @@ def _correlated_messages(
     )
     return (
         _task_input_message(),
-        correlated.local_message(),
+        correlated.tool_result_message(call),
     )
 
 

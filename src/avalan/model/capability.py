@@ -7,10 +7,12 @@ from ..entities import (
     ToolCallDiagnostic,
     ToolCallParseOutcome,
     ToolCallRecoveryFormat,
+    ToolCallResult,
     ToolFormat,
     ToolNamePolicyMode,
     ToolNamePolicySettings,
     ToolValue,
+    normalize_tool_arguments,
 )
 from ..interaction.codec import (
     decode_input_question,
@@ -904,6 +906,48 @@ class CorrelatedCapabilityResult:
             role=MessageRole.TOOL,
             content=content,
             name=self.provider_name,
+        )
+
+    def tool_result_message(
+        self,
+        call: TaskInputCapabilityCall,
+    ) -> Message:
+        """Return one correlated provider-neutral tool-result message."""
+        if (
+            not isinstance(call, TaskInputCapabilityCall)
+            or call.call_id != self.call_id
+            or call.canonical_name != self.canonical_name
+            or call.provider_name != self.provider_name
+        ):
+            raise ModelCapabilityValidationError(
+                "capability.result_correlation",
+                "result does not match its task-input capability call",
+            )
+        arguments = normalize_tool_arguments(call.arguments)
+        provider_call = ToolCall(
+            id=call.call_id,
+            name=call.canonical_name,
+            arguments=arguments,
+            provider_name=call.provider_name,
+            provider_name_encoded=(call.provider_name != call.canonical_name),
+        )
+        local = self.local_message()
+        return Message(
+            role=local.role,
+            content=local.content,
+            name=local.name,
+            tool_call_result=ToolCallResult(
+                id=call.call_id,
+                call=provider_call,
+                name=provider_call.name,
+                arguments=provider_call.arguments,
+                provider_name=provider_call.provider_name,
+                provider_name_encoded=(provider_call.provider_name_encoded),
+                result=cast(
+                    ToolValue,
+                    normalize_tool_arguments(self.provider_payload()),
+                ),
+            ),
         )
 
 

@@ -10,7 +10,7 @@ from asyncio import (
     run,
 )
 from collections.abc import Callable
-from dataclasses import dataclass, fields
+from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 
 from avalan.interaction import (
@@ -1598,4 +1598,218 @@ def test_requirement_input_n_093() -> None:
             InputErrorCode.ALREADY_RESOLVED,
         ),
         (1, 1, 1, 1),
+    )
+
+
+def test_requirement_input_n_094() -> None:
+    """Reject an unauthorized principal without claiming the resolution."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        resumer = _Resumer()
+        requested = await harness.broker.request(
+            _request(
+                _DetachedHandler(),
+                run_id="n094",
+                resumer=resumer,
+                reason="Only the owning principal may answer.",
+            )
+        )
+        try:
+            assert isinstance(requested.delivery, InteractionDelivery)
+            pending = requested.delivery.record
+            unauthorized = replace(
+                _answer(pending, "n094-wrong", value=True),
+                actor=InteractionActor(
+                    principal=replace(
+                        _principal(),
+                        user_id=UserId("intruder"),
+                    )
+                ),
+            )
+            rejected = await harness.broker.resolve(unauthorized)
+            assert isinstance(
+                rejected.store_result,
+                ResolveInteractionRejected,
+            )
+            assert rejected.store_result.error.code is InputErrorCode.NOT_FOUND
+            assert not rejected.store_result.store_mutation_applied
+            assert resumer.notifications == []
+            unchanged = await _inspect(harness.broker, pending.correlation)
+            assert unchanged == pending
+
+            accepted = await harness.broker.resolve(
+                _answer(pending, "n094-owner", value=True)
+            )
+            assert isinstance(accepted.store_result, ResolveInteractionApplied)
+            await resumer.called.wait()
+            return (
+                rejected.store_result.error.code,
+                unchanged.request.state,
+                accepted.store_result.record.request.state,
+                len(resumer.notifications),
+            )
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        InputErrorCode.NOT_FOUND,
+        RequestState.PENDING,
+        RequestState.ANSWERED,
+        1,
+    )
+
+
+def test_requirement_input_n_095() -> None:
+    """Expose opaque identifiers rather than live continuation objects."""
+
+    async def exercise() -> tuple[object, ...]:
+        harness = await _harness()
+        handler = _DetachedHandler()
+        resumer = _Resumer()
+        try:
+            requested = await harness.broker.request(
+                _request(
+                    handler,
+                    run_id="n095",
+                    resumer=resumer,
+                    reason="External continuation references stay opaque.",
+                )
+            )
+            assert isinstance(requested.delivery, InteractionDelivery)
+            delivery = requested.delivery
+            public_values = tuple(
+                getattr(delivery, item.name)
+                for item in fields(InteractionDelivery)
+            )
+            assert tuple(
+                item.name for item in fields(InteractionDelivery)
+            ) == (
+                "correlation",
+                "record",
+                "handler_attempts",
+                "resumer_failed",
+            )
+            assert isinstance(delivery.correlation.request_id, str)
+            assert isinstance(delivery.correlation.continuation_id, str)
+            assert not hasattr(delivery, "handler")
+            assert not hasattr(delivery, "resumer")
+            assert not hasattr(delivery, "callback")
+            assert not any(
+                isinstance(value, Future) or callable(value)
+                for value in public_values
+            )
+            assert handler.contexts[0].request == delivery.record.request
+            assert resumer.notifications == []
+            return (
+                type(delivery.correlation.request_id),
+                type(delivery.correlation.continuation_id),
+                delivery.record.request.state,
+            )
+        finally:
+            await harness.broker.aclose()
+
+    request_type, continuation_type, state = run(exercise())
+    assert request_type is str
+    assert continuation_type is str
+    assert state is RequestState.PENDING
+
+
+def test_requirement_input_n_096() -> None:
+    """Map disconnect to declared outcomes and never to decline."""
+
+    async def exercise() -> tuple[ResolutionStatus | None, ...]:
+        harness = await _harness()
+        try:
+            pending_resumer = _Resumer()
+            pending_result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n096-pending",
+                    resumer=pending_resumer,
+                    reason="Detached transport stays pending.",
+                )
+            )
+            unavailable_result = await harness.broker.request(
+                _request(
+                    _DisconnectedHandler(),
+                    run_id="n096-unavailable",
+                    reason="Lost attached capability becomes unavailable.",
+                )
+            )
+            timeout_resumer = _Resumer()
+            timeout_result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n096-timeout",
+                    resumer=timeout_resumer,
+                    mode=RequirementMode.ADVISORY,
+                    advisory_wait_seconds=2,
+                    reason="Detached advisory input may time out.",
+                )
+            )
+            cancel_resumer = _Resumer()
+            cancel_result = await harness.broker.request(
+                _request(
+                    _DetachedHandler(),
+                    run_id="n096-cancel",
+                    resumer=cancel_resumer,
+                    reason="Only explicit cancellation cancels.",
+                )
+            )
+            deliveries = (
+                pending_result.delivery,
+                unavailable_result.delivery,
+                timeout_result.delivery,
+                cancel_result.delivery,
+            )
+            assert all(
+                isinstance(delivery, InteractionDelivery)
+                for delivery in deliveries
+            )
+            pending, unavailable, timed, cancellable = deliveries
+            assert isinstance(pending, InteractionDelivery)
+            assert isinstance(unavailable, InteractionDelivery)
+            assert isinstance(timed, InteractionDelivery)
+            assert isinstance(cancellable, InteractionDelivery)
+
+            await _wait_until(lambda: 2.0 in harness.clock.wait_calls)
+            harness.clock.advance(2)
+            await timeout_resumer.called.wait()
+            cancelled = await harness.broker.cancel(
+                CancelInteractionCommand(
+                    actor=_actor(),
+                    correlation=cancellable.correlation,
+                    provenance=AnswerProvenance.HUMAN,
+                    expected_state_revision=(
+                        cancellable.record.request.state_revision
+                    ),
+                )
+            )
+            assert isinstance(cancelled.store_result, CancelInteractionApplied)
+            await cancel_resumer.called.wait()
+            records = (
+                await _inspect(harness.broker, pending.correlation),
+                await _inspect(harness.broker, unavailable.correlation),
+                await _inspect(harness.broker, timed.correlation),
+                cancelled.store_result.record,
+            )
+            statuses = tuple(
+                (
+                    record.request.resolution.status
+                    if record.request.resolution is not None
+                    else None
+                )
+                for record in records
+            )
+            assert ResolutionStatus.DECLINED not in statuses
+            return statuses
+        finally:
+            await harness.broker.aclose()
+
+    assert run(exercise()) == (
+        None,
+        ResolutionStatus.UNAVAILABLE,
+        ResolutionStatus.TIMED_OUT,
+        ResolutionStatus.CANCELLED,
     )

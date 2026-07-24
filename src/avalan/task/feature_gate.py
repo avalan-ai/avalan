@@ -144,8 +144,8 @@ _FEATURE_GATE_SPECS = {
         category=FeatureGateCategory.DEPENDENCY,
         message="PostgreSQL task migrations require Alembic and SQLAlchemy.",
         hint=(
-            "Install the task migration dependencies before running "
-            "PostgreSQL schema migrations."
+            'Install with `python3 -m pip install -U "avalan[task-pgsql]"` '
+            "before running PostgreSQL schema migrations."
         ),
         modules=("alembic", "sqlalchemy"),
         check_locations=(

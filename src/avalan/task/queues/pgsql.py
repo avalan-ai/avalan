@@ -22,6 +22,7 @@ from ..idempotency import (
     TaskIdempotencyReservationResult,
 )
 from ..queue import (
+    TaskDurableSuspensionCoordinator,
     TaskQueueAbandonment,
     TaskQueueArtifact,
     TaskQueueClaim,
@@ -33,8 +34,10 @@ from ..queue import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueNotFoundError,
+    TaskQueueReentry,
     TaskQueueRetry,
     TaskQueueSubmission,
+    TaskQueueSuspension,
 )
 from ..state import (
     TaskAttemptState,
@@ -50,6 +53,7 @@ from ..store import (
     TaskExecutionResult,
     TaskRun,
     TaskSnapshotMetadata,
+    TaskStoreConflictError,
     freeze_snapshot_metadata,
 )
 from ..stores.pgsql import (
@@ -63,6 +67,7 @@ from ..stores.pgsql import (
     _SELECT_ATTEMPTS_FOR_RUN_SQL,
     _SELECT_IDEMPOTENCY_SQL,
     _UPDATE_RUN_STATE_SQL,
+    PgsqlTaskStore,
     _artifact_from_row,
     _artifact_provenance_to_payload,
     _artifact_ref_to_payload,
@@ -95,11 +100,15 @@ class PgsqlTaskQueue:
         *,
         clock: Callable[[], datetime] | None = None,
         id_factory: Callable[[], str] | None = None,
+        durable_reentry_coordinator: (
+            TaskDurableSuspensionCoordinator | None
+        ) = None,
     ) -> None:
         assert hasattr(database, "connection")
         self._database = database
         self._clock = clock or _utc_now
         self._id_factory = id_factory or _uuid_id
+        self._durable_reentry_coordinator = durable_reentry_coordinator
 
     async def open(self) -> None:
         open_database = getattr(self._database, "open", None)
@@ -413,13 +422,20 @@ class PgsqlTaskQueue:
                 now=checked_at,
                 metadata=safe_metadata,
             )
-            run, attempt = await _create_claimed_attempt(
-                unit,
-                run=run,
-                attempt_id=self._new_id(),
-                now=checked_at,
-                metadata=safe_metadata,
-            )
+            if queue_row.get("is_reentry") is True:
+                attempt = await _reuse_claimed_suspended_attempt(
+                    unit,
+                    run=run,
+                    now=checked_at,
+                )
+            else:
+                run, attempt = await _create_claimed_attempt(
+                    unit,
+                    run=run,
+                    attempt_id=self._new_id(),
+                    now=checked_at,
+                    metadata=safe_metadata,
+                )
             return TaskQueueClaim(
                 queue_item=_queue_item_from_row(
                     queue_row,
@@ -489,6 +505,50 @@ class PgsqlTaskQueue:
                 operation="task_queue_heartbeat",
                 callback=execute,
             ),
+        )
+
+    async def suspend_claim(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        segment_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSuspension:
+        """Atomically suspend claimed work at a durable input checkpoint."""
+        return await self._task_store().suspend_claim(
+            queue_item_id,
+            claim_token=claim_token,
+            segment_id=segment_id,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            checkpoint_id=checkpoint_id,
+            now=now,
+            metadata=metadata,
+        )
+
+    async def requeue_suspended(
+        self,
+        run_id: str,
+        *,
+        request_id: str,
+        continuation_id: str,
+        resolution_revision: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry:
+        """Requeue the same logical task after accepted input resolution."""
+        return await self._task_store().requeue_suspended(
+            run_id,
+            request_id=request_id,
+            continuation_id=continuation_id,
+            resolution_revision=resolution_revision,
+            now=now,
+            metadata=metadata,
         )
 
     async def complete(
@@ -746,10 +806,55 @@ class PgsqlTaskQueue:
         checked_at = _ensure_aware_utc(now or self._now())
         safe_metadata = freeze_snapshot_metadata(metadata)
 
+        async def discover_durable(unit: PgsqlUnitOfWork) -> object:
+            await unit.cursor.execute(
+                _SELECT_EXPIRED_DURABLE_REENTRIES_SQL,
+                (queue_name, checked_at, limit),
+            )
+            return tuple(await unit.cursor.fetchall())
+
+        durable_rows = cast(
+            tuple[PgsqlRow, ...],
+            await self._transaction(
+                operation="task_queue_discover_expired_durable_reentry",
+                callback=discover_durable,
+            ),
+        )
+        if durable_rows and self._durable_reentry_coordinator is None:
+            raise TaskQueueConflictError(
+                "expired durable task reentry requires its coordinator"
+            )
+        coordinator = self._durable_reentry_coordinator
+        if coordinator is not None:
+            failure = TaskExecutionResult(
+                error={"code": "expired_durable_reentry_claim"}
+            )
+            for queue_row in durable_rows:
+                try:
+                    await coordinator.reconcile_expired_reentry(
+                        queue_item_id=_row_str(
+                            queue_row,
+                            "queue_item_id",
+                        ),
+                        expected_claim_token=_row_str(
+                            queue_row,
+                            "claim_token",
+                        ),
+                        task_run_id=_row_str(queue_row, "run_id"),
+                        result=failure,
+                        now=checked_at,
+                        metadata=safe_metadata,
+                    )
+                except TaskStoreConflictError:
+                    continue
+        generic_limit = limit - len(durable_rows)
+        if generic_limit <= 0:
+            return ()
+
         async def execute(unit: PgsqlUnitOfWork) -> object:
             await unit.cursor.execute(
                 _SELECT_EXPIRED_CLAIMS_SQL,
-                (queue_name, checked_at, limit),
+                (queue_name, checked_at, generic_limit),
             )
             expired_rows = tuple(await unit.cursor.fetchall())
             abandonments = []
@@ -923,6 +1028,13 @@ class PgsqlTaskQueue:
         _assert_non_empty_string(value, "generated id")
         return value
 
+    def _task_store(self) -> PgsqlTaskStore:
+        return PgsqlTaskStore(
+            self._database,
+            clock=self._clock,
+            id_factory=self._id_factory,
+        )
+
     def _now(self) -> datetime:
         value = self._clock()
         assert isinstance(value, datetime), "clock must return a datetime"
@@ -970,9 +1082,13 @@ RETURNING *
 
 _CLAIM_QUEUE_ITEM_SQL = """
 WITH "candidate" AS (
-    SELECT q."queue_item_id"
+    SELECT
+        q."queue_item_id",
+        a."state" AS "last_attempt_state"
     FROM "task_queue_items" q
     JOIN "task_runs" r ON r."run_id" = q."run_id"
+    LEFT JOIN "task_attempts" a
+        ON a."attempt_id" = r."last_attempt_id"
     WHERE
         q."queue_name" = %s
         AND q."state" = 'available'
@@ -989,12 +1105,19 @@ SET "state" = 'claimed',
     "worker_id" = %s,
     "claim_token" = %s,
     "heartbeat_at" = %s,
-    "attempts" = q."attempts" + 1,
+    "attempts" = q."attempts" + CASE
+        WHEN c."last_attempt_state" = 'suspended' THEN 0
+        ELSE 1
+    END,
     "updated_at" = %s
 FROM "candidate" c, "task_runs" r
 WHERE q."queue_item_id" = c."queue_item_id"
   AND r."run_id" = q."run_id"
-RETURNING q.*, r."state" AS "run_state"
+RETURNING
+    q.*,
+    r."state" AS "run_state",
+    r."last_attempt_id",
+    c."last_attempt_state" = 'suspended' AS "is_reentry"
 """
 
 _HEARTBEAT_QUEUE_ITEM_SQL = """
@@ -1076,6 +1199,25 @@ WHERE "run_id" = %s
 RETURNING *
 """
 
+_REUSE_CLAIMED_SUSPENDED_ATTEMPT_SQL = """
+UPDATE "task_attempts" a
+SET "context" = jsonb_set(
+        a."context",
+        '{claim}',
+        %s::jsonb,
+        true
+    ),
+    "updated_at" = %s
+FROM "task_runs" r
+WHERE a."attempt_id" = r."last_attempt_id"
+  AND a."attempt_id" = %s
+  AND a."run_id" = r."run_id"
+  AND a."state" = 'suspended'
+  AND r."state" = 'claimed'
+  AND (r."claim"->>'claim_token') = %s
+RETURNING a.*
+"""
+
 _UPDATE_CLAIMED_RUN_STATE_SQL = """
 UPDATE "task_runs"
 SET "state" = %s,
@@ -1126,11 +1268,30 @@ JOIN "task_runs" r ON r."run_id" = q."run_id"
 WHERE q."queue_name" = %s
   AND q."state" = 'claimed'
   AND q."lease_expires_at" <= %s
+  AND q."request_id" IS NULL
+  AND q."continuation_id" IS NULL
   AND r."state" IN ('claimed', 'running', 'cancel_requested')
   AND (r."claim"->>'claim_token') = q."claim_token"
 ORDER BY q."lease_expires_at", q."queue_item_id"
 LIMIT %s
 FOR UPDATE OF q, r SKIP LOCKED
+"""
+
+_SELECT_EXPIRED_DURABLE_REENTRIES_SQL = """
+SELECT q."queue_item_id", q."run_id", q."claim_token"
+FROM "task_queue_items" q
+JOIN "task_runs" r ON r."run_id" = q."run_id"
+WHERE q."queue_name" = %s
+  AND q."state" = 'claimed'
+  AND q."lease_expires_at" <= %s
+  AND (
+      q."request_id" IS NOT NULL
+      OR q."continuation_id" IS NOT NULL
+  )
+  AND r."state" IN ('claimed', 'running', 'cancel_requested')
+  AND (r."claim"->>'claim_token') = q."claim_token"
+ORDER BY q."lease_expires_at", q."queue_item_id"
+LIMIT %s
 """
 
 _DRAIN_QUEUE_SQL = """
@@ -1527,6 +1688,35 @@ async def _create_claimed_attempt(
     if run_row is None:
         raise TaskQueueConflictError("task run claim did not match")
     return _run_from_row(run_row), _attempt_from_row(inserted_attempt_row)
+
+
+async def _reuse_claimed_suspended_attempt(
+    unit: PgsqlUnitOfWork,
+    *,
+    run: TaskRun,
+    now: datetime,
+) -> TaskAttempt:
+    claim = run.claim
+    attempt_id = run.last_attempt_id
+    if claim is None or attempt_id is None:
+        raise TaskQueueConflictError(
+            "task reentry lacks a suspended claimed attempt"
+        )
+    await unit.cursor.execute(
+        _REUSE_CLAIMED_SUSPENDED_ATTEMPT_SQL,
+        (
+            _json(_claim_to_payload(claim)),
+            now,
+            attempt_id,
+            claim.claim_token,
+        ),
+    )
+    row = await unit.cursor.fetchone()
+    if row is None:
+        raise TaskQueueConflictError(
+            "task reentry suspended attempt did not match"
+        )
+    return _attempt_from_row(row)
 
 
 async def _queueable_run_row(

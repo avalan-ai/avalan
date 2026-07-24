@@ -7,6 +7,7 @@ from avalan.task import (
     TASK_RUN_TERMINAL_STATES,
     VALID_TASK_ATTEMPT_TRANSITIONS,
     VALID_TASK_RUN_TRANSITIONS,
+    TaskAttemptSegmentState,
     TaskAttemptState,
     TaskRunState,
     is_terminal_attempt_state,
@@ -15,12 +16,27 @@ from avalan.task import (
     is_valid_run_transition,
     valid_attempt_transitions,
     valid_run_transitions,
+    validate_attempt_segment_transition,
     validate_attempt_transition,
     validate_run_transition,
 )
 
 
 class TaskStateTest(TestCase):
+    def test_attempt_segment_transition_validation_is_explicit(self) -> None:
+        validate_attempt_segment_transition(
+            TaskAttemptSegmentState.CREATED,
+            TaskAttemptSegmentState.RUNNING,
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "invalid task attempt segment transition: created -> succeeded",
+        ):
+            validate_attempt_segment_transition(
+                TaskAttemptSegmentState.CREATED,
+                TaskAttemptSegmentState.SUCCEEDED,
+            )
+
     def test_run_state_values_preserve_contract_vocabulary(self) -> None:
         self.assertEqual(TaskRunState.CREATED.value, "created")
         self.assertEqual(TaskRunState.VALIDATED.value, "validated")
@@ -66,8 +82,15 @@ class TaskStateTest(TestCase):
                 TaskRunState.FAILED,
             },
             TaskRunState.RUNNING: {
+                TaskRunState.INPUT_REQUIRED,
                 TaskRunState.SUCCEEDED,
                 TaskRunState.FAILED,
+                TaskRunState.QUEUED,
+                TaskRunState.CANCEL_REQUESTED,
+                TaskRunState.EXPIRED,
+            },
+            TaskRunState.INPUT_REQUIRED: {
+                TaskRunState.RUNNING,
                 TaskRunState.QUEUED,
                 TaskRunState.CANCEL_REQUESTED,
                 TaskRunState.EXPIRED,
@@ -112,7 +135,13 @@ class TaskStateTest(TestCase):
                 TaskAttemptState.ABANDONED,
             },
             TaskAttemptState.RUNNING: {
+                TaskAttemptState.SUSPENDED,
                 TaskAttemptState.SUCCEEDED,
+                TaskAttemptState.FAILED,
+                TaskAttemptState.ABANDONED,
+            },
+            TaskAttemptState.SUSPENDED: {
+                TaskAttemptState.RUNNING,
                 TaskAttemptState.FAILED,
                 TaskAttemptState.ABANDONED,
             },

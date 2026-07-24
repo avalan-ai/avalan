@@ -1,5 +1,6 @@
 """Exercise the fail-closed structured-input acceptance verifier."""
 
+from collections.abc import Callable
 from copy import deepcopy
 from dataclasses import replace
 from hashlib import sha256
@@ -10,7 +11,7 @@ from subprocess import run
 from sys import modules
 from sys import path as sys_path
 from types import ModuleType, SimpleNamespace
-from typing import Any
+from typing import Any, cast
 
 import pytest
 
@@ -92,6 +93,7 @@ def _matrix_digest(payload: dict[str, Any]) -> str:
             "domain_side_effect_scope",
             "surfaces",
             "conditions",
+            "activation_schedule_corrections",
             "cells",
         )
     }
@@ -691,7 +693,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 4
+    assert _VERIFIER.load_manifest(path).current_phase == 5
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -881,12 +883,14 @@ def test_acceptance_rejects_invalid_inventory(
 
 
 def test_current_runtime_manifest_inventory_fails_closed() -> None:
-    """Reject missing, extra, moved, inactive, or public current nodes."""
+    """Reject missing, extra, moved, inactive, or gate-owned current nodes."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
     runtime_nodes = tuple(
         node
         for node in manifest.nodes
-        if node.node_id.split("::", 1)[0]
+        if node.active_from_phase == _VERIFIER._CURRENT_BOUNDARY_PHASE
+        and node.lifecycle == "active"
+        and node.node_id.split("::", 1)[0]
         in _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES
     )
     assert runtime_nodes
@@ -896,7 +900,7 @@ def test_current_runtime_manifest_inventory_fails_closed() -> None:
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="current runtime acceptance inventory changed",
+        match="reviewed runtime acceptance inventory changed",
     ):
         _VERIFIER._validate_current_manifest_inventory(missing)
 
@@ -910,7 +914,7 @@ def test_current_runtime_manifest_inventory_fails_closed() -> None:
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="current runtime acceptance inventory changed",
+        match="reviewed runtime acceptance inventory changed",
     ):
         _VERIFIER._validate_current_manifest_inventory(
             (
@@ -928,13 +932,13 @@ def test_current_runtime_manifest_inventory_fails_closed() -> None:
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="current runtime acceptance inventory changed",
+        match="reviewed runtime acceptance inventory changed",
     ):
         _VERIFIER._validate_current_manifest_inventory(moved_nodes)
 
     for changed in (
         replace(runtime_nodes[0], lifecycle="planned"),
-        replace(runtime_nodes[0], category="public_e2e"),
+        replace(runtime_nodes[0], requirement_ids=("INPUT-GATE-001",)),
     ):
         changed_nodes = tuple(
             changed if node is runtime_nodes[0] else node
@@ -942,18 +946,68 @@ def test_current_runtime_manifest_inventory_fails_closed() -> None:
         )
         with pytest.raises(
             _VERIFIER.AcceptanceVerificationError,
-            match="current runtime acceptance inventory changed",
+            match="reviewed runtime acceptance inventory changed",
         ):
             _VERIFIER._validate_current_manifest_inventory(changed_nodes)
 
 
-def test_current_runtime_file_inventory_fails_closed(tmp_path: Path) -> None:
-    """Reject a missing reviewed file before current collection."""
+def test_current_runtime_file_inventory_fails_closed(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject file or expanded-instance drift before current execution."""
     for relative in _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES:
         path = tmp_path / relative
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text("", encoding="utf-8")
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    definitions = _VERIFIER._current_runtime_node_ids(manifest.nodes)
+    instances = _VERIFIER._current_runtime_instance_ids(manifest)
+    assert len(definitions) == 436
+    assert len(instances) == 522
+    requested: list[tuple[str, ...]] = []
+
+    def collection_payload(node_ids: tuple[str, ...]) -> dict[str, object]:
+        return {
+            "exit_code": 0,
+            "items": [
+                {"nodeid": node_id, "markers": []} for node_id in node_ids
+            ],
+            "deselected": [],
+            "collection_reports": [],
+            "probe_stdout": "",
+            "probe_stderr": "",
+        }
+
+    def collect_instances(
+        driver: str,
+        sentinel: str,
+        node_ids: tuple[str, ...],
+        root: Path,
+    ) -> dict[str, object]:
+        del driver, sentinel, root
+        requested.append(node_ids)
+        return collection_payload(instances)
+
+    monkeypatch.setattr(_VERIFIER, "_run_probe", collect_instances)
+    _VERIFIER._validate_current_runtime_collection(manifest, tmp_path)
+    assert requested == [definitions]
+
+    for drifted in (
+        instances[1:],
+        (*instances, "tests/unexpected_test.py::test_x"),
+    ):
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_run_probe",
+            lambda *_args, drifted=drifted: collection_payload(drifted),
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="acceptance nodes were not exactly collected",
+        ):
+            _VERIFIER._validate_current_runtime_collection(manifest, tmp_path)
+
     missing = tmp_path / _VERIFIER._EXPECTED_CURRENT_RUNTIME_FILES[0]
     missing.unlink()
     with pytest.raises(
@@ -961,6 +1015,39 @@ def test_current_runtime_file_inventory_fails_closed(tmp_path: Path) -> None:
         match="current runtime test-file inventory changed",
     ):
         _VERIFIER._validate_current_runtime_collection(manifest, tmp_path)
+
+
+def test_task_failure_schedule_is_frozen() -> None:
+    """Reject lifecycle or activation-boundary drift for task failures."""
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    scheduled = tuple(
+        node
+        for node in manifest.nodes
+        if node.node_id in _VERIFIER._EXPECTED_TASK_FAILURE_NODES
+    )
+    assert frozenset(node.node_id for node in scheduled) == (
+        _VERIFIER._EXPECTED_TASK_FAILURE_NODES
+    )
+    assert all(
+        node.lifecycle == "active"
+        and node.active_from_phase == _VERIFIER._CURRENT_BOUNDARY_PHASE
+        and node.category == "public_e2e"
+        for node in scheduled
+    )
+
+    moved = replace(
+        scheduled[0],
+        lifecycle="planned",
+        active_from_phase=_VERIFIER._CURRENT_BOUNDARY_PHASE + 1,
+    )
+    moved_nodes = tuple(
+        moved if node is scheduled[0] else node for node in manifest.nodes
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="scheduled task failure-node inventory changed",
+    ):
+        _VERIFIER._validate_task_failure_schedule(moved_nodes)
 
 
 def test_current_regression_classification_fails_closed(
@@ -974,6 +1061,25 @@ def test_current_regression_classification_fails_closed(
     _VERIFIER._validate_current_regression_classification(
         classification, manifest, _ROOT
     )
+    semantic_partition = _VERIFIER._current_semantic_definition_partition(
+        frozenset(("equal", "modified", "new")),
+        {"equal": "same", "modified": "before"},
+        {"equal": "same", "modified": "after", "new": "added"},
+    )
+    assert semantic_partition == (
+        frozenset(("new",)),
+        frozenset(("modified",)),
+        frozenset(("equal",)),
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="current semantic definitions do not partition",
+    ):
+        _VERIFIER._current_semantic_definition_partition(
+            frozenset(("missing",)),
+            {},
+            {},
+        )
 
     baseline, current, paths = _VERIFIER._current_changed_test_definitions(
         _ROOT
@@ -986,12 +1092,98 @@ def test_current_regression_classification_fails_closed(
         for relative in support_baseline
         if support_baseline[relative] != support_current[relative]
     }
-    assert len(support_baseline) == 51
-    assert len(changed_support) == 43
-    assert len(support_baseline.keys() - changed_support) == 8
+    assert len(support_baseline) == _VERIFIER._EXPECTED_CURRENT_TEST_FILE_COUNT
+    assert (
+        len(changed_support)
+        == _VERIFIER._EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT
+    )
+    assert (
+        len(support_baseline.keys() - changed_support)
+        == _VERIFIER._EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT
+    )
     assert changed_support == set(
         _VERIFIER._EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS
     )
+
+    real_probe = _VERIFIER._run_probe
+
+    def inject_unreviewed_inherited(
+        driver: str,
+        sentinel: str,
+        node_ids: tuple[str, ...],
+        root: Path,
+    ) -> dict[str, object]:
+        payload = real_probe(driver, sentinel, node_ids, root)
+        if sentinel == _VERIFIER._COLLECT_SENTINEL:
+            items = payload["items"]
+            assert isinstance(items, list)
+            items.append(
+                {
+                    "nodeid": (
+                        "tests/task/stores/pgsql_contract_test.py::"
+                        "PgsqlStoreContractTest::test_unreviewed_inherited"
+                    ),
+                    "markers": [],
+                }
+            )
+        return cast(dict[str, object], payload)
+
+    with monkeypatch.context() as exact_inherited:
+        exact_inherited.setattr(
+            _VERIFIER,
+            "_run_probe",
+            inject_unreviewed_inherited,
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="does not map to one static definition",
+        ):
+            _VERIFIER._current_changed_test_definitions(_ROOT)
+
+    with monkeypatch.context() as missing_inherited:
+        missing_inherited.setattr(
+            _VERIFIER,
+            "_EXPECTED_INHERITED_COLLECTIONS",
+            frozenset(tuple(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[1:]),
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="does not map to one static definition",
+        ):
+            _VERIFIER._current_changed_test_definitions(_ROOT)
+
+    inherited_id = sorted(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[0]
+    invalid_owners = dict(_VERIFIER._EXPECTED_INHERITED_COLLECTION_OWNERS)
+    invalid_owners[inherited_id] = (
+        "tests/task/store_contract_test.py::"
+        "StoreContractAssertions::test_missing_static_owner"
+    )
+    with monkeypatch.context() as invalid_inherited_owner:
+        invalid_inherited_owner.setattr(
+            _VERIFIER,
+            "_EXPECTED_INHERITED_COLLECTION_OWNERS",
+            invalid_owners,
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="lacks its exact static owner",
+        ):
+            _VERIFIER._current_changed_test_definitions(_ROOT)
+
+    other_inherited_id = sorted(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[1]
+    swapped_owners = dict(_VERIFIER._EXPECTED_INHERITED_COLLECTION_OWNERS)
+    swapped_owners[inherited_id] = swapped_owners[other_inherited_id]
+    with monkeypatch.context() as swapped_inherited_owner:
+        swapped_inherited_owner.setattr(
+            _VERIFIER,
+            "_EXPECTED_INHERITED_COLLECTION_OWNERS",
+            swapped_owners,
+        )
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match="reviewed inherited collection inventory changed",
+        ):
+            _VERIFIER._current_changed_test_definitions(_ROOT)
 
     support_source = (
         "import pytest\n\nVALUE = 1\n\nclass Base:\n    pass\n\n"
@@ -1197,6 +1389,21 @@ def test_current_regression_classification_fails_closed(
             "_validate_frozen_duplicate_test_definitions",
             lambda *_args: None,
         )
+        patch_context.setattr(
+            _VERIFIER,
+            "_EXPECTED_NONCONVENTION_TEST_PATHS",
+            frozenset(),
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_EXPECTED_INHERITED_COLLECTIONS",
+            frozenset(),
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_EXPECTED_INHERITED_COLLECTION_SHA256",
+            sha256(b"").hexdigest(),
+        )
         patch_context.setattr(_VERIFIER, "_run_probe", collect_once)
         synthetic_baseline, synthetic_current, synthetic_paths = (
             _VERIFIER._current_changed_test_definitions(tmp_path)
@@ -1242,6 +1449,11 @@ def test_current_regression_classification_fails_closed(
                 _VERIFIER,
                 "_validate_frozen_duplicate_test_definitions",
                 lambda *_args: None,
+            )
+            patch_context.setattr(
+                _VERIFIER,
+                "_EXPECTED_NONCONVENTION_TEST_PATHS",
+                frozenset(),
             )
             with pytest.raises(
                 _VERIFIER.AcceptanceVerificationError,
@@ -1315,6 +1527,11 @@ def test_current_regression_classification_fails_closed(
             _VERIFIER,
             "_current_baseline_source",
             lambda *_args: "def test_deleted():\n    assert value\n",
+        )
+        patch_context.setattr(
+            _VERIFIER,
+            "_EXPECTED_NONCONVENTION_TEST_PATHS",
+            frozenset(),
         )
         with pytest.raises(
             _VERIFIER.AcceptanceVerificationError,
@@ -1450,14 +1667,18 @@ def test_current_regression_classification_fails_closed(
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="legacy test-definition changes lack exact classification",
+        match="new test definitions lack semantic acceptance",
     ):
         _VERIFIER._validate_current_regression_classification(
             classification, manifest, _ROOT
         )
 
     removed = dict(current)
-    removed.pop(legacy)
+    removed.pop(
+        "tests/agent/execution_message_exactness_test.py::"
+        "CorrelatedInteractionMessagesTest::"
+        "test_result_messages_reject_order_substitution_and_extras"
+    )
     monkeypatch.setattr(
         _VERIFIER,
         "_current_changed_test_definitions",
@@ -1741,7 +1962,7 @@ def test_evidence_state_and_review_history_fail_closed(
     ] = "poetry run pytest --verbose -s tests/agent/execution_test.py"
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="exact current focused pytest command",
+        match="exact ordered common gate commands",
     ):
         _VERIFIER._validate_quality_gate_evidence(
             incomplete_focused_command,
@@ -1769,27 +1990,24 @@ def test_evidence_state_and_review_history_fail_closed(
         )
 
     commands = pending["required_commands"]
-    focused = commands[-1]
+    focused = commands[2]
     results = [
         {
             "command": commands[0],
             "exit_code": 0,
-            "passed": 1,
-            "skipped": 0,
-            "subtests_passed": 1,
-            "seconds": 1.0,
-            "deselected": 0,
-            "xfail": 0,
-            "xpass": 0,
+            "source_files_typechecked": 10,
+            "script_files_typechecked": 6,
         },
         {
             "command": commands[1],
             "exit_code": 0,
-            "output_lines": [],
+            "active_fixtures": active_type_fixtures,
         },
         {
-            "command": commands[2],
+            "command": focused,
             "exit_code": 0,
+            "active_nodes": active_acceptance_nodes,
+            "active_instances": active_pytest_instances,
             "covered_statements": 100,
             "total_statements": 100,
             "source_files": 10,
@@ -1799,31 +2017,11 @@ def test_evidence_state_and_review_history_fail_closed(
             "skipped": 0,
             "subtests_passed": 1,
             "seconds": 1.0,
+            "deselected": 0,
+            "xfail": 0,
+            "xpass": 0,
         },
-        {
-            "command": commands[3],
-            "exit_code": 0,
-            "active_nodes": active_acceptance_nodes,
-            "active_instances": active_pytest_instances,
-        },
-        {
-            "command": commands[4],
-            "exit_code": 0,
-            "active_fixtures": active_type_fixtures,
-        },
-        {
-            "command": commands[5],
-            "exit_code": 0,
-            "source_files_typechecked": 10,
-            "script_files_typechecked": 6,
-        },
-        {"command": commands[6], "exit_code": 0},
-        {
-            "command": focused,
-            "exit_code": 0,
-            "active_nodes": _VERIFIER._EXPECTED_CURRENT_RUNTIME_NODE_COUNT,
-            "active_instances": _VERIFIER._EXPECTED_CURRENT_RUNTIME_NODE_COUNT,
-        },
+        {"command": commands[3], "exit_code": 0},
     ]
     tree_binding = {
         "head": "a" * 40,
@@ -1890,10 +2088,10 @@ def test_evidence_state_and_review_history_fail_closed(
         evidence_payload=evidence,
     )
     stale_focused = deepcopy(complete)
-    stale_focused["results"][-1]["active_instances"] -= 1
+    stale_focused["results"][2]["active_instances"] -= 1
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
-        match="current focused result",
+        match="exact PostgreSQL acceptance evidence is incomplete",
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_focused,
@@ -2017,14 +2215,14 @@ def test_evidence_state_and_review_history_fail_closed(
         evidence["review_history_phase1_sha256"],
         evidence["review_history_phase2_sha256"],
         evidence["review_history_prior_sha256"],
-        4,
+        5,
         "/root",
     )
     quality_history = deepcopy(evidence["quality_history"])
     _VERIFIER._validate_quality_history(
         quality_history,
         evidence["quality_history_sha256"],
-        4,
+        5,
     )
     rewritten_quality = deepcopy(quality_history)
     rewritten_quality[0]["quality_gate_sha256"] = "0" * 64
@@ -2041,7 +2239,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_quality,
             rewritten_quality_digest,
-            4,
+            5,
         )
 
     rewritten_phase2_quality = deepcopy(quality_history)
@@ -2061,7 +2259,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_phase2_quality,
             rewritten_phase2_quality_digest,
-            4,
+            5,
         )
 
     rewritten_prior_quality = deepcopy(quality_history)
@@ -2079,7 +2277,27 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_prior_quality,
             rewritten_prior_quality_digest,
-            4,
+            5,
+        )
+
+    rewritten_frozen_quality = deepcopy(quality_history)
+    rewritten_frozen_quality[3]["quality_gate_sha256"] = "3" * 64
+    rewritten_frozen_quality_digest = _canonical_digest(
+        rewritten_frozen_quality
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_QUALITY_HISTORY_SHA256",
+        rewritten_frozen_quality_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="quality history lost its .* record",
+    ):
+        _VERIFIER._validate_quality_history(
+            rewritten_frozen_quality,
+            rewritten_frozen_quality_digest,
+            5,
         )
 
     wrong_terminal_reviewer = deepcopy(history)
@@ -2101,7 +2319,7 @@ def test_evidence_state_and_review_history_fail_closed(
             evidence["review_history_phase1_sha256"],
             evidence["review_history_phase2_sha256"],
             evidence["review_history_prior_sha256"],
-            4,
+            5,
             "/root",
         )
     for index, message in (
@@ -2130,7 +2348,7 @@ def test_evidence_state_and_review_history_fail_closed(
                 evidence["review_history_phase1_sha256"],
                 evidence["review_history_phase2_sha256"],
                 evidence["review_history_prior_sha256"],
-                4,
+                5,
                 "/root",
             )
 
@@ -2288,6 +2506,115 @@ def test_acceptance_rejects_na_reason_without_exact_ids(
         validate(unowned_cell)
 
 
+def test_acceptance_rejects_failure_schedule_evidence_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require the exact reviewed 58-cell forward schedule correction."""
+    manifest_payload = _read("acceptance_manifest.json")
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_ACCEPTANCE_LEDGER_SHA256",
+        _ledger_digest(manifest_payload),
+    )
+    manifest_path = tmp_path / "acceptance_manifest.json"
+    _write(manifest_path, manifest_payload)
+    manifest = _VERIFIER.load_manifest(manifest_path)
+    requirements_payload = _read("requirements_traceability.json")
+    requirements = frozenset(
+        requirement["id"]
+        for requirement in requirements_payload["requirements"]
+    )
+    decisions = _read("contract_decisions.json")
+    decision_surfaces = frozenset(
+        row["public_failure_surface"]
+        for row in decisions["capability_matrix"]["rows"]
+        if row["public_failure_surface"] is not None
+    )
+    public_envelopes = frozenset(
+        decisions["error_status"]["public_envelope_catalog"]
+    )
+    matrix = _read("failure_matrix.json")
+    matrix_path = tmp_path / "failure_matrix.json"
+
+    def validate(payload: dict[str, Any]) -> None:
+        digest = _matrix_digest(payload)
+        payload["matrix_sha256"] = digest
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_EXPECTED_FAILURE_MATRIX_SHA256",
+            digest,
+        )
+        _write(matrix_path, payload)
+        _VERIFIER._validate_failure_matrix(
+            matrix_path,
+            manifest,
+            requirements,
+            decision_surfaces,
+            public_envelopes,
+        )
+
+    validate(deepcopy(matrix))
+
+    missing_group = deepcopy(matrix)
+    missing_group["activation_schedule_corrections"].pop()
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="frozen 58-cell review",
+    ):
+        validate(missing_group)
+
+    overlap = deepcopy(matrix)
+    overlap["activation_schedule_corrections"].append(
+        deepcopy(overlap["activation_schedule_corrections"][0])
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="overlaps cell",
+    ):
+        validate(overlap)
+
+    backward = deepcopy(matrix)
+    backward["activation_schedule_corrections"][0][
+        "corrected_active_from_phase"
+    ] = 5
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="move forward from the current implemented boundary",
+    ):
+        validate(backward)
+
+    unledgered_phase = deepcopy(matrix)
+    unledgered_cell = next(
+        cell
+        for cell in unledgered_phase["cells"]
+        if cell["condition_id"] == "INPUT-F-04"
+        and cell["surface_id"] == "task-target-agent-direct"
+    )
+    unledgered_cell["active_from_phase"] = 6
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="frozen natural or reviewed corrected phase",
+    ):
+        validate(unledgered_phase)
+
+    wrong_owner = deepcopy(matrix)
+    corrected_cell = next(
+        cell
+        for cell in wrong_owner["cells"]
+        if cell["condition_id"] == "INPUT-F-04"
+        and cell["surface_id"] == "cli-task-inspect"
+    )
+    corrected_cell["negative_e2e_node"] = (
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="wrong planned E2E owner",
+    ):
+        validate(wrong_owner)
+
+
 def test_acceptance_cli_executes_exact_synthetic_node(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -2379,6 +2706,7 @@ def test_acceptance_cli_executes_exact_synthetic_node(
                     "outcome": "passed",
                     "wasxfail": "",
                     "detail": "",
+                    "user_properties": [],
                 }
                 for node_id in node_ids
                 for when in ("setup", "call", "teardown")
@@ -2387,6 +2715,16 @@ def test_acceptance_cli_executes_exact_synthetic_node(
 
     monkeypatch.setattr(Path, "read_text", read_non_markdown)
     monkeypatch.setattr(_VERIFIER, "_run_probe", successful_probe)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_INHERITED_COLLECTIONS",
+        frozenset(),
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_INHERITED_COLLECTION_SHA256",
+        sha256(b"").hexdigest(),
+    )
     live_manifest = _VERIFIER.verify_acceptance(
         _FIXTURES / "acceptance_manifest.json",
         repo_root=_ROOT,
@@ -2505,6 +2843,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
                 "outcome": "passed",
                 "wasxfail": "",
                 "detail": "",
+                "user_properties": [],
             }
         ],
         "probe_stdout": "",
@@ -2522,6 +2861,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
             "outcome": "failed" if when == "call" else "passed",
             "wasxfail": "",
             "detail": "synthetic failure" if when == "call" else "",
+            "user_properties": [],
         }
         for when in ("setup", "call", "teardown")
     ]
@@ -2538,6 +2878,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
             "outcome": "passed",
             "wasxfail": "synthetic expectation" if when == "call" else "",
             "detail": "",
+            "user_properties": [],
         }
         for when in ("setup", "call", "teardown")
     ]
@@ -2554,6 +2895,7 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
             "outcome": "passed",
             "wasxfail": "",
             "detail": "",
+            "user_properties": [],
         }
         for when in ("setup", "call", "call", "teardown")
     ]
@@ -2572,6 +2914,164 @@ def test_acceptance_rejects_pytest_non_evidence() -> None:
         match="unexpected=",
     ):
         _VERIFIER._verify_execution((node,), execution, (node,))
+
+
+def test_acceptance_binds_failure_cells_to_dynamic_postconditions() -> None:
+    """Reject inventory-only or drifted failure-matrix execution evidence."""
+    all_expectations = _VERIFIER._failure_evidence_expectations(
+        _FIXTURES,
+        5,
+    )
+    node = "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    expectations = all_expectations[node]
+    examples = _read("contract_decisions.json")["error_status"][
+        "public_envelope_examples"
+    ]
+    observed: list[dict[str, object]] = []
+    for expectation in expectations:
+        transition_from, transition_to = expectation.expected_transition.split(
+            "->"
+        )
+        observed.append(
+            {
+                "condition_id": expectation.condition_id,
+                "surface_id": expectation.surface_id,
+                "transition_from": transition_from,
+                "transition_to": transition_to,
+                "public_result_id": expectation.public_result_id,
+                "public_result": deepcopy(
+                    examples[expectation.public_result_id]
+                ),
+                "status_key": expectation.status_key,
+                "status_value": expectation.status_value,
+                "provider_call_count": expectation.provider_call_count,
+                "domain_side_effect_count": (
+                    expectation.domain_side_effect_count
+                ),
+            }
+        )
+
+    def execution(
+        evidence: list[dict[str, object]] | None,
+    ) -> dict[str, object]:
+        properties = (
+            [] if evidence is None else [["failure_matrix_evidence", evidence]]
+        )
+        return {
+            "exit_code": 0,
+            "items": [node],
+            "deselected": [],
+            "collection_reports": [],
+            "reports": [
+                {
+                    "nodeid": node,
+                    "when": "setup",
+                    "outcome": "passed",
+                    "wasxfail": "",
+                    "detail": "",
+                    "user_properties": [],
+                },
+                {
+                    "nodeid": node,
+                    "when": "call",
+                    "outcome": "passed",
+                    "wasxfail": "",
+                    "detail": "",
+                    "user_properties": deepcopy(properties),
+                },
+                {
+                    "nodeid": node,
+                    "when": "teardown",
+                    "outcome": "passed",
+                    "wasxfail": "",
+                    "detail": "",
+                    "user_properties": deepcopy(properties),
+                },
+            ],
+            "probe_stdout": "",
+            "probe_stderr": "",
+        }
+
+    _VERIFIER._verify_execution(
+        (node,),
+        execution(observed),
+        (node,),
+        failure_expectations={node: expectations},
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="exactly one stable dynamic",
+    ):
+        _VERIFIER._verify_execution(
+            (node,),
+            execution(None),
+            (node,),
+            failure_expectations={node: expectations},
+        )
+
+    def omit_last_evidence(evidence: list[dict[str, object]]) -> None:
+        evidence.pop()
+
+    mutations: tuple[
+        tuple[str, Callable[[list[dict[str, object]]], None]],
+        ...,
+    ] = (
+        (
+            "unowned failure-matrix evidence",
+            lambda evidence: evidence[0].__setitem__(
+                "surface_id",
+                "task-target-flow-direct",
+            ),
+        ),
+        (
+            "dynamic failure transition drifted",
+            lambda evidence: evidence[0].__setitem__(
+                "transition_to",
+                "answered",
+            ),
+        ),
+        (
+            "dynamic public envelope drifted",
+            lambda evidence: cast(
+                dict[str, object], evidence[0]["public_result"]
+            ).__setitem__("task_state", "failed"),
+        ),
+        (
+            "dynamic failure status drifted",
+            lambda evidence: evidence[0].__setitem__(
+                "status_value",
+                "failed",
+            ),
+        ),
+        (
+            "dynamic failure counts drifted",
+            lambda evidence: evidence[0].__setitem__(
+                "provider_call_count",
+                99,
+            ),
+        ),
+        (
+            "duplicate failure-matrix evidence",
+            lambda evidence: evidence.append(deepcopy(evidence[0])),
+        ),
+        (
+            "omitted active failure-matrix evidence",
+            omit_last_evidence,
+        ),
+    )
+    for message, mutate in mutations:
+        drifted = deepcopy(observed)
+        mutate(drifted)
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match=message,
+        ):
+            _VERIFIER._verify_execution(
+                (node,),
+                execution(drifted),
+                (node,),
+                failure_expectations={node: expectations},
+            )
 
 
 def test_acceptance_rejects_placeholder_and_execution_tricks(

@@ -12,9 +12,18 @@ from asyncio import (
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
+from sys import path as sys_path
 from typing import Any, cast
 
 import pytest
+
+sys_path.append(str(Path(__file__).parent / "stores"))
+
+from pgsql_support import (  # noqa: E402
+    FakeInteractionCipher,
+    FakePgsqlDatabase,
+)
 
 from avalan.interaction import (
     AcquireControllerActivity,
@@ -66,6 +75,7 @@ from avalan.interaction import (
     InteractionRequestAuthorizationTarget,
     InteractionScopeAuthorizationTarget,
     InteractionStore,
+    InteractionStoreFactory,
     InteractionStoreReplayed,
     InteractionStoreRevision,
     InteractionTerminalMetadata,
@@ -88,9 +98,11 @@ from avalan.interaction import (
     ResolveInteractionRejected,
     RunId,
     ScopeCancellationApplied,
+    ScopeCancellationRejected,
     ScopeCancellationReplayed,
     ScopedInteractionLookup,
     ScopeSupersessionApplied,
+    ScopeSupersessionRejected,
     ScopeSupersessionReplayed,
     StateRevision,
     StreamSessionId,
@@ -115,6 +127,10 @@ from avalan.interaction.store import (
 from avalan.interaction.stores import (
     InteractionResumptionDeliveryError,
     MemoryInteractionStoreFactory,
+)
+from avalan.interaction.stores.pgsql import (
+    PgsqlInteractionStoreFactory,
+    PgsqlInteractionStorePolicy,
 )
 
 _NOW = datetime(2026, 7, 21, 12, 0, tzinfo=UTC)
@@ -288,7 +304,7 @@ class _Harness:
     """Hold one backend handle and its deterministic trusted dependencies."""
 
     store: InteractionStore
-    factory: MemoryInteractionStoreFactory
+    factory: InteractionStoreFactory
     policy: InteractionPolicy
     clock: _Clock
     authorizer: _Authorizer
@@ -314,15 +330,31 @@ class _Backend:
             active_policy = policy or InteractionPolicy()
             clock = _Clock()
             authorizer = _Authorizer()
-            factory = MemoryInteractionStoreFactory(
-                policy=active_policy,
-                clock=clock,
-                authorizer=authorizer,
-                id_factory=_IdFactory(),
-                classifier=_Classifier(active_policy),
-            )
+            if self.name.startswith("pgsql"):
+                factory: InteractionStoreFactory = (
+                    PgsqlInteractionStoreFactory(
+                        FakePgsqlDatabase(),
+                        policy=active_policy,
+                        clock=clock,
+                        authorizer=authorizer,
+                        id_factory=_IdFactory(),
+                        classifier=_Classifier(active_policy),
+                        cipher=FakeInteractionCipher(),
+                        store_policy=PgsqlInteractionStorePolicy(
+                            poll_interval_seconds=0.000001,
+                        ),
+                    )
+                )
+            else:
+                factory = MemoryInteractionStoreFactory(
+                    policy=active_policy,
+                    clock=clock,
+                    authorizer=authorizer,
+                    id_factory=_IdFactory(),
+                    classifier=_Classifier(active_policy),
+                )
             store = await factory.open()
-            if self.name == "memory-reopened":
+            if self.name.endswith("reopened"):
                 await store.aclose()
                 store = await factory.open()
             harness = _Harness(
@@ -331,7 +363,7 @@ class _Backend:
                 policy=active_policy,
                 clock=clock,
                 authorizer=authorizer,
-                reopen_after_first_create=(self.name == "memory-reopened"),
+                reopen_after_first_create=self.name.endswith("reopened"),
             )
             try:
                 await contract(harness)
@@ -341,7 +373,14 @@ class _Backend:
         run(exercise())
 
 
-@pytest.fixture(params=("memory-fresh", "memory-reopened"))
+@pytest.fixture(
+    params=(
+        "memory-fresh",
+        "memory-reopened",
+        "pgsql-fresh",
+        "pgsql-reopened",
+    )
+)
 def backend(request: pytest.FixtureRequest) -> _Backend:
     """Return every concrete-store lifecycle required by the contract."""
     return _Backend(cast(str, request.param))
@@ -755,6 +794,79 @@ def test_branch_graph_replay_conflict_cycle_owner_and_child_ancestry(
     backend.run(contract)
 
 
+def test_branch_ids_are_isolated_by_principal_scope(
+    backend: _Backend,
+) -> None:
+    """Allow identical branch identifiers in separate principal scopes."""
+    shared_run_id = RunId("branch-scope-isolation")
+    first_request = _request(
+        "branch-scope-first",
+        origin=replace(
+            _origin(branch_id="first-root"),
+            run_id=shared_run_id,
+            principal=_principal("first-owner"),
+        ),
+    )
+    second_request = _request(
+        "branch-scope-second",
+        origin=replace(
+            _origin(branch_id="second-root"),
+            run_id=shared_run_id,
+            principal=_principal("second-owner"),
+        ),
+    )
+    observed_roots: list[InteractionBranchRoot] = []
+
+    async def contract(harness: _Harness) -> None:
+        first = await _create(harness, first_request)
+        second = await _create(harness, second_request)
+        assert isinstance(first, CreateInteractionApplied)
+        assert isinstance(second, CreateInteractionApplied)
+
+        for request in (first_request, second_request):
+            registered = await harness.store.register_branch(
+                _branch_command(
+                    request,
+                    "shared-child",
+                    str(request.origin.branch_id),
+                )
+            )
+            assert isinstance(
+                registered,
+                InteractionBranchRegistrationApplied,
+            )
+
+        first_root = await harness.store.lookup_branch_root(
+            InteractionBranchRootLookup(
+                actor=_actor(first_request),
+                run_id=shared_run_id,
+                branch_id=BranchId("shared-child"),
+            )
+        )
+        second_root = await harness.store.lookup_branch_root(
+            InteractionBranchRootLookup(
+                actor=_actor(second_request),
+                run_id=shared_run_id,
+                branch_id=BranchId("shared-child"),
+            )
+        )
+        observed_roots.extend((first_root, second_root))
+
+    backend.run(contract)
+    assert observed_roots == [
+        InteractionBranchRoot(
+            run_id=shared_run_id,
+            branch_id=BranchId("shared-child"),
+            root_branch_id=first_request.origin.branch_id,
+        ),
+        InteractionBranchRoot(
+            run_id=shared_run_id,
+            branch_id=BranchId("shared-child"),
+            root_branch_id=second_request.origin.branch_id,
+        ),
+    ]
+
+
 def test_branch_root_lookup_reconstructs_edge_only_ancestry_after_reopen(
     backend: _Backend,
 ) -> None:
@@ -940,6 +1052,263 @@ def test_empty_scope_mutation_is_authorized_before_no_op(
         ]
 
     backend.run(contract)
+
+
+@pytest.mark.parametrize("scope_operation", ("cancel", "supersede"))
+def test_scope_mutation_isolates_mixed_owners_and_rejects_foreign_only(
+    backend: _Backend,
+    scope_operation: str,
+) -> None:
+    """Mutate actor rows, reject foreign-only scope, and replay absence."""
+    contract_completed = False
+
+    async def contract(harness: _Harness) -> None:
+        nonlocal contract_completed
+        actor_principal = _principal("scope-actor")
+        foreign_principal = _principal("scope-foreign")
+        shared_run_id = "scope-shared-owner-run"
+        actor_root = _request(
+            f"{scope_operation}-actor-root",
+            origin=_origin(
+                run_id=shared_run_id,
+                branch_id="shared-root",
+                principal=actor_principal,
+            ),
+            reason="Actor root request.",
+        )
+        foreign_root = _request(
+            f"{scope_operation}-foreign-root",
+            origin=_origin(
+                run_id=shared_run_id,
+                branch_id="shared-root",
+                principal=foreign_principal,
+            ),
+            reason="Foreign root request.",
+        )
+        actor_root_created = await _create(harness, actor_root)
+        foreign_root_created = await _create(harness, foreign_root)
+        assert isinstance(actor_root_created, CreateInteractionApplied)
+        assert isinstance(foreign_root_created, CreateInteractionApplied)
+
+        for root in (actor_root, foreign_root):
+            branch = await harness.store.register_branch(
+                _branch_command(root, "shared-child", "shared-root")
+            )
+            assert isinstance(
+                branch,
+                InteractionBranchRegistrationApplied,
+            )
+        actor_child = _request(
+            f"{scope_operation}-actor-child",
+            origin=_origin(
+                run_id=shared_run_id,
+                turn_id="child-turn",
+                branch_id="shared-child",
+                parent_branch_id="shared-root",
+                principal=actor_principal,
+            ),
+            reason="Actor child request.",
+        )
+        foreign_child = _request(
+            f"{scope_operation}-foreign-child",
+            origin=_origin(
+                run_id=shared_run_id,
+                turn_id="child-turn",
+                branch_id="shared-child",
+                parent_branch_id="shared-root",
+                principal=foreign_principal,
+            ),
+            reason="Foreign child request.",
+        )
+        actor_child_created = await _create(harness, actor_child)
+        foreign_child_created = await _create(harness, foreign_child)
+        assert isinstance(actor_child_created, CreateInteractionApplied)
+        assert isinstance(foreign_child_created, CreateInteractionApplied)
+
+        actor = InteractionActor(principal=actor_principal)
+        mixed_scope = InteractionExecutionScope(
+            run_id=RunId(shared_run_id),
+            branch_id=BranchId("shared-root"),
+            include_descendants=True,
+        )
+
+        async def mutate(
+            scope: InteractionExecutionScope,
+        ) -> object:
+            if scope_operation == "cancel":
+                return await harness.store.terminalize_scope(
+                    TerminalizeInteractionScopeCommand(
+                        actor=actor,
+                        scope=scope,
+                        provenance=AnswerProvenance.HUMAN,
+                    )
+                )
+            return await harness.store.supersede_scope(
+                SupersedeInteractionScopeCommand(
+                    actor=actor,
+                    scope=scope,
+                    provenance=AnswerProvenance.HUMAN,
+                )
+            )
+
+        applied = await mutate(mixed_scope)
+        if scope_operation == "cancel":
+            assert isinstance(applied, ScopeCancellationApplied)
+            expected_status = ResolutionStatus.CANCELLED
+        else:
+            assert isinstance(applied, ScopeSupersessionApplied)
+            expected_status = ResolutionStatus.SUPERSEDED
+        assert {record.request.request_id for record in applied.records} == {
+            actor_root.request_id,
+            actor_child.request_id,
+        }
+        assert all(
+            record.request.resolution is not None
+            and record.request.resolution.status is expected_status
+            for record in applied.records
+        )
+
+        replayed = await mutate(mixed_scope)
+        if scope_operation == "cancel":
+            assert isinstance(replayed, ScopeCancellationReplayed)
+        else:
+            assert isinstance(replayed, ScopeSupersessionReplayed)
+        assert replayed.records == ()
+
+        foreign_records = await harness.store.list_scoped(
+            ListInteractionsCommand(
+                actor=foreign_root_created.command.actor,
+                scope=InteractionExecutionScope(
+                    run_id=RunId(shared_run_id),
+                ),
+            )
+        )
+        foreign_request_ids: set[InputRequestId] = set()
+        for record in foreign_records:
+            assert isinstance(record, InteractionRecord)
+            foreign_request_ids.add(record.request.request_id)
+            assert record.request.state is RequestState.PENDING
+            assert record.request.resolution is None
+        assert foreign_request_ids == {
+            foreign_root.request_id,
+            foreign_child.request_id,
+        }
+
+        branch_precedence_run = f"{scope_operation}-branch-precedence-run"
+        actor_branch_seed = _request(
+            f"{scope_operation}-actor-requestless-branch",
+            origin=_origin(
+                run_id=branch_precedence_run,
+                branch_id="precedence-root",
+                principal=actor_principal,
+            ),
+        )
+        actor_branch = await harness.store.register_branch(
+            _branch_command(
+                actor_branch_seed,
+                "precedence-branch",
+                "precedence-root",
+            )
+        )
+        assert isinstance(
+            actor_branch,
+            InteractionBranchRegistrationApplied,
+        )
+        foreign_precedence_request = _request(
+            f"{scope_operation}-foreign-precedence",
+            origin=_origin(
+                run_id=branch_precedence_run,
+                branch_id="precedence-branch",
+                principal=foreign_principal,
+            ),
+            reason="Foreign record overrides actor branch presence.",
+        )
+        foreign_precedence_created = await _create(
+            harness,
+            foreign_precedence_request,
+        )
+        assert isinstance(
+            foreign_precedence_created,
+            CreateInteractionApplied,
+        )
+        precedence = await mutate(
+            InteractionExecutionScope(
+                run_id=RunId(branch_precedence_run),
+                branch_id=BranchId("precedence-branch"),
+            )
+        )
+        if scope_operation == "cancel":
+            assert isinstance(precedence, ScopeCancellationRejected)
+        else:
+            assert isinstance(precedence, ScopeSupersessionRejected)
+        assert precedence.error.code is InputErrorCode.FORBIDDEN
+
+        foreign_only_request = _request(
+            f"{scope_operation}-foreign-only",
+            origin=replace(
+                _origin(
+                    run_id="scope-foreign-only-run",
+                    turn_id="foreign-only-turn",
+                    branch_id="foreign-only-root",
+                    principal=foreign_principal,
+                ),
+                agent_id=AgentId("foreign-only-agent"),
+            ),
+            reason="Foreign-only request.",
+        )
+        foreign_only_created = await _create(
+            harness,
+            foreign_only_request,
+        )
+        assert isinstance(foreign_only_created, CreateInteractionApplied)
+        foreign_only_scope = InteractionExecutionScope(
+            run_id=foreign_only_request.origin.run_id,
+            turn_id=foreign_only_request.origin.turn_id,
+            agent_id=foreign_only_request.origin.agent_id,
+            branch_id=foreign_only_request.origin.branch_id,
+        )
+
+        harness.authorizer.allowed = False
+        denied = await mutate(foreign_only_scope)
+        harness.authorizer.allowed = True
+        if scope_operation == "cancel":
+            assert isinstance(denied, ScopeCancellationRejected)
+        else:
+            assert isinstance(denied, ScopeSupersessionRejected)
+        assert denied.error.code is InputErrorCode.FORBIDDEN
+
+        foreign_only = await mutate(foreign_only_scope)
+        if scope_operation == "cancel":
+            assert isinstance(foreign_only, ScopeCancellationRejected)
+        else:
+            assert isinstance(foreign_only, ScopeSupersessionRejected)
+        assert foreign_only.error.code is InputErrorCode.FORBIDDEN
+
+        empty = await mutate(
+            InteractionExecutionScope(run_id=RunId("truly-empty-scope"))
+        )
+        if scope_operation == "cancel":
+            assert isinstance(empty, ScopeCancellationReplayed)
+        else:
+            assert isinstance(empty, ScopeSupersessionReplayed)
+        assert empty.records == ()
+
+        foreign_projection = await harness.store.lookup_scoped(
+            ScopedInteractionLookup(
+                actor=foreign_only_created.command.actor,
+                correlation=foreign_only_created.record.correlation,
+            )
+        )
+        assert foreign_projection == foreign_only_created.record
+        contract_completed = True
+
+    backend.run(
+        contract,
+        policy=InteractionPolicy(
+            maximum_pending_interactions_per_process=10,
+        ),
+    )
+    assert contract_completed
 
 
 def test_full_and_terminal_metadata_projections_follow_exact_decision(

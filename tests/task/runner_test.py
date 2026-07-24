@@ -1,13 +1,15 @@
 import asyncio
 from collections.abc import Awaitable, Callable, Collection, Iterator, Mapping
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from io import BytesIO
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock, patch
 
+from avalan import interaction as interaction_api
 from avalan.task import (
     DirectTaskRunner,
     HmacProvider,
@@ -25,6 +27,7 @@ from avalan.task import (
     TaskAttempt,
     TaskAttemptDecision,
     TaskAttemptDecisionType,
+    TaskAttemptSegmentState,
     TaskAttemptState,
     TaskDefinition,
     TaskDirectTarget,
@@ -62,6 +65,7 @@ from avalan.task import (
     TaskRunState,
     TaskStoreConflictError,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationCategory,
     TaskValidationContext,
@@ -70,8 +74,10 @@ from avalan.task import (
     UsageRecord,
     UsageSource,
     UsageTotals,
+    completed_task_target_outcome,
     safe_target_metadata,
     safe_target_value,
+    suspended_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.runner import (
@@ -82,6 +88,7 @@ from avalan.task.runner import (
     _error_summary_with_attempt_policy,
     _input_summary_value,
     build_task_executable_input_files,
+    is_trusted_task_worker_runtime_envelope_runner,
     task_execution_file_entries_from_value,
     task_execution_file_entries_value,
     task_input_file_entries_for_queue,
@@ -526,6 +533,7 @@ class FailingUsageStore(InMemoryTaskStore):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
@@ -540,6 +548,7 @@ class ConflictingUsageStore(InMemoryTaskStore):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
@@ -684,9 +693,42 @@ class RejectingTarget(TaskTargetRunner):
             ),
         )
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.ran = True
-        return "unused"
+        return completed_task_target_outcome("unused")
+
+
+class DurableSuspendingTarget(TaskTargetRunner):
+    def __init__(
+        self,
+        suspension: interaction_api.DurableInteractionSuspension,
+    ) -> None:
+        self.suspension = suspension
+        self.contexts: list[TaskTargetContext] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        del definition, context
+        return ()
+
+    async def run(self, context: TaskTargetContext) -> TaskTargetOutcome:
+        self.contexts.append(context)
+        request = self.suspension.command.request
+        return suspended_task_target_outcome(
+            interaction_api.InputRequiredResult(
+                request_id=request.request_id,
+                continuation_id=request.continuation_id,
+                detached_resumption_available=True,
+            ),
+            checkpoint_id="checkpoint-1",
+            durable=self.suspension,
+        )
 
 
 class DisappearingDescriptor(Mapping[str, object]):
@@ -733,10 +775,273 @@ def definition(
     )
 
 
+def durable_suspension(
+    now: datetime,
+) -> interaction_api.DurableInteractionSuspension:
+    durable_definition = interaction_api.ExecutionDefinitionRef(
+        agent_definition_locator="agent:runner-test",
+        agent_definition_revision="agent-r1",
+        operation_id="operation-1",
+        operation_index=0,
+        model_config_reference="model-config-r1",
+        tool_revision="tools-r1",
+        capability_revision="capabilities-r1",
+    )
+    origin = interaction_api.ExecutionOrigin(
+        run_id=interaction_api.RunId("run-1"),
+        turn_id=interaction_api.TurnId("turn-1"),
+        agent_id=interaction_api.AgentId("agent-1"),
+        branch_id=interaction_api.BranchId("branch-1"),
+        model_call_id=interaction_api.ModelCallId("model-call-1"),
+        stream_session_id=interaction_api.StreamSessionId("stream-1"),
+        definition=durable_definition,
+        principal=interaction_api.PrincipalScope(),
+    )
+    request = interaction_api.create_input_request(
+        request_id=interaction_api.InputRequestId("request-1"),
+        continuation_id=interaction_api.ContinuationId("continuation-1"),
+        origin=origin,
+        mode=interaction_api.RequirementMode.REQUIRED,
+        reason="Need a durable answer.",
+        questions=(
+            interaction_api.ConfirmationQuestion(
+                question_id=interaction_api.QuestionId("continue"),
+                prompt="Continue?",
+                required=True,
+            ),
+        ),
+        created_at=now,
+    )
+    revision_binding = interaction_api.ContinuationRevisionBinding(
+        provider_family=interaction_api.ProviderFamilyName("openai"),
+        model_id=interaction_api.ModelId("runner-model"),
+        provider_config_revision=interaction_api.ProviderConfigRevision(
+            "provider-r1"
+        ),
+        model_config_revision=interaction_api.ModelConfigRevision("model-r1"),
+        capability_revision=interaction_api.CapabilityRevision(
+            "capability-r1"
+        ),
+    )
+    provider_snapshot = interaction_api.ContinuationSnapshot(
+        snapshot_kind="runner.provider-response",
+        revision_binding=revision_binding,
+        model_call_id=origin.model_call_id,
+        provider_idempotency_key=interaction_api.ProviderIdempotencyKey(
+            "provider-dispatch-1"
+        ),
+        payload={
+            "reserved_capability_call_id": "input-call-1",
+            "replay_items": (),
+        },
+    )
+    continuation = interaction_api.PortableContinuation(
+        continuation_id=request.continuation_id,
+        request_id=request.request_id,
+        origin=origin,
+        provider_call_id=origin.model_call_id,
+        provider_call_correlation_id="input-call-1",
+        definition=durable_definition,
+        operation_cursor=0,
+        generation_settings={},
+        transcript=(),
+        observations=(),
+        revision_binding=revision_binding,
+        interaction_count=1,
+        tool_loop_count=0,
+        stream_sequence=1,
+        state_revision=interaction_api.StateRevision(1),
+        store_revision=interaction_api.ContinuationStoreRevision(0),
+        created_at=now,
+        updated_at=now,
+        expires_at=now + timedelta(days=1),
+        claim=interaction_api.ContinuationClaim(),
+        fencing_token=interaction_api.ContinuationFencingToken(0),
+        provider_snapshot=provider_snapshot,
+    )
+    return interaction_api.DurableInteractionSuspension(
+        command=interaction_api.CreateInteractionCommand(
+            actor=interaction_api.InteractionActor(
+                principal=origin.principal,
+            ),
+            request=request,
+        ),
+        continuation=continuation,
+    )
+
+
 class DirectTaskRunnerTest(IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         self.store = InMemoryTaskStore()
         self.hmac_provider: HmacProvider = StaticHmacProvider()
+
+    async def test_runner_rejects_untrusted_runtime_boundaries(self) -> None:
+        target = cast(TaskDirectTarget, RecordingTarget("unused"))
+        with self.assertRaises(AssertionError):
+            DirectTaskRunner(
+                self.store,
+                target=target,
+                container_backend=cast(Any, object()),
+            )
+        with self.assertRaises(AssertionError):
+            DirectTaskRunner(
+                self.store,
+                target=target,
+                worker_runtime_envelope_runner=cast(Any, object()),
+            )
+
+        async def envelope_runner(*args: object, **kwargs: object) -> object:
+            del args, kwargs
+            return object()
+
+        self.assertFalse(
+            is_trusted_task_worker_runtime_envelope_runner(envelope_runner)
+        )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "must be trusted",
+        ):
+            DirectTaskRunner(
+                self.store,
+                target=target,
+                worker_runtime_envelope_runner=cast(
+                    Any,
+                    envelope_runner,
+                ),
+            )
+
+        setattr(envelope_runner, "trusted_runtime_envelope_runner", True)
+        self.assertTrue(
+            is_trusted_task_worker_runtime_envelope_runner(envelope_runner)
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=target,
+            worker_runtime_envelope_runner=cast(Any, envelope_runner),
+        )
+        self.assertIs(
+            runner._worker_runtime_envelope_runner,
+            envelope_runner,
+        )
+
+    async def test_runner_awaits_async_definition_hash(self) -> None:
+        async def definition_hash(task: TaskDefinition) -> str:
+            self.assertEqual(task.task.name, "summarize")
+            return "async-definition-hash"
+
+        runner = DirectTaskRunner(
+            self.store,
+            target=cast(TaskDirectTarget, RecordingTarget("unused")),
+            definition_hash=definition_hash,
+        )
+
+        self.assertEqual(
+            await runner._definition_hash_value(definition()),
+            "async-definition-hash",
+        )
+
+    async def test_initial_execution_guard_preserves_terminal_classes(
+        self,
+    ) -> None:
+        propagation_cases = (
+            SystemExit(7),
+            TaskStoreConflictError("claim changed"),
+        )
+        for error in propagation_cases:
+            with self.subTest(error=type(error).__name__):
+                target = RecordingTarget("unreachable")
+                runner = DirectTaskRunner(
+                    InMemoryTaskStore(),
+                    target=cast(TaskDirectTarget, target),
+                    hmac_provider=self.hmac_provider,
+                    definition_hash=lambda task: (
+                        f"guard-{type(error).__name__}"
+                    ),
+                )
+                with (
+                    patch.object(
+                        runner,
+                        "_check_cancellation_or_expiry",
+                        AsyncMock(side_effect=error),
+                    ),
+                    self.assertRaises(type(error)) as raised,
+                ):
+                    await runner.run(definition(), input_value="private")
+                self.assertIs(raised.exception, error)
+                self.assertEqual(target.contexts, [])
+
+        terminal_cases = (
+            (asyncio.CancelledError(), TaskRunState.CANCELLED),
+            (RuntimeError("private failure"), TaskRunState.FAILED),
+        )
+        for error, expected_state in terminal_cases:
+            with self.subTest(error=type(error).__name__):
+                target = RecordingTarget("unreachable")
+                runner = DirectTaskRunner(
+                    InMemoryTaskStore(),
+                    target=cast(TaskDirectTarget, target),
+                    hmac_provider=self.hmac_provider,
+                    definition_hash=lambda task: (
+                        f"guard-{type(error).__name__}"
+                    ),
+                )
+                with patch.object(
+                    runner,
+                    "_check_cancellation_or_expiry",
+                    AsyncMock(side_effect=error),
+                ):
+                    result = await runner.run(
+                        definition(),
+                        input_value="private",
+                    )
+                self.assertIs(result.run.state, expected_state)
+                self.assertEqual(target.contexts, [])
+
+    async def test_direct_runner_rejects_durable_suspension(self) -> None:
+        target = DurableSuspendingTarget(
+            durable_suspension(datetime(2026, 7, 23, tzinfo=UTC))
+        )
+        runner = DirectTaskRunner(
+            self.store,
+            target=target,
+            hmac_provider=self.hmac_provider,
+            definition_hash=lambda task: "hash-durable-suspension",
+        )
+
+        result = await runner.run(
+            definition(),
+            input_value="private prompt",
+        )
+
+        self.assertEqual(result.run.state, TaskRunState.FAILED)
+        self.assertEqual(result.attempt.state, TaskAttemptState.FAILED)
+        self.assertEqual(len(target.contexts), 1)
+        error_summary = cast(
+            Mapping[str, object],
+            result.run.result.error if result.run.result else {},
+        )
+        self.assertEqual(
+            error_summary["code"],
+            TaskErrorCode.RUNNABLE_FAILED.value,
+        )
+        self.assertNotIn("private prompt", str(error_summary))
+        segments = await self.store.list_attempt_segments(
+            result.attempt.attempt_id
+        )
+        self.assertEqual(
+            tuple(segment.state for segment in segments),
+            (TaskAttemptSegmentState.FAILED,),
+        )
+
+        await runner._close_running_segment(
+            result.attempt,
+            state=TaskAttemptSegmentState.ABANDONED,
+            reason="idempotent_close",
+        )
+        self.assertEqual(
+            await self.store.list_attempt_segments(result.attempt.attempt_id),
+            segments,
+        )
 
     async def test_fake_target_success_creates_inspectable_lifecycle(
         self,

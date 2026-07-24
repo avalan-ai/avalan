@@ -20,6 +20,7 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNamePolicyMode,
     ToolNamePolicySettings,
+    normalize_tool_arguments,
 )
 from avalan.interaction import (
     RESERVED_INPUT_CAPABILITY_NAME,
@@ -988,6 +989,26 @@ def test_project_result_preserves_exact_provider_call_correlation() -> None:
         '"request_id":"request-01",'
         '"resolved_at":"2026-07-21T12:00:00.000000Z"}}'
     )
+    typed = projected.tool_result_message(decoded)
+    assert typed.role is MessageRole.TOOL
+    assert typed.content == local.content
+    assert typed.name == local.name
+    outcome = typed.tool_call_result
+    assert outcome is not None
+    assert outcome.id == decoded.call_id
+    assert outcome.call.id == decoded.call_id
+    assert outcome.call.name == decoded.canonical_name
+    assert outcome.call.provider_name == decoded.provider_name
+    assert outcome.call.arguments == normalize_tool_arguments(
+        decoded.arguments
+    )
+    assert outcome.result == projected.provider_payload()
+
+    with pytest.raises(ModelCapabilityValidationError) as mismatch:
+        projected.tool_result_message(
+            replace(decoded, call_id="provider-call/other")
+        )
+    assert mismatch.value.code == "capability.result_correlation"
 
 
 def _codec_snapshot(

@@ -25,6 +25,7 @@ from avalan.task import (
     TaskArtifactStat,
     TaskAttemptState,
     TaskClient,
+    TaskClientOutput,
     TaskClientUnsupportedOperationError,
     TaskClientValidationResult,
     TaskClientWaitTimeoutError,
@@ -57,6 +58,7 @@ from avalan.task import (
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationCategory,
     TaskValidationContext,
@@ -64,6 +66,7 @@ from avalan.task import (
     TaskValidationIssue,
     UsageSource,
     UsageTotals,
+    completed_task_target_outcome,
     read_artifact_stream_bytes,
     spec_hash,
 )
@@ -247,8 +250,11 @@ class RejectingTarget(TaskTargetRunner):
             ),
         )
 
-    async def run(self, context: TaskTargetContext) -> object:
-        return "unused"
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
+        return completed_task_target_outcome("unused")
 
 
 class CapturingTarget(TaskTargetRunner):
@@ -264,9 +270,12 @@ class CapturingTarget(TaskTargetRunner):
         self.validated.append(definition)
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         _ = context
-        return "unused"
+        return completed_task_target_outcome("unused")
 
 
 class RecordingArtifactStore:
@@ -535,6 +544,30 @@ class FailingQueue(RecordingQueue):
 
 
 class TaskClientTest(IsolatedAsyncioTestCase):
+    def test_output_snapshot_includes_pending_input_details(self) -> None:
+        output = TaskClientOutput(
+            run_id="run-input-required",
+            state=TaskRunState.INPUT_REQUIRED,
+            input_required={
+                "request_id": "request-1",
+                "question": "Choose a safe option",
+            },
+        )
+
+        self.assertEqual(
+            output.as_dict(),
+            {
+                "run_id": "run-input-required",
+                "state": "input_required",
+                "ready": False,
+                "waiting_for_input": True,
+                "input_required": {
+                    "request_id": "request-1",
+                    "question": "Choose a safe option",
+                },
+            },
+        )
+
     async def test_agent_backed_direct_run_is_inspectable(self) -> None:
         with TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -2614,7 +2647,10 @@ ref = "agents/reviewer.toml"
             from_states={TaskAttemptState.RUNNING},
             to_state=TaskAttemptState.FAILED,
             reason="failed",
-            result=TaskExecutionResult(error={"code": "attempt.failed"}),
+            result=TaskExecutionResult(
+                error={"code": "attempt.failed"},
+                metadata={"failure_class": "safe"},
+            ),
             claim_token=claimed.claim.claim_token,
         )
         client = TaskClient(
@@ -2630,7 +2666,10 @@ ref = "agents/reviewer.toml"
             from_states={TaskRunState.CLAIMED},
             to_state=TaskRunState.FAILED,
             reason="failed",
-            result=TaskExecutionResult(error={"code": "run.failed"}),
+            result=TaskExecutionResult(
+                error={"code": "run.failed"},
+                metadata={"failure_class": "safe"},
+            ),
             claim_token=claimed.claim.claim_token,
         )
 
@@ -2649,6 +2688,7 @@ ref = "agents/reviewer.toml"
         self.assertIn("worker-1", claimed_snapshot)
         self.assertIn("input-1", rendered)
         self.assertIn("attempt.failed", rendered)
+        self.assertIn("failure_class", rendered)
         self.assertIn("provider_family", rendered)
         self.assertNotIn(claimed.claim.claim_token, claimed_snapshot)
         self.assertNotIn(claimed.claim.claim_token, rendered)

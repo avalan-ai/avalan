@@ -129,6 +129,7 @@ class UsageRecord:
     source: UsageSource
     totals: UsageTotals
     created_at: datetime
+    segment_id: str | None = None
     metadata: TaskUsageMetadata = field(default_factory=_empty_metadata)
 
     def __post_init__(self) -> None:
@@ -136,6 +137,11 @@ class UsageRecord:
         _assert_non_empty_string(self.run_id, "run_id")
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        if self.segment_id is not None:
+            _assert_non_empty_string(self.segment_id, "segment_id")
+            assert (
+                self.attempt_id is not None
+            ), "segment usage requires an attempt"
         assert isinstance(self.sequence, int), "sequence must be an integer"
         assert not isinstance(
             self.sequence, bool
@@ -194,6 +200,7 @@ class TaskUsageStore(Protocol):
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord: ...

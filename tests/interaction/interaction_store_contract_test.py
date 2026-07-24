@@ -2382,7 +2382,13 @@ def test_scope_transaction_rejects_ancestry_ownership_and_graph_drift() -> (
                 branch_records=(requestless_middle, leaf_branch),
                 store_generation=generation,
             ),
-            command,
+            replace(
+                command,
+                scope=InteractionExecutionScope(
+                    run_id=RunId("run-1"),
+                    branch_id=BranchId("leaf-branch"),
+                ),
+            ),
         )
     assert intermediate_mismatch.value.code is InputErrorCode.FORBIDDEN
 
@@ -2419,16 +2425,15 @@ def test_scope_transaction_rejects_ancestry_ownership_and_graph_drift() -> (
         command,
         scope=replace(scope, branch_id=BranchId("child-branch")),
     )
-    with pytest.raises(InputValidationError) as sibling_mismatch:
-        _begin_scope_transaction(
-            _new_interaction_store_backing(
-                records=(root, child, other_sibling),
-                branch_records=(branch_record, other_sibling_branch),
-                store_generation=generation,
-            ),
-            child_scope_command,
-        )
-    assert sibling_mismatch.value.code is InputErrorCode.FORBIDDEN
+    sibling_transaction = _begin_scope_transaction(
+        _new_interaction_store_backing(
+            records=(root, child, other_sibling),
+            branch_records=(branch_record, other_sibling_branch),
+            store_generation=generation,
+        ),
+        child_scope_command,
+    )
+    assert sibling_transaction.selected_records == (child,)
 
     same_branch_other = _pending_record_on_branch(
         "same-branch-other-request",
@@ -2449,15 +2454,14 @@ def test_scope_transaction_rejects_ancestry_ownership_and_graph_drift() -> (
             same_branch_other_request
         ),
     )
-    with pytest.raises(InputValidationError) as mixed_branch:
-        _begin_scope_transaction(
-            _new_interaction_store_backing(
-                records=(root, same_branch_other),
-                store_generation=generation,
-            ),
-            command,
-        )
-    assert mixed_branch.value.code is InputErrorCode.FORBIDDEN
+    mixed_branch = _begin_scope_transaction(
+        _new_interaction_store_backing(
+            records=(root, same_branch_other),
+            store_generation=generation,
+        ),
+        command,
+    )
+    assert mixed_branch.selected_records == (root,)
 
 
 def test_rejected_results_are_runtime_bound_to_their_operation() -> None:
@@ -5389,6 +5393,7 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
             (root,),
             cast(InteractionExecutionScope, object()),
             (),
+            _principal(),
         )
 
     other_principal = PrincipalScope(user_id=UserId("other-user"))
@@ -5403,6 +5408,7 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
         interaction_store._validate_scope_ownership(
             (child,),
             (conflicting_branch,),
+            frozenset(),
             scope,
             _principal(),
             (child,),
@@ -5410,6 +5416,7 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
     interaction_store._validate_scope_ownership(
         (root, child),
         (child_branch,),
+        frozenset(),
         scope,
         _principal(),
         (child,),
@@ -5418,6 +5425,7 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
         interaction_store._validate_scope_ownership(
             (),
             (),
+            frozenset(),
             scope,
             _principal(),
             (root,),
@@ -5433,14 +5441,14 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
         run_id=RunId("run-1"),
         branch_id=BranchId("child-branch"),
     )
-    with pytest.raises(InputValidationError):
-        interaction_store._validate_scope_ownership(
-            (),
-            (other_owned_branch,),
-            child_scope,
-            _principal(),
-            (),
-        )
+    interaction_store._validate_scope_ownership(
+        (),
+        (other_owned_branch,),
+        frozenset(),
+        child_scope,
+        _principal(),
+        (),
+    )
 
     command = TerminalizeInteractionScopeCommand(
         actor=actor,
@@ -5469,6 +5477,7 @@ def test_store_scope_snapshot_and_batch_reducers_fail_closed() -> None:
     assert interaction_store._scope_descendant_branches(
         child_scope,
         (child_branch,),
+        _principal(),
     ) == frozenset({BranchId("child-branch")})
 
     supersede = SupersedeInteractionScopeCommand(

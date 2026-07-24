@@ -51,7 +51,13 @@ from .privacy import (
     PrivacySanitizationError,
     PrivacySanitizer,
 )
-from .queue import TaskQueue, TaskQueueArtifact, TaskQueueSubmission
+from .queue import (
+    TaskQueue,
+    TaskQueueArtifact,
+    TaskQueueCompletion,
+    TaskQueueItemState,
+    TaskQueueSubmission,
+)
 from .runner import (
     DirectTaskRunner,
     TaskDirectTarget,
@@ -76,7 +82,12 @@ from .skills import (
     task_definition_with_skills_identity,
     task_skill_audit_event_publisher,
 )
-from .state import TASK_RUN_TERMINAL_STATES, TaskRunState
+from .state import (
+    TASK_RUN_TERMINAL_STATES,
+    TaskAttemptSegmentState,
+    TaskAttemptState,
+    TaskRunState,
+)
 from .store import (
     TaskAttempt,
     TaskExecutionPayload,
@@ -117,7 +128,7 @@ from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
 from math import isfinite
 from pathlib import Path
-from typing import cast
+from typing import Protocol, cast
 
 
 class TaskClientUnsupportedOperationError(RuntimeError):
@@ -140,6 +151,20 @@ class TaskClientWaitTimeoutError(TimeoutError):
         self.operation = "wait"
         self.run_id = run_id
         super().__init__("Task run did not reach a terminal state in time.")
+
+
+class TaskClientDurableLifecycleCoordinator(Protocol):
+    """Converge durable interaction and task lifecycle state atomically."""
+
+    async def cancel_input_required_task(
+        self,
+        *,
+        task_run_id: str,
+        now: datetime,
+        metadata: Mapping[str, object],
+    ) -> TaskQueueCompletion:
+        """Cancel one durable input-required task atomically."""
+        ...
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -169,21 +194,29 @@ class TaskClientOutput:
     state: TaskRunState
     output_summary: TaskSnapshotValue = None
     error: TaskSnapshotValue = None
+    input_required: TaskSnapshotValue = None
 
     @property
     def ready(self) -> bool:
         return self.state == TaskRunState.SUCCEEDED
+
+    @property
+    def waiting_for_input(self) -> bool:
+        return self.state == TaskRunState.INPUT_REQUIRED
 
     def as_dict(self) -> TaskSnapshotValue:
         value: dict[str, object] = {
             "run_id": self.run_id,
             "state": self.state.value,
             "ready": self.ready,
+            "waiting_for_input": self.waiting_for_input,
         }
         if self.output_summary is not None:
             value["output_summary"] = self.output_summary
         if self.error is not None:
             value["error"] = self.error
+        if self.input_required is not None:
+            value["input_required"] = self.input_required
         return freeze_snapshot_value(value)
 
 
@@ -259,6 +292,9 @@ class TaskClient:
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
         container_backend: ContainerAsyncBackend | None = None,
+        durable_lifecycle_coordinator: (
+            TaskClientDurableLifecycleCoordinator | None
+        ) = None,
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
@@ -287,6 +323,7 @@ class TaskClient:
         if container_backend is not None:
             assert isinstance(container_backend, ContainerAsyncBackend)
         self._container_backend = container_backend
+        self._durable_lifecycle_coordinator = durable_lifecycle_coordinator
         self._clock = clock or _utc_now
         self._sleep = sleep or asyncio_sleep
 
@@ -777,7 +814,10 @@ class TaskClient:
         )
         while True:
             output = await self.output(run_id)
-            if output.state in TASK_RUN_TERMINAL_STATES:
+            if (
+                output.state in TASK_RUN_TERMINAL_STATES
+                or output.state == TaskRunState.INPUT_REQUIRED
+            ):
                 return output
             if deadline is not None:
                 now = self._clock()
@@ -795,6 +835,61 @@ class TaskClient:
             return run
         if run.state == TaskRunState.CANCEL_REQUESTED:
             return run
+        if run.state == TaskRunState.INPUT_REQUIRED:
+            assert run.last_attempt_id is not None
+            attempt = await self._store.get_attempt(run.last_attempt_id)
+            segments = await self._store.list_attempt_segments(
+                attempt.attempt_id
+            )
+            suspended_segment = (
+                segments[-1]
+                if segments
+                and segments[-1].state is TaskAttemptSegmentState.SUSPENDED
+                else None
+            )
+            if (
+                suspended_segment is not None
+                and suspended_segment.checkpoint_id is not None
+            ):
+                coordinator = self._durable_lifecycle_coordinator
+                if coordinator is None:
+                    raise _unsupported_durable_cancel_operation()
+                completion = await coordinator.cancel_input_required_task(
+                    task_run_id=run.run_id,
+                    now=self._clock(),
+                    metadata={"source": "task_client"},
+                )
+                if (
+                    completion.run.run_id != run.run_id
+                    or completion.run.state is not TaskRunState.CANCELLED
+                    or completion.attempt.attempt_id != attempt.attempt_id
+                    or completion.attempt.state
+                    is not TaskAttemptState.ABANDONED
+                    or completion.queue_item.run_id != run.run_id
+                    or completion.queue_item.state
+                    is not TaskQueueItemState.DEAD
+                ):
+                    raise _invalid_durable_cancel_completion()
+                return completion.run
+            if attempt.state == TaskAttemptState.SUSPENDED:
+                await self._store.transition_attempt(
+                    attempt.attempt_id,
+                    from_states={TaskAttemptState.SUSPENDED},
+                    to_state=TaskAttemptState.ABANDONED,
+                    reason="cancelled_while_input_required",
+                )
+            run = await self._store.transition_run(
+                run.run_id,
+                from_states={TaskRunState.INPUT_REQUIRED},
+                to_state=TaskRunState.CANCEL_REQUESTED,
+                reason="cancel_requested",
+            )
+            return await self._store.transition_run(
+                run.run_id,
+                from_states={TaskRunState.CANCEL_REQUESTED},
+                to_state=TaskRunState.CANCELLED,
+                reason="cancelled_while_input_required",
+            )
         if run.state not in {
             TaskRunState.QUEUED,
             TaskRunState.RUNNING,
@@ -815,6 +910,11 @@ class TaskClient:
             state=run.state,
             output_summary=result.output_summary if result else None,
             error=result.error if result else None,
+            input_required=(
+                result.metadata.get("interaction")
+                if result is not None
+                else None
+            ),
         )
 
     async def events(
@@ -1416,6 +1516,32 @@ def _unsupported_cancel_operation() -> TaskClientUnsupportedOperationError:
     )
 
 
+def _unsupported_durable_cancel_operation() -> (
+    TaskClientUnsupportedOperationError
+):
+    return TaskClientUnsupportedOperationError(
+        code="task.durable_lifecycle_unavailable",
+        operation="cancel",
+        message=(
+            "Durable input-required cancellation requires an atomic "
+            "lifecycle coordinator."
+        ),
+    )
+
+
+def _invalid_durable_cancel_completion() -> (
+    TaskClientUnsupportedOperationError
+):
+    return TaskClientUnsupportedOperationError(
+        code="task.durable_lifecycle_invalid",
+        operation="cancel",
+        message=(
+            "Durable input-required cancellation returned an invalid "
+            "task completion."
+        ),
+    )
+
+
 async def _default_definition_hash(definition: TaskDefinition) -> str:
     return await spec_hash(definition)
 
@@ -1567,6 +1693,8 @@ def _result_inspection_value(result: TaskExecutionResult) -> dict[str, object]:
         value["output_summary"] = result.output_summary
     if result.error is not None:
         value["error"] = result.error
+    if result.metadata:
+        value["metadata"] = result.metadata
     return value
 
 
@@ -1597,6 +1725,8 @@ def _usage_inspection_value(record: UsageRecord) -> dict[str, object]:
     }
     if record.attempt_id is not None:
         value["attempt_id"] = record.attempt_id
+    if record.segment_id is not None:
+        value["segment_id"] = record.segment_id
     if record.metadata:
         value["metadata"] = record.metadata
     return value

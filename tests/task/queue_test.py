@@ -7,6 +7,7 @@ from avalan.task import (
     TaskAttempt,
     TaskAttemptState,
     TaskClaim,
+    TaskDurableExpiredReentryCommit,
     TaskExecutionContext,
     TaskExecutionRequest,
     TaskQueueClaim,
@@ -20,6 +21,13 @@ from avalan.task import (
 
 
 class TaskQueueModelTest(TestCase):
+    def test_expired_reentry_commit_requires_exactly_one_outcome(self) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "expired reentry must be restored or terminalized",
+        ):
+            TaskDurableExpiredReentryCommit()
+
     def test_queue_item_exposes_cancellation_visibility(self) -> None:
         now = datetime(2026, 1, 1, tzinfo=UTC)
 

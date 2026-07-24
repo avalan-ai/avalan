@@ -22,6 +22,7 @@ from avalan.agent.engine import EngineAgent
 from avalan.agent.execution import (
     AgentExecution,
     AgentExecutionStatus,
+    AttachedInteractionRuntime,
     ExecutionTerminatedError,
 )
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -38,15 +39,21 @@ from avalan.entities import (
     ToolCallResult,
     TransformerEngineSettings,
 )
-from avalan.interaction.broker import InteractionRequestResult
+from avalan.interaction.broker import (
+    InteractionBroker,
+    InteractionRequestResult,
+)
 from avalan.interaction.entities import (
     InputModelResult,
     InputRequest,
     InputRequestId,
+    PrincipalScope,
     RequestState,
     ResolutionStatus,
     TerminateInputContinuation,
+    UserId,
 )
+from avalan.interaction.policy import InteractionActor
 from avalan.interaction.store import CreateInteractionApplied
 from avalan.model.call import ModelCallContext
 from avalan.model.capability import (
@@ -363,27 +370,37 @@ class OrchestratorResponseIterationCoverageTest(IsolatedAsyncioTestCase):
 class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
     """Exercise attached-interaction admission and polling boundaries."""
 
-    async def test_start_task_input_requires_attached_runtime(self) -> None:
+    async def test_start_task_input_requires_interaction_runtime(self) -> None:
         response = _response()
         response._execution = None
 
         with self.assertRaisesRegex(
             RuntimeError,
-            "explicitly attached runtime",
+            "^task input requires an explicit interaction runtime$",
         ):
             await response._start_task_input(_task_input_call())
 
     async def test_start_task_input_abandons_failed_scheduling(self) -> None:
         response = _response()
         call = _task_input_call()
-        runtime = SimpleNamespace(actor=object(), handler=AsyncMock())
-        broker = SimpleNamespace(request=MagicMock(return_value=object()))
+        broker = SimpleNamespace(
+            request=AsyncMock(),
+            cancel_scope=AsyncMock(),
+        )
+        runtime = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, broker),
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("coverage-user"))
+            ),
+            handler=AsyncMock(),
+        )
         execution = MagicMock(spec=AgentExecution)
         execution.interaction_runtime = runtime
         execution.interaction_broker = broker
         execution.origin = object()
         execution.begin_interaction = AsyncMock()
         execution.abandon_interaction = AsyncMock()
+        execution.status = AgentExecutionStatus.PREPARING_INPUT
         response._execution = cast(AgentExecution, execution)
         response._canonical_items = [
             _canonical_item(
@@ -391,6 +408,10 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
                 text_delta="provider preface",
             )
         ]
+
+        def fail_scheduling(coroutine: Any, **_: object) -> None:
+            coroutine.close()
+            raise RuntimeError("task scheduling failed")
 
         with (
             patch(
@@ -401,7 +422,7 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
             patch(
                 "avalan.agent.orchestrator.response."
                 "orchestrator_response.create_task",
-                side_effect=RuntimeError("task scheduling failed"),
+                side_effect=fail_scheduling,
             ),
         ):
             with self.assertRaisesRegex(

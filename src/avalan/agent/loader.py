@@ -109,6 +109,7 @@ from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
+from pathlib import Path
 from tomllib import loads as toml_loads
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, cast
 from uuid import UUID, uuid4
@@ -544,6 +545,17 @@ class OrchestratorLoader:
                 runtime_envelope_loader
             ), "runtime envelope loader must be trusted"
         self._runtime_envelope_loader = runtime_envelope_loader
+
+    def clone_for_stack(self, stack: AsyncExitStack) -> "OrchestratorLoader":
+        """Return an equivalent loader with isolated resource ownership."""
+        assert isinstance(stack, AsyncExitStack)
+        return OrchestratorLoader(
+            hub=self._hub,
+            logger=self._logger,
+            participant_id=self._participant_id,
+            stack=stack,
+            runtime_envelope_loader=self._runtime_envelope_loader,
+        )
 
     @staticmethod
     def _sentence_transformer_model_type() -> type[Any]:
@@ -1206,6 +1218,7 @@ class OrchestratorLoader:
             raise FileNotFoundError(path)
         elif not access(path, R_OK):
             raise PermissionError(path)
+        definition_locator = Path(path).resolve(strict=True).as_uri()
 
         _l("Loading agent from %s", path, is_debug=False)
 
@@ -1569,14 +1582,21 @@ class OrchestratorLoader:
                 envelope_load_kwargs["call_options_override"] = (
                     call_options_override
                 )
-            return (
-                await (
-                    self._runtime_envelope_loader.load_agent_runtime_envelope(
-                        runtime_envelope_plan,
-                        **envelope_load_kwargs,
-                    )
-                )
+            load_runtime_envelope = (
+                self._runtime_envelope_loader.load_agent_runtime_envelope
             )
+            agent = await load_runtime_envelope(
+                runtime_envelope_plan,
+                **envelope_load_kwargs,
+            )
+            bind_locator = getattr(
+                agent,
+                "bind_execution_definition_locator",
+                None,
+            )
+            if callable(bind_locator):
+                bind_locator(definition_locator)
+            return agent
 
         tool_format = None
         tool_format_str = tool_section.get("format")
@@ -1600,37 +1620,29 @@ class OrchestratorLoader:
 
         _l("Loaded agent from %s", path, is_debug=False)
 
+        from_settings_kwargs: dict[str, Any] = {
+            "tool_settings": tool_settings,
+            "tool_format": tool_format,
+            "tool_name_policy": tool_name_policy,
+        }
         if tool_recovery_formats:
-            if event_manager_mode is not EventManagerMode.SDK:
-                return await self.from_settings(
-                    settings,
-                    tool_settings=tool_settings,
-                    tool_format=tool_format,
-                    tool_name_policy=tool_name_policy,
-                    tool_recovery_formats=tool_recovery_formats,
-                    event_manager_mode=event_manager_mode,
-                )
-            return await self.from_settings(
-                settings,
-                tool_settings=tool_settings,
-                tool_format=tool_format,
-                tool_name_policy=tool_name_policy,
-                tool_recovery_formats=tool_recovery_formats,
+            from_settings_kwargs["tool_recovery_formats"] = (
+                tool_recovery_formats
             )
         if event_manager_mode is not EventManagerMode.SDK:
-            return await self.from_settings(
-                settings,
-                tool_settings=tool_settings,
-                tool_format=tool_format,
-                tool_name_policy=tool_name_policy,
-                event_manager_mode=event_manager_mode,
-            )
-        return await self.from_settings(
+            from_settings_kwargs["event_manager_mode"] = event_manager_mode
+        agent = await self.from_settings(
             settings,
-            tool_settings=tool_settings,
-            tool_format=tool_format,
-            tool_name_policy=tool_name_policy,
+            **from_settings_kwargs,
         )
+        bind_locator = getattr(
+            agent,
+            "bind_execution_definition_locator",
+            None,
+        )
+        if callable(bind_locator):
+            bind_locator(definition_locator)
+        return agent
 
     @classmethod
     def _skills_config_from_tool_section(

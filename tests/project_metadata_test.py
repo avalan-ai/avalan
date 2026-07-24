@@ -81,20 +81,17 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
         "      - name: Verify structured-input type contracts\n"
         "        run: |\n"
         "          make lint\n"
-        "          make typecheck-input-contract INPUT_PHASE=4\n"
+        "          make typecheck-input-contract INPUT_PHASE=5\n"
     )
     postgresql_gate = (
         "      - name: Run exact tests with PostgreSQL\n"
         "        if: matrix.target.os == 'ubuntu-latest'\n"
-        "        run: make test-pgsql-exact no-install INPUT_PHASE=4\n"
+        "        run: make test-pgsql-exact no-install INPUT_PHASE=5\n"
     )
     portable_gate = (
         "      - name: Run exact tests\n"
         "        if: matrix.target.os != 'ubuntu-latest'\n"
-        "        run: |\n"
-        "          make test-coverage-exact no-install\n"
-        "          poetry run python scripts/verify_input_acceptance.py "
-        "--through-phase 4\n"
+        "        run: make test-coverage-exact no-install\n"
     )
     metadata_gate = (
         "      - name: Verify clean generated metadata\n"
@@ -296,18 +293,31 @@ def test_task_documents_extra_declares_document_dependencies() -> None:
 
 
 def test_task_pgsql_extra_declares_postgresql_dependencies() -> None:
+    alembic_requirements = _requirements_by_name("task-pgsql", "alembic")
     psycopg_requirements = _requirements_by_name("task-pgsql", "psycopg")
     binary_requirements = _requirements_by_name(
         "task-pgsql",
         "psycopg-binary",
     )
+    sqlalchemy_requirements = _requirements_by_name(
+        "task-pgsql",
+        "sqlalchemy",
+    )
 
+    assert len(alembic_requirements) == 1
     assert len(psycopg_requirements) == 1
     assert len(binary_requirements) == 1
+    assert len(sqlalchemy_requirements) == 1
+    assert alembic_requirements[0].specifier == SpecifierSet(">=1.14.0,<2.0.0")
+    assert alembic_requirements[0].marker is None
     assert psycopg_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
     assert psycopg_requirements[0].extras == {"pool"}
     assert psycopg_requirements[0].marker is None
     assert binary_requirements[0].specifier == SpecifierSet(">=3.2.9,<4.0.0")
+    assert sqlalchemy_requirements[0].specifier == SpecifierSet(
+        ">=2.0.0,<3.0.0"
+    )
+    assert sqlalchemy_requirements[0].marker is None
 
     binary_marker = binary_requirements[0].marker
 
@@ -338,15 +348,15 @@ def test_task_otel_extra_declares_opentelemetry_dependency() -> None:
     assert requirements[0].marker is None
 
 
-def test_task_pgsql_extra_omits_migration_dependencies() -> None:
+def test_task_pgsql_extra_includes_migration_dependencies() -> None:
     optional_deps = _optional_dependencies()
     task_pgsql_dependencies = {
         canonicalize_name(Requirement(requirement).name)
         for requirement in optional_deps["task-pgsql"]
     }
 
-    assert "alembic" not in task_pgsql_dependencies
-    assert "sqlalchemy" not in task_pgsql_dependencies
+    assert "alembic" in task_pgsql_dependencies
+    assert "sqlalchemy" in task_pgsql_dependencies
 
 
 def test_task_pgsql_extra_omits_memory_vector_dependencies() -> None:

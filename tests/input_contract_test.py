@@ -36,38 +36,44 @@ from avalan.tool.manager import ToolManager
 _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests" / "fixtures" / "input"
 _CURRENT_RUNTIME_FILES = (
-    "tests/agent/execution_attached_boundaries_test.py",
-    "tests/agent/execution_cancellation_integration_test.py",
-    "tests/agent/execution_direct_iteration_cancellation_test.py",
-    "tests/agent/execution_isolation_integration_test.py",
-    "tests/agent/execution_memory_idempotency_test.py",
-    "tests/agent/execution_message_exactness_test.py",
-    "tests/agent/execution_response_ownership_adversarial_test.py",
-    "tests/agent/execution_sequential_response_sync_test.py",
-    "tests/agent/execution_strict_invariants_test.py",
-    "tests/agent/execution_suspension_adversarial_test.py",
-    "tests/agent/execution_test.py",
-    "tests/agent/execution_transcript_adversarial_test.py",
+    "tests/agent/durable_continuation_resume_test.py",
+    "tests/agent/durable_runtime_test.py",
+    "tests/agent/execution_coverage_regression_test.py",
     "tests/agent/execution_wrapper_input_required_test.py",
-    "tests/agent/json_orchestrator_test.py",
-    "tests/agent/orchestrator_cleanup_ownership_test.py",
-    "tests/agent/orchestrator_convergence_coverage_test.py",
-    "tests/agent/orchestrator_response_convergence_coverage_test.py",
-    "tests/agent/orchestrator_test.py",
-    "tests/agent/renderer_test.py",
-    "tests/input/attached_runtime_e2e_test.py",
-    "tests/input/attached_runtime_matrix_test.py",
+    "tests/agent/orchestrator_contract_coverage_test.py",
+    "tests/agent/orchestrator_response_contract_coverage_test.py",
     "tests/input/broker_contract_test.py",
-    "tests/memory/permanent/elasticsearch_message_memory_test.py",
-    "tests/memory/permanent/pgsql_test.py",
-    "tests/memory/permanent/s3vectors_message_memory_test.py",
-    "tests/memory/permanent/structured_message_codec_test.py",
-    "tests/model/engine_test.py",
-    "tests/model/model_stream_interaction_test.py",
+    "tests/input/failure_matrix_task_e2e_test.py",
+    "tests/input/public_interaction_e2e_test.py",
+    "tests/interaction/continuation_import_test.py",
+    "tests/interaction/continuation_test.py",
+    "tests/interaction/interaction_store_authority_precedence_regression_test.py",
+    "tests/interaction/interaction_store_conformance_test.py",
+    "tests/interaction/interaction_store_contract_test.py",
+    "tests/interaction/interaction_store_validation_coverage_test.py",
+    "tests/interaction/stores/interaction_pgsql_e2e.py",
+    "tests/interaction/stores/interaction_pgsql_store_test.py",
+    "tests/model/model_capability_test.py",
+    "tests/model/nlp/vendor_openai_continuation_test.py",
+    "tests/model/text_generation_response_additional_test.py",
+    "tests/task/client_test.py",
+    "tests/task/event_test.py",
+    "tests/task/queue_test.py",
+    "tests/task/queues/pgsql_protocol_test.py",
+    "tests/task/runner_test.py",
+    "tests/task/state_test.py",
+    "tests/task/store_contract_test.py",
+    "tests/task/stores/in_memory_task_store_test.py",
+    "tests/task/stores/pgsql_migration_test.py",
+    "tests/task/stores/pgsql_store_coverage_test.py",
+    "tests/task/suspension_test.py",
+    "tests/task/target_registry_test.py",
+    "tests/task/targets/agent_target_test.py",
+    "tests/task/targets/flow_target_test.py",
+    "tests/task/worker_continuation_coverage_test.py",
+    "tests/task/worker_test.py",
 )
-_CURRENT_RUNTIME_NODE_COUNT = 249
-_CURRENT_RUNTIME_ID_COUNT = 244
-_CURRENT_GATE_NODE_COUNT = 4
+_CURRENT_RUNTIME_NODE_COUNT = 436
 
 
 class _AgentCardMessage:
@@ -300,14 +306,14 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         node["node_id"] for node in nodes if node["lifecycle"] == "active"
     ]
     assert manifest["current_phase"] == snapshots[-1]["phase"]
-    assert manifest["current_phase"] == 4
-    assert len(active) == 103 + _CURRENT_RUNTIME_NODE_COUNT
+    assert manifest["current_phase"] == 5
+    assert len(active) == 788
     current_behavioral = [
         node
         for node in nodes
-        if node["active_from_phase"] == 4
+        if node["active_from_phase"] == 5
         and any(
-            requirement_id.startswith("INPUT-N-")
+            requirement_id.startswith(("INPUT-N-", "INPUT-26."))
             for requirement_id in node["requirement_ids"]
         )
     ]
@@ -315,11 +321,12 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     assert {
         node["node_id"].split("::", 1)[0] for node in current_behavioral
     } == set(_CURRENT_RUNTIME_FILES)
-    assert sum(node["lifecycle"] == "planned" for node in nodes) == 169
-    assert active == snapshots[-1]["node_ids"]
+    assert sum(node["lifecycle"] == "planned" for node in nodes) == 156
+    assert set(active) == set(snapshots[-1]["node_ids"])
+    assert len(active) == len(snapshots[-1]["node_ids"])
     assert (
         snapshots[-1]["sha256"]
-        == sha256("\n".join(active).encode()).hexdigest()
+        == sha256("\n".join(snapshots[-1]["node_ids"]).encode()).hexdigest()
     )
     assert [item["phase"] for item in snapshots] == sorted(
         item["phase"] for item in snapshots
@@ -327,21 +334,27 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     assert [item["phase"] for item in history] == [
         item["phase"] for item in snapshots
     ]
-    assert history[-1]["node_ids"] == [
-        "behavior-002",
-        "behavior-044",
-        "behavior-045",
-        "behavior-046",
-        "behavior-047",
-        *(
-            f"current-runtime-{index:03d}"
-            for index in range(1, _CURRENT_RUNTIME_ID_COUNT + 1)
-        ),
-        *(
-            f"current-gate-{index:03d}"
-            for index in range(1, _CURRENT_GATE_NODE_COUNT + 1)
-        ),
+    assert set(history[-1]["node_ids"]) == {
+        node["id"]
+        for node in nodes
+        if node["lifecycle"] == "active" and node["active_from_phase"] == 5
+    }
+    nodes_by_id = {node["id"]: node for node in nodes}
+    assert (
+        not {
+            "durable-acceptance-437",
+            "durable-acceptance-438",
+            "durable-acceptance-440",
+            "durable-acceptance-441",
+        }
+        & nodes_by_id.keys()
+    )
+    assert nodes_by_id["durable-acceptance-439"]["requirement_ids"] == [
+        "INPUT-N-101",
+        "INPUT-N-102",
     ]
+    assert "current-runtime-201" in history[4]["node_ids"]
+    assert "current-runtime-201" not in history[5]["node_ids"]
     phase3_expansions = {
         expansion["node_id"]: (
             len(expansion["instance_node_ids"]),
@@ -382,7 +395,34 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
                 "Canonical types exist while all production capability"
                 " registries remain unadvertised."
             ),
-        }
+        },
+        {
+            "phase": 5,
+            "old_node_id": (
+                "tests/agent/orchestrator_response_convergence_coverage_test.py"
+                "::OrchestratorResponseInteractionCoverageTest::"
+                "test_start_task_input_requires_attached_runtime"
+            ),
+            "replacement_node_ids": [
+                "tests/agent/"
+                "orchestrator_response_convergence_coverage_test.py::"
+                "OrchestratorResponseInteractionCoverageTest::"
+                "test_start_task_input_requires_interaction_runtime"
+            ],
+            "requirement_ids": [
+                "INPUT-N-002",
+                "INPUT-N-019",
+                "INPUT-N-044",
+                "INPUT-N-107",
+            ],
+            "reviewed_by": "/root",
+            "evidence": (
+                "The corrected interaction-runtime precondition test replaces"
+                " the stale attached-runtime node name while preserving"
+                " INPUT-N-002, INPUT-N-019, INPUT-N-044, and INPUT-N-107"
+                " coverage."
+            ),
+        },
     ]
 
 
@@ -409,6 +449,67 @@ def test_failure_matrix_is_complete() -> None:
         expected_pairs
     )
     assert len(cells) == len(expected_pairs) == 1260
+    corrections = matrix["activation_schedule_corrections"]
+    assert len(corrections) == 4
+    assert (
+        sum(correction["corrected_cell_count"] for correction in corrections)
+        == 58
+    )
+    assert all(
+        correction["reviewed_in_phase"] == 5
+        and correction["previous_active_from_phase"] == 5
+        and correction["corrected_active_from_phase"] > 5
+        and correction["corrected_cell_count"]
+        == len(correction["condition_ids"]) * len(correction["surface_ids"])
+        for correction in corrections
+    )
+    corrected_cells = {
+        (condition_id, surface_id): correction["corrected_active_from_phase"]
+        for correction in corrections
+        for condition_id in correction["condition_ids"]
+        for surface_id in correction["surface_ids"]
+    }
+    assert len(corrected_cells) == 58
+    assert all(
+        cell["active_from_phase"]
+        == corrected_cells.get(
+            (cell["condition_id"], cell["surface_id"]),
+            max(
+                next(
+                    surface["active_from_phase"]
+                    for surface in surfaces
+                    if surface["id"] == cell["surface_id"]
+                ),
+                next(
+                    condition["active_from_phase"]
+                    for condition in conditions
+                    if condition["id"] == cell["condition_id"]
+                ),
+            ),
+        )
+        for cell in cells
+    )
+    active_cells = [
+        cell
+        for cell in cells
+        if cell["applicable"] and cell["active_from_phase"] <= 5
+    ]
+    assert len(active_cells) == 19
+    assert {
+        (cell["condition_id"], cell["surface_id"]) for cell in active_cells
+    } == {
+        ("INPUT-F-01", "task-target-agent-direct"),
+        ("INPUT-F-01", "task-target-agent-queue"),
+        *{
+            (f"INPUT-F-{condition:02d}", surface)
+            for condition in range(4, 12)
+            for surface in (
+                "task-target-agent-direct",
+                "task-target-agent-queue",
+            )
+        },
+        ("INPUT-F-10", "task-client-cancel"),
+    }
     decision_surfaces = decisions["capability_matrix"]["rows"]
     assert surface_ids == [
         row["public_failure_surface"]
@@ -474,6 +575,7 @@ def test_failure_matrix_is_complete() -> None:
             "domain_side_effect_scope",
             "surfaces",
             "conditions",
+            "activation_schedule_corrections",
             "cells",
         )
     }
@@ -716,7 +818,7 @@ def test_contract_decisions_are_frozen() -> None:
     examples = error_status["public_envelope_examples"]
     contract = error_status["public_envelope_catalog_contract"]
     assert set(catalog) == set(examples)
-    assert len(catalog) == 101
+    assert len(catalog) == 107
     assert contract["mutation_requirements"] == [
         "missing_required_field",
         "extra_field",
@@ -855,7 +957,7 @@ def test_baseline_evidence_is_complete() -> None:
     assert evidence["implementation_owner"] == "/root"
     assert evidence["independent_reviewer"] == "/root/input_contract_audit"
     assert evidence["implementation_owner"] != evidence["independent_reviewer"]
-    assert evidence["recorded_at"] == "2026-07-23T05:47:33Z"
+    assert evidence["recorded_at"] == "2026-07-24T01:43:55Z"
     assert evidence["review_history"][0] == {
         "sequence": 0,
         "phase": 0,
@@ -1044,7 +1146,7 @@ def test_baseline_evidence_is_complete() -> None:
             ),
         },
     ]
-    assert evidence["review_history"][-2:] == [
+    assert evidence["review_history"][16:18] == [
         {
             "sequence": 16,
             "phase": 4,
@@ -1080,6 +1182,30 @@ def test_baseline_evidence_is_complete() -> None:
                 " this approval."
             ),
         },
+    ]
+    assert [
+        (
+            record["phase"],
+            record["role"],
+            record["reviewer"],
+            record["status"],
+        )
+        for record in evidence["review_history"][-4:]
+    ] == [
+        (
+            5,
+            "semantic",
+            "/root/durable_lifecycle_corrections",
+            "pending",
+        ),
+        (5, "gate", "/root/continuation_r5_review", "pending"),
+        (
+            5,
+            "semantic",
+            "/root/durable_lifecycle_corrections",
+            "approved",
+        ),
+        (5, "gate", "/root/continuation_r5_review", "approved"),
     ]
     assert evidence["review_history_sha256"] == _digest(
         evidence["review_history"]
@@ -1129,6 +1255,16 @@ def test_baseline_evidence_is_complete() -> None:
             ),
             "evidence_sha256": (
                 "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
+            ),
+        },
+        {
+            "phase": 4,
+            "state": "complete",
+            "quality_gate_sha256": (
+                "07d5de78f45684af480d428d17ea8fef29565581e37c20fbd8e97a46c3fb30d0"
+            ),
+            "evidence_sha256": (
+                "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
             ),
         },
     ]
@@ -1397,285 +1533,108 @@ def test_baseline_evidence_is_complete() -> None:
     }
     assert evidence["pending_structural_inventory"] == {
         "source_inventory_sha256": (
-            "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563"
+            "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23"
         ),
-        "source_file_count": 426,
-        "statement_count": 111511,
-        "excluded_line_count": 1356,
+        "source_file_count": 435,
+        "statement_count": 118256,
+        "excluded_line_count": 1736,
     }
     regression = evidence["current_regression_classification"]
-    assert len(regression["mechanical_nodes"]) == 26
-    reviewed_support = regression["reviewed_nonsemantic_nodes"]
-    assert [entry["node_id"] for entry in reviewed_support] == [
-        (
-            "tests/src_coverage_verifier_test.py::"
-            "test_current_history_link_fails_closed"
-        ),
-        (
-            "tests/src_coverage_verifier_test.py::"
-            "test_phase3_history_succeeds_implicitly_explicitly_and_through_cli"
-        ),
-        (
-            "tests/src_coverage_verifier_test.py::"
-            "test_phase3_live_exclusion_fixtures_match_reviewed_relocations"
-        ),
-        (
-            "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::"
-            "test_calls_sdk_v1_router_and_streams_status"
-        ),
-        (
-            "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::"
-            "test_calls_sdk_v1_router_with_forwarded_input_file"
-        ),
-        (
-            "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::"
-            "test_default_denied_served_agent_reports_pipeline_over_a2a"
-        ),
-        (
-            "tests/tool/a2a_tool_test.py::A2ACallToolHttpE2ETestCase::"
-            "test_served_pipeline_enabled_agent_streams_over_a2a"
-        ),
-        "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_cancellation_rejects_invalid_store_results",
-        "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_child_registration_rejects_every_invalid_result",
-        "tests/agent/execution_coverage_regression_test.py::BranchBrokerDefenseTest::test_public_type_actor_and_scope_guards",
-        "tests/agent/execution_coverage_regression_test.py::BrokerResultValidationTest::test_applied_admission_rejects_contract_and_delivery_substitution",
-        "tests/agent/execution_coverage_regression_test.py::BrokerResultValidationTest::test_rejected_admission_rejects_delivery_then_returns_without_one",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_missing_active_input_and_memory_message_fail_closed",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_result_replay_skips_an_unrelated_interaction",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionHelperDefenseTest::test_terminal_request_rejects_changed_and_nonterminal_contracts",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_new_stream_turn_mints_a_stream_session",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_response_cursor_conflict_is_detected",
-        "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_transcript_cursor_conflict_is_detected",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_ledger_origin_guards_reject_empty_misordered_and_stale_tails",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_interaction_correlation_substitutions",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_model_turn_while_interaction_is_reserved",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_repeated_input_and_interaction_loop_overflow",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_terminal_and_cleanup_ordering",
-        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_terminal_ledger_rejects_wrong_kind_and_post_terminal_work",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_abandon_unclaimed_marks_owner_before_sync",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_close_response_collection_returns_base_exception",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_exit_collects_collection_invocation_failures",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_pending_cleanup_surfaces_engine_drain_error",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorExitGapCoverageTest::test_terminal_snapshot_preserves_provider_cleanup_failure",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_engine_call_failure_collects_stage_errors",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_engine_call_failure_handles_cancelled_cleanup_task",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_execution_provider_exit_attaches_settlement_failure",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_execution_provider_exit_handles_cancelled_cleanup_task",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_provider_handoff_failure_collects_boundary_errors",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_unowned_cleanup_retains_execution_settlement_error",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::OrchestratorSettlementGapCoverageTest::test_unowned_provider_settlement_attaches_cleanup_results",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_completed_owner_ignores_cleanup_and_inactive_attempts",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_converge_reports_cancelled_retained_attempt",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_observer_ignores_cancelled_and_unobservable_tasks",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_poll_task_distinguishes_cancel_outcomes",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_poll_task_reports_stubborn_cancellation",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_run_attempt_retains_operation_when_poll_is_incomplete",
-        "tests/agent/orchestrator_cleanup_gap_coverage_test.py::PendingProviderCleanupGapCoverageTest::test_run_sync_propagates_engine_memory_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cancel_task_deadline_rejects_uncooperative_task",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_observer_ignores_cancelled_task",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_observer_ignores_pending_task",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_cleanup_task_deadline_cancels_unfinished_task",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_close_provider_is_idempotent_after_cleanup",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_completed_provider_event_is_not_appended",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_execution_cleanup_deadline_clears_cancelled_task",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_pending_batch_caller_cancellation_notes_cleanup_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseCleanupDeadlineCoverageTest::test_tool_continuation_cancellation_keeps_cleanup_failure_note",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_aborted_tool_batch_notes_finalize_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cancellation_cleanup_aggregates_independent_failures",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cancelled_tool_batch_notes_finalize_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_cleanup_failure_is_not_attached_to_itself",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_completion_guard_rejects_unsettled_success",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_continuation_install_failure_is_settled",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_error_cleanup_attempts_every_stage",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_failed_tool_batch_notes_finalize_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_handoff_settlement_captures_all_result_shapes",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_keyboard_interrupt_notes_cleanup_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_stream_failure_collects_all_cleanup_failures",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_stream_failure_respects_cancelled_execution",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseFailureAggregationCoverageTest::test_terminal_guard_rejects_errored_stream",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_interaction_cleanup_aggregates_branch_failures",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_pending_interaction_task_cleanup_failure_is_raised",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_poll_caller_cancellation_notes_cleanup_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_poll_session_cancellation_notes_cleanup_failure",
-        "tests/agent/orchestrator_response_cleanup_coverage_test.py::OrchestratorResponseInteractionCleanupCoverageTest::test_response_collection_cancellation_notes_cleanup_failure",
-        "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_cleanup_failure_notes_are_identity_deduplicated",
-        "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_cleanup_task_observer_handles_terminal_failures",
-        "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_interrupted_iteration_preserves_cancel_cleanup_failure",
-        "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_reap_cleanup_tasks_discards_cancelled_stage",
-    ]
-    assert [entry["disposition"] for entry in reviewed_support] == [
-        "gate_support",
-        "gate_support",
-        "gate_support",
-        "semantic_support",
-        "semantic_support",
-        "semantic_support",
-        "semantic_support",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-        "reviewed_nonsemantic",
-    ]
-    assert len(regression["support_surfaces"]) == 43
     assert regression["catalog_sha256"] == _digest(
         {
             "mechanical_nodes": regression["mechanical_nodes"],
-            "reviewed_nonsemantic_nodes": reviewed_support,
+            "reviewed_nonsemantic_nodes": regression[
+                "reviewed_nonsemantic_nodes"
+            ],
             "support_surfaces": regression["support_surfaces"],
         }
     )
-    assert evidence["inventory"]["active_acceptance_nodes"] == (
-        103 + _CURRENT_RUNTIME_NODE_COUNT
+    semantic_support_nodes = {
+        entry["node_id"]: entry["evidence"]
+        for entry in regression["reviewed_nonsemantic_nodes"]
+        if entry["disposition"] == "semantic_support"
+    }
+    assert set(semantic_support_nodes) == {
+        (
+            "tests/agent/loader_test.py::"
+            "LoaderFromFileTestCase::"
+            "test_runtime_container_delegates_to_agent_envelope_loader"
+        ),
+        (
+            "tests/agent/loader_test.py::"
+            "LoadJsonOrchestratorVariantsTestCase::"
+            "test_run_reasoning_summary_file_entry_points_match"
+        ),
+        (
+            "tests/task/client_test.py::TaskClientTest::"
+            "test_inspection_snapshot_includes_safe_optional_fields"
+        ),
+        (
+            "tests/task/stores/in_memory_task_store_test.py::"
+            "InMemoryTaskStoreTest::"
+            "test_lookup_methods_raise_stable_not_found_errors"
+        ),
+        (
+            "tests/task/stores/pgsql_migration_test.py::"
+            "PgsqlMigrationRevisionTest::"
+            "test_revision_downgrade_is_forward_only"
+        ),
+    }
+    assert all(
+        "unrelated to structured-input requirements" in evidence
+        for evidence in semantic_support_nodes.values()
     )
-    assert evidence["inventory"]["active_pytest_instances"] == (
-        191 + _CURRENT_RUNTIME_NODE_COUNT
-    )
-    assert evidence["inventory"]["planned_acceptance_nodes"] == 169
+    assert evidence["inventory"]["active_acceptance_nodes"] == 788
+    assert evidence["inventory"]["active_pytest_instances"] == 962
+    assert evidence["inventory"]["planned_acceptance_nodes"] == 156
     assert evidence["inventory"]["failure_surfaces"] == 84
     assert evidence["inventory"]["failure_cells"] == 1260
+    assert evidence["typing_async_audit"]["strict_type_fixture_count"] == 28
     quality_gate = evidence["quality_gate"]
-    commands = [
-        "poetry run pytest --verbose -s",
-        "make test-coverage -- -100 src/",
-        "make test-coverage-exact no-install",
-        (
-            "poetry run python scripts/verify_input_acceptance.py"
-            " --through-phase 4"
-        ),
-        "make typecheck-input-contract INPUT_PHASE=4",
-        "make lint",
-        "git diff --check",
-        (
-            "poetry run python scripts/verify_input_acceptance.py"
-            " --through-phase 4 --runtime-only"
-        ),
-    ]
     assert quality_gate["state"] == "complete"
-    assert quality_gate["required_commands"] == commands
+    assert quality_gate["required_commands"] == [
+        "make lint",
+        "make typecheck-input-contract INPUT_PHASE=5",
+        "make test-pgsql-exact no-install INPUT_PHASE=5",
+        "git diff --check",
+    ]
     assert quality_gate["state_details"] == {
-        "completed_at": "2026-07-23T05:47:33Z",
-        "gate_run_id": "input-execution-authoritative-cb20c0323cb5",
+        "completed_at": "2026-07-24T01:43:55Z",
+        "gate_run_id": "phase5-pgsql-exact-dc59b953c8ca",
     }
     assert quality_gate["results"] == [
         {
-            "command": commands[0],
+            "command": "make lint",
             "exit_code": 0,
-            "passed": 11332,
-            "skipped": 66,
-            "subtests_passed": 8304,
-            "seconds": 263.34,
+            "source_files_typechecked": 435,
+            "script_files_typechecked": 6,
+        },
+        {
+            "command": "make typecheck-input-contract INPUT_PHASE=5",
+            "exit_code": 0,
+            "active_fixtures": 28,
+        },
+        {
+            "command": "make test-pgsql-exact no-install INPUT_PHASE=5",
+            "exit_code": 0,
+            "active_nodes": 788,
+            "active_instances": 962,
+            "covered_statements": 118256,
+            "total_statements": 118256,
+            "source_files": 435,
+            "missing_lines": 0,
+            "missing_files": 0,
+            "passed": 11932,
+            "skipped": 59,
+            "subtests_passed": 8663,
+            "seconds": 501.02,
             "deselected": 0,
             "xfail": 0,
             "xpass": 0,
         },
-        {
-            "command": commands[1],
-            "exit_code": 0,
-            "output_lines": [],
-        },
-        {
-            "command": commands[2],
-            "exit_code": 0,
-            "covered_statements": 111511,
-            "total_statements": 111511,
-            "source_files": 426,
-            "missing_lines": 0,
-            "missing_files": 0,
-            "passed": 11332,
-            "skipped": 66,
-            "subtests_passed": 8304,
-            "seconds": 398.11,
-        },
-        {
-            "command": commands[3],
-            "exit_code": 0,
-            "active_nodes": 352,
-            "active_instances": 440,
-        },
-        {
-            "command": commands[4],
-            "exit_code": 0,
-            "active_fixtures": 21,
-        },
-        {
-            "command": commands[5],
-            "exit_code": 0,
-            "source_files_typechecked": 426,
-            "script_files_typechecked": 6,
-        },
-        {"command": commands[6], "exit_code": 0},
-        {
-            "command": commands[7],
-            "exit_code": 0,
-            "active_nodes": 249,
-            "active_instances": 249,
-        },
+        {"command": "git diff --check", "exit_code": 0},
     ]
-    tree_binding = quality_gate["tree_binding"]
-    assert set(tree_binding) == {
+    assert set(quality_gate["tree_binding"]) == {
         "baseline_head",
         "inventory_file_count",
         "inventory_sha256",
@@ -1685,28 +1644,16 @@ def test_baseline_evidence_is_complete() -> None:
         "normalized_verifier_sha256",
         "tree_sha256",
     }
-    assert tree_binding["baseline_head"] == evidence["git"]["head"]
-    assert tree_binding["inventory_file_count"] > 0
-    assert tree_binding["normalized_evidence_kind"] == "regular"
-    assert tree_binding["normalized_verifier_kind"] == "regular"
-    for field in (
-        "inventory_sha256",
-        "normalized_evidence_sha256",
-        "normalized_verifier_sha256",
-        "tree_sha256",
-    ):
-        assert len(tree_binding[field]) == 64
-        int(tree_binding[field], 16)
     assert quality_gate["coverage_binding"] == {
         "report_sha256": (
-            "cb20c0323cb5315d7f7a7cb79342cc80f2314f0c47ef0e01c9cc97ebdc48646c"
+            "dc59b953c8ca740cf319cc7f23c8f1faa186ea88360158a37c7f60b8a2003acc"
         ),
         "source_inventory_sha256": (
-            "a803978249761cdf9b9f8ebf019ca4df9fa7e33d18b9281a424c104dca4c4563"
+            "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23"
         ),
-        "source_file_count": 426,
-        "statement_count": 111511,
-        "excluded_line_count": 1356,
+        "source_file_count": 435,
+        "statement_count": 118256,
+        "excluded_line_count": 1736,
     }
     assert evidence["unresolved_risks"] == [
         (
@@ -1734,6 +1681,7 @@ def test_capability_remains_dormant() -> None:
         {"phase": 2, "state": "dormant_unadvertised"},
         {"phase": 3, "state": "dormant_unadvertised"},
         {"phase": 4, "state": "dormant_unadvertised"},
+        {"phase": 5, "state": "dormant_unadvertised"},
     ]
     assert evidence["boundary"]["production_source_changes"]
     assert all(

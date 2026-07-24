@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "f333a13de1678a7d139acc384d673df15f861c66cfbbffbcd77b8dcc2dc79c80",
+  "catalog_sha256": "0e4bc53885cbe24ee6fc6ad34f16aaf9220f59918615b348fa582987c3f3e74c",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -60,7 +60,7 @@
         "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_default_stream_has_exact_input_required_order",
         "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_preamble_order_and_materialization_match_streaming",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
-        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_interaction_runtime",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
@@ -232,15 +232,16 @@
         "tests/fixtures/input/contract_decisions.json",
         "tests/agent/execution_response_ownership_adversarial_test.py",
         "tests/agent/orchestrator_test.py",
-        "tests/model/engine_test.py"
+        "tests/model/engine_test.py",
+        "tests/input/sdk_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_008",
-        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
         "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_host_support_intersects_model_adapter_proof",
         "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_advertises_incapable_without_provider_proof",
         "tests/agent/orchestrator_test.py::OrchestratorCallTestCase::test_call_rejects_untrusted_provider_support",
-        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned"
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
       ]
     },
     {
@@ -390,12 +391,13 @@
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/attached_runtime_matrix_test.py"
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_016",
         "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_clarification_words_do_not_approve_protected_action",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval",
+        "tests/input/security_contract_test.py::test_requirement_input_n_016"
       ]
     },
     {
@@ -406,7 +408,8 @@
       "owner": "interaction security boundary",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_017"
@@ -424,9 +427,9 @@
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_018",
         "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
-        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text",
+        "tests/input/security_contract_test.py::test_requirement_input_n_018"
       ]
     },
     {
@@ -458,14 +461,14 @@
         "tests/memory/permanent/elasticsearch_message_memory_test.py",
         "tests/memory/permanent/pgsql_test.py",
         "tests/memory/permanent/s3vectors_message_memory_test.py",
-        "tests/memory/permanent/structured_message_codec_test.py"
+        "tests/memory/permanent/structured_message_codec_test.py",
+        "tests/input/public_interaction_e2e_test.py",
+        "tests/input/sdk_contract_test.py",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/attached_runtime_e2e_test.py::test_requirement_input_n_002_n_019_model_call_to_input_required",
         "tests/input/broker_contract_test.py::test_requirement_input_n_019",
-        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
-        "tests/input/security_contract_test.py::test_requirement_input_n_101",
-        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
@@ -608,7 +611,7 @@
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
-        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_interaction_runtime",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
@@ -645,7 +648,11 @@
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_finite_diagnostic_duration",
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_non_json_tool_outcome_values",
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_rejects_forged_or_drifted_envelopes",
-        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity"
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
+        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/input/security_contract_test.py::test_requirement_input_n_101",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseContractCoverageTest::test_event_manager_property_returns_exact_owner"
       ]
     },
     {
@@ -833,7 +840,8 @@
         "tests/agent/execution_test.py",
         "tests/agent/execution_transcript_adversarial_test.py",
         "tests/agent/execution_message_exactness_test.py",
-        "tests/memory/permanent/structured_message_codec_test.py"
+        "tests/memory/permanent/structured_message_codec_test.py",
+        "tests/model/model_capability_test.py"
       ],
       "test_node_ids": [
         "tests/input/canonical_contract_test.py::test_requirement_input_n_029",
@@ -876,7 +884,9 @@
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_structured_tool_call_and_result_round_trip_exactly",
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_multimodal_content_round_trips_exactly",
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_tool_errors_and_diagnostics_use_safe_closed_values",
-        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity"
+        "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
+        "tests/model/model_capability_test.py::test_project_result_preserves_exact_provider_call_correlation",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_capability_result_message_is_provider_native"
       ]
     },
     {
@@ -1371,11 +1381,22 @@
         "tests/input/attached_runtime_matrix_test.py",
         "tests/agent/orchestrator_response_convergence_coverage_test.py",
         "tests/input/broker_contract_test.py",
-        "tests/model/model_stream_interaction_test.py"
+        "tests/model/model_stream_interaction_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/agent/durable_runtime_test.py",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/task/queues/pgsql_protocol_test.py",
+        "tests/task/stores/pgsql_migration_test.py",
+        "tests/task/suspension_test.py",
+        "tests/task/targets/agent_target_test.py",
+        "tests/task/worker_test.py",
+        "tests/input/sdk_contract_test.py",
+        "tests/task/target_registry_test.py",
+        "tests/task/targets/flow_target_test.py",
+        "tests/task/state_test.py"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_044",
-        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_handler_wait",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_next_provider_call",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cancel_during_publication",
@@ -1407,13 +1428,107 @@
         "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_equivalent_input_reaches_its_bound_without_tool_cycles",
         "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_every_question_type_crosses_the_attached_runtime",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_drained_reserved_call_starts_attached_interaction",
-        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_interaction_runtime",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_finish_task_input_rejects_failed_admission",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_unpublished_interaction_needs_no_canonical_cancel",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_reserved_call_validation_failure_restages_batch",
-        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream"
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream",
+        "tests/agent/durable_continuation_resume_test.py::test_continuation_record_rejects_impossible_task_binding",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_real_loader_cold_resume_can_suspend_again",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_admitted_reentry_rejection_invalidates_without_orphan",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_ambiguous_resume_fails_task_without_replay",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_atomic_coordinator_rolls_back_and_requeues",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_claimed_reentry_release_and_malformed_failure",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_due_batch_terminalizes_every_task_bound_run",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_expired_claimed_reentry_restores_same_attempt_atomically",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_expired_reentry_rejects_stale_or_unexpired_claim",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_expired_running_reentry_restores_only_before_dispatch",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_outbox_reconciler_recovers_expired_claim_and_fences_stale",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_outbox_reconciler_recovers_leases_and_failures",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_outbox_reconciler_requeues_after_preclaim_restart",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_resolution_races_each_terminal_task_lifecycle",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_running_pre_dispatch_reentry_release_is_replay_safe",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_task_lifecycle_matrix_is_atomic_replayed_and_guarded",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_claim_reuses_suspended_attempt_without_retry_increment",
+        "tests/task/stores/pgsql_migration_test.py::PgsqlMigrationRevisionTest::test_durable_revision_extends_aggregated_schema",
+        "tests/task/suspension_test.py::DirectTaskSuspensionTest::test_client_wait_observes_input_required_without_success",
+        "tests/task/suspension_test.py::DirectTaskSuspensionTest::test_suspension_is_not_success_or_artifact",
+        "tests/task/suspension_test.py::TaskTargetOutcomeTest::test_completed_and_suspended_are_disjoint",
+        "tests/task/suspension_test.py::TaskTargetOutcomeTest::test_suspended_outcome_rejects_invalid_checkpoint",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_durable_runtime_rejects_attached_consumption_suspension",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_enables_heartbeat_guard_by_default",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_heartbeats_while_cold_admission_blocks",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_marks_provider_ambiguity_without_retry",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_releases_safe_predispatch_failure",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_settles_success_without_rerunning_input",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_suspension_uses_atomic_coordinator_first",
+        "tests/task/worker_test.py::TaskWorkerTest::test_expired_postdispatch_reentry_returns_terminal_commit",
+        "tests/task/worker_test.py::TaskWorkerTest::test_expired_predispatch_reentry_restores_same_attempt",
+        "tests/task/worker_test.py::TaskWorkerTest::test_non_durable_reentry_fails_closed_without_rerun",
+        "tests/task/worker_test.py::TaskWorkerTest::test_run_target_timeout_fences_durable_dispatch",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_task_bound_public_mutations_require_coordinator",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_task_client_cancels_only_exact_bound_branches_atomically",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_abandon_expired_fails_closed_for_durable_reentry",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_abandon_expired_routes_durable_before_generic_work",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_routes_durable_suspension_capability_exactly",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_registers_exact_provider_events_before_dispatch",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_simple_agent_durable_resume_remains_supported",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_rejects_unadvertised_nested_suspension_as_failure",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_child_process_control_group_propagates",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_child_runtime_error_propagates",
+        "tests/task/worker_test.py::TaskWorkerTest::test_completed_provider_failure_requires_atomic_coordinator",
+        "tests/task/worker_test.py::TaskWorkerTest::test_completed_provider_failure_terminalizes_without_replay",
+        "tests/task/worker_test.py::TaskWorkerTest::test_convergence_child_errors_propagate_after_cleanup",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_cold_admission_renews_continuation_lease",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_output_validation_failure_closes_once",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_rejects_non_exact_capability_pre_admission",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_rejects_spoof_prepared_runner",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_resume_wait_renews_until_dispatch_fence",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_start_conflict_releases_and_closes_admission",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_start_retryable_failure_requeues_and_closes",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_start_terminal_failures_close_without_rerun",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_successor_suspension_closes_once",
+        "tests/task/worker_test.py::TaskWorkerTest::test_fresh_admission_rejection_closes_returned_handle",
+        "tests/task/worker_test.py::TaskWorkerTest::test_registry_prepares_stateful_capability_once",
+        "tests/task/state_test.py::TaskStateTest::test_attempt_transition_table_matches_source_contract",
+        "tests/task/state_test.py::TaskStateTest::test_run_transition_table_matches_source_contract",
+        "tests/agent/durable_continuation_resume_test.py::test_task_resume_admission_validation_and_proxy_contract",
+        "tests/agent/durable_continuation_resume_test.py::test_task_resume_coordinator_rejects_invalid_boundaries",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorResumeContractCoverageTest::test_resume_requires_resuming_execution_and_exact_contract",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseAsyncContractCoverageTest::test_durable_task_input_must_suspend_execution",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_coordinator_rejects_invalid_public_contracts",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_private_selection_and_capacity_guards",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_remaining_capacity_and_terminal_persistence_paths",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_remaining_public_wrappers_and_poll_guards",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_remaining_small_helper_positive_paths",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_standalone_durable_creation_rejects_task_binding",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_task_lifecycle_rejects_malformed_results",
+        "tests/task/client_test.py::TaskClientTest::test_output_snapshot_includes_pending_input_details",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_durable_operations_delegate_to_transactional_store",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_reentry_claim_requires_a_suspended_attempt",
+        "tests/task/runner_test.py::DirectTaskRunnerTest::test_direct_runner_rejects_durable_suspension",
+        "tests/task/runner_test.py::DirectTaskRunnerTest::test_initial_execution_guard_preserves_terminal_classes",
+        "tests/task/runner_test.py::DirectTaskRunnerTest::test_runner_awaits_async_definition_hash",
+        "tests/task/state_test.py::TaskStateTest::test_attempt_segment_transition_validation_is_explicit",
+        "tests/task/store_contract_test.py::StoreHelperTest::test_segment_transition_helpers_reject_stale_invalid_and_terminal",
+        "tests/task/stores/in_memory_task_store_test.py::InMemoryTaskStoreTest::test_attempt_segments_enforce_lineage_and_correlation",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_attempt_segment_can_transition_to_suspended",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_attempt_segment_queries_and_transition_guards",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_suspended_run_validation_rejects_each_boundary",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_suspension_transition_insert_failure_is_explicit",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_terminalize_suspended_validates_terminal_contract",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreHelperCoverageTest::test_segment_transition_row_conversion",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_rejects_invalid_target_outcome",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_private_resume_helpers_preserve_control_flow",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_converts_dispatch_and_output_suspensions",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_converts_invocation_suspension_to_target_outcome",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_discovery_handles_completed_values_and_container_cycles",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_container_execution_and_input_file_helpers",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_durable_target_helpers_reject_invalid_pairing",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_reconciliation_and_suspension_guards_fail_closed"
       ]
     },
     {
@@ -1426,13 +1541,14 @@
         "tests/fixtures/input/contract_decisions.json",
         "tests/agent/execution_test.py",
         "tests/agent/execution_transcript_adversarial_test.py",
-        "tests/input/broker_contract_test.py"
+        "tests/input/broker_contract_test.py",
+        "tests/input/sdk_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_045",
-        "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
         "tests/agent/execution_test.py::InteractionStateTest::test_turn_advance_rejects_an_interaction_boundary",
-        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_input_required_cannot_advance_without_resolution"
+        "tests/agent/execution_transcript_adversarial_test.py::InteractionResumeAdversarialTest::test_input_required_cannot_advance_without_resolution",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
       ]
     },
     {
@@ -1460,12 +1576,13 @@
       "implementation_artifacts": [
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/attached_runtime_matrix_test.py",
-        "tests/input/broker_contract_test.py"
+        "tests/input/broker_contract_test.py",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_047",
-        "tests/input/cli_contract_test.py::test_requirement_input_n_056",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_model_visible_declined_cancelled_and_unavailable_outcomes",
+        "tests/input/cli_contract_test.py::test_requirement_input_n_056"
       ]
     },
     {
@@ -1477,11 +1594,12 @@
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/attached_runtime_matrix_test.py"
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_048",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_048"
       ]
     },
     {
@@ -1493,11 +1611,12 @@
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/attached_runtime_matrix_test.py"
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_049",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_049"
       ]
     },
     {
@@ -1509,12 +1628,13 @@
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/attached_runtime_matrix_test.py"
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_050",
         "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_timeout_preserves_policy_provenance_and_declared_default",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_trusted_default_uses_broker_owned_provenance"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_trusted_default_uses_broker_owned_provenance",
+        "tests/input/broker_contract_test.py::test_requirement_input_n_050"
       ]
     },
     {
@@ -1525,7 +1645,8 @@
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/broker_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_051"
@@ -1539,7 +1660,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_052"
@@ -1553,7 +1675,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_053"
@@ -1567,7 +1690,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_054"
@@ -1581,7 +1705,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_055"
@@ -1595,7 +1720,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_056"
@@ -1609,7 +1735,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_057"
@@ -1623,7 +1750,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_058"
@@ -1637,7 +1765,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_059"
@@ -1651,7 +1780,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_060"
@@ -1665,7 +1795,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_061"
@@ -1679,7 +1810,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_062"
@@ -1693,7 +1825,8 @@
       "owner": "CLI interaction host",
       "implementation_artifacts": [
         "planned:tests/input/cli_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/cli_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/cli_contract_test.py::test_requirement_input_n_063"
@@ -1707,7 +1840,8 @@
       "owner": "public async SDK",
       "implementation_artifacts": [
         "planned:tests/input/sdk_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/sdk_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
@@ -1721,7 +1855,8 @@
       "owner": "public async SDK",
       "implementation_artifacts": [
         "planned:tests/input/sdk_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/sdk_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/sdk_contract_test.py::test_requirement_input_n_065"
@@ -1735,10 +1870,65 @@
       "owner": "public async SDK",
       "implementation_artifacts": [
         "planned:tests/input/sdk_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/interaction/continuation_test.py",
+        "tests/model/nlp/vendor_openai_continuation_test.py",
+        "tests/input/sdk_contract_test.py",
+        "tests/agent/durable_continuation_resume_test.py"
       ],
       "test_node_ids": [
-        "tests/input/sdk_contract_test.py::test_requirement_input_n_066"
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_staging_rejects_incomplete_provider_replay",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_staging_rejects_missing_provider_adapter",
+        "tests/interaction/continuation_test.py::test_decode_rejects_unknown_version_provider_model_and_revision",
+        "tests/interaction/continuation_test.py::test_portable_continuation_rejects_provider_snapshot_drift",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_durable_registration_fails_closed_for_sdk_endpoint",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_durable_registration_requires_an_effective_endpoint",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_durable_registration_uses_sdk_environment_base_url",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_native_openai_model_registers_exact_durable_revision",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_native_openai_model_registration_rejects_revision_drift",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_compatible_subclasses_never_register_durable_replay",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_model_durable_registration_fails_closed",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_exact_call_validation_rejects_changed_arguments",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_export_fails_closed_without_safe_state",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_export_rejects_incomplete_replay_state",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_collision_and_poisoning",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_invalid_payload",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_kind_provider_model_and_revision",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_non_replay_item",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_registration_rejects_invalid_inputs",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_duplicate_historical_call_id",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_duplicate_reasoning_id",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_invalid_call_id",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_missing_duplicate_or_reordered_manifest",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_trailing_reasoning_after_current_call",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_restores_in_fresh_process",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_round_trip_preserves_replay_identity",
+        "tests/input/sdk_contract_test.py::test_requirement_input_n_066",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_provider_key_from_mutated_durable_identity",
+        "tests/interaction/continuation_test.py::test_durable_provider_key_is_exact_and_pair_bound",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_imported_provider_key_is_exact_on_every_resumed_retry",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_transport_unsafe_provider_key",
+        "tests/agent/durable_continuation_resume_test.py::test_runtime_catalog_snapshot_and_reserved_call_checks_fail_closed",
+        "tests/agent/execution_wrapper_input_required_test.py::DurableInteractionStagingContextValidationTest::test_rejects_codec_round_trip_drift",
+        "tests/agent/execution_wrapper_input_required_test.py::DurableInteractionStagingContextValidationTest::test_rejects_invalid_provider_correlations",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_codec_registration_contains_snapshot_and_type_failures",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_operation_and_continuation_contracts_require_loaded_codec",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_revision_binding_requires_versioned_provider_model",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseContractCoverageTest::test_durable_staging_context_rejects_snapshot_model_call_drift",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_client_and_model_capability_fallbacks_are_exact",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_helpers_reject_invalid_json_and_reasoning_correlation",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_model_provider_resolution_uses_live_client_then_settings",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_replay_owner_lookup_ignores_released_active_owners",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_replay_owner_rejects_reuse_and_clears_released_state",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_replay_validation_rechecks_mutating_sequences",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_replay_validation_rejects_boundary_order_and_completeness",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_reserved_boundary_decoder_rejects_every_malformed_layer",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_reserved_call_boundary_rejects_nonfinal_and_changed_calls",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_reserved_input_arguments_reject_invalid_contracts",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_snapshot_call_validation_rejects_invalid_expected_contract",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_snapshot_import_rejects_non_restorable_item_and_releases_owner",
+        "tests/model/text_generation_response_additional_test.py::TextGenerationResponseAdditionalTestCase::test_continuation_snapshot_adapter_requires_complete_contract"
       ]
     },
     {
@@ -1749,7 +1939,8 @@
       "owner": "public async SDK",
       "implementation_artifacts": [
         "planned:tests/input/sdk_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/sdk_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/sdk_contract_test.py::test_requirement_input_n_067"
@@ -1763,7 +1954,8 @@
       "owner": "headless interaction policy",
       "implementation_artifacts": [
         "planned:tests/input/headless_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/headless_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/headless_contract_test.py::test_requirement_input_n_068"
@@ -1777,7 +1969,8 @@
       "owner": "headless interaction policy",
       "implementation_artifacts": [
         "planned:tests/input/headless_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/headless_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/headless_contract_test.py::test_requirement_input_n_069"
@@ -1791,7 +1984,8 @@
       "owner": "headless interaction policy",
       "implementation_artifacts": [
         "planned:tests/input/headless_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/headless_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/headless_contract_test.py::test_requirement_input_n_070"
@@ -1805,7 +1999,8 @@
       "owner": "authenticated server interaction surface",
       "implementation_artifacts": [
         "planned:tests/input/server_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/server_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/server_contract_test.py::test_requirement_input_n_071"
@@ -1819,7 +2014,8 @@
       "owner": "authenticated server interaction surface",
       "implementation_artifacts": [
         "planned:tests/input/server_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/server_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/server_contract_test.py::test_requirement_input_n_072"
@@ -1833,7 +2029,8 @@
       "owner": "authenticated server interaction surface",
       "implementation_artifacts": [
         "planned:tests/input/server_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/server_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/server_contract_test.py::test_requirement_input_n_073"
@@ -1847,7 +2044,8 @@
       "owner": "authenticated server interaction surface",
       "implementation_artifacts": [
         "planned:tests/input/server_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/server_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/server_contract_test.py::test_requirement_input_n_074"
@@ -1861,7 +2059,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_075"
@@ -1875,7 +2074,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_076"
@@ -1889,7 +2089,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_077"
@@ -1903,7 +2104,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_078"
@@ -1917,7 +2119,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_079"
@@ -1931,7 +2134,8 @@
       "owner": "MCP projection",
       "implementation_artifacts": [
         "planned:tests/input/mcp_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/mcp_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/mcp_contract_test.py::test_requirement_input_n_080"
@@ -1945,7 +2149,8 @@
       "owner": "A2A projection",
       "implementation_artifacts": [
         "planned:tests/input/a2a_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/a2a_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/a2a_contract_test.py::test_requirement_input_n_081"
@@ -1959,7 +2164,8 @@
       "owner": "A2A projection",
       "implementation_artifacts": [
         "planned:tests/input/a2a_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/a2a_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/a2a_contract_test.py::test_requirement_input_n_082"
@@ -1973,7 +2179,8 @@
       "owner": "A2A projection",
       "implementation_artifacts": [
         "planned:tests/input/a2a_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/a2a_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/a2a_contract_test.py::test_requirement_input_n_083"
@@ -1987,7 +2194,8 @@
       "owner": "A2A projection",
       "implementation_artifacts": [
         "planned:tests/input/a2a_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/a2a_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/a2a_contract_test.py::test_requirement_input_n_084"
@@ -2008,10 +2216,11 @@
         "tests/agent/execution_transcript_adversarial_test.py",
         "tests/agent/execution_memory_idempotency_test.py",
         "tests/agent/orchestrator_response_convergence_coverage_test.py",
-        "tests/model/engine_test.py"
+        "tests/model/engine_test.py",
+        "tests/input/orchestration_contract_test.py",
+        "tests/task/targets/flow_target_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085",
         "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
         "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_prompts_share_only_the_prior_snapshot",
         "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_definition_sync_and_tool_configuration_are_stable",
@@ -2036,7 +2245,11 @@
         "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_drain_aggregates_unexpected_owner_exit",
         "tests/agent/execution_response_ownership_adversarial_test.py::ResponseOwnershipAdversarialTest::test_retain_rejects_provider_ownership_collision",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
-        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned"
+        "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_rejects_durable_nested_agent_before_resolution",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerValidationTest::test_validation_rejects_durable_nested_agent_before_resolution",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_rejects_strict_result_with_nested_suspension"
       ]
     },
     {
@@ -2047,10 +2260,29 @@
       "owner": "flow and nested orchestration",
       "implementation_artifacts": [
         "planned:tests/input/orchestration_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/orchestration_contract_test.py",
+        "tests/task/target_registry_test.py",
+        "tests/task/targets/agent_target_test.py",
+        "tests/task/targets/flow_target_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_086"
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_086",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_prepared_target_cannot_be_constructed_directly",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_prepared_target_rejects_copy_replace_and_pickle",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_prepared_target_rejects_identity_forgeries",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_copies_runner_mapping",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_prepares_sealed_target_bound_runner_once",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_public_resume_rejects_untrusted_preparation",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_resume_rejects_wrong_selected_target",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_resume_requires_exact_positive_capability",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_resume_routes_exact_positive_capability",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_durable_runtime_rejects_map_reduce_before_provider_work",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_rejects_durable_nested_agent_before_resolution",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerValidationTest::test_validation_rejects_durable_nested_agent_before_resolution",
+        "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_rejects_non_durable_resume_runner",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_durable_map_reduce_rejection_uses_planned_strategy",
+        "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_rejects_strict_result_with_nested_suspension"
       ]
     },
     {
@@ -2069,10 +2301,10 @@
         "tests/agent/execution_test.py",
         "tests/agent/execution_memory_idempotency_test.py",
         "tests/agent/orchestrator_response_convergence_coverage_test.py",
-        "tests/agent/renderer_test.py"
+        "tests/agent/renderer_test.py",
+        "tests/input/orchestration_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087",
         "tests/agent/execution_attached_boundaries_test.py::AttachedConcurrencyIsolationTest::test_waiting_run_does_not_block_second_attached_run",
         "tests/agent/execution_cancellation_integration_test.py::ExecutionCancellationIntegrationTest::test_waiting_attached_branch_does_not_block_unrelated_run",
         "tests/agent/execution_isolation_integration_test.py::ExecutionIsolationIntegrationTest::test_concurrent_invocations_are_fully_isolated",
@@ -2082,7 +2314,8 @@
         "tests/agent/execution_test.py::ExecutionCreationTest::test_direct_constructor_enforces_attached_runtime_origin",
         "tests/agent/execution_memory_idempotency_test.py::ExecutionMemoryRetryTest::test_engine_execution_context_properties_and_guards",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseBoundaryCoverageTest::test_child_context_can_reuse_current_execution_origin",
-        "tests/agent/renderer_test.py::RendererTestCase::test_template_caches_are_isolated_by_renderer"
+        "tests/agent/renderer_test.py::RendererTestCase::test_template_caches_are_isolated_by_renderer",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087"
       ]
     },
     {
@@ -2096,13 +2329,14 @@
         "tests/fixtures/input/contract_decisions.json",
         "tests/agent/execution_strict_invariants_test.py",
         "tests/agent/execution_test.py",
-        "tests/model/model_stream_interaction_test.py"
+        "tests/model/model_stream_interaction_test.py",
+        "tests/input/orchestration_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088",
         "tests/agent/execution_strict_invariants_test.py::BrokerContractValidationTest::test_pending_request_must_match_reserved_call",
         "tests/agent/execution_test.py::InteractionStateTest::test_request_lifecycle_and_immutable_contract_fail_closed",
-        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid"
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088"
       ]
     },
     {
@@ -2113,7 +2347,8 @@
       "owner": "flow and nested orchestration",
       "implementation_artifacts": [
         "planned:tests/input/orchestration_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/orchestration_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/orchestration_contract_test.py::test_requirement_input_n_089"
@@ -2128,13 +2363,87 @@
       "implementation_artifacts": [
         "tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/agent/execution_test.py"
+        "tests/agent/execution_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/interaction/continuation_test.py",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/agent/durable_runtime_test.py",
+        "tests/interaction/interaction_store_conformance_test.py",
+        "tests/interaction/interaction_store_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/broker_contract_test.py::test_requirement_input_n_090",
         "tests/agent/execution_test.py::InteractionStateTest::test_conflicting_replay_and_wrong_correlation_fail_closed",
         "tests/agent/execution_test.py::InteractionStateTest::test_input_required_replay_and_new_stream_resume",
-        "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner"
+        "tests/agent/execution_test.py::InteractionStateTest::test_result_compare_and_swap_allows_one_concurrent_winner",
+        "tests/agent/durable_continuation_resume_test.py::test_completion_failure_is_retryable_after_known_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_concurrent_completion_pins_one_digest_during_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_dispatch_marker_and_release_failure_is_ambiguous",
+        "tests/agent/durable_continuation_resume_test.py::test_dispatch_marker_failure_releases_pre_dispatch_claim",
+        "tests/agent/durable_continuation_resume_test.py::test_rejection_command_fences_exact_pre_dispatch_admission",
+        "tests/agent/durable_continuation_resume_test.py::test_release_if_pre_dispatch_is_atomic_and_idempotent",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_claims_restores_dispatches_and_completes_once",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_wrong_record_binding_before_claim",
+        "tests/agent/durable_continuation_resume_test.py::test_setup_failure_reports_stale_release_cleanup",
+        "tests/agent/durable_continuation_resume_test.py::test_transient_release_failure_never_enables_dispatch",
+        "tests/interaction/continuation_test.py::test_portable_continuation_accepts_every_claim_state",
+        "tests/interaction/continuation_test.py::test_portable_continuation_rejects_claim_metadata_drift",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_atomic_completion_and_successor_suspension",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_atomic_terminal_settlement_records_known_failure",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_atomic_terminal_settlement_rolls_back_and_replays",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_durable_continuation_claim_fencing_and_ambiguity",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_process_local_bindings_publish_only_after_commit",
+        "tests/interaction/interaction_store_conformance_test.py::test_branch_ids_are_isolated_by_principal_scope",
+        "tests/interaction/interaction_store_conformance_test.py::test_scope_mutation_isolates_mixed_owners_and_rejects_foreign_only",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_admission_cleanup_loads_only_its_bound_record",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_admission_cleanup_publishes_only_after_commit",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_branch_delta_preserves_full_ancestry_roots",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_completed_provider_failure_is_atomic_and_replay_safe",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_coordinator_operations_isolate_corrupt_scopes",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_creation_paths_ignore_corrupt_foreign_same_run_scope",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_exact_task_lookups_hide_foreign_and_missing_rows",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_fake_upserts_preserve_sql_immutable_columns",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_partial_startup_rejects_wrong_fences_and_provenance",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_public_complete_rejects_task_bound_continuation",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_released_renewal_requires_prior_claim_owner",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scope_identity_digest_is_domain_and_field_exact",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scope_ownership_presence_is_content_free_and_atomic",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scoped_operations_isolate_unrelated_corrupt_rows",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_wait_change_returns_projection_from_deciding_snapshot",
+        "tests/interaction/interaction_store_contract_test.py::test_scope_transaction_rejects_ancestry_ownership_and_graph_drift",
+        "tests/interaction/interaction_store_contract_test.py::test_store_scope_snapshot_and_batch_reducers_fail_closed",
+        "tests/agent/durable_continuation_resume_test.py::test_admission_completion_rejection_and_release_state_guards",
+        "tests/agent/durable_continuation_resume_test.py::test_completion_state_races_and_internal_validation_fail_closed",
+        "tests/interaction/interaction_store_validation_coverage_test.py::test_branch_closure_attestation_rejects_graph_drift",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_branch_graph_and_replay_helpers_fail_closed",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_claim_and_renewal_reject_invalid_lifecycles",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_coordinator_scope_entry_validation",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_coordinator_successor_validators_reject_drift",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_private_claim_and_snapshot_guards",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_public_wrappers_preserve_exact_snapshot_scope",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_rejection_helpers_require_exact_claim_state",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_schema_and_lock_helpers_fail_closed",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_attempt_segment_creation_conflict_boundaries",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_cancel_partial_reentry_rejects_stale_boundaries",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_completed_claim_terminalization_rejects_bad_provenance",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_fail_claimed_reentry_rejects_stale_boundaries",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_release_claimed_reentry_rejects_stale_boundaries",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_release_running_reentry_rejects_stale_boundaries",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_requeue_suspended_rejects_each_stale_boundary",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_requeue_suspended_rejects_invalid_revision",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_settle_claim_rejects_each_stale_boundary",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_settle_claim_validates_contract_and_expiry_override",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_suspend_claim_public_contract_and_delegation",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_suspend_claim_rejects_each_stale_boundary",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_terminalize_suspended_rejects_each_stale_boundary",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreHelperCoverageTest::test_attempt_and_segment_lock_helpers",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreHelperCoverageTest::test_reentry_replay_helpers_reject_mismatches",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreHelperCoverageTest::test_reentry_validation_helpers_reject_mismatches",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_completion_conflict_convergence_matrix",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_execute_convergence_conflict_matrix",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_suspend_conflict_convergence_matrix",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_suspend_failure_convergence_matrix",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_non_durable_suspend_failure_finalize_conflict"
       ]
     },
     {
@@ -2224,10 +2533,81 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/broker_contract_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/agent/durable_runtime_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/interaction/continuation_test.py",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/model/nlp/vendor_openai_continuation_test.py",
+        "tests/interaction/interaction_store_conformance_test.py",
+        "tests/task/target_registry_test.py",
+        "tests/interaction/interaction_store_authority_precedence_regression_test.py",
+        "tests/interaction/interaction_store_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_094"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_094",
+        "tests/agent/durable_continuation_resume_test.py::test_completion_command_pins_digest_across_owner_clearing",
+        "tests/agent/durable_continuation_resume_test.py::test_openai_boundary_tampering_never_invokes_provider",
+        "tests/agent/durable_continuation_resume_test.py::test_rejection_command_loses_to_release_or_dispatch_ownership",
+        "tests/agent/durable_continuation_resume_test.py::test_release_ownership_excludes_racing_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_command_rejects_tampered_correlated_result_payload",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_hostile_claim_receipt",
+        "tests/agent/durable_continuation_resume_test.py::test_snapshot_call_tampering_rejects_before_provider_dispatch",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_loader_rejects_locator_revision_and_payload_tamper",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_stages_real_openai_owner_before_source_close",
+        "tests/interaction/continuation_test.py::test_claim_rejects_owner_or_lease_state_mismatch",
+        "tests/interaction/continuation_test.py::test_decode_rejects_tampering_schema_and_noncanonical_json",
+        "tests/interaction/continuation_test.py::test_portable_continuation_rejects_live_values_and_secret_keys",
+        "tests/interaction/continuation_test.py::test_resolved_runtime_rejects_missing_components_or_credentials",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scope_lifecycle_collapses_same_run_branch_records",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_sequential_snapshot_rejects_boundary_tampering",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_exports_sequential_active_replay_owner",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_combined_historical_call_tampering",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_rejects_tampered_reserved_call",
+        "tests/interaction/interaction_store_conformance_test.py::test_branch_ids_are_isolated_by_principal_scope",
+        "tests/interaction/interaction_store_conformance_test.py::test_scope_mutation_isolates_mixed_owners_and_rejects_foreign_only",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_branch_delta_preserves_full_ancestry_roots",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_coordinator_operations_isolate_corrupt_scopes",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_creation_paths_ignore_corrupt_foreign_same_run_scope",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_exact_task_lookups_hide_foreign_and_missing_rows",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_released_renewal_requires_prior_claim_owner",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scope_identity_digest_is_domain_and_field_exact",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scope_ownership_presence_is_content_free_and_atomic",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_scoped_operations_isolate_unrelated_corrupt_rows",
+        "tests/interaction/interaction_store_authority_precedence_regression_test.py::test_requestless_scope_has_no_mutation_or_disclosure",
+        "tests/interaction/interaction_store_contract_test.py::test_scope_transaction_rejects_ancestry_ownership_and_graph_drift",
+        "tests/interaction/interaction_store_contract_test.py::test_store_scope_snapshot_and_batch_reducers_fail_closed",
+        "tests/agent/durable_continuation_resume_test.py::test_claim_lease_and_resumer_boundaries_reject_invalid_values",
+        "tests/agent/durable_continuation_resume_test.py::test_portable_stager_and_runtime_ownership_validate_boundaries",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_command_and_admission_reject_every_drifted_component",
+        "tests/agent/durable_continuation_resume_test.py::test_terminal_projection_and_identity_checks_reject_corruption",
+        "tests/agent/durable_continuation_resume_test.py::test_trusted_executor_rejects_runtime_and_replay_corruption",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_host_validates_assembly_and_runtime_boundaries",
+        "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_durable_runtime_and_suspension_validate_identity",
+        "tests/agent/execution_coverage_regression_test.py::LedgerReplayDefenseTest::test_replay_rejects_corrupted_durable_interaction_states",
+        "tests/agent/execution_wrapper_input_required_test.py::DurableInteractionStagingContextValidationTest::test_rejects_invalid_identity_and_codec_components",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_codec_registration_cannot_change_execution_identity",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseContractCoverageTest::test_durable_staging_rejects_invalid_result_actor_and_request",
+        "tests/interaction/continuation_test.py::test_claim_receipt_rejects_invalid_or_uncorrelated_claims",
+        "tests/interaction/interaction_store_validation_coverage_test.py::test_branch_closure_attestation_rejects_graph_drift",
+        "tests/interaction/interaction_store_validation_coverage_test.py::test_private_scope_attestation_constructors_fail_closed",
+        "tests/interaction/interaction_store_validation_coverage_test.py::test_scope_ownership_attestation_rejects_forgery_and_drift",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_durable_suspension_rejects_untrusted_or_drifted_values",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_branch_graph_and_replay_helpers_fail_closed",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_coordinator_scope_entry_validation",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_invalidation_and_task_lookup_fail_closed",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_persisted_identity_helpers_detect_drift",
+        "tests/task/runner_test.py::DirectTaskRunnerTest::test_runner_rejects_untrusted_runtime_boundaries",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_rejects_different_context_handle",
+        "tests/task/worker_test.py::TaskDurableResumeSettlementTest::test_failure_and_cancellation_require_error_only",
+        "tests/task/worker_test.py::TaskDurableResumeSettlementTest::test_settlement_digest_rejects_unknown_type",
+        "tests/task/worker_test.py::TaskDurableResumeSettlementTest::test_settlement_variants_reject_invalid_results",
+        "tests/task/worker_test.py::TaskDurableResumeSettlementTest::test_success_rejects_error_result",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_durable_settlement_guards_reject_invalid_state",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_rejects_untrusted_runtime_boundaries"
       ]
     },
     {
@@ -2238,10 +2618,51 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/broker_contract_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py",
+        "tests/interaction/continuation_import_test.py",
+        "tests/interaction/continuation_test.py",
+        "tests/model/nlp/vendor_openai_continuation_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_095"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_095",
+        "tests/agent/durable_continuation_resume_test.py::test_completion_readback_recovers_lost_success_response",
+        "tests/agent/durable_continuation_resume_test.py::test_post_marker_failure_remains_ambiguous",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_materialization_stages_without_broker_mutation",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_stager_failure_cleans_reservation_and_source",
+        "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_durable_stream_preserves_exact_staged_payload",
+        "tests/interaction/continuation_import_test.py::test_portable_continuation_cold_import_has_no_service_dependencies",
+        "tests/interaction/continuation_test.py::test_codec_and_metadata_helpers_reject_invalid_values",
+        "tests/interaction/continuation_test.py::test_codec_enforces_wire_and_encoded_byte_bounds",
+        "tests/interaction/continuation_test.py::test_codec_rejects_wrong_expected_binding_and_non_json_helpers",
+        "tests/interaction/continuation_test.py::test_decode_rejects_invalid_nested_shapes",
+        "tests/interaction/continuation_test.py::test_decode_rejects_invalid_wire_values",
+        "tests/interaction/continuation_test.py::test_portable_continuation_rejects_correlation_and_timestamp_drift",
+        "tests/interaction/continuation_test.py::test_portable_continuation_rejects_invalid_field_types",
+        "tests/interaction/continuation_test.py::test_portable_continuation_round_trip_is_canonical_and_immutable",
+        "tests/interaction/continuation_test.py::test_runtime_resolver_loads_fresh_trusted_components",
+        "tests/interaction/continuation_test.py::test_runtime_resolver_rejects_definition_and_binding_drift",
+        "tests/interaction/continuation_test.py::test_runtime_resolver_rejects_invalid_results",
+        "tests/interaction/continuation_test.py::test_runtime_resolver_rejects_untrusted_loader_and_invalid_clock",
+        "tests/interaction/continuation_test.py::test_terminal_revision_may_be_recorded_after_expiry",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_provider_key_from_mutated_durable_identity",
+        "tests/interaction/continuation_test.py::test_continuation_dispatch_id_is_exact_and_stable",
+        "tests/interaction/continuation_test.py::test_durable_provider_key_is_exact_and_pair_bound",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_imported_provider_key_is_exact_on_every_resumed_retry",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_rejects_transport_unsafe_provider_key",
+        "tests/agent/durable_continuation_resume_test.py::test_durable_runtime_decoders_reject_every_malformed_shape",
+        "tests/agent/durable_continuation_resume_test.py::test_portable_json_conversion_accepts_declared_values_only",
+        "tests/agent/durable_continuation_resume_test.py::test_portable_stager_and_runtime_ownership_validate_boundaries",
+        "tests/agent/durable_continuation_resume_test.py::test_trusted_runtime_loader_validates_configuration_and_loads",
+        "tests/agent/execution_coverage_regression_test.py::ExecutionMutationDefenseTest::test_durable_input_staging_rejects_every_invalid_boundary",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_definition_locator_rejects_invalid_rebinding_and_startup",
+        "tests/agent/orchestrator_contract_coverage_test.py::OrchestratorContractCoverageTest::test_execution_contract_rejects_invalid_advertisement_and_locator",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseContractCoverageTest::test_durable_staging_context_requires_catalog",
+        "tests/interaction/continuation_test.py::test_durable_continuation_record_rejects_nonportable_value",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_payload_helpers_reject_every_malformed_shape",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_private_continuation_persistence_guards"
       ]
     },
     {
@@ -2252,10 +2673,103 @@
       "owner": "interaction broker and durable store",
       "implementation_artifacts": [
         "planned:tests/input/broker_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/broker_contract_test.py",
+        "tests/agent/durable_continuation_resume_test.py",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/task/suspension_test.py",
+        "tests/task/worker_test.py",
+        "tests/task/targets/agent_target_test.py",
+        "tests/agent/durable_runtime_test.py"
       ],
       "test_node_ids": [
-        "tests/input/broker_contract_test.py::test_requirement_input_n_096"
+        "tests/input/broker_contract_test.py::test_requirement_input_n_096",
+        "tests/agent/durable_continuation_resume_test.py::test_cancellation_preserves_boundary_semantics",
+        "tests/agent/durable_continuation_resume_test.py::test_cancelled_dispatch_is_owned_until_explicit_settlement",
+        "tests/agent/durable_continuation_resume_test.py::test_interrupt_fences_in_flight_dispatch_as_ambiguous",
+        "tests/agent/durable_continuation_resume_test.py::test_interrupt_releases_before_dispatch_and_is_idempotent",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_atomic_terminal_settlement_records_cancellation",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_task_client_uses_atomic_durable_cancellation",
+        "tests/task/suspension_test.py::DirectTaskSuspensionTest::test_attached_cancel_preserves_local_transition_path",
+        "tests/task/suspension_test.py::DirectTaskSuspensionTest::test_durable_cancel_fails_closed_without_coordinator",
+        "tests/task/suspension_test.py::DirectTaskSuspensionTest::test_durable_cancel_rejects_malformed_completion",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_heartbeat_loss_interrupts_inflight_dispatch",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_reentry_cancellation_settles_cancelled",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_shutdown_fences_inflight_dispatch",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_shutdown_releases_before_dispatch",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_exact_request_and_continuation_deadline_is_enforced",
+        "tests/agent/durable_continuation_resume_test.py::test_cancelled_caller_retains_listener_until_dispatch_settles",
+        "tests/agent/durable_continuation_resume_test.py::test_cancelled_loader_owns_release_through_repeat_cancellation",
+        "tests/agent/durable_continuation_resume_test.py::test_dispatch_started_before_deadline_ignores_late_renewal",
+        "tests/agent/durable_continuation_resume_test.py::test_expired_cold_loader_cleanup_survives_repeat_cancels",
+        "tests/agent/durable_continuation_resume_test.py::test_listener_registration_failure_precedes_provider_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_listener_registration_is_exclusive_and_pre_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_near_expiry_claim_binds_before_cold_load_and_clamps",
+        "tests/agent/durable_continuation_resume_test.py::test_setup_cleanup_aggregates_release_and_close_errors_in_order",
+        "tests/agent/durable_continuation_resume_test.py::test_setup_cleanup_preserves_nested_process_control_errors",
+        "tests/agent/durable_continuation_resume_test.py::test_setup_cleanup_reports_owned_child_self_cancellation",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_host_clock_controls_request_and_checkpoint_time",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_host_production_clock_defaults_to_utc_now",
+        "tests/agent/durable_runtime_test.py::DurableRuntimeTest::test_host_rejects_invalid_and_naive_clocks",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_blocked_cold_expiry_rolls_back_and_replays",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_blocked_cold_loader_expires_before_release",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_cancel_requested_expired_reentry_replays_after_restart",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_cancel_requested_settlement_matrix_converges_atomically",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_cancelled_resumed_startup_boundaries_converge_atomically",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_cancelled_startup_rejects_released_reclaimed_owner",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_cancelled_startup_requires_exact_claim_columns",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_completed_provider_cancellation_preserves_semantics",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_deadline_snapshot_uses_nonlocking_continuation_reads",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_expired_deadline_terminalizes_ready_and_claimed_reentry",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_trusted_task_cancel_attests_child_only_branch_root",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_trusted_task_cancel_requires_one_bound_owner",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_trusted_task_cancel_validates_bound_branch_ancestors",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_wait_change_cancellation_and_close_release_snapshot",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_worker_deadline_atomically_expires_claimed_reentry",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_worker_deadline_reconciliation_rolls_back_atomically",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_cancellation_removes_listener_without_task_leak",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_dispatch_error_removes_listener_once",
+        "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_resume_listener_failure_prevents_provider_dispatch",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_child_self_cancellation_propagates",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_pending_self_cancellation_before_entry_is_consumed",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_repeated_cancellation_while_awaiting_is_consumed",
+        "tests/task/worker_test.py::TaskWorkerTest::test_cancellation_during_heartbeat_cleanup_preserves_result",
+        "tests/task/worker_test.py::TaskWorkerTest::test_cold_admission_expiry_cancels_loader_before_reconcile",
+        "tests/task/worker_test.py::TaskWorkerTest::test_cold_expiry_closes_cancellation_racing_admission_once",
+        "tests/task/worker_test.py::TaskWorkerTest::test_cold_expiry_reconciles_then_surfaces_cleanup_failure",
+        "tests/task/worker_test.py::TaskWorkerTest::test_completed_provider_cancellation_is_atomic",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_dispatch_survives_heartbeats_past_deadline",
+        "tests/task/worker_test.py::TaskWorkerTest::test_durable_heartbeat_loss_after_start_releases_and_closes",
+        "tests/task/worker_test.py::TaskWorkerTest::test_expired_cold_reentry_fails_terminal_without_rerun",
+        "tests/task/worker_test.py::TaskWorkerTest::test_external_cancellation_fences_blocked_provider_once",
+        "tests/task/worker_test.py::TaskWorkerTest::test_external_cancellation_preserves_dispatch_winning_race",
+        "tests/task/worker_test.py::TaskWorkerTest::test_external_cancellation_releases_predispatch_reentry",
+        "tests/task/worker_test.py::TaskWorkerTest::test_nested_cancellation_interrupts_before_failure_settlement",
+        "tests/task/worker_test.py::TaskWorkerTest::test_nested_expiry_keyboard_interrupt_propagates",
+        "tests/task/worker_test.py::TaskWorkerTest::test_nested_expiry_system_exit_propagates",
+        "tests/task/worker_test.py::TaskWorkerTest::test_repeat_external_cancellation_converges_failure_once",
+        "tests/task/worker_test.py::TaskWorkerTest::test_unrelated_cancellation_type_does_not_interrupt_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_admission_wait_interrupt_and_marker_guards_fail_closed",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseAsyncContractCoverageTest::test_cancel_with_runtime_preserves_task_cleanup_failure",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseAsyncContractCoverageTest::test_cancel_without_runtime_clears_completed_pending_task",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_admission_delivery_contains_failures_and_cancellation",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_cancel_requested_claim_requires_dispatch_evidence",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_expired_reentry_rejects_malformed_provenance",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_reconciler_releases_cancelled_delivery",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_trusted_task_cancellation_rejects_bad_ownership",
+        "tests/task/queue_test.py::TaskQueueModelTest::test_expired_reentry_commit_requires_exactly_one_outcome",
+        "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_durable_expiry_conflict_consumes_the_requested_limit",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_expired_settlement_records_interaction_event",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_settle_claim_cancellation_cas_failures",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_execute_expiry_converges",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_durable_suspend_expiry_converges",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_run_target_preserves_heartbeat_and_interrupt_errors",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_shutdown_after_claim_converges_setup_failure",
+        "tests/task/worker_test.py::AwaitOwnedTaskTest::test_completed_child_clears_pending_owner_cancellation",
+        "tests/task/worker_test.py::TaskWorkerTest::test_resume_claim_lease_and_cleanup_owners_fail_closed",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_claim_guard_preserves_cleanup_failures",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_expiry_and_skill_helpers_cover_terminal_shapes",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_heartbeat_and_reentry_guards_fail_closed"
       ]
     },
     {
@@ -2267,12 +2781,13 @@
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/attached_runtime_matrix_test.py"
+        "tests/input/attached_runtime_matrix_test.py",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_097",
         "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_clarification_words_do_not_approve_protected_action",
-        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval"
+        "tests/input/attached_runtime_matrix_test.py::AttachedRuntimeMatrixTest::test_protected_action_waits_for_separate_explicit_approval",
+        "tests/input/security_contract_test.py::test_requirement_input_n_097"
       ]
     },
     {
@@ -2287,9 +2802,9 @@
         "tests/fixtures/input/contract_decisions.json"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_098",
         "tests/interaction/interaction_codec_test.py::test_continuation_snapshot_rejects_drift_secrets_and_invalid_json",
-        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text"
+        "tests/input/security_contract_test.py::test_prohibited_tags_are_rejected_without_scanning_free_text",
+        "tests/input/security_contract_test.py::test_requirement_input_n_098"
       ]
     },
     {
@@ -2300,7 +2815,8 @@
       "owner": "interaction security policy",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_099"
@@ -2314,7 +2830,8 @@
       "owner": "interaction security policy",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_100"
@@ -2328,10 +2845,14 @@
       "owner": "privacy and observability",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_101"
+        "tests/input/security_contract_test.py::test_requirement_input_n_101",
+        "tests/task/event_test.py::SanitizedTaskEventTest::test_interaction_event_payload_tracks_resumed_segment",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreHelperCoverageTest::test_interaction_event_insert_failure_is_explicit",
+        "tests/task/event_test.py::SanitizedTaskEventTest::test_token_event_keeps_canonical_stream_observability"
       ]
     },
     {
@@ -2346,13 +2867,17 @@
         "planned:tests/input/security_contract_test.py",
         "tests/model/model_stream_interaction_test.py",
         "tests/task/interaction_event_sanitization_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_102",
         "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_interaction_stream_projects_correlated_input_required",
         "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_forged_stream_observability_cannot_smuggle_content",
-        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed"
+        "tests/task/interaction_event_sanitization_test.py::InteractionEventSanitizationTestCase::test_invalid_interaction_state_fails_closed",
+        "tests/input/security_contract_test.py::test_requirement_input_n_102",
+        "tests/task/event_test.py::SanitizedTaskEventTest::test_raw_correlation_identifier_is_not_safe",
+        "tests/task/stores/pgsql_store_coverage_test.py::PgsqlStoreCoverageTest::test_append_segment_usage_requires_matching_attempt",
+        "tests/task/event_test.py::SanitizedTaskEventTest::test_token_event_keeps_canonical_stream_observability"
       ]
     },
     {
@@ -2363,10 +2888,24 @@
       "owner": "privacy and observability",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/interaction/stores/interaction_pgsql_store_test.py",
+        "tests/model/nlp/vendor_openai_continuation_test.py",
+        "tests/input/security_contract_test.py",
+        "tests/interaction/stores/interaction_pgsql_e2e.py"
       ],
       "test_node_ids": [
-        "tests/input/security_contract_test.py::test_requirement_input_n_103"
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_encryption_and_dependency_failures_are_content_safe",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_sweep_deletes_all_encrypted_payload_copies",
+        "tests/model/nlp/vendor_openai_continuation_test.py::test_openai_snapshot_import_converts_retention_failure",
+        "tests/input/security_contract_test.py::test_requirement_input_n_103",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_continuationless_retention_removes_encrypted_scope",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_retention_is_principal_scoped_in_real_postgresql",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_deadline_and_retention_skip_corrupt_candidates",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_retention_deletes_branches_by_principal_scope",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_sweep_deletes_continuationless_record_and_branch",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_private_row_persistence_and_crypto_guards",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_sweep_skips_each_nonactionable_row"
       ]
     },
     {
@@ -2377,7 +2916,8 @@
       "owner": "privacy and observability",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_104"
@@ -2391,7 +2931,8 @@
       "owner": "privacy and observability",
       "implementation_artifacts": [
         "planned:tests/input/security_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/security_contract_test.py"
       ],
       "test_node_ids": [
         "tests/input/security_contract_test.py::test_requirement_input_n_105"
@@ -2405,16 +2946,33 @@
       "owner": "cross-surface failure contract",
       "implementation_artifacts": [
         "planned:tests/input/failure_contract_test.py",
-        "tests/fixtures/input/contract_decisions.json"
+        "tests/fixtures/input/contract_decisions.json",
+        "tests/input/failure_matrix_task_e2e_test.py",
+        "tests/input/failure_contract_test.py",
+        "tests/input/failure_matrix_cli_e2e_test.py",
+        "tests/input/failure_matrix_sdk_e2e_test.py",
+        "tests/input/failure_matrix_server_e2e_test.py",
+        "tests/input/failure_matrix_mcp_e2e_test.py",
+        "tests/input/failure_matrix_a2a_e2e_test.py",
+        "tests/input/failure_matrix_flow_e2e_test.py",
+        "tests/input/failure_matrix_nested_agent_e2e_test.py"
       ],
       "test_node_ids": [
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
         "tests/input/failure_contract_test.py::test_requirement_input_n_106",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_01",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_02",
@@ -2424,7 +2982,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_04",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05",
@@ -2432,7 +2989,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_05",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06",
@@ -2440,7 +2996,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_06",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07",
@@ -2448,7 +3003,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_07",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08",
@@ -2456,7 +3010,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_08",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09",
@@ -2464,7 +3017,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_09",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10",
@@ -2472,7 +3024,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_10",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11",
@@ -2480,7 +3031,6 @@
         "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11",
         "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11",
         "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
         "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11",
         "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_11",
         "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_12",
@@ -2541,10 +3091,10 @@
         "tests/memory/permanent/s3vectors_message_memory_test.py",
         "tests/memory/permanent/structured_message_codec_test.py",
         "tests/model/engine_test.py",
-        "tests/model/model_stream_interaction_test.py"
+        "tests/model/model_stream_interaction_test.py",
+        "tests/input/failure_contract_test.py"
       ],
       "test_node_ids": [
-        "tests/input/failure_contract_test.py::test_requirement_input_n_107",
         "tests/agent/execution_attached_boundaries_test.py::AttachedCancellationBoundaryTest::test_cleanup_failure_retries_once_without_rewriting_cancel",
         "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_checker_after_continuation_start_converges",
         "tests/agent/execution_direct_iteration_cancellation_test.py::DirectIterationCancellationTest::test_consumer_cancel_after_result_append_converges",
@@ -2683,7 +3233,7 @@
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_stream_cleanup_finishes_state_before_provider_error",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_completed_tool_outcome_records_execution_messages",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseIterationCoverageTest::test_abort_batch_with_execution_is_consumed",
-        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_attached_runtime",
+        "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_requires_interaction_runtime",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_start_task_input_abandons_failed_scheduling",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_caller_cancellation_cleans_local_waiters",
         "tests/agent/orchestrator_response_convergence_coverage_test.py::OrchestratorResponseInteractionCoverageTest::test_poll_session_cancellation_cancels_interaction",
@@ -2725,7 +3275,17 @@
         "tests/memory/permanent/structured_message_codec_test.py::StructuredMessageCodecTest::test_stable_key_controls_permanent_message_identity",
         "tests/model/engine_test.py::EnginePropertyTestCase::test_runtime_state_and_capability_proof_are_instance_owned",
         "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_sequential_resolved_interactions_share_one_stream",
-        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid"
+        "tests/model/model_stream_interaction_test.py::ModelStreamInteractionTestCase::test_overlapping_interactions_remain_invalid",
+        "tests/input/failure_contract_test.py::test_requirement_input_n_107",
+        "tests/agent/orchestrator_response_contract_coverage_test.py::OrchestratorResponseAsyncContractCoverageTest::test_durable_staging_preserves_cleanup_failure",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_private_transaction_boundaries_preserve_errors",
+        "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_pgsql_rejected_task_creates_fail_before_persistence",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_admission_wait_failure_cleanup_matrix",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_container_output_validation_failure_raises",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_non_durable_start_failure_propagates",
+        "tests/task/worker_continuation_coverage_test.py::TaskWorkerContinuationCoverageTest::test_non_durable_suspend_failure_retries",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_container_execution_failure_matrix",
+        "tests/task/worker_test.py::TaskWorkerTest::test_worker_setup_failure_matrix_fails_closed"
       ]
     },
     {
@@ -2735,7 +3295,8 @@
       "paraphrase": "Prove the complete public attached cli clarification behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_attached_cli_clarification"
@@ -2748,7 +3309,8 @@
       "paraphrase": "Prove the complete public text and multiple selection behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_text_and_multiple_selection"
@@ -2761,7 +3323,8 @@
       "paraphrase": "Prove the complete public piped prompt with tty behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_piped_prompt_with_tty"
@@ -2774,7 +3337,8 @@
       "paraphrase": "Prove the complete public fully headless run behavior through a supported product boundary.",
       "owner": "headless and durable hosts",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_fully_headless_run"
@@ -2787,7 +3351,8 @@
       "paraphrase": "Prove the complete public required versus advisory behavior through a supported product boundary.",
       "owner": "public async SDK",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_required_versus_advisory"
@@ -2800,7 +3365,8 @@
       "paraphrase": "Prove the complete public decline cancel and steering behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_decline_cancel_and_steering"
@@ -2813,7 +3379,8 @@
       "paraphrase": "Prove the complete public approval isolation behavior through a supported product boundary.",
       "owner": "interaction security policy",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_approval_isolation"
@@ -2826,7 +3393,8 @@
       "paraphrase": "Prove the complete public mcp projection behavior through a supported product boundary.",
       "owner": "MCP projection",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_mcp_projection"
@@ -2839,7 +3407,8 @@
       "paraphrase": "Prove the complete public a2a projection behavior through a supported product boundary.",
       "owner": "A2A projection",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_a2a_projection"
@@ -2852,7 +3421,8 @@
       "paraphrase": "Prove the complete public multi agent origin behavior through a supported product boundary.",
       "owner": "nested orchestration",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_multi_agent_origin"
@@ -2865,10 +3435,23 @@
       "paraphrase": "Prove the complete public idempotency and staleness behavior through a supported product boundary.",
       "owner": "durable interaction store",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py",
+        "tests/interaction/stores/interaction_pgsql_e2e.py"
       ],
       "test_node_ids": [
-        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness"
+        "tests/input/public_interaction_e2e_test.py::test_idempotency_and_staleness",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_worker_restart_crash_recovery_and_retention",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_independent_connections_serialize_resolution_races",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_branch_roots_use_full_real_ancestry",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_completed_provider_failure_replays_after_connection_loss",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_continuationless_retention_removes_encrypted_scope",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_coordinator_scopes_isolate_real_corruption",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_deadline_reads_bound_continuations_in_real_postgresql",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_partial_resumed_startup_cancel_recovers_after_restart",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_retention_is_principal_scoped_in_real_postgresql",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_scoped_corruption_isolated_in_real_postgresql",
+        "tests/interaction/stores/interaction_pgsql_e2e.py::PgsqlDurableInteractionE2ETest::test_wait_change_returns_coherent_resolved_projection"
       ]
     },
     {
@@ -2878,7 +3461,8 @@
       "paraphrase": "Prove the complete public privacy behavior through a supported product boundary.",
       "owner": "privacy and observability",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py"
+        "planned:tests/input/public_interaction_e2e_test.py",
+        "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
         "tests/input/public_interaction_e2e_test.py::test_privacy"

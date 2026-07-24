@@ -327,6 +327,7 @@ async def record_response_usage(
     response: object,
     run_id: str,
     attempt_id: str | None = None,
+    segment_id: str | None = None,
     usage_observer: TaskSanitizedEventObserver | None = None,
 ) -> None:
     entries = usage_observation_entries_from_response(response)
@@ -355,6 +356,7 @@ async def record_response_usage(
                 store=store,
                 run_id=run_id,
                 attempt_id=attempt_id,
+                segment_id=segment_id,
                 usage_id=usage_id,
                 observation=entry.observation,
                 flow_node=flow_node,
@@ -369,6 +371,7 @@ async def observe_response_usage(
     *,
     run_id: str,
     attempt_id: str | None = None,
+    segment_id: str | None = None,
     usage_observer: TaskSanitizedEventObserver | None = None,
     observed_usage_ids: set[str] | None = None,
 ) -> None:
@@ -396,6 +399,7 @@ async def observe_response_usage(
                 SanitizedTaskUsageEvent(
                     run_id=run_id,
                     attempt_id=attempt_id,
+                    segment_id=segment_id,
                     source=entry.observation.source,
                     totals=entry.observation.totals,
                     metadata=_usage_event_metadata_with_flow_node(
@@ -432,6 +436,7 @@ async def _record_response_usage_observation(
     store: TaskUsageStore,
     run_id: str,
     attempt_id: str | None,
+    segment_id: str | None,
     usage_id: str,
     observation: UsageObservation,
     flow_node: str | None,
@@ -442,6 +447,7 @@ async def _record_response_usage_observation(
         usage_record = await store.append_usage(
             run_id,
             attempt_id=attempt_id,
+            segment_id=segment_id,
             usage_id=usage_id,
             source=observation.source,
             totals=observation.totals,
@@ -457,6 +463,7 @@ async def _record_response_usage_observation(
             SanitizedTaskUsageEvent(
                 run_id=run_id,
                 attempt_id=attempt_id,
+                segment_id=segment_id,
                 source=observation.source,
                 totals=observation.totals,
                 metadata=_usage_event_metadata_with_flow_node(
