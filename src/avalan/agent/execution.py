@@ -48,7 +48,7 @@ from ..interaction.entities import (
     TerminateInputContinuation,
     TurnId,
 )
-from ..interaction.handler import InputHandler
+from ..interaction.handler import _InputHandler
 from ..interaction.policy import InteractionActor
 from ..interaction.state import project_resolution_to_model
 from ..interaction.store import (
@@ -161,31 +161,48 @@ class ExecutionInputRequiredError(RuntimeError):
     """Expose segment suspension without disguising it as completion."""
 
     result: InputRequiredResult
+    request: InputRequest | None
     durable: DurableInteractionSuspension | None
 
     def __init__(
         self,
         result: InputRequiredResult,
         *,
+        request: InputRequest | None = None,
         durable: DurableInteractionSuspension | None = None,
     ) -> None:
         if type(result) is not InputRequiredResult:
             raise TypeError("result must be an input-required result")
+        if request is not None and type(request) is not InputRequest:
+            raise TypeError("request must be an input request or None")
         if durable is not None:
             if type(durable) is not DurableInteractionSuspension:
                 raise TypeError(
                     "durable must be a durable interaction suspension"
                 )
-            request = durable.command.request
+            durable_request = durable.command.request
             if (
-                request.request_id != result.request_id
-                or request.continuation_id != result.continuation_id
+                durable_request.request_id != result.request_id
+                or durable_request.continuation_id != result.continuation_id
                 or not result.detached_resumption_available
             ):
                 raise ExecutionCorrelationError(
                     "durable suspension does not match input-required result"
                 )
+            if request is not None and request != durable_request:
+                raise ExecutionCorrelationError(
+                    "request does not match durable input suspension"
+                )
+            request = durable_request
+        if request is not None and (
+            request.request_id != result.request_id
+            or request.continuation_id != result.continuation_id
+        ):
+            raise ExecutionCorrelationError(
+                "request does not match input-required result"
+            )
         self.result = result
+        self.request = request
         self.durable = durable
         super().__init__("execution requires correlated input")
 
@@ -1070,7 +1087,7 @@ class AttachedInteractionRuntime:
 
     broker: InteractionBroker = field(repr=False)
     actor: InteractionActor
-    handler: InputHandler = field(repr=False)
+    handler: _InputHandler = field(repr=False)
     id_factory: ExecutionIdFactory = field(
         default_factory=UuidExecutionIdFactory,
         repr=False,

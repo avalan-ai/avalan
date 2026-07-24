@@ -693,7 +693,7 @@ def test_acceptance_rejects_invalid_inventory(
     )
     path = tmp_path / "manifest.json"
     _write(path, manifest)
-    assert _VERIFIER.load_manifest(path).current_phase == 5
+    assert _VERIFIER.load_manifest(path).current_phase == 6
 
     invalid = deepcopy(manifest)
     invalid["categories"].append("unit")
@@ -963,8 +963,8 @@ def test_current_runtime_file_inventory_fails_closed(
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
     definitions = _VERIFIER._current_runtime_node_ids(manifest.nodes)
     instances = _VERIFIER._current_runtime_instance_ids(manifest)
-    assert len(definitions) == 436
-    assert len(instances) == 522
+    assert len(definitions) == 26
+    assert len(instances) == 26
     requested: list[tuple[str, ...]] = []
 
     def collection_payload(node_ids: tuple[str, ...]) -> dict[str, object]:
@@ -1059,7 +1059,9 @@ def test_current_regression_classification_fails_closed(
     evidence = _read("baseline_evidence.json")
     classification = evidence["current_regression_classification"]
     _VERIFIER._validate_current_regression_classification(
-        classification, manifest, _ROOT
+        classification,
+        manifest,
+        _ROOT,
     )
     semantic_partition = _VERIFIER._current_semantic_definition_partition(
         frozenset(("equal", "modified", "new")),
@@ -1137,51 +1139,6 @@ def test_current_regression_classification_fails_closed(
         with pytest.raises(
             _VERIFIER.AcceptanceVerificationError,
             match="does not map to one static definition",
-        ):
-            _VERIFIER._current_changed_test_definitions(_ROOT)
-
-    with monkeypatch.context() as missing_inherited:
-        missing_inherited.setattr(
-            _VERIFIER,
-            "_EXPECTED_INHERITED_COLLECTIONS",
-            frozenset(tuple(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[1:]),
-        )
-        with pytest.raises(
-            _VERIFIER.AcceptanceVerificationError,
-            match="does not map to one static definition",
-        ):
-            _VERIFIER._current_changed_test_definitions(_ROOT)
-
-    inherited_id = sorted(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[0]
-    invalid_owners = dict(_VERIFIER._EXPECTED_INHERITED_COLLECTION_OWNERS)
-    invalid_owners[inherited_id] = (
-        "tests/task/store_contract_test.py::"
-        "StoreContractAssertions::test_missing_static_owner"
-    )
-    with monkeypatch.context() as invalid_inherited_owner:
-        invalid_inherited_owner.setattr(
-            _VERIFIER,
-            "_EXPECTED_INHERITED_COLLECTION_OWNERS",
-            invalid_owners,
-        )
-        with pytest.raises(
-            _VERIFIER.AcceptanceVerificationError,
-            match="lacks its exact static owner",
-        ):
-            _VERIFIER._current_changed_test_definitions(_ROOT)
-
-    other_inherited_id = sorted(_VERIFIER._EXPECTED_INHERITED_COLLECTIONS)[1]
-    swapped_owners = dict(_VERIFIER._EXPECTED_INHERITED_COLLECTION_OWNERS)
-    swapped_owners[inherited_id] = swapped_owners[other_inherited_id]
-    with monkeypatch.context() as swapped_inherited_owner:
-        swapped_inherited_owner.setattr(
-            _VERIFIER,
-            "_EXPECTED_INHERITED_COLLECTION_OWNERS",
-            swapped_owners,
-        )
-        with pytest.raises(
-            _VERIFIER.AcceptanceVerificationError,
-            match="reviewed inherited collection inventory changed",
         ):
             _VERIFIER._current_changed_test_definitions(_ROOT)
 
@@ -1674,11 +1631,15 @@ def test_current_regression_classification_fails_closed(
         )
 
     removed = dict(current)
-    removed.pop(
-        "tests/agent/execution_message_exactness_test.py::"
-        "CorrelatedInteractionMessagesTest::"
-        "test_result_messages_reject_order_substitution_and_extras"
+    removed_id = next(
+        node.node_id
+        for node in manifest.nodes
+        if node.lifecycle == "active"
+        and node.node_id in baseline
+        and node.node_id in current
+        and baseline[node.node_id] != current[node.node_id]
     )
+    removed.pop(removed_id)
     monkeypatch.setattr(
         _VERIFIER,
         "_current_changed_test_definitions",
@@ -1707,7 +1668,16 @@ def test_current_regression_classification_fails_closed(
         )
 
     mechanical = deepcopy(classification)
-    mechanical["mechanical_nodes"][0]["node_id"] = hidden
+    reviewed = mechanical["reviewed_nonsemantic_nodes"].pop(0)
+    mechanical["mechanical_nodes"].append(
+        {
+            "node_id": hidden,
+            "baseline_ast_sha256": reviewed["baseline_ast_sha256"],
+            "current_ast_sha256": reviewed["current_ast_sha256"],
+            "disposition": "mechanical_fixture_or_assertion_migration",
+            "evidence": reviewed["evidence"],
+        }
+    )
     digest_value = {
         "mechanical_nodes": mechanical["mechanical_nodes"],
         "reviewed_nonsemantic_nodes": mechanical["reviewed_nonsemantic_nodes"],
@@ -1717,6 +1687,11 @@ def test_current_regression_classification_fails_closed(
     mechanical["catalog_sha256"] = digest
     monkeypatch.setattr(
         _VERIFIER, "_EXPECTED_CURRENT_REGRESSION_SHA256", digest
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_CURRENT_REGRESSION_NODE_COUNT",
+        len(mechanical["mechanical_nodes"]),
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
@@ -1810,9 +1785,26 @@ def test_tree_binding_is_commit_stable_and_fail_closed(
         "normalized_evidence_sha256",
         "normalized_verifier_kind",
         "normalized_verifier_sha256",
+        "source_tree_file_count",
+        "source_tree_inventory_sha256",
+        "test_tree_file_count",
+        "test_tree_inventory_sha256",
+        "script_tree_file_count",
+        "script_tree_inventory_sha256",
+        "support_tree_boundary",
+        "support_tree_file_count",
+        "support_tree_inventory_sha256",
         "tree_sha256",
     }
-    assert before_commit["inventory_file_count"] == 2
+    assert before_commit["inventory_file_count"] == 4
+    assert before_commit["source_tree_file_count"] == 0
+    assert before_commit["test_tree_file_count"] == 1
+    assert before_commit["script_tree_file_count"] == 1
+    assert before_commit["support_tree_file_count"] == 2
+    assert (
+        before_commit["support_tree_boundary"]
+        == "all normalized files outside src/, tests/, and scripts/"
+    )
     _git(tmp_path, "add", "tracked.txt", "added.txt")
     _git(tmp_path, "commit", "--quiet", "-m", "update")
     assert (
@@ -1921,27 +1913,22 @@ def test_evidence_state_and_review_history_fail_closed(
     assert isinstance(inventory, dict)
     active_acceptance_nodes = inventory["active_acceptance_nodes"]
     active_pytest_instances = inventory["active_pytest_instances"]
+    assert active_acceptance_nodes == 814
     type_manifest = _read("type_contract_manifest.json")
     active_type_fixtures = sum(
         fixture["lifecycle"] == "active"
         for fixture in type_manifest["fixtures"]
     )
-    complete_fixture = deepcopy(evidence["quality_gate"])
-    _VERIFIER._validate_quality_gate_evidence(
-        complete_fixture,
-        active_acceptance_nodes=active_acceptance_nodes,
-        active_pytest_instances=active_pytest_instances,
-        active_type_fixtures=active_type_fixtures,
-        root=_ROOT,
-        preserved_untracked=("docs/examples/skills/code/",),
-        evidence_payload=evidence,
-    )
+    complete_evidence = deepcopy(evidence["quality_gate"])
     pending = {
         "state": "pending",
-        "required_commands": complete_fixture["required_commands"],
+        "required_commands": complete_evidence["required_commands"],
         "state_details": {
-            "requested_at": "2026-07-21T03:59:00-03:00",
-            "reason": "Fresh current-tree quality evidence is pending.",
+            "requested_at": "2026-07-24T10:03:24Z",
+            "reason": (
+                "Synthetic pending evidence has no completed results or"
+                " bindings."
+            ),
         },
         "results": [],
         "tree_binding": {},
@@ -2038,11 +2025,53 @@ def test_evidence_state_and_review_history_fail_closed(
         "state_details": {
             "completed_at": "2026-07-21T04:00:00-03:00",
             "gate_run_id": "round-5-gate-run",
+            "final_review": {
+                "reviewer": "/root/public_sdk_gate_review",
+                "status": "approved",
+                "approval_sealed": True,
+            },
+            "prior_failed_attempts": [
+                {
+                    "attempt": attempt,
+                    "command": focused,
+                    "outcome": "failed",
+                    "passed": 12000,
+                    "skipped": 59,
+                    "subtests_passed": 8678,
+                    "seconds": seconds,
+                    "failure_stage": failure_stage,
+                    "failure": (
+                        "Concrete failed gate provenance remains preserved."
+                    ),
+                }
+                for attempt, seconds, failure_stage in (
+                    (1, 366.53, "coverage_exclusion_verification"),
+                    (2, 362.09, "coverage_exclusion_verification"),
+                    (3, 366.48, "exact_source_coverage"),
+                )
+            ],
+            "diagnostic_coverage": {
+                "purpose": "diagnostic_only",
+                "passed": 12000,
+                "skipped": 59,
+                "subtests_passed": 8678,
+                "seconds": 368.56,
+                "report_sha256": (
+                    "48b0587756849bc1c22fdf437f0f03643ad9e2c9788e4166"
+                    "168239e31be2cf7f"
+                ),
+            },
+            "hard_coverage_audit": {
+                "command": "make test-coverage -- -100 src/",
+                "exit_code": 0,
+                "below_threshold_files": [],
+            },
         },
         "results": results,
         "tree_binding": tree_binding,
         "coverage_binding": {
             "report_sha256": "2" * 64,
+            "xml_report_sha256": "3" * 64,
             "source_inventory_sha256": inventory[0],
             "source_file_count": inventory[1],
             "statement_count": inventory[2],
@@ -2063,6 +2092,11 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER,
         "_coverage_report_binding",
         lambda root: ("2" * 64, *inventory),
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_coverage_xml_report_digest",
+        lambda root: "3" * 64,
     )
     verified_coverage = SimpleNamespace(
         files=tuple(f"src/file_{index}.py" for index in range(inventory[1])),
@@ -2087,6 +2121,21 @@ def test_evidence_state_and_review_history_fail_closed(
         preserved_untracked=("docs/examples/skills/code/",),
         evidence_payload=evidence,
     )
+    unsealed_review = deepcopy(complete)
+    unsealed_review["state_details"]["final_review"]["approval_sealed"] = False
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="approved sealed verdict",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            unsealed_review,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
     stale_focused = deepcopy(complete)
     stale_focused["results"][2]["active_instances"] -= 1
     with pytest.raises(
@@ -2177,13 +2226,28 @@ def test_evidence_state_and_review_history_fail_closed(
             evidence_payload=evidence,
         )
     stale_report = deepcopy(complete)
-    stale_report["coverage_binding"]["report_sha256"] = "3" * 64
+    stale_report["coverage_binding"]["report_sha256"] = "4" * 64
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
         match="live report",
     ):
         _VERIFIER._validate_quality_gate_evidence(
             stale_report,
+            active_acceptance_nodes=active_acceptance_nodes,
+            active_pytest_instances=active_pytest_instances,
+            active_type_fixtures=active_type_fixtures,
+            root=_ROOT,
+            preserved_untracked=("docs/examples/skills/code/",),
+            evidence_payload=evidence,
+        )
+    stale_xml_report = deepcopy(complete)
+    stale_xml_report["coverage_binding"]["xml_report_sha256"] = "4" * 64
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="coverage XML digest",
+    ):
+        _VERIFIER._validate_quality_gate_evidence(
+            stale_xml_report,
             active_acceptance_nodes=active_acceptance_nodes,
             active_pytest_instances=active_pytest_instances,
             active_type_fixtures=active_type_fixtures,
@@ -2215,14 +2279,41 @@ def test_evidence_state_and_review_history_fail_closed(
         evidence["review_history_phase1_sha256"],
         evidence["review_history_phase2_sha256"],
         evidence["review_history_prior_sha256"],
-        5,
+        6,
         "/root",
+    )
+    self_review = deepcopy(history)
+    self_review[-1]["reviewer"] = "/root"
+    self_review_digest = _canonical_digest(self_review)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_REVIEW_HISTORY_SHA256",
+        self_review_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="implementation owner cannot review its own evidence",
+    ):
+        _VERIFIER._validate_review_history(
+            self_review,
+            self_review_digest,
+            evidence["review_history_phase0_sha256"],
+            evidence["review_history_phase1_sha256"],
+            evidence["review_history_phase2_sha256"],
+            evidence["review_history_prior_sha256"],
+            6,
+            "/root",
+        )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_REVIEW_HISTORY_SHA256",
+        evidence["review_history_sha256"],
     )
     quality_history = deepcopy(evidence["quality_history"])
     _VERIFIER._validate_quality_history(
         quality_history,
         evidence["quality_history_sha256"],
-        5,
+        6,
     )
     rewritten_quality = deepcopy(quality_history)
     rewritten_quality[0]["quality_gate_sha256"] = "0" * 64
@@ -2239,7 +2330,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_quality,
             rewritten_quality_digest,
-            5,
+            6,
         )
 
     rewritten_phase2_quality = deepcopy(quality_history)
@@ -2259,7 +2350,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_phase2_quality,
             rewritten_phase2_quality_digest,
-            5,
+            6,
         )
 
     rewritten_prior_quality = deepcopy(quality_history)
@@ -2277,7 +2368,7 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_prior_quality,
             rewritten_prior_quality_digest,
-            5,
+            6,
         )
 
     rewritten_frozen_quality = deepcopy(quality_history)
@@ -2297,7 +2388,27 @@ def test_evidence_state_and_review_history_fail_closed(
         _VERIFIER._validate_quality_history(
             rewritten_frozen_quality,
             rewritten_frozen_quality_digest,
-            5,
+            6,
+        )
+
+    rewritten_phase5_quality = deepcopy(quality_history)
+    rewritten_phase5_quality[4]["quality_gate_sha256"] = "4" * 64
+    rewritten_phase5_quality_digest = _canonical_digest(
+        rewritten_phase5_quality
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_EXPECTED_QUALITY_HISTORY_SHA256",
+        rewritten_phase5_quality_digest,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="quality history lost its phase-5 record",
+    ):
+        _VERIFIER._validate_quality_history(
+            rewritten_phase5_quality,
+            rewritten_phase5_quality_digest,
+            6,
         )
 
     wrong_terminal_reviewer = deepcopy(history)
@@ -2319,7 +2430,7 @@ def test_evidence_state_and_review_history_fail_closed(
             evidence["review_history_phase1_sha256"],
             evidence["review_history_phase2_sha256"],
             evidence["review_history_prior_sha256"],
-            5,
+            6,
             "/root",
         )
     for index, message in (
@@ -2348,7 +2459,7 @@ def test_evidence_state_and_review_history_fail_closed(
                 evidence["review_history_phase1_sha256"],
                 evidence["review_history_phase2_sha256"],
                 evidence["review_history_prior_sha256"],
-                5,
+                6,
                 "/root",
             )
 
@@ -2603,10 +2714,10 @@ def test_acceptance_rejects_failure_schedule_evidence_drift(
         cell
         for cell in wrong_owner["cells"]
         if cell["condition_id"] == "INPUT-F-04"
-        and cell["surface_id"] == "cli-task-inspect"
+        and cell["surface_id"] == "task-client-inspect"
     )
     corrected_cell["negative_e2e_node"] = (
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
     )
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
@@ -3236,14 +3347,6 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
             "        assert len('x') == 1\n    return\n    checked()\n"
         ),
         (
-            "def test_case():\n    def checked():\n"
-            "        assert len('x') == 1\n    checked()\n"
-        ),
-        (
-            "def checked():\n    assert len('x') == 1\n\n"
-            "def test_case():\n    checked()\n"
-        ),
-        (
             "def checked():\n    assert len('x') == 1\n\n"
             "def test_case():\n    callback = lambda: checked()\n"
             "    callback()\n"
@@ -3281,10 +3384,19 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
             "        assert len('x') == 1\n    await checked()\n"
         ),
         (
-            "from asyncio import run as runner\n\ndef test_case():\n"
-            "    async def checked():\n"
-            "        assert len('x') == 1\n    runner(checked())\n"
+            "def test_case():\n    def unchecked():\n"
+            "        return len('x')\n    unchecked()\n"
         ),
+        (
+            "def enabled():\n    return True\n\ndef test_case():\n"
+            "    def checked():\n        assert len('x') == 1\n"
+            "    if enabled():\n        checked()\n"
+        ),
+        (
+            "def test_case():\n    def first():\n        second()\n"
+            "    def second():\n        first()\n    first()\n"
+        ),
+        "from helpers import checked\n\ndef test_case():\n    checked()\n",
         (
             "def test_case():\n    values = ('x',)\n    return\n"
             "    for value in values:\n        assert len(value) == 1\n"
@@ -4035,6 +4147,25 @@ def test_acceptance_rejects_placeholder_and_execution_tricks(
     path.write_text(
         "def test_case():\n    value = len('contract')\n    assert value"
         " == 8\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def test_case():\n    def checked():\n"
+        "        assert len('contract') == 8\n    checked()\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "def checked():\n    assert len('contract') == 8\n\n"
+        "def test_case():\n    checked()\n",
+        encoding="utf-8",
+    )
+    _VERIFIER._validate_test_implementation(node, tmp_path)
+    path.write_text(
+        "from asyncio import run as runner\n\ndef test_case():\n"
+        "    async def checked():\n"
+        "        assert len('contract') == 8\n    runner(checked())\n",
         encoding="utf-8",
     )
     _VERIFIER._validate_test_implementation(node, tmp_path)

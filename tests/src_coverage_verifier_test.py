@@ -206,13 +206,13 @@ def test_phase3_live_exclusion_fixtures_match_reviewed_relocations() -> None:
     assert current_ledger["directive_count_before"] == 55
     assert current_ledger["directive_count_after"] == 67
     assert current_ledger["report_excluded_line_count_before"] == 1327
-    assert current_ledger["report_excluded_line_count_after"] == 1736
+    assert current_ledger["report_excluded_line_count_after"] == 1834
     assert len(current_ledger["directive_relocations"]) == 5
     assert len(current_ledger["directive_additions"]) == 12
     assert current_ledger["directive_removals"] == []
-    assert len(current_ledger["report_exclusion_relocations"]) == 17
-    assert len(current_ledger["report_exclusion_additions"]) == 25
-    assert len(current_ledger["report_exclusion_removals"]) == 16
+    assert len(current_ledger["report_exclusion_relocations"]) == 19
+    assert len(current_ledger["report_exclusion_additions"]) == 31
+    assert len(current_ledger["report_exclusion_removals"]) == 18
     assert {
         entry["path"] for entry in current_ledger["directive_additions"]
     } == {"src/avalan/task/worker.py"}
@@ -242,6 +242,26 @@ def test_phase3_live_exclusion_fixtures_match_reviewed_relocations() -> None:
     assert {entry["reviewed_by"] for entry in current_entries} == {
         _VERIFIER._EXPECTED_EXCLUSION_REVIEWER
     }
+    analyzer = _VERIFIER.Coverage(config_file=False, data_file=None)
+    observed_report_lines: dict[str, list[int]] = {}
+    for source_path in sorted((_ROOT / "src").rglob("*.py")):
+        normalized = source_path.relative_to(_ROOT).as_posix()
+        _, _, excluded, _, _ = analyzer.analysis2(str(source_path))
+        if excluded:
+            observed_report_lines[normalized] = excluded
+    expected_report_lines = current["report_excluded_lines"]
+    mismatches = {
+        path: {
+            "snapshot": expected_report_lines.get(path, []),
+            "analysis2": observed_report_lines.get(path, []),
+        }
+        for path in sorted(
+            set(expected_report_lines) | set(observed_report_lines)
+        )
+        if expected_report_lines.get(path, [])
+        != observed_report_lines.get(path, [])
+    }
+    assert not mismatches, dumps(mismatches, indent=2)
     report_lines = _VERIFIER._verify_exclusion_history_chain(
         fixtures / "coverage_exclusions.json",
         fixtures / "coverage_exclusions_phase3.json",

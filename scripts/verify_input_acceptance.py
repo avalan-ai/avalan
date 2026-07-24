@@ -104,7 +104,7 @@ from verify_src_coverage import (
 _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
-_CURRENT_BOUNDARY_PHASE = 5
+_CURRENT_BOUNDARY_PHASE = 6
 _CATEGORIES = frozenset(
     (
         "unit",
@@ -336,7 +336,7 @@ _FROZEN_RUNTIME_NODE_COUNT = 249
 _FROZEN_RUNTIME_NODE_SHA256 = (
     "41ec33710c3a014309798077e3ef75484d315e0781309aa4f62756253c5e0be4"
 )
-_EXPECTED_CURRENT_RUNTIME_FILES = (
+_FROZEN_PHASE5_RUNTIME_FILES = (
     "tests/agent/durable_continuation_resume_test.py",
     "tests/agent/durable_runtime_test.py",
     "tests/agent/execution_coverage_regression_test.py",
@@ -374,43 +374,56 @@ _EXPECTED_CURRENT_RUNTIME_FILES = (
     "tests/task/worker_continuation_coverage_test.py",
     "tests/task/worker_test.py",
 )
-_EXPECTED_CURRENT_RUNTIME_NODE_COUNT = 436
-_EXPECTED_CURRENT_RUNTIME_NODE_SHA256 = (
+_FROZEN_PHASE5_RUNTIME_NODE_COUNT = 436
+_FROZEN_PHASE5_RUNTIME_NODE_SHA256 = (
     "5ecf8718bfdc7e3fbcb5fdeb8b3f110556568e7d2d2234e2cea13c73538deb2a"
 )
+_EXPECTED_CURRENT_RUNTIME_FILES = (
+    "tests/input/broker_contract_test.py",
+    "tests/input/failure_matrix_sdk_e2e_test.py",
+    "tests/input/failure_matrix_task_e2e_test.py",
+    "tests/input/headless_contract_test.py",
+    "tests/input/public_interaction_e2e_test.py",
+    "tests/input/sdk_contract_test.py",
+)
+_EXPECTED_CURRENT_RUNTIME_NODE_COUNT = 26
+_EXPECTED_CURRENT_RUNTIME_NODE_SHA256 = (
+    "2f4e7091ecd6fe447ef5beec4bc4413fa4cfce2c24875bcd222a931ce3eb44d4"
+)
 _EXPECTED_CURRENT_FOCUSED_COMMAND = (
-    "make test-pgsql-exact no-install INPUT_PHASE=5"
+    "make test-pgsql-exact no-install INPUT_PHASE=6"
+)
+_EXPECTED_LINT_SCRIPT_FILE_COUNT = 6
+_EXPECTED_FINAL_GATE_REVIEWER = "/root/public_sdk_gate_review"
+_EXPECTED_DIAGNOSTIC_COVERAGE_SHA256 = (
+    "48b0587756849bc1c22fdf437f0f03643ad9e2c9788e4166168239e31be2cf7f"
+)
+_EXPECTED_HARD_COVERAGE_COMMAND = "make test-coverage -- -100 src/"
+_SUPPORT_TREE_BOUNDARY = (
+    "all normalized files outside src/, tests/, and scripts/"
 )
 _EXPECTED_TASK_FAILURE_NODES = frozenset(
     (
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
-        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13",
     )
 )
 _EXPECTED_TASK_FAILURE_SHA256 = (
-    "0c513eeef6debbd1d31760cdbc95d914aeb3f902f8e1a28bd8fb50419fe4e1a9"
+    "ac0672e33705f4d4085fe6d4ae2fdd0f9a63243a4d0ea02743ea8a8c9a5ae185"
 )
-_EXPECTED_NONCONVENTION_TEST_PATHS = frozenset(
-    ("tests/interaction/stores/interaction_pgsql_e2e.py",)
-)
-_EXPECTED_INHERITED_COLLECTION_METHODS = (
-    "test_artifact_metadata_is_appended_and_filtered_by_store",
-    "test_artifact_state_transitions_are_compare_and_swap",
-    "test_attempts_are_ordered_and_one_active_attempt_is_allowed",
-    "test_claim_token_fences_queued_run_updates",
-    "test_create_run_requires_registered_definition",
-    "test_execution_payload_is_durable_and_immutable",
-    "test_registers_definitions_immutably",
-    "test_retention_artifact_discovery_filters_ready_expired_records",
-    "test_run_lifecycle_uses_compare_and_swap_transitions",
-)
+_EXPECTED_NONCONVENTION_TEST_PATHS: frozenset[str] = frozenset()
+_EXPECTED_INHERITED_COLLECTION_METHODS: tuple[str, ...] = ()
 _EXPECTED_INHERITED_COLLECTION_OWNERS = {
     f"{path}::{class_name}::{method}": (
         f"tests/task/store_contract_test.py::StoreContractAssertions::{method}"
@@ -428,7 +441,7 @@ _EXPECTED_INHERITED_COLLECTIONS = frozenset(
     _EXPECTED_INHERITED_COLLECTION_OWNERS
 )
 _EXPECTED_INHERITED_COLLECTION_SHA256 = (
-    "f0d41d2a7888657aef5046cc56f17a949508f96c87ec40701ab8b3c59fc04a79"
+    "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
 )
 _COVERAGE_EXCLUSION_PATTERN = compile_regex(
     r"#\s*(?:pragma\s*:?\s*no\s*cover|coverage\s*:?\s*ignore)",
@@ -465,6 +478,7 @@ _STATUS_OR_EXIT_KEYS = frozenset(
         "task_state",
         "flow_state",
         "branch_state",
+        "broker_result",
         "capability",
         "client_result",
     }
@@ -507,6 +521,14 @@ _EXPECTED_FAILURE_SCHEDULE_CORRECTIONS = {
         for target in ("task", "model", "callable", "tool")
         for mode in ("direct", "queue")
     },
+    **{
+        (condition, surface): 9
+        for condition in ("INPUT-F-12", "INPUT-F-13")
+        for surface in (
+            "task-target-flow-direct",
+            "task-target-flow-queue",
+        )
+    },
 }
 _EXPECTED_NO_BC_IDS = frozenset(
     {
@@ -529,25 +551,25 @@ _EXPECTED_NO_BC_IDS = frozenset(
     }
 )
 _EXPECTED_REQUIREMENTS_SHA256 = (
-    "0e4bc53885cbe24ee6fc6ad34f16aaf9220f59918615b348fa582987c3f3e74c"
+    "71f234f898b044dc8997a59886904245d30bba767daffb2c7d1fea49a6436467"
 )
 _EXPECTED_FAILURE_MATRIX_SHA256 = (
-    "a87657b19615f2f5064eec8e73d6d3856fb2eb64934fc1cbe9b7a71733b3226d"
+    "d64efebb753395a02e1a063229b1420aa40de90a0643ef6733ea08c703fb6559"
 )
 _EXPECTED_DECISIONS_SHA256 = (
-    "55f46cb67350be867b3b7b0a5194dc8f534cfed2f35f69a9859d3a8dd71bc740"
+    "a195dca79295a5dff56d5e961c278406a5eb29394e643c9467b5d84fcf998ccb"
 )
 _EXPECTED_NO_BC_SHA256 = (
     "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887"
 )
 _EXPECTED_ACCEPTANCE_LEDGER_SHA256 = (
-    "edd3cfd2721fef0159d53f07f6b5b83c27c8dd7c1e975084f01e7917c8def19e"
+    "e78c4362f75c2aeef4334b9420f5f094bea3bb098609593e462cb065d6ce57df"
 )
 _EXPECTED_EVIDENCE_SHA256 = (
-    "97987b255baca02760ec1d3701db4ff7fcf92316abac6ab399b518cdb48f68f1"
+    "21922b9ad9413313f1cd5d740b4f2f54bc75a3460e81d1d6f46f72668dbb8f3f"
 )
 _EXPECTED_REVIEW_HISTORY_SHA256 = (
-    "901b758b01325b0eae2ed2cbbc23a24d27d768852f56208e05297bc2b3ecddea"
+    "9eb1283c0495bd9a92d8f535ab065c335dfdf6b9136a141a003ad5f5f130c18a"
 )
 _EXPECTED_PHASE0_REVIEW_SHA256 = (
     "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b"
@@ -583,13 +605,19 @@ _EXPECTED_PRIOR_EVIDENCE_SHA256 = (
     "59788e2441bec0bd34a61ff94f8b14459ca229a37fcf693ae6b94fb8106e8ab9"
 )
 _EXPECTED_QUALITY_HISTORY_SHA256 = (
-    "0f44c34f7b4d34074204769f97290070ade00d44ae89e875feef8598dc5f32e5"
+    "aeab42dc865dd0d7f68fb274033312b25eda40b0be2a2e08ec72c09a2ba8d471"
 )
 _EXPECTED_FROZEN_QUALITY_SHA256 = (
     "07d5de78f45684af480d428d17ea8fef29565581e37c20fbd8e97a46c3fb30d0"
 )
 _EXPECTED_FROZEN_EVIDENCE_SHA256 = (
     "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
+)
+_EXPECTED_PHASE5_QUALITY_SHA256 = (
+    "6f02f22e439d6b1ec34a291f1b22c4fe26d429b8d01c0b1e3453a1730424c3c5"
+)
+_EXPECTED_PHASE5_EVIDENCE_SHA256 = (
+    "97987b255baca02760ec1d3701db4ff7fcf92316abac6ab399b518cdb48f68f1"
 )
 _EXPECTED_IMPLEMENTATION_OWNER = "/root"
 _EXPECTED_INDEPENDENT_REVIEWER = "/root/input_contract_audit"
@@ -626,16 +654,28 @@ _EXPECTED_REVIEW_OCCURRENCES = (
     (5, "gate", "/root/continuation_r5_review", "pending"),
     (5, "semantic", "/root/durable_lifecycle_corrections", "approved"),
     (5, "gate", "/root/continuation_r5_review", "approved"),
+    (6, "semantic", "/root/public_sdk_surface", "approved"),
+    (6, "gate", "/root/public_sdk_gate_review", "pending"),
+    (6, "cold-import-closure", "/root/public_sdk_surface", "pending"),
+    (6, "cold-import-closure", "/root/public_sdk_surface", "approved"),
+    (
+        6,
+        "independent_public_sdk_surface_reviewer",
+        "/root/public_sdk_surface",
+        "approved",
+    ),
+    (6, "gate-correction-closure", "/root", "approved"),
+    (6, "gate", "/root/public_sdk_gate_review", "approved"),
 )
 _EXPECTED_CURRENT_SEMANTIC_REVIEW_STATUS = "approved"
 _EXPECTED_CURRENT_GATE_REVIEW_STATUS = "approved"
 _EXPECTED_BASELINE_HEAD = "609aa091c17756ab952cf5fe668ca3d867f0e311"
 _EXPECTED_BASELINE_SUBJECT = "Bump version to v1.5.8 (#1067)"
-_EXPECTED_CURRENT_BASELINE_HEAD = "a455e6817557305fa27bb7052366d851e4eb0342"
-_EXPECTED_CURRENT_REGRESSION_NODE_COUNT = 53
-_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT = 47
-_EXPECTED_CURRENT_TEST_FILE_COUNT = 54
-_EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT = 7
+_EXPECTED_CURRENT_BASELINE_HEAD = "1201c27827e4eb4afeae9b9b0c772be96632c088"
+_EXPECTED_CURRENT_REGRESSION_NODE_COUNT = 0
+_EXPECTED_CURRENT_SUPPORT_SURFACE_COUNT = 14
+_EXPECTED_CURRENT_TEST_FILE_COUNT = 22
+_EXPECTED_CURRENT_UNCHANGED_SUPPORT_SURFACE_COUNT = 8
 _ABSENT_TEST_DEFINITION_SHA256 = (
     "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479"
 )
@@ -645,52 +685,19 @@ _ABSENT_TEST_SUPPORT_SHA256 = (
 _EXPECTED_CURRENT_CHANGED_SUPPORT_PATHS = frozenset(
     (
         "tests/agent/durable_continuation_resume_test.py",
-        "tests/agent/durable_runtime_test.py",
-        "tests/agent/execution_coverage_regression_test.py",
-        "tests/agent/execution_message_exactness_test.py",
-        "tests/agent/execution_test.py",
         "tests/agent/execution_wrapper_input_required_test.py",
-        "tests/agent/loader_test.py",
-        "tests/agent/orchestrator_contract_coverage_test.py",
-        "tests/agent/orchestrator_response_contract_coverage_test.py",
-        "tests/agent/orchestrator_response_convergence_coverage_test.py",
+        "tests/agent/interaction_runtime_injection_test.py",
         "tests/input/broker_contract_test.py",
+        "tests/input/failure_matrix_sdk_e2e_test.py",
         "tests/input/failure_matrix_task_e2e_test.py",
+        "tests/input/headless_contract_test.py",
         "tests/input/public_interaction_e2e_test.py",
-        "tests/input_acceptance_verifier_test.py",
-        "tests/input_contract_test.py",
-        "tests/interaction/continuation_import_test.py",
-        "tests/interaction/continuation_test.py",
-        "tests/interaction/interaction_store_conformance_test.py",
-        "tests/interaction/interaction_store_validation_coverage_test.py",
-        "tests/interaction/stores/interaction_pgsql_e2e.py",
+        "tests/input/public_sdk_annotation_contract_test.py",
+        "tests/input/public_sdk_construction_test.py",
+        "tests/input/public_sdk_coverage_test.py",
+        "tests/input/sdk_contract_test.py",
+        "tests/interaction/headless_policy_test.py",
         "tests/interaction/stores/interaction_pgsql_store_test.py",
-        "tests/model/model_capability_test.py",
-        "tests/model/nlp/vendor_openai_continuation_test.py",
-        "tests/project_metadata_test.py",
-        "tests/src_coverage_verifier_test.py",
-        "tests/task/client_test.py",
-        "tests/task/container_execution_test.py",
-        "tests/task/direct_client_e2e_test.py",
-        "tests/task/event_test.py",
-        "tests/task/full_e2e_matrix_test.py",
-        "tests/task/queue_test.py",
-        "tests/task/queue_worker_e2e_test.py",
-        "tests/task/queues/pgsql_protocol_test.py",
-        "tests/task/runner_test.py",
-        "tests/task/state_test.py",
-        "tests/task/store_contract_test.py",
-        "tests/task/stores/in_memory_task_store_test.py",
-        "tests/task/stores/pgsql_contract_test.py",
-        "tests/task/stores/pgsql_migration_test.py",
-        "tests/task/stores/pgsql_queue_e2e_test.py",
-        "tests/task/stores/pgsql_store_coverage_test.py",
-        "tests/task/suspension_test.py",
-        "tests/task/target_registry_test.py",
-        "tests/task/targets/agent_target_test.py",
-        "tests/task/targets/flow_target_test.py",
-        "tests/task/worker_continuation_coverage_test.py",
-        "tests/task/worker_test.py",
     )
 )
 _CURRENT_DUPLICATE_PGSQL_NODE = (
@@ -705,36 +712,35 @@ _EXPECTED_CURRENT_DUPLICATE_TEST_DEFINITIONS = {
     ),
 }
 _EXPECTED_CURRENT_REGRESSION_SHA256 = (
-    "7280d26cd84a941c2f063d10027615db20ff2b125298dc858a3ef0c2d77c5566"
+    "e26844f278d2ba186211e137cecbb23100ee950dcaec3ded80a3c81b241b7814"
 )
-_EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT = 23
+_EXPECTED_CURRENT_ACTIVE_LEGACY_NODE_COUNT = 25
 _EXPECTED_CURRENT_ACTIVE_LEGACY_SHA256 = (
-    "2f1b6d7b76f8fd6b714a0fabd4b8f24ea45f05c6b2b56dfeed17003b1851a69c"
+    "cd2c8feac93ff3676795aad4fa8a100b2cd26c834878f6b06099ad5475eb5207"
 )
 _EXPECTED_CURRENT_ACTIVE_LEGACY_GATE_NODES: frozenset[str] = frozenset()
-_EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS: tuple[
-    tuple[str, str, str, str], ...
-] = (
+_EXPECTED_HISTORICAL_SEMANTIC_REPLACEMENTS = (
     (
         (
             "tests/agent/orchestrator_response_convergence_coverage_test.py::"
             "OrchestratorResponseInteractionCoverageTest::"
             "test_start_task_input_requires_attached_runtime"
         ),
-        "cd8ca832e93833ddc5590abbca97b341a522f34f3ca5dff743c738f94e7c6495",
         (
             "tests/agent/orchestrator_response_convergence_coverage_test.py::"
             "OrchestratorResponseInteractionCoverageTest::"
             "test_start_task_input_requires_interaction_runtime"
         ),
-        "fbed1866fcf219f6ac03c60840c9e466d8cd47850030212ce680630e18d1c94b",
     ),
 )
+_EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS: tuple[
+    tuple[str, str, str, str], ...
+] = ()
 _EXPECTED_PENDING_SOURCE_INVENTORY = (
-    "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23",
-    435,
-    118256,
-    1736,
+    "924cbf18b65fb91c3b438a4cb7bec757ba7843e97b5ac0bd89b68072f7edc943",
+    440,
+    119485,
+    1834,
 )
 _EXPECTED_BOUNDARY_PATHS = frozenset(
     {
@@ -750,6 +756,8 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "scripts/verify_src_coverage.py",
         "src/avalan/agent/",
         "src/avalan/cli/",
+        "src/avalan/__init__.py",
+        "src/avalan/sdk.py",
         "src/avalan/entities.py",
         "src/avalan/event/__init__.py",
         "src/avalan/event/manager.py",
@@ -769,6 +777,7 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
         "tests/fixtures/input/",
         "tests/flow/",
         "tests/input/",
+        "tests/input_consumers/",
         "tests/input_acceptance_verifier_test.py",
         "tests/input_contract_fixtures.py",
         "tests/input_contract_harness_test.py",
@@ -790,6 +799,7 @@ _EXPECTED_BOUNDARY_PATHS = frozenset(
 )
 _EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
     {
+        "src/avalan/__init__.py",
         "src/avalan/agent/",
         "src/avalan/cli/",
         "src/avalan/entities.py",
@@ -803,14 +813,15 @@ _EXPECTED_PRODUCTION_SOURCE_PATHS = frozenset(
         "src/avalan/server/routers/chat.py",
         "src/avalan/server/routers/mcp.py",
         "src/avalan/server/routers/responses.py",
+        "src/avalan/sdk.py",
         "src/avalan/task/",
         "src/avalan/tool/",
     }
 )
 _EXPECTED_ORDERED_COMMON_GATE_COMMANDS = (
     "make lint",
-    "make typecheck-input-contract INPUT_PHASE=5",
-    "make test-pgsql-exact no-install INPUT_PHASE=5",
+    "make typecheck-input-contract INPUT_PHASE=6",
+    "make test-pgsql-exact no-install INPUT_PHASE=6",
     "git diff --check",
 )
 _EXPECTED_COMMON_GATE_COMMANDS = frozenset(
@@ -1198,11 +1209,16 @@ def _validate_current_manifest_inventory(
             replacement_id: removed_id
             for (
                 removed_id,
-                _baseline_digest,
                 replacement_id,
-                _current_digest,
-            ) in _EXPECTED_CURRENT_SEMANTIC_REPLACEMENTS
+            ) in _EXPECTED_HISTORICAL_SEMANTIC_REPLACEMENTS
         },
+    )
+    _validate_runtime_inventory(
+        nodes,
+        boundary=5,
+        expected_files=frozenset(_FROZEN_PHASE5_RUNTIME_FILES),
+        expected_count=_FROZEN_PHASE5_RUNTIME_NODE_COUNT,
+        expected_digest=_FROZEN_PHASE5_RUNTIME_NODE_SHA256,
     )
     _validate_runtime_inventory(
         nodes,
@@ -2343,8 +2359,8 @@ def _failure_schedule_corrections(
             "failure schedule corrected_active_from_phase",
         )
         if (
-            reviewed_in_phase != _CURRENT_BOUNDARY_PHASE
-            or previous_phase != _CURRENT_BOUNDARY_PHASE
+            reviewed_in_phase > _CURRENT_BOUNDARY_PHASE
+            or previous_phase != reviewed_in_phase
             or corrected_phase <= previous_phase
         ):
             raise AcceptanceVerificationError(
@@ -2662,12 +2678,16 @@ def _validate_failure_matrix(
                 )
             if key in schedule_corrections:
                 corrected_phase = schedule_corrections[key]
-                owner_kind = {
-                    6: "sdk",
-                    7: "cli",
-                    9: "flow",
-                    12: "task",
-                }[corrected_phase]
+                owner_kind = (
+                    "task"
+                    if surface_id.startswith("task-client-")
+                    else {
+                        6: "sdk",
+                        7: "cli",
+                        9: "flow",
+                        12: "task",
+                    }[corrected_phase]
+                )
                 condition_suffix = (
                     condition_id.removeprefix("INPUT-")
                     .lower()
@@ -5349,7 +5369,15 @@ def _validate_review_history(
             raise AcceptanceVerificationError(
                 "review history evidence must be concrete"
             )
-        if reviewer == implementation_owner:
+        owner_gate_correction_closure = (
+            phase == current_phase
+            and role == "gate-correction-closure"
+            and reviewer == implementation_owner
+            and status == "approved"
+        )
+        if reviewer == implementation_owner and not (
+            owner_gate_correction_closure
+        ):
             raise AcceptanceVerificationError(
                 "implementation owner cannot review its own evidence"
             )
@@ -5375,7 +5403,13 @@ def _validate_review_history(
                 )
             direct_current_approval = (
                 phase == current_phase
-                and role in {"semantic", "gate"}
+                and role
+                in {
+                    "semantic",
+                    "gate",
+                    "independent_public_sdk_surface_reviewer",
+                    "gate-correction-closure",
+                }
                 and status == "approved"
             )
             preserved_prior_direct_approval = phase < current_phase and (
@@ -5497,6 +5531,10 @@ def _validate_quality_history(
                 _EXPECTED_FROZEN_QUALITY_SHA256,
                 _EXPECTED_FROZEN_EVIDENCE_SHA256,
             ),
+            5: (
+                _EXPECTED_PHASE5_QUALITY_SHA256,
+                _EXPECTED_PHASE5_EVIDENCE_SHA256,
+            ),
         }
         expected_digests = expected_historical_digests.get(phase)
         if (
@@ -5605,7 +5643,14 @@ def _validate_quality_gate_evidence(
     details = _evidence_mapping(state_details, "complete quality state")
     _exact_keys(
         details,
-        {"completed_at", "gate_run_id"},
+        {
+            "completed_at",
+            "gate_run_id",
+            "final_review",
+            "prior_failed_attempts",
+            "diagnostic_coverage",
+            "hard_coverage_audit",
+        },
         "complete quality state",
     )
     _nonempty_string(details.get("completed_at"), "quality completed_at")
@@ -5616,6 +5661,130 @@ def _validate_quality_gate_evidence(
     if len(gate_run_id) < 12:
         raise AcceptanceVerificationError(
             "completed quality evidence requires a concrete gate run ID"
+        )
+    final_review = _evidence_mapping(
+        details.get("final_review"),
+        "final quality review",
+    )
+    _exact_keys(
+        final_review,
+        {"reviewer", "status", "approval_sealed"},
+        "final quality review",
+    )
+    if final_review != {
+        "reviewer": _EXPECTED_FINAL_GATE_REVIEWER,
+        "status": "approved",
+        "approval_sealed": True,
+    }:
+        raise AcceptanceVerificationError(
+            "final quality review must record the approved sealed verdict"
+        )
+    raw_attempts = details.get("prior_failed_attempts")
+    if not isinstance(raw_attempts, list) or len(raw_attempts) != 3:
+        raise AcceptanceVerificationError(
+            "complete quality evidence must preserve three failed attempts"
+        )
+    expected_attempts = (
+        (1, 366.53, "coverage_exclusion_verification"),
+        (2, 362.09, "coverage_exclusion_verification"),
+        (3, 366.48, "exact_source_coverage"),
+    )
+    for raw_attempt, expected in zip(
+        raw_attempts,
+        expected_attempts,
+        strict=True,
+    ):
+        attempt = _evidence_mapping(
+            raw_attempt,
+            "prior failed quality attempt",
+        )
+        _exact_keys(
+            attempt,
+            {
+                "attempt",
+                "command",
+                "outcome",
+                "passed",
+                "skipped",
+                "subtests_passed",
+                "seconds",
+                "failure_stage",
+                "failure",
+            },
+            "prior failed quality attempt",
+        )
+        attempt_number, attempt_seconds, failure_stage = expected
+        if (
+            attempt.get("attempt") != attempt_number
+            or attempt.get("command") != _EXPECTED_CURRENT_FOCUSED_COMMAND
+            or attempt.get("outcome") != "failed"
+            or attempt.get("passed") != 12000
+            or attempt.get("skipped") != 59
+            or attempt.get("subtests_passed") != 8678
+            or attempt.get("seconds") != attempt_seconds
+            or attempt.get("failure_stage") != failure_stage
+            or len(
+                _nonempty_string(
+                    attempt.get("failure"),
+                    "prior quality failure",
+                )
+            )
+            < 20
+        ):
+            raise AcceptanceVerificationError(
+                "prior failed quality attempt provenance is stale"
+            )
+    diagnostic = _evidence_mapping(
+        details.get("diagnostic_coverage"),
+        "diagnostic coverage provenance",
+    )
+    _exact_keys(
+        diagnostic,
+        {
+            "purpose",
+            "passed",
+            "skipped",
+            "subtests_passed",
+            "seconds",
+            "report_sha256",
+        },
+        "diagnostic coverage provenance",
+    )
+    diagnostic_digest = _sha256_string(
+        diagnostic.get("report_sha256"),
+        "diagnostic coverage report SHA-256",
+    )
+    if (
+        diagnostic
+        != {
+            "purpose": "diagnostic_only",
+            "passed": 12000,
+            "skipped": 59,
+            "subtests_passed": 8678,
+            "seconds": 368.56,
+            "report_sha256": diagnostic_digest,
+        }
+        or diagnostic_digest != _EXPECTED_DIAGNOSTIC_COVERAGE_SHA256
+    ):
+        raise AcceptanceVerificationError(
+            "diagnostic coverage provenance is stale"
+        )
+    hard_audit = _evidence_mapping(
+        details.get("hard_coverage_audit"),
+        "hard coverage audit",
+    )
+    _exact_keys(
+        hard_audit,
+        {"command", "exit_code", "below_threshold_files"},
+        "hard coverage audit",
+    )
+    if hard_audit != {
+        "command": _EXPECTED_HARD_COVERAGE_COMMAND,
+        "exit_code": 0,
+        "below_threshold_files": [],
+    }:
+        raise AcceptanceVerificationError(
+            "hard coverage audit must record zero below-100 source files"
         )
     if len(raw_results) != len(required_commands):
         raise AcceptanceVerificationError(
@@ -5720,7 +5889,7 @@ def _validate_quality_gate_evidence(
             "exact source-coverage evidence differs from the validated live"
             " report"
         )
-    type_result = results["make typecheck-input-contract INPUT_PHASE=5"]
+    type_result = results["make typecheck-input-contract INPUT_PHASE=6"]
     _exact_keys(
         type_result,
         {"command", "exit_code", "active_fixtures"},
@@ -5749,9 +5918,12 @@ def _validate_quality_gate_evidence(
         lint.get("script_files_typechecked"),
         "lint script files typechecked",
     )
-    if lint_source_files == 0 or lint_script_files == 0:
+    if (
+        lint_source_files == 0
+        or lint_script_files != _EXPECTED_LINT_SCRIPT_FILE_COUNT
+    ):
         raise AcceptanceVerificationError(
-            "lint quality evidence has empty typechecked inventories"
+            "lint quality evidence has stale typechecked inventories"
         )
     _exact_keys(
         results["git diff --check"],
@@ -5775,6 +5947,7 @@ def _validate_quality_gate_evidence(
         coverage,
         {
             "report_sha256",
+            "xml_report_sha256",
             "source_inventory_sha256",
             "source_file_count",
             "statement_count",
@@ -5786,19 +5959,32 @@ def _validate_quality_gate_evidence(
         coverage.get("report_sha256"),
         "coverage report SHA-256",
     )
+    xml_report_digest = _sha256_string(
+        coverage.get("xml_report_sha256"),
+        "coverage XML report SHA-256",
+    )
     inventory_digest = _sha256_string(
         coverage.get("source_inventory_sha256"),
         "coverage source inventory SHA-256",
     )
-    if report_digest == "0" * 64 or report_digest == inventory_digest:
+    if (
+        report_digest == "0" * 64
+        or xml_report_digest == "0" * 64
+        or report_digest == inventory_digest
+        or xml_report_digest in {report_digest, inventory_digest}
+    ):
         raise AcceptanceVerificationError(
-            "coverage report digest is missing or reused"
+            "coverage artifact digest is missing or reused"
         )
     live_inventory = _source_statement_inventory(root)
     live_report = _coverage_report_binding(root)
     if report_digest != live_report[0]:
         raise AcceptanceVerificationError(
             "coverage report digest does not match the live report"
+        )
+    if xml_report_digest != _coverage_xml_report_digest(root):
+        raise AcceptanceVerificationError(
+            "coverage XML digest does not match the live report"
         )
     if live_report[1:] != live_inventory:
         raise AcceptanceVerificationError(
@@ -5966,22 +6152,69 @@ def _current_tree_binding(
         "0" * 64,
     )
     verifier_digest = sha256(normalized_verifier.encode("utf-8")).hexdigest()
-    inventory_digest = sha256(
-        dumps(
-            inventory,
-            ensure_ascii=False,
-            separators=(",", ":"),
-            sort_keys=True,
-        ).encode("utf-8")
-    ).hexdigest()
+    normalized_inventory: list[dict[str, object]] = [
+        *inventory,
+        {
+            "path": evidence_path,
+            "kind": normalized_evidence_kind,
+            "sha256": evidence_digest,
+        },
+        {
+            "path": verifier_path,
+            "kind": normalized_verifier_kind,
+            "sha256": verifier_digest,
+        },
+    ]
+    normalized_inventory.sort(key=lambda entry: cast(str, entry["path"]))
+    source_inventory = [
+        entry
+        for entry in normalized_inventory
+        if cast(str, entry["path"]).startswith("src/")
+    ]
+    test_inventory = [
+        entry
+        for entry in normalized_inventory
+        if cast(str, entry["path"]).startswith("tests/")
+    ]
+    script_inventory = [
+        entry
+        for entry in normalized_inventory
+        if cast(str, entry["path"]).startswith("scripts/")
+    ]
+    support_inventory = [
+        entry
+        for entry in normalized_inventory
+        if not cast(str, entry["path"]).startswith(
+            (
+                "src/",
+                "tests/",
+                "scripts/",
+            )
+        )
+    ]
     values: dict[str, object] = {
         "baseline_head": _EXPECTED_BASELINE_HEAD,
-        "inventory_file_count": len(inventory),
-        "inventory_sha256": inventory_digest,
+        "inventory_file_count": len(normalized_inventory),
+        "inventory_sha256": _tree_inventory_digest(normalized_inventory),
         "normalized_evidence_kind": normalized_evidence_kind,
         "normalized_evidence_sha256": evidence_digest,
         "normalized_verifier_kind": normalized_verifier_kind,
         "normalized_verifier_sha256": verifier_digest,
+        "source_tree_file_count": len(source_inventory),
+        "source_tree_inventory_sha256": _tree_inventory_digest(
+            source_inventory
+        ),
+        "test_tree_file_count": len(test_inventory),
+        "test_tree_inventory_sha256": _tree_inventory_digest(test_inventory),
+        "script_tree_file_count": len(script_inventory),
+        "script_tree_inventory_sha256": _tree_inventory_digest(
+            script_inventory
+        ),
+        "support_tree_boundary": _SUPPORT_TREE_BOUNDARY,
+        "support_tree_file_count": len(support_inventory),
+        "support_tree_inventory_sha256": _tree_inventory_digest(
+            support_inventory
+        ),
     }
     values["tree_sha256"] = sha256(
         dumps(
@@ -5992,6 +6225,17 @@ def _current_tree_binding(
         ).encode("utf-8")
     ).hexdigest()
     return values
+
+
+def _tree_inventory_digest(inventory: list[dict[str, object]]) -> str:
+    return sha256(
+        dumps(
+            inventory,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
 
 
 def _tree_entry_kind(path: Path, root: Path, relative: str) -> str:
@@ -6226,6 +6470,15 @@ def _coverage_report_binding(
         sum(cast(int, entry["statements"]) for entry in inventory),
         sum(cast(int, entry["excluded_lines"]) for entry in inventory),
     )
+
+
+def _coverage_xml_report_digest(root: Path) -> str:
+    report_path = root / "coverage.xml"
+    if not report_path.is_file():
+        raise AcceptanceVerificationError(
+            "completed quality evidence requires the live coverage XML report"
+        )
+    return sha256(report_path.read_bytes()).hexdigest()
 
 
 def _sha256_string(value: object, label: str) -> str:
@@ -6782,14 +7035,7 @@ def _validate_test_implementation(node_id: str, root: Path) -> None:
             f"acceptance test function is missing or ambiguous: {node_id}"
         )
     function = functions[0]
-    body = list(function.body)
-    if (
-        body
-        and isinstance(body[0], Expr)
-        and isinstance(body[0].value, Constant)
-        and isinstance(body[0].value.value, str)
-    ):
-        body = body[1:]
+    body = _function_body(function)
     meaningful = [
         statement
         for statement in body
@@ -6809,8 +7055,18 @@ def _validate_test_implementation(node_id: str, root: Path) -> None:
     check_paths = _check_sequence(body, frozenset({False}), aliases)
     successful_paths = check_paths.next_states | check_paths.return_states
     if (
-        not successful_paths or False in successful_paths
-    ) and not _has_static_nonempty_checked_loop(function, aliases):
+        (not successful_paths or False in successful_paths)
+        and not _has_static_nonempty_checked_loop(
+            function,
+            aliases,
+        )
+        and not _has_checked_same_file_helper_invocation(
+            function,
+            tree,
+            source,
+            node_id,
+        )
+    ):
         raise AcceptanceVerificationError(
             "acceptance test has a reachable successful path without a"
             f" meaningful check: {node_id}"
@@ -6824,6 +7080,399 @@ def _validate_test_implementation(node_id: str, root: Path) -> None:
             "acceptance test uses a feature-specific coverage exclusion:"
             f" {node_id}"
         )
+
+
+def _function_body(
+    function: FunctionDef | AsyncFunctionDef,
+) -> list[AST]:
+    """Return a function body without its optional docstring."""
+    body: list[AST] = list(function.body)
+    if (
+        body
+        and isinstance(body[0], Expr)
+        and isinstance(body[0].value, Constant)
+        and isinstance(body[0].value.value, str)
+    ):
+        return body[1:]
+    return body
+
+
+def _has_checked_same_file_helper_invocation(
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    source: str,
+    node_id: str,
+) -> bool:
+    """Return whether every successful path executes a checked helper."""
+    return _has_checked_helper_invocation(
+        function,
+        module_tree,
+        source,
+        node_id,
+        (),
+        frozenset((id(function),)),
+    )
+
+
+def _has_checked_helper_invocation(
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    source: str,
+    node_id: str,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+    visiting: frozenset[int],
+) -> bool:
+    """Return whether a direct same-file helper checks all success paths."""
+    body = _function_body(function)
+    aliases = _contextlib_suppress_aliases(
+        module_tree,
+        function,
+        enclosing_functions=enclosing_functions,
+    )
+    for index, statement in enumerate(body):
+        expression = _direct_statement_expression(statement)
+        if expression is None:
+            continue
+        helpers = _direct_same_file_helpers(
+            expression,
+            function,
+            module_tree,
+            enclosing_functions,
+        )
+        if not helpers:
+            continue
+        prefix = _check_sequence(
+            body[:index],
+            frozenset({False}),
+            aliases,
+        )
+        if not prefix.next_states or False in prefix.return_states:
+            continue
+        for helper, helper_enclosing in helpers:
+            if (
+                id(helper) in visiting
+                or not _same_file_helper_is_unmodified(
+                    helper,
+                    expression,
+                    function,
+                    module_tree,
+                    enclosing_functions,
+                )
+                or not _function_checks_success_paths(
+                    helper,
+                    module_tree,
+                    source,
+                    node_id,
+                    helper_enclosing,
+                    visiting | frozenset((id(helper),)),
+                )
+            ):
+                continue
+            if isinstance(statement, Return):
+                successful = prefix.return_states | frozenset({True})
+            else:
+                suffix = _check_sequence(
+                    body[index + 1 :],
+                    frozenset({True}),
+                    aliases,
+                )
+                successful = (
+                    prefix.return_states
+                    | suffix.next_states
+                    | suffix.return_states
+                )
+            if successful and False not in successful:
+                return True
+    return False
+
+
+def _function_checks_success_paths(
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    source: str,
+    node_id: str,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+    visiting: frozenset[int],
+) -> bool:
+    """Return whether every successful helper path performs a check."""
+    _validate_prohibited_test_constructs(function, node_id, module_tree)
+    segment = "\n".join(
+        source.splitlines()[function.lineno - 1 : function.end_lineno]
+    )
+    if _COVERAGE_EXCLUSION_PATTERN.search(segment):
+        raise AcceptanceVerificationError(
+            "acceptance helper uses a feature-specific coverage exclusion:"
+            f" {node_id}"
+        )
+    aliases = _contextlib_suppress_aliases(
+        module_tree,
+        function,
+        enclosing_functions=enclosing_functions,
+    )
+    body = _function_body(function)
+    paths = _check_sequence(body, frozenset({False}), aliases)
+    successful = paths.next_states | paths.return_states
+    if successful and False not in successful:
+        return True
+    if _has_static_nonempty_checked_loop(function, aliases):
+        return True
+    return _has_checked_helper_invocation(
+        function,
+        module_tree,
+        source,
+        node_id,
+        enclosing_functions,
+        visiting,
+    )
+
+
+def _direct_statement_expression(statement: AST) -> AST | None:
+    """Return the expression unconditionally evaluated by a statement."""
+    if isinstance(statement, Expr):
+        return statement.value
+    if isinstance(statement, Assign):
+        return statement.value
+    if isinstance(statement, AnnAssign):
+        return statement.value
+    if isinstance(statement, Return):
+        return statement.value
+    return None
+
+
+def _direct_same_file_helpers(
+    expression: AST,
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+) -> tuple[
+    tuple[
+        FunctionDef | AsyncFunctionDef,
+        tuple[FunctionDef | AsyncFunctionDef, ...],
+    ],
+    ...,
+]:
+    """Return same-file helpers directly evaluated by an expression."""
+    if not isinstance(expression, Call):
+        return ()
+    helpers: list[
+        tuple[
+            FunctionDef | AsyncFunctionDef,
+            tuple[FunctionDef | AsyncFunctionDef, ...],
+        ]
+    ] = []
+    if isinstance(expression.func, Name):
+        resolved = _resolve_same_file_helper(
+            expression.func.id,
+            function,
+            module_tree,
+            enclosing_functions,
+        )
+        if resolved is not None and isinstance(resolved[0], FunctionDef):
+            helpers.append(resolved)
+        if (
+            _is_asyncio_run_name(
+                expression.func.id,
+                function,
+                module_tree,
+                enclosing_functions,
+            )
+            and len(expression.args) == 1
+            and not expression.keywords
+            and isinstance(expression.args[0], Call)
+            and isinstance(expression.args[0].func, Name)
+        ):
+            resolved = _resolve_same_file_helper(
+                expression.args[0].func.id,
+                function,
+                module_tree,
+                enclosing_functions,
+            )
+            if resolved is not None and isinstance(
+                resolved[0],
+                AsyncFunctionDef,
+            ):
+                helpers.append(resolved)
+    for argument in expression.args:
+        helpers.extend(
+            _direct_same_file_helpers(
+                argument,
+                function,
+                module_tree,
+                enclosing_functions,
+            )
+        )
+    for keyword in expression.keywords:
+        helpers.extend(
+            _direct_same_file_helpers(
+                keyword.value,
+                function,
+                module_tree,
+                enclosing_functions,
+            )
+        )
+    unique: dict[
+        int,
+        tuple[
+            FunctionDef | AsyncFunctionDef,
+            tuple[FunctionDef | AsyncFunctionDef, ...],
+        ],
+    ] = {}
+    for helper in helpers:
+        unique.setdefault(id(helper[0]), helper)
+    return tuple(unique.values())
+
+
+def _same_file_helper_is_unmodified(
+    helper: FunctionDef | AsyncFunctionDef,
+    invocation: AST,
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+) -> bool:
+    """Return whether no reachable prefix may alter a helper callable."""
+    for scope, limit in (
+        (module_tree, _ALIAS_END_POSITION),
+        *(
+            (enclosing, _ALIAS_END_POSITION)
+            for enclosing in enclosing_functions
+        ),
+        (function, _node_position(invocation)),
+    ):
+        for node in _scope_runtime_nodes(scope):
+            if _node_position(node) >= limit:
+                continue
+            if isinstance(node, Constant) and node.value in {
+                "__code__",
+                "__defaults__",
+                "__kwdefaults__",
+            }:
+                return False
+            if isinstance(node, Attribute) and node.attr in {
+                "__code__",
+                "__defaults__",
+                "__kwdefaults__",
+            }:
+                return False
+            if isinstance(node, Call) and any(
+                keyword.arg in {"__code__", "__defaults__", "__kwdefaults__"}
+                for keyword in node.keywords
+            ):
+                return False
+            if (
+                isinstance(node, Call)
+                and node is not invocation
+                and _call_references_name(node, helper.name)
+            ):
+                return False
+    return True
+
+
+def _call_references_name(call: Call, name: str) -> bool:
+    """Return whether a call argument refers to one lexical name."""
+    return any(
+        isinstance(child, Name) and child.id == name
+        for argument in (
+            *call.args,
+            *(keyword.value for keyword in call.keywords),
+        )
+        for child in walk(argument)
+    )
+
+
+def _resolve_same_file_helper(
+    name: str,
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+) -> (
+    tuple[
+        FunctionDef | AsyncFunctionDef,
+        tuple[FunctionDef | AsyncFunctionDef, ...],
+    ]
+    | None
+):
+    """Resolve one unambiguously bound lexical same-file helper."""
+    scopes = (*enclosing_functions, function)
+    for index in range(len(scopes) - 1, -1, -1):
+        scope = scopes[index]
+        bindings = tuple(
+            binding
+            for binding in _scope_alias_bindings(scope)
+            if binding.name == name
+        )
+        if not bindings:
+            continue
+        helpers = tuple(
+            statement
+            for statement in scope.body
+            if isinstance(statement, (FunctionDef, AsyncFunctionDef))
+            and statement.name == name
+        )
+        if (
+            len(bindings) == 1
+            and len(helpers) == 1
+            and bindings[0].position == _node_position(helpers[0])
+        ):
+            return helpers[0], scopes[: index + 1]
+        return None
+    bindings = tuple(
+        binding
+        for binding in _scope_alias_bindings(module_tree)
+        if binding.name == name
+    )
+    helpers = tuple(
+        statement
+        for statement in getattr(module_tree, "body", ())
+        if isinstance(statement, (FunctionDef, AsyncFunctionDef))
+        and statement.name == name
+    )
+    if (
+        len(bindings) == 1
+        and len(helpers) == 1
+        and bindings[0].position == _node_position(helpers[0])
+    ):
+        return helpers[0], ()
+    return None
+
+
+def _is_asyncio_run_name(
+    name: str,
+    function: FunctionDef | AsyncFunctionDef,
+    module_tree: AST,
+    enclosing_functions: tuple[FunctionDef | AsyncFunctionDef, ...],
+) -> bool:
+    """Return whether a lexical name is an exact asyncio.run import."""
+    for scope in (*enclosing_functions, function):
+        if any(
+            binding.name == name for binding in _scope_alias_bindings(scope)
+        ):
+            return False
+    imports = tuple(
+        statement
+        for statement in getattr(module_tree, "body", ())
+        if isinstance(statement, ImportFrom)
+        and statement.level == 0
+        and statement.module == "asyncio"
+        and any(
+            item.name == "run" and (item.asname or item.name) == name
+            for item in statement.names
+        )
+    )
+    bindings = tuple(
+        binding
+        for binding in _scope_alias_bindings(module_tree)
+        if binding.name == name
+    )
+    return (
+        len(imports) == 1
+        and len(bindings) == 1
+        and bindings[0].position == _node_position(imports[0])
+        and _scope_attribute_is_unmodified(
+            "run",
+            module_tree,
+            _ALIAS_END_POSITION,
+        )
+    )
 
 
 def _has_static_nonempty_checked_loop(

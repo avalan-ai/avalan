@@ -4533,7 +4533,18 @@
       "expired": "InputExpiredError",
       "unavailable": "InputUnavailableResult",
       "input_required": "InputRequiredResult",
-      "cancelled": "InputCancelledResult"
+      "cancelled": "InputCancelledResult",
+      "attached_or_predeclared_in_band": {
+        "validation": "ResolveInteractionRejected",
+        "replay": "InteractionStoreReplayed",
+        "conflict": "ResolveInteractionRejected",
+        "expired": "ResolveInteractionRejected",
+        "cancelled": "CancelInteractionApplied",
+        "superseded": "ResolveInteractionRejected"
+      },
+      "durable_task_boundary": {
+        "cancelled": "TaskRunState.CANCELLED"
+      }
     },
     "task": {
       "input_required": "INPUT_REQUIRED",
@@ -7329,6 +7340,37 @@
           "value": {}
         }
       },
+      "sdk.failed.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "kind",
+          "code",
+          "message",
+          "retryable",
+          "channel"
+        ],
+        "properties": {
+          "kind": {
+            "const": "failed"
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "retryable": {
+            "type": "boolean"
+          },
+          "channel": {
+            "const": "typed"
+          }
+        }
+      },
       "sdk.expired.v1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -8504,6 +8546,13 @@
         "value": "choice-1",
         "channel": "typed"
       },
+      "sdk.failed.v1": {
+        "kind": "failed",
+        "code": "input.unavailable",
+        "message": "agent execution ended while awaiting input",
+        "retryable": false,
+        "channel": "typed"
+      },
       "sdk.expired.v1": {
         "error": "input.expired",
         "interaction_state": "expired",
@@ -8863,5 +8912,5 @@
     },
     "measurement": "barriers, queues, local peers, call_soon callbacks, and real monotonic loop time; no timing sleeps or network"
   },
-  "contract_sha256": "55f46cb67350be867b3b7b0a5194dc8f534cfed2f35f69a9859d3a8dd71bc740"
+  "contract_sha256": "a195dca79295a5dff56d5e961c278406a5eb29394e643c9467b5d84fcf998ccb"
 }

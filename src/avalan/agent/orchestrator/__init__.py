@@ -393,6 +393,7 @@ class Orchestrator:
     _exiting: bool
     _exit_memory: bool = True
     _shell_input_file_settings: ShellToolSettings | None
+    _interaction_runtime: InteractionRuntime | None
     _user: str | None
     _user_template: str | None
 
@@ -408,6 +409,7 @@ class Orchestrator:
         call_options: dict[str, Any] | None = None,
         exit_memory: bool = True,
         id: UUID | None = None,
+        interaction_runtime: InteractionRuntime | None = None,
         name: str | None = None,
         renderer: Renderer | None = None,
         shell_input_file_settings: ShellToolSettings | None = None,
@@ -418,6 +420,13 @@ class Orchestrator:
         assert shell_input_file_settings is None or isinstance(
             shell_input_file_settings, ShellToolSettings
         )
+        if interaction_runtime is not None and not isinstance(
+            interaction_runtime,
+            AttachedInteractionRuntime | DurableInteractionRuntime,
+        ):
+            raise TypeError(
+                "interaction_runtime must be an interaction runtime or None"
+            )
         self._logger = logger
         self._model_manager = model_manager
         self._memory = memory
@@ -434,6 +443,7 @@ class Orchestrator:
         self._renderer = renderer or Renderer()
         self._total_operations = len(self._operations)
         self._call_options = call_options
+        self._interaction_runtime = interaction_runtime
         self._shell_input_file_settings = shell_input_file_settings
         self._user = user
         self._user_template = user_template
@@ -599,6 +609,18 @@ class Orchestrator:
         execution_id_factory: ExecutionIdFactory | None = None,
         **kwargs: Any,
     ) -> OrchestratorResponse:
+        runtime = (
+            interaction_runtime
+            if interaction_runtime is not None
+            else self._interaction_runtime
+        )
+        if runtime is not None and not isinstance(
+            runtime,
+            AttachedInteractionRuntime | DurableInteractionRuntime,
+        ):
+            raise TypeError(
+                "interaction_runtime must be an interaction runtime or None"
+            )
         tool_confirm = kwargs.pop("tool_confirm", None)
         if (
             type(operation_index) is not int
@@ -659,11 +681,11 @@ class Orchestrator:
             "Orchestrator calling engine agent %s", str(engine_agent)
         )
         attached_runtime = isinstance(
-            interaction_runtime,
+            runtime,
             AttachedInteractionRuntime,
         )
         durable_runtime = isinstance(
-            interaction_runtime,
+            runtime,
             DurableInteractionRuntime,
         )
         requested_advertisement = (
@@ -683,18 +705,18 @@ class Orchestrator:
             definition=definition,
             agent_id=AgentId(str(self._id)),
             principal=(
-                interaction_runtime.actor.principal
-                if interaction_runtime is not None
+                runtime.actor.principal
+                if runtime is not None
                 else PrincipalScope()
             ),
             initial_messages=execution_messages,
             synced_message_prefix=len(history),
             id_factory=(
-                interaction_runtime.id_factory
-                if interaction_runtime is not None
+                runtime.id_factory
+                if runtime is not None
                 else execution_id_factory
             ),
-            interaction_runtime=interaction_runtime,
+            interaction_runtime=runtime,
         )
         messages = cast(Input, list(execution.messages))
         context = ModelCallContext(

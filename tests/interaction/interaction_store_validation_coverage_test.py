@@ -727,7 +727,25 @@ def test_record_resolution_validation_rejects_corrupt_authority() -> None:
             resolved_by=_principal(),
         ),
         InputErrorCode.FORBIDDEN,
-        "record.resolution.provenance",
+        "record.resolved_by",
+    )
+    interaction_store._validate_record_resolution(
+        _unchecked_resolution_record(
+            policy_candidate,
+            resolved_by=interaction_store._TRUSTED_POLICY_RESOLVER,
+        )
+    )
+    policy_with_human_answer = replace(
+        trusted_with_human_answer,
+        provenance=AnswerProvenance.POLICY,
+    )
+    _assert_record_error(
+        _unchecked_resolution_record(
+            policy_with_human_answer,
+            resolved_by=interaction_store._TRUSTED_POLICY_RESOLVER,
+        ),
+        InputErrorCode.FORBIDDEN,
+        "record.resolution.answers",
     )
     _assert_record_error(
         _unchecked_resolution_record(
@@ -786,6 +804,14 @@ def test_record_resolution_validation_rejects_corrupt_authority() -> None:
         request_id=pending.request.request_id,
         provenance=AnswerProvenance.HUMAN,
         resolved_at=_NOW,
+    )
+    _assert_record_error(
+        _unchecked_resolution_record(
+            unavailable,
+            resolved_by=interaction_store._ADMISSION_CLEANUP_RESOLVER,
+        ),
+        InputErrorCode.FORBIDDEN,
+        "record.resolution.provenance",
     )
     _assert_record_error(
         _unchecked_resolution_record(unavailable, resolved_by=None),
@@ -979,6 +1005,37 @@ def test_replay_branch_and_basic_identity_validators_fail_closed() -> None:
     with pytest.raises(InputValidationError) as replay:
         interaction_store._validate_replay_command(terminal, command)
     assert replay.value.code is InputErrorCode.IDEMPOTENCY_CONFLICT
+
+    policy_resolution = AnsweredResolution(
+        request_id=terminal.request.request_id,
+        provenance=AnswerProvenance.POLICY,
+        resolved_at=_NOW,
+        answers=(
+            ConfirmationAnswer(
+                question_id=QuestionId("confirm"),
+                provenance=AnswerProvenance.POLICY,
+                value=True,
+            ),
+        ),
+    )
+    forged_policy_record = _unchecked_resolution_record(
+        policy_resolution,
+        resolved_by=_principal(),
+    )
+    policy_command = interaction_store._new_trusted_policy_resolution_command(
+        actor=_actor(),
+        correlation=forged_policy_record.correlation,
+        expected_state_revision=forged_policy_record.request.state_revision,
+        idempotency_key=ResolutionIdempotencyKey("policy-replay-key"),
+        proposed_resolution=policy_resolution,
+    )
+    with pytest.raises(InputValidationError) as policy_authority:
+        interaction_store._validate_replay_command(
+            forged_policy_record,
+            policy_command,
+        )
+    assert policy_authority.value.code is InputErrorCode.FORBIDDEN
+    assert policy_authority.value.path == "result.command.actor"
 
     registration = InteractionBranchRegistration(
         run_id=RunId("run-1"),

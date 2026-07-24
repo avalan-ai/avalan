@@ -30,7 +30,6 @@ from ..interaction.entities import (
     InputRequest,
     InputRequestId,
     ProviderIdempotencyKey,
-    RequestState,
     ResumeInputContinuation,
     RunId,
 )
@@ -1213,13 +1212,10 @@ class DurableAgentContinuationResumer:
                 "authorized terminal interaction is unavailable",
             )
         request = projection.request
-        if (
-            request.state is not RequestState.ANSWERED
-            or request.resolution is None
-        ):
+        if request.resolution is None:
             _illegal_transition(
                 "resume.interaction.state",
-                "durable continuation requires an accepted answer",
+                "durable continuation requires a terminal resolution",
             )
         if (
             request.request_id != continuation.request_id

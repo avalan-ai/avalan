@@ -23,7 +23,7 @@
     "25",
     "26"
   ],
-  "catalog_sha256": "0e4bc53885cbe24ee6fc6ad34f16aaf9220f59918615b348fa582987c3f3e74c",
+  "catalog_sha256": "71f234f898b044dc8997a59886904245d30bba767daffb2c7d1fea49a6436467",
   "requirements": [
     {
       "id": "INPUT-N-001",
@@ -1592,7 +1592,6 @@
       "paraphrase": "Apply a host-controlled waiting budget to advisory input.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/attached_runtime_matrix_test.py",
         "tests/input/broker_contract_test.py"
@@ -1609,7 +1608,6 @@
       "paraphrase": "Preserve an advisory budget expiry as timed_out provenance.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/attached_runtime_matrix_test.py",
         "tests/input/broker_contract_test.py"
@@ -1626,7 +1624,6 @@
       "paraphrase": "Mark a subsequently applied advisory default as default rather than human provenance.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/attached_runtime_matrix_test.py",
         "tests/input/broker_contract_test.py"
@@ -1644,7 +1641,6 @@
       "paraphrase": "Pause inactivity-based timeout accounting while the human is actively using the control.",
       "owner": "execution and continuation runtime",
       "implementation_artifacts": [
-        "planned:tests/input/broker_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/broker_contract_test.py"
       ],
@@ -1839,9 +1835,9 @@
       "paraphrase": "Allow embedded hosts to register a complete semantic async handler that resolves, waits, detaches, and receives cancellation.",
       "owner": "public async SDK",
       "implementation_artifacts": [
-        "planned:tests/input/sdk_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/sdk_contract_test.py"
+        "tests/input/sdk_contract_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py"
       ],
       "test_node_ids": [
         "tests/input/sdk_contract_test.py::test_requirement_input_n_064"
@@ -1854,7 +1850,6 @@
       "paraphrase": "Permit an SDK handler to remain pending without blocking unrelated application work.",
       "owner": "public async SDK",
       "implementation_artifacts": [
-        "planned:tests/input/sdk_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/sdk_contract_test.py"
       ],
@@ -1869,7 +1864,6 @@
       "paraphrase": "Give detached hosts sufficient opaque correlation without provider-specific reconstruction.",
       "owner": "public async SDK",
       "implementation_artifacts": [
-        "planned:tests/input/sdk_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/agent/execution_wrapper_input_required_test.py",
         "tests/interaction/continuation_test.py",
@@ -1938,7 +1932,6 @@
       "paraphrase": "Allow applications to reject or decline requests they cannot safely render.",
       "owner": "public async SDK",
       "implementation_artifacts": [
-        "planned:tests/input/sdk_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/sdk_contract_test.py"
       ],
@@ -1953,7 +1946,6 @@
       "paraphrase": "Require an explicit headless policy covering predeclared values, controllers, persistence, defaults with non-human provenance, or unavailability.",
       "owner": "headless interaction policy",
       "implementation_artifacts": [
-        "planned:tests/input/headless_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/headless_contract_test.py"
       ],
@@ -1968,7 +1960,6 @@
       "paraphrase": "Never let headless execution block indefinitely, consume arbitrary stdin, silently answer required input, or turn clarification into approval.",
       "owner": "headless interaction policy",
       "implementation_artifacts": [
-        "planned:tests/input/headless_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
         "tests/input/headless_contract_test.py"
       ],
@@ -1983,9 +1974,9 @@
       "paraphrase": "Emit machine-readable pauses that external orchestrators can display and resolve with correlation.",
       "owner": "headless interaction policy",
       "implementation_artifacts": [
-        "planned:tests/input/headless_contract_test.py",
         "tests/fixtures/input/contract_decisions.json",
-        "tests/input/headless_contract_test.py"
+        "tests/input/headless_contract_test.py",
+        "tests/agent/execution_wrapper_input_required_test.py"
       ],
       "test_node_ids": [
         "tests/input/headless_contract_test.py::test_requirement_input_n_070"
@@ -3295,7 +3286,6 @@
       "paraphrase": "Prove the complete public attached cli clarification behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py",
         "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [
@@ -3309,7 +3299,6 @@
       "paraphrase": "Prove the complete public text and multiple selection behavior through a supported product boundary.",
       "owner": "CLI interaction host",
       "implementation_artifacts": [
-        "planned:tests/input/public_interaction_e2e_test.py",
         "tests/input/public_interaction_e2e_test.py"
       ],
       "test_node_ids": [

@@ -1,10 +1,10 @@
 {
   "schema_version": 1,
   "feature": "structured_task_input",
-  "recorded_at": "2026-07-24T01:43:55Z",
+  "recorded_at": "2026-07-24T11:25:16Z",
   "implementation_owner": "/root",
   "independent_reviewer": "/root/input_contract_audit",
-  "review_history_sha256": "901b758b01325b0eae2ed2cbbc23a24d27d768852f56208e05297bc2b3ecddea",
+  "review_history_sha256": "9eb1283c0495bd9a92d8f535ab065c335dfdf6b9136a141a003ad5f5f130c18a",
   "review_history_phase0_sha256": "573625598e6f7501e5d3cbc158be7b630427143e1cdd7658814a52b6374d8f6b",
   "review_history_phase1_sha256": "42ee51f1041cc975bcdd750247d3e61a08fe453f1f332d76f9dd47e18b8e4a85",
   "review_history_phase2_sha256": "7c94eb4806501ecb3ae82f1447fd94ed95e31d185d41e9fbcba2f31ce448a408",
@@ -207,9 +207,72 @@
       "status": "approved",
       "recorded_at": "2026-07-24T01:43:55Z",
       "evidence": "Independent final-artifact audit approved the Phase 5 terminal gate with zero P1, P2, or P3 findings after confirming the ordered lint 435/6, type 28, exact PostgreSQL 11,932/59/8,663 in 501.02 seconds, acceptance 788/962, JSON dc59b953c8ca740cf319cc7f23c8f1faa186ea88360158a37c7f60b8a2003acc, XML 88e7aef2ca5de6f6017d21df9c0b58134c47b610710963dba1ae97a72c602df3, 435 files and 118,256 statements with zero missing and 1,736 excluded, and zero newer source, test, or script files; normalized final-tree evidence is sealed atomically with this approval."
+    },
+    {
+      "sequence": 22,
+      "phase": 6,
+      "role": "semantic",
+      "reviewer": "/root/public_sdk_surface",
+      "status": "approved",
+      "recorded_at": "2026-07-24T06:43:30Z",
+      "evidence": "Independent review 53 approved the public SDK annotation correction with zero P1, P2, or P3 findings after auditing 47 SDK symbols, 74 annotated targets, and 381 leaves with zero missing root exports; six focused tests, 34 strict type fixtures, Ruff, and git diff --check passed."
+    },
+    {
+      "sequence": 23,
+      "phase": 6,
+      "role": "gate",
+      "reviewer": "/root/public_sdk_gate_review",
+      "status": "pending",
+      "recorded_at": "2026-07-24T06:43:31Z",
+      "evidence": "The independent final gate review is pending until the ordered lint, strict type, provisioned PostgreSQL exact coverage and acceptance, and diff commands produce current-tree evidence."
+    },
+    {
+      "sequence": 24,
+      "phase": 6,
+      "role": "cold-import-closure",
+      "reviewer": "/root/public_sdk_surface",
+      "status": "pending",
+      "recorded_at": "2026-07-24T07:43:02Z",
+      "evidence": "Independent review 54 found zero P1, one P2, and zero P3 findings at disconnected copied patch seams that made the public SDK cold import pull optional service dependencies; a bounded canonical-ownership correction began."
+    },
+    {
+      "sequence": 25,
+      "phase": 6,
+      "role": "cold-import-closure",
+      "reviewer": "/root/public_sdk_surface",
+      "status": "approved",
+      "recorded_at": "2026-07-24T07:43:14Z",
+      "evidence": "Independent review 55 approved the correction with zero P1, P2, or P3 findings after copied bindings were removed and tests were canonicalized; nine seam, cold-import, and failure tests, six public tests, 34 strict type fixtures, mypy, Ruff, and git diff --check passed."
+    },
+    {
+      "sequence": 26,
+      "phase": 6,
+      "role": "independent_public_sdk_surface_reviewer",
+      "reviewer": "/root/public_sdk_surface",
+      "status": "approved",
+      "recorded_at": "2026-07-24T08:17:34Z",
+      "evidence": "Independent review #56 approved both exact-gate corrections with P1=0, P2=0, and P3=0. The exact CLI-startup and store-authority command passed 2 tests in 2.36 seconds; focused suite A passed 31 tests and 3 subtests in 4.83 seconds; focused suite B passed 88 tests in 8.55 seconds; the phase-6 type verifier passed 34 fixtures; the 47-symbol and 74-target annotation audit found no missing roots and canonical run_agent; scoped seven-file mypy, scoped Ruff, git diff --check, identity and runtime probes, and the scoped Jinja CLI probe passed. Exploratory broader mypy and SQLAlchemy-blocking probes exposed pre-existing CLI typing and database-settings import boundaries and are not claimed as gate successes. This focused review does not approve the common quality gate."
+    },
+    {
+      "sequence": 27,
+      "phase": 6,
+      "role": "gate-correction-closure",
+      "reviewer": "/root",
+      "status": "approved",
+      "recorded_at": "2026-07-24T08:17:34Z",
+      "evidence": "Root closed the two exact-gate correction lanes after make lint completed Ruff format, Black, Ruff check, full mypy for 440 files, and verifier-script mypy for 6 files, and make typecheck-input-contract INPUT_PHASE=6 passed 34 fixtures. This is a pre-gate validation record, not an independent review or common-gate approval; the exact PostgreSQL coverage and acceptance gate plus final tree and coverage bindings remain pending."
+    },
+    {
+      "sequence": 28,
+      "phase": 6,
+      "role": "gate",
+      "reviewer": "/root/public_sdk_gate_review",
+      "status": "approved",
+      "recorded_at": "2026-07-24T11:25:16Z",
+      "evidence": "Independent review #57 returned verdict APPROVE with P1=0, P2=0, and P3=0 after validating the ordered final quality results, exact JSON and XML coverage artifacts, normalized final tree, focused evidence and verifier suite, and phase-6 production verifier; this append-only record seals the already-reviewed gate without changing implementation behavior."
     }
   ],
-  "quality_history_sha256": "0f44c34f7b4d34074204769f97290070ade00d44ae89e875feef8598dc5f32e5",
+  "quality_history_sha256": "aeab42dc865dd0d7f68fb274033312b25eda40b0be2a2e08ec72c09a2ba8d471",
   "quality_history": [
     {
       "phase": 1,
@@ -234,6 +297,12 @@
       "state": "complete",
       "quality_gate_sha256": "07d5de78f45684af480d428d17ea8fef29565581e37c20fbd8e97a46c3fb30d0",
       "evidence_sha256": "e3546c8702c933b8861db39a72e499f7d5bec80523eb9650c3f2bb7a52c0ecba"
+    },
+    {
+      "phase": 5,
+      "state": "complete",
+      "quality_gate_sha256": "6f02f22e439d6b1ec34a291f1b22c4fe26d429b8d01c0b1e3453a1730424c3c5",
+      "evidence_sha256": "97987b255baca02760ec1d3701db4ff7fcf92316abac6ab399b518cdb48f68f1"
     }
   ],
   "active_test_node_ids": [
@@ -738,6 +807,32 @@
     "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09",
     "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10",
     "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_048",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_049",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_050",
+    "tests/input/broker_contract_test.py::test_requirement_input_n_051",
+    "tests/input/sdk_contract_test.py::test_requirement_input_n_064",
+    "tests/input/sdk_contract_test.py::test_requirement_input_n_065",
+    "tests/input/sdk_contract_test.py::test_requirement_input_n_066",
+    "tests/input/sdk_contract_test.py::test_requirement_input_n_067",
+    "tests/input/headless_contract_test.py::test_requirement_input_n_068",
+    "tests/input/headless_contract_test.py::test_requirement_input_n_069",
+    "tests/input/headless_contract_test.py::test_requirement_input_n_070",
+    "tests/input/public_interaction_e2e_test.py::test_fully_headless_run",
+    "tests/input/public_interaction_e2e_test.py::test_required_versus_advisory",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12",
+    "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12",
+    "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13",
+    "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13",
     "tests/agent/durable_continuation_resume_test.py::test_cancelled_caller_retains_listener_until_dispatch_settles",
     "tests/agent/durable_continuation_resume_test.py::test_cancelled_loader_owns_release_through_repeat_cancellation",
     "tests/agent/durable_continuation_resume_test.py::test_dispatch_started_before_deadline_ignores_late_renewal",
@@ -1070,9 +1165,14 @@
       {
         "phase": 5,
         "state": "dormant_unadvertised"
+      },
+      {
+        "phase": 6,
+        "state": "dormant_unadvertised"
       }
     ],
     "production_source_changes": [
+      "src/avalan/__init__.py",
       "src/avalan/agent/",
       "src/avalan/cli/",
       "src/avalan/entities.py",
@@ -1082,6 +1182,7 @@
       "src/avalan/interaction/",
       "src/avalan/memory/",
       "src/avalan/model/",
+      "src/avalan/sdk.py",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
       "src/avalan/server/routers/mcp.py",
@@ -1100,6 +1201,7 @@
       "scripts/verify_input_acceptance.py",
       "scripts/verify_input_types.py",
       "scripts/verify_src_coverage.py",
+      "src/avalan/__init__.py",
       "src/avalan/agent/",
       "src/avalan/cli/",
       "src/avalan/entities.py",
@@ -1109,6 +1211,7 @@
       "src/avalan/interaction/",
       "src/avalan/memory/",
       "src/avalan/model/",
+      "src/avalan/sdk.py",
       "src/avalan/server/a2a/router.py",
       "src/avalan/server/routers/chat.py",
       "src/avalan/server/routers/mcp.py",
@@ -1122,6 +1225,7 @@
       "tests/flow/",
       "tests/input/",
       "tests/input_acceptance_verifier_test.py",
+      "tests/input_consumers/",
       "tests/input_contract_fixtures.py",
       "tests/input_contract_harness_test.py",
       "tests/input_contract_metadata_test.py",
@@ -1141,876 +1245,608 @@
     ]
   },
   "pending_structural_inventory": {
-    "source_inventory_sha256": "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23",
-    "source_file_count": 435,
-    "statement_count": 118256,
-    "excluded_line_count": 1736
+    "source_inventory_sha256": "924cbf18b65fb91c3b438a4cb7bec757ba7843e97b5ac0bd89b68072f7edc943",
+    "source_file_count": 440,
+    "statement_count": 119485,
+    "excluded_line_count": 1834
   },
   "current_regression_classification": {
-    "catalog_sha256": "7280d26cd84a941c2f063d10027615db20ff2b125298dc858a3ef0c2d77c5566",
-    "mechanical_nodes": [
-      {
-        "node_id": "tests/cli/task_test.py::CliTaskPgsqlTestCase::test_pgsql_diagnose_uses_env_without_printing_dsn",
-        "baseline_ast_sha256": "fe9aa2f96be72ae8abaf076e1d47fd3ced60398a2563522e9ffc26d25fb0b1ee",
-        "current_ast_sha256": "77c818088c326eaead1a4b6f25517ef41140fb13d9a4831bdfb7dc179c09157c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Pins PostgreSQL diagnose output to the durable-interactions migration head after the exact gate exposed the stale revision assertion."
-      },
-      {
-        "node_id": "tests/task/feature_gate_test.py::FeatureGateTest::test_migration_dependency_gate_requires_alembic_and_sqlalchemy",
-        "baseline_ast_sha256": "4f34fdfab6fa15a4258036845c1ec6effaa3c56870320591d0e5273fd6eefb5a",
-        "current_ast_sha256": "80382914ee870e0d448c9a34c0855c7aabc5dab88fcbac582b3d715490a1a745",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/stores/pgsql_migration_test.py::PgsqlMigrationHelperTest::test_invalid_helper_settings_fail_fast",
-        "baseline_ast_sha256": "2e1eaa4e26aaaa949e505a796dac70ff275222c0cdafe7eabdda28a47bab9cec",
-        "current_ast_sha256": "00522429c214f23b4ee293545b850602d258dea0305d10527e6ed43bde2e173f",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression receives only a typed local or variable-name cleanup with identical assertions."
-      },
-      {
-        "node_id": "tests/task/stores/pgsql_migration_test.py::PgsqlMigrationRevisionTest::test_revision_upgrade_executes_schema_statements",
-        "baseline_ast_sha256": "8a84bafe5991b790895d9e02dff27be8689f4992042e3c3f78e9c9a567bdf036",
-        "current_ast_sha256": "eb181bdf582c5c6ceefd0a964f84307e2a854b594f5f8a86ac4eb25f9b89123c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/stores/pgsql_migration_test.py::PgsqlMigrationSchemaTest::test_schema_covers_current_state_and_artifact_vocabularies",
-        "baseline_ast_sha256": "087838835cdd0af9fefefaffc413e67bfe9fe4dde4d933606de6b5f8c46ab546",
-        "current_ast_sha256": "0291ccebf6ab7f586fc5eb6d851e7f7b565f74c234aeab5daef700b65855971c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression receives only a typed local or variable-name cleanup with identical assertions."
-      },
-      {
-        "node_id": "tests/task/target_registry_test.py::CallableTaskTargetRunnerTestCase::test_callable_runner_validates_and_runs_target",
-        "baseline_ast_sha256": "b82995ddda72c7f24026e8de44b0c9414132a51417598e1c22c0004b524bab58",
-        "current_ast_sha256": "f96b08535180ee77732170f6c5aa545420c7def61b4e38ea68350d99b55aaba4",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/target_registry_test.py::TaskTargetRunnerRegistryTestCase::test_registry_uses_mapped_runner_only_for_target_type",
-        "baseline_ast_sha256": "4dadf4fdaeed6771c5b7e1055525594d0f24429c4c8e663c185c456936653a62",
-        "current_ast_sha256": "5e96244cd9b9b2700617bd0ad8274b473d9a0b22b3bd0b77290e690c2543626a",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_orchestrator_response_branches_are_consumed",
-        "baseline_ast_sha256": "27f2c96727b125e03f4a418948d515def4d089049eea0186e790a91866854b64",
-        "current_ast_sha256": "28865add573d3eddbf378700da75f53d041b2392fe5cade27d7b95c749f549b0",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_plain_output_without_text_method_returns_type_name",
-        "baseline_ast_sha256": "7f60a2580c2231680dcb32315bd3df7bbf98faf63f13c43046d88a116b6e878b",
-        "current_ast_sha256": "12ebc3471db426e11d36719d67100ad33ac9d05833744c2802a4b2686098534c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_plain_string_response_is_returned",
-        "baseline_ast_sha256": "57c4755c654cd95bd5e3064d1900fb7d81c4b3b01cc5283da2f44039fcf9f657",
-        "current_ast_sha256": "7abc02dccc53901e9bf27aff4389ffad397a35f6710f887ab4bca4c6b4dc9eaf",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_attaches_cancellation_checker_to_response",
-        "baseline_ast_sha256": "397f9903a4514b74bf8e46caa362060042970ff126ce12fa10a20fd72cbbea77",
-        "current_ast_sha256": "b69e310a09a500f9a0e1226b89afd3e14606b50d31c3839ebe8aea25337151b2",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_maps_json_input_and_structured_output",
-        "baseline_ast_sha256": "1d3ff6393161747f5d2e5fe0e9857656e271c1393e3b8dbbcd3bb8a966a53da2",
-        "current_ast_sha256": "6cdd7ef96b1acbbae2f2f6693438eac661abefac57bd913bb10795de40c28c63",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_maps_provider_file_reference_at_execution_time",
-        "baseline_ast_sha256": "cd3285a49c9df84a3b7899d2b20e8c131ed33fc4a40f3047c9bf80187cdacd79",
-        "current_ast_sha256": "c983e670ec9a550d2bf5b8bf75392eaee1e3c90cdcef33513ac6ca7d29a172bf",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_passes_tool_settings_to_agent_loader",
-        "baseline_ast_sha256": "202fadfbb07f0b157eac3487615104cb3fe69d8aa81326b973e0d871faffbd8e",
-        "current_ast_sha256": "f36776cd6542c9db023bc18486d9472e89e65d86619f0d46e2a45f40ddb0b346",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_uses_fresh_orchestrator_and_consumes_text",
-        "baseline_ast_sha256": "903b446ade3577f71eb6fa18e5d2b8bce7609327e00078033fa99e377010a3e3",
-        "current_ast_sha256": "40e6996494cfe7b105aa0f431ec88f47a114c6515015d1b9380dae720dfdcfa1",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_run_uses_map_reduce_for_unmatched_local_text",
-        "baseline_ast_sha256": "8b461c472259863c9a3ae80d0fca7bbd1bc08d79660257713a9014a54f98e04c",
-        "current_ast_sha256": "fb46a0ff47d0231a5f0af2238327a2d661aca6071b1c69e2eb66e85140c6bdd9",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_structured_output_can_fall_back_to_text_response",
-        "baseline_ast_sha256": "a528d0299327080c3758646ebe03010d06d45474f98db63f286ec90f2cc96723",
-        "current_ast_sha256": "d5b83b7fbd72b3c7c42b27e7e74d7057272c14f2f8f121f2ee160fda06249199",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_plain_queued_input",
-        "baseline_ast_sha256": "7f16a4adf6c4af81a1bc0d9656ae15c3c068bd732b05ff74cc4bd4de5a1fc1a7",
-        "current_ast_sha256": "656fcd7c24617b977ddf70ba0f371326961cf17c690eeff9ff9fa0dfd5813eff",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_plain_queued_object_input",
-        "baseline_ast_sha256": "0012436aa252659620183a8c1a15d3765420799444041d660e8c2454b404104a",
-        "current_ast_sha256": "fa7b2a23968fad8d8765710f82ac30c6334936ebbc95c58c9ecdd124260dc36c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_precompiled_plan_with_allowed_skills",
-        "baseline_ast_sha256": "f04fa92b6cbf7056f8514f6230f2cf3e14b40250c0177c52b6d266aaf3a4ab31",
-        "current_ast_sha256": "f1f1d73e64d077c077ab2929560e17e62d548d8e49849788cc3bd3c9ebea8c88",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_queued_file_array_from_durable_refs",
-        "baseline_ast_sha256": "188119935399def2567e055a59f3a79b941d49fd18bd3c260c9ffa056dc87581",
-        "current_ast_sha256": "4a4a2c09391490c9360c96d856f16332085e8ac239d48ea4903758f4a40494ef",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_queued_file_from_durable_ref",
-        "baseline_ast_sha256": "6f477c4f7a22fb07faab46ee56c0c0cf888d01eed7e1574d3ec54039c4aeae80",
-        "current_ast_sha256": "3f3f53d40d3a585461ea53bdb55e62b791ef039d74f3ddf3302bbb1ff57638ff",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_accepts_strict_flow_definition_with_allowed_skills",
-        "baseline_ast_sha256": "94469d913b2cec55e6e216acbce772d51683bed0cbbd307a5a72a91078727ee2",
-        "current_ast_sha256": "2d165e36b344a739feb8ff9341a1c331e0c698572fb56fa1d15756354f5aa3f8",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_agent_node_appends_files_from_selector",
-        "baseline_ast_sha256": "e6c873029318ca4cefd2db94a9d1c59b189a7cc11c627281aaf79bf1821f40e7",
-        "current_ast_sha256": "383b8b2d764fdb270b84659e2a4224ff5c00f5abe2d834338a8841119ce2c8e6",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_agent_node_replaces_files_from_selector",
-        "baseline_ast_sha256": "a4f6875cce96cf39522d9e582395f401427b1e22e181893b1585bec3b5208edc",
-        "current_ast_sha256": "7bcf3cad513efad9313edb02621bab2a40b1ad58a34d5a94a26a3854621cb068",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_agent_node_uses_flow_input_fallbacks",
-        "baseline_ast_sha256": "e8974b092c8edd54040f0cff0183f8f852f1c93525283d0e196f48d2d35efd37",
-        "current_ast_sha256": "258d70bd7a33e404f44d3a0baecb13c254de130496b012b8946ab513c2216d8b",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_awaits_async_resolver",
-        "baseline_ast_sha256": "e932b583e989f22c1d5e23c9e4c42285a597441cd127317367cab955f78cb89a",
-        "current_ast_sha256": "203ca3d15fa7c3ba2040dd1486bbb87bf9391e523f394a5ea96d662065931bbc",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_binds_array_input_as_json_lists",
-        "baseline_ast_sha256": "90d1e24692a5b0c257116e88f03c7d5e43ef4348522f3041b887ca78ed0d63e0",
-        "current_ast_sha256": "ce8abd94976e35758c63889a8d7177db67d42c64b6699e538cdd49f46c8853a6",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_binds_object_fields_and_full_input",
-        "baseline_ast_sha256": "15e4b118d4f58d49dda5fc93198df717c9f12105472bbbd24d8cb3ba855b5734",
-        "current_ast_sha256": "c64c0eb461ec392a744206293f3354106b0081aaf58b170457d85ff67f0d31cf",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_binds_scalar_input_value",
-        "baseline_ast_sha256": "29b283fd826e26d39686dfe638dfafe2d165ee164c3301b3d37a6e1fb0ff8b44",
-        "current_ast_sha256": "a50b949b7ede95c3ef08269fcd15c86a53caa1921a7aab021d69526a661ccaff",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_does_not_trust_reserved_object_input_key",
-        "baseline_ast_sha256": "8dbf4b32f2bc3fd4718e4b14f7656edec43fe609aabd740580e2239e8f3315e1",
-        "current_ast_sha256": "5b23360225d00777d6d86e0904d9791b43a3d43c62d1793d2dce083b16f5e0df",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_executes_compiled_strict_plan_for_direct_and_queue",
-        "baseline_ast_sha256": "187aef2932bea19922832ccfbaa43d803e2f4e957b9409a12d8247c53002b62a",
-        "current_ast_sha256": "4447f60257c8d6f4aa2d59385eef20672a0fc4bd0d8c4f1bcbde13353f520c7c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_executes_incomplete_strict_state",
-        "baseline_ast_sha256": "77fb8bc619b7d4807bba2634e1e48dd45399b4ee20b69da5bcf21396417c655c",
-        "current_ast_sha256": "6529638a37647be466794a557c4896f31b0f326461cda63e4e8fc50cf4267065",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_executes_resolved_flow",
-        "baseline_ast_sha256": "c5dac91cfc23b1f4b008018026c3fc5c488b9735dde54d59693f88e1f5893e53",
-        "current_ast_sha256": "e0f7d81845f8be7c4c56495641d823e5f40fd63d9efd46c046f08dcf6c620f76",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_executes_strict_definition_and_records_state",
-        "baseline_ast_sha256": "e838397aaf85c276c4ed5c5957deef5785390d67ef93e0058f3f358a28ab781e",
-        "current_ast_sha256": "f080f03de77899a77567875b8fe3160a6352250e30b17dcf2fe99f6018dd4079",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_injects_task_skills_into_precompiled_plan",
-        "baseline_ast_sha256": "0e54fac1c393ddc7db19c14296197ac4d2496aa613b4a4a76ca768fb1e4623b6",
-        "current_ast_sha256": "ccc534c7b1c73dac63c1680b3f6735e3d2f6acc22d15cd81b6e37c387ee73bb4",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_injects_task_skills_into_strict_flow_definition",
-        "baseline_ast_sha256": "d34799deae1edf122f52cd025b7d68fe02faade515934780eaabdcda181253c7",
-        "current_ast_sha256": "d3478e7e1fa2833f7b3bd2b72eb3bd082c7dc53863838f86541e19ba6316f757",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_isolates_object_input_from_node_mutation",
-        "baseline_ast_sha256": "52d8d1d256d30d7debd361e90ff1c13b043190cfa0fd324dd98df7b26cf8ab66",
-        "current_ast_sha256": "fd40ce1c056fd709dc77c10e5c41e1866bcb568b1552e6998299b50036e5369c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_keeps_declared_object_input_with_privacy_marker",
-        "baseline_ast_sha256": "cbdabf53bccc18f40c2ba0185c0f418f0b636b7a60e0185c7fb2e6b2e7b89a88",
-        "current_ast_sha256": "34ff4c75b4ce7ec6e0f1a9842601e95106990c541b3b1f06a5cddca327fa4826",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_keeps_legacy_object_input_envelope_collision",
-        "baseline_ast_sha256": "2ddc604d47358359120220e5599b526a3730ef1aa672586eb8ab096166e4a339",
-        "current_ast_sha256": "51ae00d4d82d53a34076adaaa2f5d3288445f1c60ff163495c4d7ea243b3783e",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_merges_narrowing_strict_flow_skills_config",
-        "baseline_ast_sha256": "8a38fda434414c3689bc12f07558e7f568c4e9593e2a3dd0895b0be00efc08ff",
-        "current_ast_sha256": "c7ccbbd58460a08234247ebb3263a1bf26894e672710566013d913601e60d667",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_reruns_partial_strict_state_without_node_outputs",
-        "baseline_ast_sha256": "f76e5623944e06ba0a573a747807b9988174d48fbc04bc64ec7da219d66fc67e",
-        "current_ast_sha256": "29c2fbe2341612d648737fcde1b8b2e328ff7999caea6c6cee651b387e1a3b1c",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_resumes_partial_strict_state_without_rerunning_node",
-        "baseline_ast_sha256": "12c08c07daba2c774b2c54ad14d938baf73223401ef09f2d697777ef6488e33b",
-        "current_ast_sha256": "9b3452ed750bd12dd2c85100886eaeaf6c574e11a19a9c46441ccea754cb055a",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_resumes_pgsql_strict_human_review_after_restart",
-        "baseline_ast_sha256": "20658ee4a42ad2cbc6488ab389a2fbb0700685525145cbd8bb051bf297695cb7",
-        "current_ast_sha256": "a798f64ca81d39bb15ed89e24378efd53efd297bee5286b17fa70ca3c1c68d21",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_resumes_pgsql_strict_state_after_json_round_trip",
-        "baseline_ast_sha256": "4a7644003015febfecfca8258e9c0b4de102a63a1ac9bb0573aa177218f34759",
-        "current_ast_sha256": "111f78bf62782df1ed84f94b3388c12e0b229b8494179537ad0dbb1de10bacab",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_resumes_strict_human_review_from_metadata",
-        "baseline_ast_sha256": "abbe66a3312ba0ff3d1f876d6c018f9d157b3319e2af8c370a9fa1735eb70097",
-        "current_ast_sha256": "aa02b50049d0fca31fba01a8c566a9d3356e3a5e7e9d9f4bf86ef4a24f32ae4d",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_routes_strict_human_review_resume_decisions",
-        "baseline_ast_sha256": "f1ae4069516a653f59779ad4d0890b535301a774de3c16308fd7088435499799",
-        "current_ast_sha256": "559f96092a4befe3f0e9992775f49216c15e0231ffa2b0e19479675f5c8083ee",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_unwraps_legacy_stored_queued_input",
-        "baseline_ast_sha256": "3004a6262d8aab185ba01f4786a33959312e2c21a12139a77573668bfc879527",
-        "current_ast_sha256": "826811baa03b748690040232d51922ad386a33fd49c617f24eb7d71da3a0d2ce",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_run_unwraps_stored_queued_input",
-        "baseline_ast_sha256": "814de9cd4811323aaa17f9bc779d71bfc1cf821eebfad6f351a85c13fb45d1bf",
-        "current_ast_sha256": "9a36819139b2fdd93f1bbd43b8376579e6e4d4c3c71b1a2223273d2062191401",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/worker_test.py::TaskWorkerTest::test_process_once_abandons_active_shutdown_for_reclaim",
-        "baseline_ast_sha256": "e88887f1a2fe26067a6738517b6eb748acbf69c042473ca6cd3fe0265d5dd9a6",
-        "current_ast_sha256": "67d793a5616c263f6123aa60f883d22d3a0ac20b92da1fef1403075fe0121ced",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/worker_test.py::TaskWorkerTest::test_process_once_shutdown_abandon_can_exhaust_attempts",
-        "baseline_ast_sha256": "51288cc6d8e5f46f44e02371532e1cc26c0ba6a7d613c631c95ca869195e0a88",
-        "current_ast_sha256": "857beebcb10de089e1c32c5408f63150d1409b51a29eea98b6119a43c4557546",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/worker_test.py::TaskWorkerTest::test_process_once_stops_after_success_complete_conflict",
-        "baseline_ast_sha256": "1c9c444125d09cd43df4b394958d3ec627702e0a2c6371f13b3799907f801669",
-        "current_ast_sha256": "5e12e12fbe8106f2d00e001e26e88ae572aa9e0c28dc1c6268626be07903a534",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      },
-      {
-        "node_id": "tests/task/worker_test.py::TaskWorkerTest::test_run_target_returns_with_heartbeat_enabled",
-        "baseline_ast_sha256": "feb3d783fdc4cdee32050295881277c0184ef0ed61dbda86aae919f59496d831",
-        "current_ast_sha256": "0d907136108ae16e510aaf8d8be9737192ae9e0297ad6701c36d2e1b8d8fdfa8",
-        "disposition": "mechanical_fixture_or_assertion_migration",
-        "evidence": "Existing regression adopts current durable task fixtures or assertions without adding a new acceptance node."
-      }
-    ],
+    "catalog_sha256": "e26844f278d2ba186211e137cecbb23100ee950dcaec3ded80a3c81b241b7814",
+    "mechanical_nodes": [],
     "reviewed_nonsemantic_nodes": [
       {
-        "node_id": "tests/agent/loader_test.py::LoadJsonOrchestratorVariantsTestCase::test_run_reasoning_summary_file_entry_points_match",
-        "baseline_ast_sha256": "fc520b66bc6e504a21167e6b406f1eadfb0bd8c4fa9bc3846e003b79507d8b70",
-        "current_ast_sha256": "90f4dde2498e0cb4119319c46dae32ce807b8857459b5e8d7e756f88eb3c8ac3",
-        "disposition": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The loader reasoning-summary entry-point parity assertion covers existing reasoning behavior unrelated to structured-input requirements and carries no structured-input acceptance claim."
-      },
-      {
-        "node_id": "tests/agent/loader_test.py::LoaderFromFileTestCase::test_runtime_container_delegates_to_agent_envelope_loader",
-        "baseline_ast_sha256": "5201e1db1b08c62ee6c96a5cb86868ff103ed344e13dffb45474a1e22b1562a9",
-        "current_ast_sha256": "84bf40a342c4175d4185a45e2d9118342262792df929b295e52e0658da2b742d",
-        "disposition": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The runtime-container delegation assertion covers existing loader envelope behavior unrelated to structured-input requirements and carries no structured-input acceptance claim."
-      },
-      {
-        "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_binds_failure_cells_to_dynamic_postconditions",
+        "node_id": "tests/agent/durable_continuation_resume_test.py::test_resume_admits_every_canonical_resumable_terminal_outcome",
         "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
-        "current_ast_sha256": "3efafbe6ef30ec28d443dd94592457eefdfc06b3da2ebc1626534b79bcf6873d",
-        "disposition": "gate_support",
+        "current_ast_sha256": "fbf627af545400b068a2088e519db60d2eac80e5b6da740c6f3dd4de8087a21c",
+        "disposition": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "This verifier-only regression seals metadata and gate behavior without claiming runtime acceptance."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_canonical_termination_before_provider_work",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "67add2567a91f13c22baad84fd85499deb85981bf077aa2c2a4bccc76ee46973",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_public_sdk_preserves_completed_wrapper_values",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ff1fc2d9e4e5404e9989d413817b84dac102ea4a5e3130803a9c57d5660f81c9",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/execution_wrapper_input_required_test.py::ExecutionWrapperInputRequiredTest::test_public_sdk_preserves_noncompleted_wrapper_results",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ce526980fbdfaa2b16c138f57c2778ca463cbe3e2f12f2bd6a13c28c4b1a648a",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorConstructionInteractionRuntimeTestCase::test_constructor_rejects_untyped_runtime",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ff9277a483aefa949ee2de5c46e04da3dd8d724db798c452133253569ed47c7f",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorConstructionInteractionRuntimeTestCase::test_reasoning_wrapper_preserves_trusted_host_runtime",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ad60722432fed0f2a2bf3f0300ec46554920ea3a4cdb65a1d1b93c8396223347",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorInteractionRuntimeTestCase::test_host_runtime_reaches_fresh_run_creation",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "0ad63d12c0df28c9aeb328d730c4e26417b41bd55271880db1c71888608d8843",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorInteractionRuntimeTestCase::test_per_run_runtime_overrides_host_scope_without_mutation",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "f62b32b478faaeaf43865971b1e1d05cffd6ada31b3f4bbf6f2b0d07a273757f",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorInteractionRuntimeTestCase::test_run_rejects_untyped_runtime_before_side_effects",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "97ef1ad53dba6adcb25603ba016bd4dcbe583bae225a1caae18bd2315bb57608",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorInteractionRuntimeTestCase::test_runtime_capability_remains_off_when_omitted",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "ef8e1e50669954a53ffa43f70463b989e53d1c26a08e8b236073812ee36c7684",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorLoaderInteractionRuntimeTestCase::test_from_file_forwards_only_explicit_host_runtime",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "fe058f36a70dc67516bbc71fe7c4063ab50b2a1499dccd299d404f76c012c0b2",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorLoaderInteractionRuntimeTestCase::test_from_file_forwards_runtime_to_trusted_envelope",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e9d302d3b1fa8a77fdff9c7dd9d81766dba1e0b8f2caedff7b7ec18e5db020d2",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorLoaderInteractionRuntimeTestCase::test_from_settings_injects_runtime_into_both_constructors",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d1ba6e43edcd44f40bc7e2d033081fa870f92f17ed5480a856340920e832a107",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorLoaderInteractionRuntimeTestCase::test_from_settings_keeps_runtime_off_by_default",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "b16c50dbf2fb53cdc10453dcc49ef0944ff8e8bc6a1c7e6bafc92e8721d2a2d9",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/agent/interaction_runtime_injection_test.py::OrchestratorLoaderInteractionRuntimeTestCase::test_loader_rejects_untyped_runtime",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "f2fb73cd9168649abc7dbb983bebf34f1771e08f68623758cf232e02edaa7456",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_annotation_contract_test.py::test_root_public_aliases_are_recursively_audited",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5dd15ba37cae175667dbf467288492c05184deae553b9907db8832afe895c676",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_annotation_contract_test.py::test_root_public_facade_annotations_are_root_closed",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "31975b44b34abc588dfdaa84c59d9ea7f3652d030c00c52eb61e4e38dc6af000",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_construction_test.py::test_root_only_consumer_drives_attached_and_atomic_durable_bridge",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e8f838ec98a4612573454d4c5e98ea767f97b32a6df69c48047c148d441a055a",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_completed_json_rejects_every_non_finite_float",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "59cae797df71c80f0ba6f4b89c1e482d675a4b52cbeabba4a0c1211e10bbef1e",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_durable_handoff_rejects_untyped_and_mismatched_acknowledgements",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "daa335394196260276442ffd976bf0580e15ed1e48d5d070c015918ae8922b93",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_durable_integration_rejects_unowned_components",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e6667529ff8010eb4583306cc84ccaac3c8ccfefb89dac63e738bd0870a0594d",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_legacy_async_controller_aliases_and_projection_failures",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "452d9e1e79cb517692321b6d89353d6c40d1fbf6857b4e8083a388cea10ff58f",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_opaque_references_reject_type_shape_payload_and_pair_mismatches",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "7c42f2c512ff7b5e86a61b688d87c6b1403a882f7669ffcd71fa05a163edd667",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_owned_runtime_and_policy_factories_validate_callbacks",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "586d2ab8a876a54bdb635717461fa20c2ea065c60c4da91c860442e68faea794",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_principal_clock_identifiers_authorization_and_classifier",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "9210f940c653e84dd2e3033eae2a0fec1182872b6c3b13c891e60aab99ecc906",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_public_controller_aliases_and_bridge_validation",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "befcdf6a0e3630778669fadb51feae002ebdc53abb4096010c41e11abd492ea2",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_public_handler_adapters_preserve_each_typed_outcome",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "72e1b95a5a7cea0b733f0b04886df707ac4815a873a578588038dcc9c44f3094",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_public_persistence_values_reject_empty_payloads_and_bad_digests",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e3c5a741d39295493ac4a53a8823fbfda41cd31a92637f146372c9247325991a",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_public_state_errors_map_to_exact_exception_classes",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "61c895c57c30c2b94fe9faaed92a024420325c4404e35328cbefae4702e8cde3",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_public_value_objects_reject_each_invalid_member",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "6c5ea0083d8bda7d7dbce13a29f11b9c7546b098be9c3e18d0f82258acc608fd",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/public_sdk_coverage_test.py::test_run_agent_maps_untyped_values_failures_and_input_handoff",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "da5566af805c5985aee5c650322abbe19c52b3ceb5593ded22645fb5fbb56cd3",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises real public SDK and defensive runtime branches outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/sdk_contract_test.py::test_durable_controller_rejects_sync_callbacks",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e8f0d694495e87c13880a44ba6049e297784d03348da9baeb680f522b84046f2",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/sdk_contract_test.py::test_durable_resolution_requires_authority_and_atomic_resolver",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "60498065876e2483dd99a14d1dd45ebaf0dbf172dd0643c879d8b3cc1080a3a6",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/input/sdk_contract_test.py::test_multiple_embedded_runs_keep_distinct_handlers",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "2164feb36294f790ee964a80f5c9505ed7095cfa208b99e2f6f60cce55bb1215",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
         "node_id": "tests/input_acceptance_verifier_test.py::test_acceptance_rejects_failure_schedule_evidence_drift",
-        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
-        "current_ast_sha256": "9e62433e58690e429b44dfc210a2ead7a44e2249a58bf25cbe1ddebf982be453",
+        "baseline_ast_sha256": "9e62433e58690e429b44dfc210a2ead7a44e2249a58bf25cbe1ddebf982be453",
+        "current_ast_sha256": "a55f6666c32a77e73c2457fd698fef3e41babac1574ae76abaeb5638e54acebd",
         "disposition": "gate_support",
         "reviewed_by": "/root",
-        "evidence": "This verifier-only regression seals metadata and gate behavior without claiming runtime acceptance."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
         "node_id": "tests/input_acceptance_verifier_test.py::test_evidence_state_and_review_history_fail_closed",
-        "baseline_ast_sha256": "c2fdef4ba09fe20b1f9e7e83146560c61fb29ca53073d104b9adf333e01b2202",
-        "current_ast_sha256": "c975d91106904ec6298a771db80303c1666840f0b72d03f15a780991c452f69a",
+        "baseline_ast_sha256": "c975d91106904ec6298a771db80303c1666840f0b72d03f15a780991c452f69a",
+        "current_ast_sha256": "01af2424692a7639af484589a0e0c0966a8ae655f53632e4906bc4d168d73d4e",
         "disposition": "gate_support",
         "reviewed_by": "/root",
-        "evidence": "Metadata support verifies exact current manifests and gates without adding runtime acceptance behavior."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
-        "node_id": "tests/input_acceptance_verifier_test.py::test_task_failure_schedule_is_frozen",
+        "node_id": "tests/input_acceptance_verifier_test.py::test_tree_binding_is_commit_stable_and_fail_closed",
+        "baseline_ast_sha256": "d8124e9ca6a229cf462e5ecbbfd6d1cfffe0d65590909cd83629b2f32d6b3d58",
+        "current_ast_sha256": "ecf0be733ac7e79caedc811952d3f15fd50048444a52a65d3ae1e2e77375d99e",
+        "disposition": "gate_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_durable_handoff_rejects_invalid_callbacks_and_receipts",
         "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
-        "current_ast_sha256": "547ec990d0e5160248785a045c4f98712bb0bc1b97f1f57789fdc1fc7b368ce6",
-        "disposition": "gate_support",
+        "current_ast_sha256": "c84151a12cdb97906d71f6252678e1bf77770cdd28082de3f01e843c1e388540",
+        "disposition": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "This verifier-only regression seals metadata and gate behavior without claiming runtime acceptance."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
-        "node_id": "tests/project_metadata_test.py::test_task_pgsql_extra_declares_postgresql_dependencies",
-        "baseline_ast_sha256": "3a805539d4655967e6c0e24c70f7b696b5b2ba67ec95cdeb1108a2d61b5e93a2",
-        "current_ast_sha256": "9c55d2d1d9939bd4c1590ca0ccb162d0fa7a5756730de2da00dc7a03357aece4",
-        "disposition": "gate_support",
-        "reviewed_by": "/root",
-        "evidence": "Metadata support verifies exact current manifests and gates without adding runtime acceptance behavior."
-      },
-      {
-        "node_id": "tests/project_metadata_test.py::test_task_pgsql_extra_includes_migration_dependencies",
+        "node_id": "tests/interaction/headless_policy_test.py::test_durable_handoff_requires_exact_pending_request",
         "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
-        "current_ast_sha256": "fce005a9dbb8bc35ee8e4afd1097c310384dfdd04c30b235febb3a0a57214daf",
-        "disposition": "gate_support",
+        "current_ast_sha256": "fb4e3eff8ca1252cf3d20f16c932ee42147c51fcb4d3b9e89bc94e5cd2230ea1",
+        "disposition": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "This verifier-only regression seals metadata and gate behavior without claiming runtime acceptance."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
-        "node_id": "tests/project_metadata_test.py::test_task_pgsql_extra_omits_migration_dependencies",
-        "baseline_ast_sha256": "c2ca789d69a05183a6c784bbaee64ab3874c156e5c96f357107634984e1a8366",
-        "current_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
-        "disposition": "gate_support",
+        "node_id": "tests/interaction/headless_policy_test.py::test_durable_handoff_wait_is_wall_clock_bounded_and_cancellable",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "07bce801b2d4fcf7377cdfc3bf20cf119c8b73c4e2cb8d9f709eaf144b56ca71",
+        "disposition": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Metadata support verifies exact current manifests and gates without adding runtime acceptance behavior."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       },
       {
-        "node_id": "tests/src_coverage_verifier_test.py::test_current_history_link_fails_closed",
-        "baseline_ast_sha256": "de5310d6a80593e1b1dacd224e59a257c2b459689110833fd9eac802f5d54c8d",
-        "current_ast_sha256": "aa4cdc64144bac22507cc73b8c6270e0fc8f1fda87f4f1db271267f0919d05a5",
-        "disposition": "gate_support",
+        "node_id": "tests/interaction/headless_policy_test.py::test_external_controller_cancellation_notifies_host",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "bbdf16cf6a9857041d34a45bcf27099c738adce5b3468f11a6e54f12eaa49b50",
+        "disposition": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Strengthens the current coverage-exclusion history-link gate for schema version 5 and exact directive additions and removals."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_headless_validation_rejects_untyped_and_relabelled_callbacks",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "459d451569f340ee2a743e90173d503815549932dc24face5b8c9c2b66db53ee",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_ordinary_handler_cannot_escalate_policy_provenance",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d59cb619d9ae2cd343d1e2cb23995f0d6b5979f9c8042248afdf50205c4e5b0c",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_policy_cancellation_notifies_async_host_callback",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "7d750d16ff8ffce9c455a95f29f73f19334bebb630a28ce7b6a4429273f0a849",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_policy_candidate_uses_sealed_resolver_on_commit_and_replay",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "4a574361c1cc102de9d77c2896a84a95829fcde6ce797cb2ff97af7c0159e373",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_policy_constructors_reject_sync_or_untrusted_values",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "dd03fa907ebd038443ecdeb743984b8e0bf49c05e4ff2eae03f2bc5dd01893f3",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_policy_variants_are_async_typed_and_explicit",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "e2aae38766f0ea5384955156391a2bf81e9ced7784323a4848c20d41f40f097a",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_repeated_trusted_provenance_escalation_fails_closed",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "d484a630b23309958703ed628049d512ce178b916d43f6364ad5449e6c439df2",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_sealed_outcome_is_not_a_public_handler_resolution",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "0d20c9b3296143ca6eeb840b91f5f0d7ef7f216efa9a52937823e8fe8aec7ab1",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_sealed_outcome_rejects_forged_authority_and_shapes",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "1ad1b059ed7fbbf7a3b0b36800b8dc4ac8b10146b3fe57ffc292d31c1f14fc22",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_trusted_headless_policies_use_sealed_broker_path",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "063dbaa98db68c699c0d0185c003172c0efe5bcac871c02a7e94e5dfacd74d18",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_trusted_policy_resolver_round_trips_pgsql_record_codec",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "027de3a2f27866e83245ad41812933c68a9fbed60bec175942a7e81742cd0df4",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_trusted_policy_store_command_is_sealed_and_strict",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "7c9e7b134a34f85641cc1a989b8b5c739f9a1d82384546413cd6b845b5165185",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/headless_policy_test.py::test_validation_feedback_allows_only_dynamic_retry",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "358974d7fad9e23201ad650b5869c2ff4e73de38f8dc101461bfac66f30442a4",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/interaction_store_validation_coverage_test.py::test_record_resolution_validation_rejects_corrupt_authority",
+        "baseline_ast_sha256": "cf25ed572afeef7874c26e59bd5803ac4543002bf65f557b876ce59018e043ec",
+        "current_ast_sha256": "8a0dc162cc111de72b0ef5dd2e337650262461a75936bba40f28fc89143d1f2c",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises the policy-answer provenance guard outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/interaction_store_validation_coverage_test.py::test_replay_branch_and_basic_identity_validators_fail_closed",
+        "baseline_ast_sha256": "ad6669b817411076ddc10945e6f3d28b4650f8959c64ddc053f11d0cfb0329a0",
+        "current_ast_sha256": "7f475049ab84447f257ffe08bd095bcbabc96c0dd526ec557b4558c0f0fb6ec5",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises sealed trusted-policy replay authority outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_advisory_timeout_atomically_requeues_and_replays",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "8c2c190b90b629de13c5e1a6e792e2f9c2a962c69363657f53879ff6bcec16c6",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_advisory_timeout_rejects_required_expiry_and_converges",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "9a2bbca18e7ad1a7c68cb2f098595a224cb04c704ff5c249aa4f3e7530755b12",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
+      },
+      {
+        "node_id": "tests/interaction/stores/interaction_pgsql_store_test.py::PgsqlInteractionStoreTest::test_advisory_timeout_rejects_wrong_scope_and_task_state",
+        "baseline_ast_sha256": "d6f5bc657cdeb0be6ee6c3f042458c9981e5bcb0a4dbe6a9f6d6c39f464f0479",
+        "current_ast_sha256": "5f4cd3db1119f2d3b6a02777961ab479f1e1be46d2d3b52713d08c859dab8ff5",
+        "disposition": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Focused coverage closure exercises lookup validation and unexpected due-result rollback outside the acceptance manifest."
       },
       {
         "node_id": "tests/src_coverage_verifier_test.py::test_phase3_live_exclusion_fixtures_match_reviewed_relocations",
-        "baseline_ast_sha256": "9ab16267e96f54e4e06e47b4244296a7233eeb39184a4296bd0805904e4870b4",
-        "current_ast_sha256": "14b652c85f136c3c55407a8eeebe41c6c634bc3f33ea228737684eb0b42bcb2e",
+        "baseline_ast_sha256": "14b652c85f136c3c55407a8eeebe41c6c634bc3f33ea228737684eb0b42bcb2e",
+        "current_ast_sha256": "ba8fef07c1c1db91b9bb6d84d75bbebf09027e3a96975f0734dcda5d951ab8bf",
         "disposition": "gate_support",
         "reviewed_by": "/root",
-        "evidence": "Pins the live coverage-exclusion snapshots and relocation ledger to the reviewed current counts and SHA-256 digests."
-      },
-      {
-        "node_id": "tests/task/client_test.py::TaskClientTest::test_inspection_snapshot_includes_safe_optional_fields",
-        "baseline_ast_sha256": "15011a0003e975a12eda770a419dfc93dc3dca64a16e8d8c26c3496c8a5f06a0",
-        "current_ast_sha256": "64009ceed1aede8fb2c5769101f77db0613f09c47f469c8daba5594a4fe89ce1",
-        "disposition": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The task-inspection optional-field assertion covers existing inspection projection behavior unrelated to structured-input requirements and carries no structured-input acceptance claim."
-      },
-      {
-        "node_id": "tests/task/stores/in_memory_task_store_test.py::InMemoryTaskStoreTest::test_lookup_methods_raise_stable_not_found_errors",
-        "baseline_ast_sha256": "20c60f78eecf1011fa7b7a680e76478c13e33e4c2960357cd991efe84ec35faf",
-        "current_ast_sha256": "53b5aa9dac2604f4ce3c285b7c9fd0aed781d5957e0b0f41a37d2f968e55a4e2",
-        "disposition": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The stable in-memory lookup-error assertion covers existing store lookup behavior unrelated to structured-input requirements and carries no structured-input acceptance claim."
-      },
-      {
-        "node_id": "tests/task/stores/pgsql_migration_test.py::PgsqlMigrationRevisionTest::test_revision_downgrade_is_forward_only",
-        "baseline_ast_sha256": "01ea8ff93f727387cefefbcb2faf0138bcffd91db2001ee23d149b9849bc3b6b",
-        "current_ast_sha256": "6eeb2608f272116992acc43852585fd7e4548100ffc258fe7d55832509c941ef",
-        "disposition": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The forward-only migration assertion covers existing database migration policy unrelated to structured-input requirements and carries no structured-input acceptance claim."
+        "evidence": "Exact live support definition for the public SDK boundary is classified outside the acceptance manifest."
       }
     ],
     "support_surfaces": [
       {
         "path": "tests/agent/durable_continuation_resume_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "1493ceeae5c4be6784ab958b138198333c71125613c01847f32adef5d7c7bcfe",
+        "baseline_ast_sha256": "1493ceeae5c4be6784ab958b138198333c71125613c01847f32adef5d7c7bcfe",
+        "current_ast_sha256": "1ac38c910f82f052384c83f9c1dabc04ca53e9d83ff9198743d21bbdb6127223",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/agent/durable_runtime_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "280673e7cb840bb145d97910a3522e64a6a2fd7ae3b0b3e519b5e42a793f3f4a",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/agent/execution_coverage_regression_test.py",
-        "baseline_ast_sha256": "cb62d94e376ca9976a6227e76d6b87e8c891a198273b6781517b87d1b3392c21",
-        "current_ast_sha256": "4059abbeec4deaa9a5d87249664299d2bc2249683b1aa2f1fb4d43c92fadb8aa",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
-      },
-      {
-        "path": "tests/agent/execution_message_exactness_test.py",
-        "baseline_ast_sha256": "fd9860ae999cc537374eadf873d8ee65cf67d6491cc7cded0f9e837e9af6b1b3",
-        "current_ast_sha256": "72162539eda8fcdd9ec38429c004085c7dea727afd3d434154f71bf5049df55b",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
-      },
-      {
-        "path": "tests/agent/execution_test.py",
-        "baseline_ast_sha256": "55539a64e679ae57e6d1678b0f4c9b0bba6554e4c5f1af9c96de5b4bef8c659c",
-        "current_ast_sha256": "86877a443a16ba0a4578b30a8667def4e8e5ba1866a9af5eb38cfe5d6d7611bd",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
         "path": "tests/agent/execution_wrapper_input_required_test.py",
-        "baseline_ast_sha256": "fb76bef565efa8a8b7dadde982c51f110cb6f4095f834a02bc467f42211c06f0",
-        "current_ast_sha256": "c98d561c1ec45a9e592e9acfa75c90e67b6028dc075aedb3286b376b18e5d751",
+        "baseline_ast_sha256": "c98d561c1ec45a9e592e9acfa75c90e67b6028dc075aedb3286b376b18e5d751",
+        "current_ast_sha256": "b8c0a9adcd97b45ac6f5bb14f1ce229a1ea04e107a3dc5e1fa54c3056d6bd0ef",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
-        "path": "tests/agent/loader_test.py",
-        "baseline_ast_sha256": "6a63758fe0b91e5dcb05215fe026440c243214f91ac0010c50893d00a6fc1fd9",
-        "current_ast_sha256": "1296f42e058d3b598737c30137587ce2132d4840e9ea029b5da65b1eb1c08db9",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/agent/orchestrator_contract_coverage_test.py",
+        "path": "tests/agent/interaction_runtime_injection_test.py",
         "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "ea9b7493d1e8f0564ae85ed44f75f83741aa7c918f80d5cda814268d635619b5",
+        "current_ast_sha256": "0c6969a3bad6209e4f0746c4c27a4c4c2f387c4909ec709541a2f8efecd5113d",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/agent/orchestrator_response_contract_coverage_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "4741f34ecdf8a1c81def9521877c92b7cbe352225b7d9320b53ae74b18531d34",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/agent/orchestrator_response_convergence_coverage_test.py",
-        "baseline_ast_sha256": "5ba19780c000de65bf3af5653f69a0ed34592948c486e68656d39255a7bbb726",
-        "current_ast_sha256": "fd000a051b41cf9ecb7dbc9a7e339c5ef061c62f2b1d7811e84646aecd1b23eb",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Updates imports and shared runtime construction required by the corrected semantic interaction-runtime tests."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
         "path": "tests/input/broker_contract_test.py",
-        "baseline_ast_sha256": "c4f6e148d249bf31998c69bacade6173cce23b27915680c0a7cf02a2b5728867",
-        "current_ast_sha256": "8b07f75b9cc3737702b1835d82247ab1a323116b8f5ab2c92ac2a18460014528",
+        "baseline_ast_sha256": "8b07f75b9cc3737702b1835d82247ab1a323116b8f5ab2c92ac2a18460014528",
+        "current_ast_sha256": "1956429db20b6cef20967ee04ee0a04145144b59ef4a8d2c7dfce7906bacf4c2",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
+      },
+      {
+        "path": "tests/input/failure_matrix_sdk_e2e_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "6d4e5a8409df6c656364cb8e8fdf989a3e6214b549d9b8bc87d4cd54aff5ce2f",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
         "path": "tests/input/failure_matrix_task_e2e_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "6fadd4a34dd71a4fdcd682bf125c9d5cab16e9994355c351f8a3851630409fe5",
+        "baseline_ast_sha256": "6fadd4a34dd71a4fdcd682bf125c9d5cab16e9994355c351f8a3851630409fe5",
+        "current_ast_sha256": "d837fff03b8f7d5d204e5d70054d9867d08ccbdb801249f562035108ac50d6a5",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
+      },
+      {
+        "path": "tests/input/headless_contract_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "b3253c05f6311ef9687ef5414d48ac7669f947b8345e9c7302b589c3389fef0c",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
         "path": "tests/input/public_interaction_e2e_test.py",
+        "baseline_ast_sha256": "f999ff91bc22709abba3014430f41c2640ae202c59be2526c53cbc8b8e2a05c0",
+        "current_ast_sha256": "eea1d17683424e1ce69550a91859d124c5dbdf6881739540281bd2135dfa22cb",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
+      },
+      {
+        "path": "tests/input/public_sdk_annotation_contract_test.py",
         "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "f999ff91bc22709abba3014430f41c2640ae202c59be2526c53cbc8b8e2a05c0",
+        "current_ast_sha256": "f32815c3facf8e260b7f5c67a6e88d4728be4d03ba21ca51a26249c47276edb2",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
-        "path": "tests/input_acceptance_verifier_test.py",
-        "baseline_ast_sha256": "c0d1253cb6abd27f0259fa852cb9b205be30102066ff6c8550a5585766f90817",
-        "current_ast_sha256": "787548ec0a9b8be4d32dc35d1bbd86d36a8e5f046c2a9c884f72c7fb9af6c395",
-        "change_kind": "gate_support",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
-      },
-      {
-        "path": "tests/input_contract_test.py",
-        "baseline_ast_sha256": "40a9d22ebf11ec0198df721006fd17efbc337d32c9341f013a5ec69c5718b29f",
-        "current_ast_sha256": "61de24eeae44e0f7aae6f172384d85b5d645f542a62a13bb8f73f84bb2b37a90",
-        "change_kind": "gate_support",
-        "reviewed_by": "/root",
-        "evidence": "Gate support changed to validate the exact current manifest, workflow, and evidence contract."
-      },
-      {
-        "path": "tests/interaction/continuation_import_test.py",
+        "path": "tests/input/public_sdk_construction_test.py",
         "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "0a22884c2a966d24b61cc68aa5740a5f7927c1f70cc51db7155e98857920a154",
+        "current_ast_sha256": "8b9c4e5d39089c6d351cac06a15d1e9f8442b47752fba64e8837cc953ccdf412",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
-        "path": "tests/interaction/continuation_test.py",
+        "path": "tests/input/public_sdk_coverage_test.py",
         "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "fb68c06f117672f54bfccb599cfd021a0cb037582ec64e719ec567e641006c74",
+        "current_ast_sha256": "ea1eea6cdd3ba158c892192ae3677923b828f488685309405675dc5f5ffe3d9a",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the focused public SDK coverage matrix outside individual test bodies."
       },
       {
-        "path": "tests/interaction/interaction_store_conformance_test.py",
-        "baseline_ast_sha256": "0ec7b029b0a3c746c50ad1237d4903c2918e2e76fc6a5c344d4603cdbd975673",
-        "current_ast_sha256": "da43d57945de7339e1d9ae7a2f5c1388eb628fdb7afaa17fdb09ea12e5bf5f56",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/interaction/interaction_store_validation_coverage_test.py",
-        "baseline_ast_sha256": "32a8ba519d6d732ad69dc831f4ee1043b113a6340d771199aab4cbd4e70562ee",
-        "current_ast_sha256": "121b4b0a8e8849f4e51c7c4d4870e178e359de8e782ee9d4d9cbd497956fb817",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/interaction/stores/interaction_pgsql_e2e.py",
+        "path": "tests/input/sdk_contract_test.py",
         "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "67230c5cc03a08854acde073b063057b38696f64eb379d8436894008ac81dff8",
+        "current_ast_sha256": "c1d5559a2d6adc3c811f7dfa275c1b3386afc1754e13e4b8904ff118db961450",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
+      },
+      {
+        "path": "tests/interaction/headless_policy_test.py",
+        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
+        "current_ast_sha256": "380c970c49399a7a8aa53b3c18da92b830a593d77db3afcb278affd8a2f41349",
+        "change_kind": "semantic_support",
+        "reviewed_by": "/root",
+        "evidence": "Exact live support AST binds the public SDK regression surface outside individual test bodies."
       },
       {
         "path": "tests/interaction/stores/interaction_pgsql_store_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "bf3fe77913e3527d3b9861da3ab80fb4d1056ae7cd5f75bef730bebbf30cd370",
+        "baseline_ast_sha256": "bf3fe77913e3527d3b9861da3ab80fb4d1056ae7cd5f75bef730bebbf30cd370",
+        "current_ast_sha256": "fadf53f69875cf0db6b2e9344c6f6b3be8ab44528c10c2a9c9da02fd4959df9a",
         "change_kind": "semantic_support",
         "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/model/model_capability_test.py",
-        "baseline_ast_sha256": "6f1cf2504523b591f03f3b1da80e757871cb4d7903fac4fff63defa2cb0eaaad",
-        "current_ast_sha256": "376239a438934e6abdf88aadf2b0770da4558fda22d80ca9ac6f5d2afe6db7b8",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
-      },
-      {
-        "path": "tests/model/nlp/vendor_openai_continuation_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "28cd22e64c6a2a766e9e0632b33f6d91d9248078afaaa4f6c2f2dc7c9f82e804",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/project_metadata_test.py",
-        "baseline_ast_sha256": "09825f4005fde09d077f76355d0b0a89052dcab172b8b9b8e40579f2bf183f8d",
-        "current_ast_sha256": "2dd319527d159a8d5c9a16db9603a2fc5c2ddf75d436d6b6aca976ea5de7c0ed",
-        "change_kind": "gate_support",
-        "reviewed_by": "/root",
-        "evidence": "Gate support changed to validate the exact current manifest, workflow, and evidence contract."
-      },
-      {
-        "path": "tests/src_coverage_verifier_test.py",
-        "baseline_ast_sha256": "1ab0b7f06ba414513e12666dd1e6bcf46b4bcf777ed9c18106baddf328c8fba0",
-        "current_ast_sha256": "3a55488d7521c529d83ba0b93e02de90104461644d690b93d246a6fbd9820b1e",
-        "change_kind": "gate_support",
-        "reviewed_by": "/root",
-        "evidence": "Adds schema-version-5 directive-delta helpers used by the strengthened exact coverage-exclusion gate tests."
-      },
-      {
-        "path": "tests/task/client_test.py",
-        "baseline_ast_sha256": "ca458be0b77737e2916de966149d4a533531338e434bd7b2b3eecd40d8ea537b",
-        "current_ast_sha256": "b49de366fe68076cb1c41d0312633e9787cd39d6854c7ec7744ead78dc9f90d3",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/container_execution_test.py",
-        "baseline_ast_sha256": "2c2df49833a55ecbf4450f63163f6deb9bfd74065a8b9e24409d58fa945cc427",
-        "current_ast_sha256": "277dd5c2c870215fccfc0ad70244acc418f65c8ec1ccaa6377b71b664195720a",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/direct_client_e2e_test.py",
-        "baseline_ast_sha256": "efe505ddc56470a3f2b1ef8c3441d53f64f1532c482479dcfc47d7e28ee90300",
-        "current_ast_sha256": "2af6a2f03de80c98977f8a61284f206f417f4de7aef7af3a5182a98b87bc53a9",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/event_test.py",
-        "baseline_ast_sha256": "0bc02f54385f508fe31acec53de163ab534e0f7401ea8b1ec0c7918c60a28f59",
-        "current_ast_sha256": "9a21d1be2b41ffd5b018cbbd0b325a7322935547545da2b8c9610d9c52fcd995",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/full_e2e_matrix_test.py",
-        "baseline_ast_sha256": "fdd142df8ef0616046004e5bab2700f4a4fafbdf5435890b3482e1195939fb81",
-        "current_ast_sha256": "975f2df581d2c6d77cfed4c8c39580b7fea4002340a9ade61bff06162d667e32",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/queue_test.py",
-        "baseline_ast_sha256": "d2a37e4d9870f683ba272b0d4d10ac6acdb38f28d73e0cdbcde4f2f583224779",
-        "current_ast_sha256": "2bc9b5e1013e9538709345a7e4de42a60af45337df6c8876a997cd8ea3ce2cc5",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/queue_worker_e2e_test.py",
-        "baseline_ast_sha256": "68087097253ba5d1a831c2176ec851277c79c5b6fb69d9ad15a2cc40d50c40f6",
-        "current_ast_sha256": "beb6f5df0ecb4b9046aa1f72d17ab8b05f51d4e47bf9120e713d1f31559992dd",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/queues/pgsql_protocol_test.py",
-        "baseline_ast_sha256": "3694ef54450fbb7898b3df0ce2eba675be0ac42504502e3cdde29f3201648384",
-        "current_ast_sha256": "6ad5144b0a7ad26ab82a638a3cbb4dd4aae6b965a4f33cbedf29d9138150f329",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/runner_test.py",
-        "baseline_ast_sha256": "9521c12d57e9fc2622349ae7132ccb4c9327f57d5d888b07e770758d25355068",
-        "current_ast_sha256": "5b354cf2a7db2dafb4a9f0fde77b53711d833e0799372fc0a32409db76c50250",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/state_test.py",
-        "baseline_ast_sha256": "55b91b54d2493601185d591e59da7c30e75a36936822d510be22f69bb43a5bc1",
-        "current_ast_sha256": "b01dd443c48083c4009aa51891b1582301fce99d676cdd6ba70f1f4f3aeebf61",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/store_contract_test.py",
-        "baseline_ast_sha256": "853930bff578d065ce7297e692951ab83eb68df77812fe6c5a8129f0b3601d0d",
-        "current_ast_sha256": "a349e32a06aa0f1e90c7a2c060a97d04c89a78ddeed656583d0ae260403a4a9a",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/stores/in_memory_task_store_test.py",
-        "baseline_ast_sha256": "72d17a01c9e6cba77384c87b5eae428e0c04442ee95af76ec1f2d1f89aae027d",
-        "current_ast_sha256": "7137e85bf004c404747571af5fbc33f95e6988f541c1843b54710bb2e22e4104",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/stores/pgsql_contract_test.py",
-        "baseline_ast_sha256": "879026a68ef4cfbf0fa15272a2ad9194b8b761e2817c86b5600975a7694c6ae5",
-        "current_ast_sha256": "6d79e3fe4bad6c97be48d0f022a843e0a5e9149923167a607e01535e97d6d019",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/stores/pgsql_migration_test.py",
-        "baseline_ast_sha256": "630870b18e33214294b6a02d26a63417675bd23f2decd85daf6ad070242f9615",
-        "current_ast_sha256": "f1d5b6c9e27763d8e42ddb8ccdd9bb669534e37b6d81c2d4f8dd14f3ebaa3658",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "The changed non-test support surface is reviewed with its exact normalized AST digest."
-      },
-      {
-        "path": "tests/task/stores/pgsql_queue_e2e_test.py",
-        "baseline_ast_sha256": "d7aab4802312c9f55cc75cd5d2ed067b999dc4ab1ceb70bb827b49949453bdeb",
-        "current_ast_sha256": "a893067f3a875b05b0ef4de46cd1dfef0111e17ed5995d6f37c95eb461d016cd",
-        "change_kind": "mechanical_fixture_migration",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/stores/pgsql_store_coverage_test.py",
-        "baseline_ast_sha256": "3b735b81c0e7cf5a7948a3267570faaa18014b4eb25010f4559be4416fff3d65",
-        "current_ast_sha256": "e486e5e37274b14e2886fc42c6a869c1748887d2f7d83235f47e43ac6f288fce",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/suspension_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "7502b5150e2e839afdaf47a50ac6663b8912bed5d6775e001290a0d81491d0c8",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/target_registry_test.py",
-        "baseline_ast_sha256": "fe73ac7bbcb7fe70b17691f75922393a684fab9a9a1d79154a8fa5feceea15f2",
-        "current_ast_sha256": "73a7b0eda456261118cabe45eaee042a81e19de4dda1a50a6c7df3508632a970",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/targets/agent_target_test.py",
-        "baseline_ast_sha256": "44a0aca4809dbf321fab3acf9e41c913a1210a6dfc002cc2d7d1f5353703b18e",
-        "current_ast_sha256": "f70be1ea47e4f92ab82b92398f136b07984262777241e6bbac6c712db9b33ca2",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/targets/flow_target_test.py",
-        "baseline_ast_sha256": "ad3a52a3d7f1be15133edb6334ba19023e9efc255bc76122b9ed21e08d13c88c",
-        "current_ast_sha256": "3c8578eabf211064d9fd3ceaa1c6be0a5a6264b1be74150880dce8e3ce3dc9c3",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/worker_continuation_coverage_test.py",
-        "baseline_ast_sha256": "6b21bdd337b5554cd17fe6cf861b9b1f457568a5a2e05a41e7ee744686ed0872",
-        "current_ast_sha256": "f35e7981f1760a54ed754ce318fc5d0ca89562fc06fc71d89e312df07432d863",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
-      },
-      {
-        "path": "tests/task/worker_test.py",
-        "baseline_ast_sha256": "917f9b4fbad9565feaa54152272782e747955175664016a72cfa3586e7e332eb",
-        "current_ast_sha256": "15df2e6a47b6352b2a1b2412a82d485627992091c3a2067ea893357df657aa07",
-        "change_kind": "semantic_support",
-        "reviewed_by": "/root",
-        "evidence": "Shared test support changed to exercise the current durable continuation contract without hiding test behavior."
+        "evidence": "Exact live support AST binds the focused PostgreSQL coordinator coverage import and harness surface."
       }
     ]
   },
@@ -2018,9 +1854,9 @@
     "behavior_requirements": 107,
     "public_scenarios": 12,
     "delivery_requirements": 12,
-    "active_acceptance_nodes": 788,
-    "active_pytest_instances": 962,
-    "planned_acceptance_nodes": 156,
+    "active_acceptance_nodes": 814,
+    "active_pytest_instances": 988,
+    "planned_acceptance_nodes": 130,
     "failure_conditions": 15,
     "failure_surfaces": 84,
     "failure_cells": 1260,
@@ -2031,40 +1867,93 @@
     "state": "complete",
     "required_commands": [
       "make lint",
-      "make typecheck-input-contract INPUT_PHASE=5",
-      "make test-pgsql-exact no-install INPUT_PHASE=5",
+      "make typecheck-input-contract INPUT_PHASE=6",
+      "make test-pgsql-exact no-install INPUT_PHASE=6",
       "git diff --check"
     ],
     "state_details": {
-      "completed_at": "2026-07-24T01:43:55Z",
-      "gate_run_id": "phase5-pgsql-exact-dc59b953c8ca"
+      "completed_at": "2026-07-24T10:45:19Z",
+      "gate_run_id": "final-quality-evidence-91a820e283d1",
+      "final_review": {
+        "reviewer": "/root/public_sdk_gate_review",
+        "status": "approved",
+        "approval_sealed": true
+      },
+      "prior_failed_attempts": [
+        {
+          "attempt": 1,
+          "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
+          "outcome": "failed",
+          "passed": 12000,
+          "skipped": 59,
+          "subtests_passed": 8678,
+          "seconds": 366.53,
+          "failure_stage": "coverage_exclusion_verification",
+          "failure": "Stale continuation parser exclusion provenance caused coverage exclusion verification to fail."
+        },
+        {
+          "attempt": 2,
+          "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
+          "outcome": "failed",
+          "passed": 12000,
+          "skipped": 59,
+          "subtests_passed": 8678,
+          "seconds": 362.09,
+          "failure_stage": "coverage_exclusion_verification",
+          "failure": "Remaining serial parser exclusion drift caused coverage exclusion verification to fail."
+        },
+        {
+          "attempt": 3,
+          "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
+          "outcome": "failed",
+          "passed": 12000,
+          "skipped": 59,
+          "subtests_passed": 8678,
+          "seconds": 366.48,
+          "failure_stage": "exact_source_coverage",
+          "failure": "Exact coverage found 143 missing statements: execution.py 3, interaction/store.py 2, interaction/stores/pgsql.py 2, sdk.py 135, and task/stores/pgsql.py 1."
+        }
+      ],
+      "diagnostic_coverage": {
+        "purpose": "diagnostic_only",
+        "passed": 12000,
+        "skipped": 59,
+        "subtests_passed": 8678,
+        "seconds": 368.56,
+        "report_sha256": "48b0587756849bc1c22fdf437f0f03643ad9e2c9788e4166168239e31be2cf7f"
+      },
+      "hard_coverage_audit": {
+        "command": "make test-coverage -- -100 src/",
+        "exit_code": 0,
+        "below_threshold_files": []
+      }
     },
     "results": [
       {
         "command": "make lint",
         "exit_code": 0,
-        "source_files_typechecked": 435,
+        "source_files_typechecked": 440,
         "script_files_typechecked": 6
       },
       {
-        "command": "make typecheck-input-contract INPUT_PHASE=5",
+        "command": "make typecheck-input-contract INPUT_PHASE=6",
         "exit_code": 0,
-        "active_fixtures": 28
+        "active_fixtures": 34
       },
       {
-        "command": "make test-pgsql-exact no-install INPUT_PHASE=5",
+        "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
         "exit_code": 0,
-        "active_nodes": 788,
-        "active_instances": 962,
-        "covered_statements": 118256,
-        "total_statements": 118256,
-        "source_files": 435,
+        "active_nodes": 814,
+        "active_instances": 988,
+        "covered_statements": 119485,
+        "total_statements": 119485,
+        "source_files": 440,
         "missing_lines": 0,
         "missing_files": 0,
-        "passed": 11932,
+        "passed": 12013,
         "skipped": 59,
-        "subtests_passed": 8663,
-        "seconds": 501.02,
+        "subtests_passed": 8678,
+        "seconds": 380.35,
         "deselected": 0,
         "xfail": 0,
         "xpass": 0
@@ -2076,24 +1965,34 @@
     ],
     "tree_binding": {
       "baseline_head": "609aa091c17756ab952cf5fe668ca3d867f0e311",
-      "inventory_file_count": 1329,
-      "inventory_sha256": "6bad32cd71b6df6bf35a519fc6875bf7e315c2d2e7abbaeee318753c9582d7cf",
+      "inventory_file_count": 1352,
+      "inventory_sha256": "1ff597455cf898f9eb837755c952feab0bde54da870f0c5c733589b8c719ee6b",
       "normalized_evidence_kind": "regular",
-      "normalized_evidence_sha256": "c5870a79385afa20f8550023df017ca9bec53aaf202871b1d7b0dad090c89b1f",
+      "normalized_evidence_sha256": "ecf5b6c87198692c93baeb467739d6b85370f354144126ef67e54b9eae8769ef",
       "normalized_verifier_kind": "regular",
-      "normalized_verifier_sha256": "342f5f2d6c6ec9850dd1e82fce717dc8bf0c9cebcdbffd4cf356b0978642d45a",
-      "tree_sha256": "5ce2ce199142defaca2f281027f7c6c70c04e240b074d2566773c56bcbde3a20"
+      "normalized_verifier_sha256": "8fa2d14636e0cb83e970378ea67e99df75ca82a771b174d12587f080de697b2c",
+      "source_tree_file_count": 444,
+      "source_tree_inventory_sha256": "aed8012536efa74d3f8c363087886fe9525724c7b852a45644dc75e74c4d334c",
+      "test_tree_file_count": 749,
+      "test_tree_inventory_sha256": "d2a50a97bf06792a702b67b5417c0a3adbe013f03ef78d5d2078286823e17f30",
+      "script_tree_file_count": 10,
+      "script_tree_inventory_sha256": "1b4f12726420a7bde4519eab7605f507fa4016633ee6d1a88a699b3660869c98",
+      "support_tree_boundary": "all normalized files outside src/, tests/, and scripts/",
+      "support_tree_file_count": 149,
+      "support_tree_inventory_sha256": "e3e3a7f71dd2bd1d8d0ff6affcd24cfeb681bed7e9192518d970349267e0cba3",
+      "tree_sha256": "e7e9758c859b55e0e4db2ece293ec37cace7ff243c579d42b19700316c493820"
     },
     "coverage_binding": {
-      "report_sha256": "dc59b953c8ca740cf319cc7f23c8f1faa186ea88360158a37c7f60b8a2003acc",
-      "source_inventory_sha256": "abaed7c23479bf0d88c5ee9859855e5361baccaca9dac6ae1135d3675184ab23",
-      "source_file_count": 435,
-      "statement_count": 118256,
-      "excluded_line_count": 1736
+      "report_sha256": "91a820e283d1dfa48073feaa008cf29c5730640767dd9f48c630c3d1157fba34",
+      "xml_report_sha256": "497870de64efb4b142db041e604d2cb9be8390561f1bda4480b44cedf6b5d170",
+      "source_inventory_sha256": "924cbf18b65fb91c3b438a4cb7bec757ba7843e97b5ac0bd89b68072f7edc943",
+      "source_file_count": 440,
+      "statement_count": 119485,
+      "excluded_line_count": 1834
     }
   },
   "typing_async_audit": {
-    "strict_type_fixture_count": 28,
+    "strict_type_fixture_count": 34,
     "negative_type_fixtures_planned": 0,
     "effect_interfaces_async": [
       "scripted provider",

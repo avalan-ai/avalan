@@ -80,6 +80,106 @@ class InputHandlerResolution:
             )
 
 
+_TRUSTED_INPUT_HANDLER_RESOLUTION_TOKEN = object()
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False)
+class _TrustedInputHandlerResolution:
+    """Carry one sealed trusted-host handler decision."""
+
+    resolution: InputCandidateResolution | None
+    trusted_default: bool
+    _authority: object = field(repr=False)
+    kind: Literal[InputHandlerResultKind.RESOLUTION] = field(
+        init=False,
+        default=InputHandlerResultKind.RESOLUTION,
+    )
+
+    def __init__(
+        self,
+        *,
+        resolution: InputCandidateResolution | None,
+        trusted_default: bool,
+        _token: object,
+    ) -> None:
+        if _token is not _TRUSTED_INPUT_HANDLER_RESOLUTION_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "handler.trusted_authority",
+                "trusted handler outcomes must be minted by the host",
+            )
+        if type(trusted_default) is not bool:
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "handler.trusted_default",
+                "value must be a boolean",
+            )
+        if trusted_default:
+            if resolution is not None:
+                raise InputValidationError(
+                    InputErrorCode.INVALID_FORMAT,
+                    "handler.resolution",
+                    "trusted-default outcomes cannot carry a candidate",
+                )
+        elif not _is_input_candidate_resolution(resolution):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "handler.resolution",
+                "trusted policy must carry an answer or decline",
+            )
+        object.__setattr__(self, "resolution", resolution)
+        object.__setattr__(self, "trusted_default", trusted_default)
+        object.__setattr__(self, "_authority", _token)
+        object.__setattr__(
+            self,
+            "kind",
+            InputHandlerResultKind.RESOLUTION,
+        )
+
+
+def _new_trusted_default_input_handler_resolution() -> (
+    _TrustedInputHandlerResolution
+):
+    """Mint one sealed request-derived trusted-default outcome."""
+    return _TrustedInputHandlerResolution(
+        resolution=None,
+        trusted_default=True,
+        _token=_TRUSTED_INPUT_HANDLER_RESOLUTION_TOKEN,
+    )
+
+
+def _new_trusted_policy_input_handler_resolution(
+    resolution: InputCandidateResolution,
+) -> _TrustedInputHandlerResolution:
+    """Mint one sealed trusted-policy candidate outcome."""
+    return _TrustedInputHandlerResolution(
+        resolution=resolution,
+        trusted_default=False,
+        _token=_TRUSTED_INPUT_HANDLER_RESOLUTION_TOKEN,
+    )
+
+
+def _validate_trusted_input_handler_resolution(
+    outcome: object,
+) -> _TrustedInputHandlerResolution:
+    """Return one exactly sealed trusted-host handler outcome."""
+    if type(outcome) is not _TrustedInputHandlerResolution:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "handler.outcome",
+            "value must be a trusted host handler outcome",
+        )
+    assert isinstance(outcome, _TrustedInputHandlerResolution)
+    if outcome._authority is not _TRUSTED_INPUT_HANDLER_RESOLUTION_TOKEN:
+        raise InputValidationError(
+            InputErrorCode.FORBIDDEN,
+            "handler.trusted_authority",
+            "trusted handler outcome authority is invalid",
+        )
+    return outcome
+
+
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class InputHandlerDetached:
@@ -138,6 +238,22 @@ class InputHandler(Protocol):
         context: InputHandlerContext,
     ) -> InputHandlerOutcome:
         """Handle one attached request or correction attempt."""
+        ...
+
+
+_InputHandlerOutcome: TypeAlias = (
+    InputHandlerOutcome | _TrustedInputHandlerResolution
+)
+
+
+class _InputHandler(Protocol):
+    """Handle input through either public or sealed trusted outcomes."""
+
+    async def __call__(
+        self,
+        context: InputHandlerContext,
+    ) -> _InputHandlerOutcome:
+        """Handle one attached request or trusted policy attempt."""
         ...
 
 

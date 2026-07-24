@@ -102,3 +102,58 @@ class InteractionNotFoundError(InputContractError):
             "interaction",
             "interaction was not found",
         )
+
+
+class InputAuthorizationError(InputContractError):
+    """Report a denied public input-controller operation."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.FORBIDDEN,
+            "interaction",
+            "input operation is not authorized",
+        )
+
+
+class InputNotFoundError(InputContractError):
+    """Report indistinguishable missing or out-of-scope public input."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.NOT_FOUND,
+            "interaction",
+            "input request was not found",
+        )
+
+
+class InputAlreadyResolvedError(InputContractError):
+    """Report a conflicting resolution of terminal public input."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.ALREADY_RESOLVED,
+            "interaction",
+            "input request is already resolved",
+        )
+
+
+class InputExpiredError(InputContractError):
+    """Report public input whose continuation has expired."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.EXPIRED,
+            "interaction",
+            "input request has expired",
+        )
+
+
+class InputSupersededError(InputContractError):
+    """Report public input superseded by newer execution state."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            InputErrorCode.SUPERSEDED,
+            "interaction",
+            "input request has been superseded",
+        )
