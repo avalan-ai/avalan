@@ -101,6 +101,7 @@ from avalan.task import (
     TaskRunState,
     TaskStoreNotFoundError,
     TaskTargetContext,
+    TaskTargetOutcome,
     TaskTargetRunner,
     TaskValidationContext,
     TaskValidationError,
@@ -108,6 +109,7 @@ from avalan.task import (
     TaskWorker,
     TaskWorkerShutdown,
     UsageSource,
+    completed_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
 from avalan.task.idempotency import TaskIdempotencyIdentity
@@ -224,7 +226,10 @@ class ReadingTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         assert context.artifact_store is not None
@@ -255,7 +260,7 @@ class ReadingTarget(TaskTargetRunner):
                 total_token_count=14,
             )
         )
-        return "public answer"
+        return completed_task_target_outcome("public answer")
 
 
 class TextTarget(TaskTargetRunner):
@@ -270,10 +275,13 @@ class TextTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await context.check_cancelled()
-        return "public answer"
+        return completed_task_target_outcome("public answer")
 
 
 class SkillsToolTarget(TaskTargetRunner):
@@ -288,7 +296,10 @@ class SkillsToolTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         assert context.definition.skills is not None
         registry = await build_task_skill_registry(context.definition.skills)
         manager = ToolManager.create_instance(
@@ -321,7 +332,9 @@ class SkillsToolTarget(TaskTargetRunner):
         content = cast(dict[str, object], _tool_result_dict(read)["content"])
         text = content["text"]
         assert isinstance(text, str)
-        return "answered after read" if "FOLLOW_THE_PDF_STEPS" in text else ""
+        return completed_task_target_outcome(
+            "answered after read" if "FOLLOW_THE_PDF_STEPS" in text else ""
+        )
 
 
 class UsageTextOutput(str):
@@ -350,20 +363,25 @@ class UsageTextOutput(str):
 
 
 class ReturnedUsageTextTarget(TextTarget):
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await context.check_cancelled()
-        return UsageTextOutput(
-            "public answer",
-            usage={
-                "input_tokens": 6,
-                "cached_input_tokens": 2,
-                "output_tokens": 4,
-                "reasoning_tokens": 1,
-                "total_tokens": 10,
-                "provider_family": "openai",
-                "raw_response_id": "private-response-id",
-            },
+        return completed_task_target_outcome(
+            UsageTextOutput(
+                "public answer",
+                usage={
+                    "input_tokens": 6,
+                    "cached_input_tokens": 2,
+                    "output_tokens": 4,
+                    "reasoning_tokens": 1,
+                    "total_tokens": 10,
+                    "provider_family": "openai",
+                    "raw_response_id": "private-response-id",
+                },
+            )
         )
 
 
@@ -461,7 +479,10 @@ class HeartbeatWaitingTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         self.started.set()
         while True:
@@ -481,7 +502,10 @@ class StructuredQueueTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await context.check_cancelled()
         attempt_number = len(self.inputs)
@@ -511,7 +535,7 @@ class StructuredQueueTarget(TaskTargetRunner):
         ]
         if isinstance(outcome, BaseException):
             raise outcome
-        return outcome
+        return completed_task_target_outcome(outcome)
 
 
 class ArtifactOutputTarget(TaskTargetRunner):
@@ -523,13 +547,18 @@ class ArtifactOutputTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         await context.check_cancelled()
         assert context.artifact_store is not None
-        return await context.artifact_store.put(
-            b"private generated report",
-            media_type="text/plain",
-            metadata={"filename": "report.txt"},
+        return completed_task_target_outcome(
+            await context.artifact_store.put(
+                b"private generated report",
+                media_type="text/plain",
+                metadata={"filename": "report.txt"},
+            )
         )
 
 
@@ -542,7 +571,10 @@ class FailingTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         await context.check_cancelled()
         raise OSError("private backend path /tmp/customer-secret.txt")
 
@@ -563,11 +595,14 @@ class CancellingTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         await self.cancel(context.execution.run_id)
         await context.check_cancelled()
-        return "unused"
+        return completed_task_target_outcome("unused")
 
 
 class ShutdownOnceTarget(TaskTargetRunner):
@@ -583,14 +618,17 @@ class ShutdownOnceTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         if len(self.inputs) == 1:
             self.shutdown.request()
             await context.check_cancelled()
-            return "unused"
+            return completed_task_target_outcome("unused")
         await context.check_cancelled()
-        return "public answer"
+        return completed_task_target_outcome("public answer")
 
 
 class ShutdownReturningOnceTarget(TaskTargetRunner):
@@ -606,13 +644,16 @@ class ShutdownReturningOnceTarget(TaskTargetRunner):
         _ = definition, context
         return ()
 
-    async def run(self, context: TaskTargetContext) -> object:
+    async def run(
+        self,
+        context: TaskTargetContext,
+    ) -> TaskTargetOutcome:
         self.inputs.append(context.input_value)
         if len(self.inputs) == 1:
             self.shutdown.request()
-            return "unused"
+            return completed_task_target_outcome("unused")
         await context.check_cancelled()
-        return "public answer"
+        return completed_task_target_outcome("public answer")
 
 
 class InMemoryTaskQueue:
@@ -4437,7 +4478,9 @@ async def _target_done_wait(
     _ = timeout, return_when
     for _attempt in range(3):
         for task in tasks:
-            if task.done() and task.result() == "unused":
+            if task.done() and task.result() == completed_task_target_outcome(
+                "unused"
+            ):
                 return {task}, tasks - {task}
         await sleep(0)
     raise AssertionError("target task did not finish")

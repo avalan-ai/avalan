@@ -9,6 +9,24 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallResult,
 )
+from .....interaction.codec import (
+    decode_continuation_snapshot,
+    decode_input_question,
+    encode_continuation_snapshot,
+)
+from .....interaction.entities import (
+    RESERVED_INPUT_CAPABILITY_NAME,
+    ContinuationRevisionBinding,
+    ContinuationSnapshot,
+    ModelCallId,
+    ProviderIdempotencyKey,
+    RequirementMode,
+)
+from .....interaction.error import (
+    InputErrorCode,
+    InputSnapshotError,
+    InputValidationError,
+)
 from .....model.provider import ProviderFamily, provider_string_option
 from .....model.reasoning import (
     ReasoningSummaryRequestCapability,
@@ -35,14 +53,23 @@ from .....model.stream import (
     TextGenerationStream,
     normalize_provider_stream,
 )
-from .....tool.manager import ToolManager
 from .....types import (
+    JsonValue,
     LooseJsonValue,
     assert_non_negative_int,
     assert_non_negative_number,
     assert_positive_number,
 )
 from .....utils import to_json, tool_call_diagnostic_payload
+from ....capability import (
+    ContinuationSnapshotCodecRegistry,
+    CorrelatedCapabilityResult,
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    ProviderCapabilitySupport,
+    RegisteredContinuationSnapshotCodec,
+    TaskInputCapabilityCall,
+)
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -69,9 +96,10 @@ from collections.abc import (
 )
 from copy import deepcopy
 from dataclasses import dataclass, field, replace
+from hashlib import sha256
 from importlib import import_module
 from inspect import isawaitable
-from json import dumps
+from json import JSONDecodeError, dumps, loads
 from math import isfinite
 from mimetypes import guess_type
 from types import SimpleNamespace
@@ -88,6 +116,7 @@ Omit: type[Any] = _OmitPlaceholder
 _OPENAI_REASONING_SUMMARY_CAPABILITY = ReasoningSummaryRequestCapability(
     supported_modes=frozenset(ReasoningSummaryMode)
 )
+_OPENAI_IDEMPOTENCY_HEADER = "Idempotency-Key"
 _OPENAI_REASONING_SUMMARY_PROVIDERS = frozenset(
     {
         ProviderFamily.OPENAI.value,
@@ -95,6 +124,31 @@ _OPENAI_REASONING_SUMMARY_PROVIDERS = frozenset(
     }
 )
 _OPENAI_VENDOR_MODULE = "avalan.model.nlp.text.vendor.openai"
+
+
+def _unique_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate JSON object key")
+        result[key] = value
+    return result
+
+
+def _reject_json_constant(value: str) -> Never:
+    raise ValueError(f"invalid JSON constant: {value}")
+
+
+def _mutable_provider_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _mutable_provider_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_mutable_provider_json(item) for item in value]
+    return value
 
 
 def _is_exact_native_openai_type(value: object, expected_name: str) -> bool:
@@ -2153,6 +2207,20 @@ class _ReplayItemAccounting:
     summary_serialized_bytes: int = 0
 
 
+@dataclass(frozen=True, slots=True)
+class _OpenAIReplayReasoningBoundary:
+    item_id: str
+    encrypted_content_sha256: str
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIReservedCallBoundary:
+    call_id: str
+    provider_name: str
+    canonical_arguments: str
+    reasoning: tuple[_OpenAIReplayReasoningBoundary, ...]
+
+
 def _assign_replay_json_value(
     target: dict[str, object] | list[object],
     key: str | None,
@@ -2511,6 +2579,11 @@ class _OpenAIReplayOwner:
     _attempt_active: bool = False
     _released: bool = False
     _release_count: int = 0
+    _reserved_call_boundaries: tuple[_OpenAIReservedCallBoundary, ...] = ()
+    _provider_idempotency_key: ProviderIdempotencyKey | None = field(
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         assert isinstance(self.policy, StreamRetentionPolicy)
@@ -2560,6 +2633,42 @@ class _OpenAIReplayOwner:
             assert isinstance(copied, dict)
             items.append(cast(dict[str, Any], copied))
         return tuple(items)
+
+    def reserved_call_boundaries(
+        self,
+    ) -> tuple[_OpenAIReservedCallBoundary, ...]:
+        """Return the immutable reserved-call history."""
+        return self._reserved_call_boundaries
+
+    def restore_reserved_call_boundaries(
+        self,
+        boundaries: tuple[_OpenAIReservedCallBoundary, ...],
+    ) -> None:
+        """Restore a validated reserved-call history exactly once."""
+        if self._released or self._reserved_call_boundaries:
+            raise RuntimeError("OpenAI replay boundary history is unavailable")
+        self._reserved_call_boundaries = boundaries
+
+    def restore_provider_idempotency_key(
+        self,
+        value: ProviderIdempotencyKey,
+    ) -> None:
+        """Restore one request-scoped durable provider key."""
+        if self._released or self._provider_idempotency_key is not None:
+            raise RuntimeError(
+                "OpenAI provider idempotency key is unavailable"
+            )
+        self._provider_idempotency_key = value
+
+    def take_provider_idempotency_key(
+        self,
+    ) -> ProviderIdempotencyKey | None:
+        """Return and clear the request-scoped durable provider key."""
+        if self._released:
+            raise RuntimeError("OpenAI replay owner is released")
+        value = self._provider_idempotency_key
+        self._provider_idempotency_key = None
+        return value
 
     def begin_attempt(self) -> None:
         if self._released:
@@ -2617,6 +2726,8 @@ class _OpenAIReplayOwner:
         self._summary_serialized_byte_count = 0
         self._attempt_checkpoint = 0
         self._attempt_active = False
+        self._reserved_call_boundaries = ()
+        self._provider_idempotency_key = None
         self._released = True
         self._release_count += 1
 
@@ -2763,7 +2874,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _stream_factory: Callable[[], Awaitable[AsyncIterator[Any]]] | None
     _stream_retry_delay_seconds: float
     _stream_retries: int
-    _tool_manager: ToolManager | None
+    _capability_catalog: ModelCapabilityCatalog | None
     _last_text_delta_alias_key: tuple[object, ...] | None
     _last_text_delta_alias_event_type: str | None
     _attempt_output_item_count: int
@@ -2814,7 +2925,7 @@ class OpenAIStream(TextGenerationVendorStream):
         ) = None,
         stream_retry_delay_seconds: float = 0,
         stream_retries: int = 0,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> None:
         normalized_provider_family = (
             provider_family.value
@@ -2840,7 +2951,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._stream_factory = stream_factory
         self._stream_retry_delay_seconds = stream_retry_delay_seconds
         self._stream_retries = stream_retries
-        self._tool_manager = tool
+        self._capability_catalog = capability
         self._last_text_delta_alias_key = None
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
@@ -5000,11 +5111,13 @@ class OpenAIStream(TextGenerationVendorStream):
         if canonical_name is None:
             canonical_name = self._tool_call_name_from_item(item)
         if call_id is None:
+            if self._capability_catalog is not None:
+                raise ValueError("response tool call id is missing")
             return
         self._record_tool_call_item_id(item_id, call_id)
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
         self._record_tool_call_name(
             state,
@@ -5025,7 +5138,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._record_tool_call_item_id(item_id, call_id)
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
         self._record_tool_call_name(
             state,
@@ -5046,9 +5159,12 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> tuple[StreamProviderEvent, ...]:
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
         state["arguments_seen"] = True
+        current_arguments = state.get("arguments")
+        assert isinstance(current_arguments, str)
+        state["arguments"] = current_arguments + delta
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -5070,11 +5186,12 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> tuple[StreamProviderEvent, ...]:
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
         result: list[StreamProviderEvent] = []
         if arguments is not None and not state["arguments_seen"]:
             state["arguments_seen"] = True
+            state["arguments"] = arguments
             result.append(
                 StreamProviderEvent(
                     kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -5115,6 +5232,8 @@ class OpenAIStream(TextGenerationVendorStream):
         if call_id is None:
             call_id = self._tool_call_id_from_event(event, required=False)
         if call_id is None:
+            if self._capability_catalog is not None:
+                raise ValueError("response tool call id is missing")
             return ()
         self._record_tool_call_item_id(item_id, call_id)
         state = self._canonical_tool_calls.setdefault(
@@ -5122,6 +5241,7 @@ class OpenAIStream(TextGenerationVendorStream):
             {
                 "name": canonical_name,
                 "arguments_seen": False,
+                "arguments": "",
             },
         )
         self._record_tool_call_name(
@@ -5317,7 +5437,7 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> tuple[StreamProviderEvent, ...]:
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
         if state["arguments_seen"]:
             return ()
@@ -5325,6 +5445,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if arguments is None:
             return ()
         state["arguments_seen"] = True
+        state["arguments"] = arguments
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -5346,13 +5467,38 @@ class OpenAIStream(TextGenerationVendorStream):
         self._canonical_ready_tool_call_ids.add(call_id)
         state = self._canonical_tool_calls.setdefault(
             call_id,
-            {"name": None, "arguments_seen": False},
+            {"name": None, "arguments_seen": False, "arguments": ""},
         )
+        name = state.get("name")
+        if isinstance(name, str):
+            if self._capability_catalog is not None:
+                arguments = state.get("arguments")
+                assert isinstance(arguments, str)
+                decoded = self._capability_catalog.decode_call(
+                    ProviderCapabilityCall(
+                        call_id=call_id,
+                        provider_name=name,
+                        arguments=arguments or None,
+                    ),
+                    provider_family=(
+                        self._provider_family or ProviderFamily.OPENAI
+                    ),
+                )
+                name = (
+                    decoded.canonical_name
+                    if isinstance(decoded, TaskInputCapabilityCall)
+                    else decoded.name
+                )
+            else:
+                try:
+                    name = TextGenerationVendor.canonical_tool_name(name)
+                except AssertionError:
+                    pass
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
                 correlation=self._state_tool_call_correlation(call_id, state),
-                data={"name": state.get("name")},
+                data={"name": name},
                 provider_payload=provider_payload,
                 provider_event_type=event_type,
             ),
@@ -5368,7 +5514,12 @@ class OpenAIStream(TextGenerationVendorStream):
             if type(value) is str and value.strip():
                 if field_name == "call_id":
                     return value
-                return self._tool_call_ids_by_item_id.get(value, value)
+                mapped = self._tool_call_ids_by_item_id.get(value)
+                if mapped is not None:
+                    return mapped
+                if self._capability_catalog is None:
+                    return value
+                continue
             raise _OpenAIToolCallIdError(value)
         if required:
             raise ValueError("response tool call id is missing")
@@ -5391,7 +5542,12 @@ class OpenAIStream(TextGenerationVendorStream):
         if item_id is None:
             return None
         if type(item_id) is str and item_id.strip():
-            return self._tool_call_ids_by_item_id.get(item_id, item_id)
+            mapped = self._tool_call_ids_by_item_id.get(item_id)
+            if mapped is not None:
+                return mapped
+            if self._capability_catalog is None:
+                return item_id
+            return None
         raise _OpenAIToolCallIdError(item_id)
 
     @staticmethod
@@ -5474,14 +5630,7 @@ class OpenAIStream(TextGenerationVendorStream):
             if value is None:
                 continue
             if type(value) is str:
-                try:
-                    return TextGenerationVendor.canonical_tool_name(
-                        value,
-                        tool=self._tool_manager,
-                        provider_family=self._provider_family,
-                    )
-                except AssertionError:
-                    return value
+                return value
             raise ValueError("response tool call name must be a string")
         return None
 
@@ -5643,6 +5792,7 @@ class OpenAIStream(TextGenerationVendorStream):
 
 class OpenAIClient(TextGenerationVendor):
     _DEFAULT_MODEL_ID = "default"
+    _CONTINUATION_SNAPSHOT_KIND = "openai.responses.reasoning"
     _STREAM_RESPONSE_FAILED_RETRIES = 24
     _STREAM_RESPONSE_FAILED_RETRY_DELAY_SECONDS = 1.0
     _client: Any
@@ -5657,6 +5807,7 @@ class OpenAIClient(TextGenerationVendor):
     _active_replay_call_ids: dict[str, _OpenAIReplayOwner]
     _ambiguous_replay_call_ids: dict[str, None]
     _replay_association_poisoned: bool
+    _base_url: str | None
     _closed: bool
     _reasoning_summary_provider = "openai"
 
@@ -5697,6 +5848,7 @@ class OpenAIClient(TextGenerationVendor):
                 stream_response_failed_retry_delay_seconds
             )
         )
+        self._base_url = base_url
         self._is_azure = self._is_azure_base_url(base_url)
         self._extra_query = self._azure_extra_query(
             base_url, azure_api_version
@@ -5739,6 +5891,866 @@ class OpenAIClient(TextGenerationVendor):
             )
         self._client = async_openai_type(**client_kwargs)
 
+    @classmethod
+    def register_continuation_snapshot_codec(
+        cls,
+        registry: ContinuationSnapshotCodecRegistry,
+        *,
+        codec_id: str,
+        revision_binding: ContinuationRevisionBinding,
+    ) -> RegisteredContinuationSnapshotCodec:
+        """Register the validated OpenAI Responses continuation codec."""
+        if type(registry) is not ContinuationSnapshotCodecRegistry:
+            raise InputValidationError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.registry",
+                "registry must be a continuation snapshot codec registry",
+            )
+        cls._validate_continuation_revision_binding(revision_binding)
+
+        def restore_snapshot(
+            value: str,
+            expected_binding: ContinuationRevisionBinding,
+        ) -> ContinuationSnapshot:
+            return decode_continuation_snapshot(
+                value,
+                expected_binding=expected_binding,
+            )
+
+        registry.register(
+            codec_id=codec_id,
+            revision_binding=revision_binding,
+            snapshot_kind=cls._CONTINUATION_SNAPSHOT_KIND,
+            export_snapshot=encode_continuation_snapshot,
+            restore_snapshot=restore_snapshot,
+        )
+        return registry.reference(codec_id)
+
+    def export_continuation_snapshot(
+        self,
+        *,
+        revision_binding: ContinuationRevisionBinding,
+        model_call_id: ModelCallId,
+        provider_idempotency_key: ProviderIdempotencyKey,
+        provider_call_correlation_id: str,
+    ) -> ContinuationSnapshot:
+        """Export retained OpenAI Responses replay state as strict JSON."""
+        self._raise_if_closed()
+        self._validate_continuation_revision_binding(revision_binding)
+        call_id = self._validate_continuation_call_id(
+            provider_call_correlation_id
+        )
+        owner = self._continuation_replay_owner(call_id)
+        replay_items = owner.replay_items()
+        current_boundary = self._current_reserved_call_boundary(
+            replay_items,
+            call_id,
+        )
+        boundaries = (
+            *owner.reserved_call_boundaries(),
+            current_boundary,
+        )
+        self._validate_continuation_replay_items(
+            replay_items,
+            call_id,
+            boundaries,
+        )
+        return ContinuationSnapshot(
+            snapshot_kind=self._CONTINUATION_SNAPSHOT_KIND,
+            revision_binding=revision_binding,
+            model_call_id=model_call_id,
+            provider_idempotency_key=provider_idempotency_key,
+            payload={
+                "reserved_capability_call_id": call_id,
+                "reserved_capability_boundaries": (
+                    self._encode_reserved_call_boundaries(boundaries)
+                ),
+                "replay_items": replay_items,
+            },
+        )
+
+    def import_continuation_snapshot(
+        self,
+        snapshot: ContinuationSnapshot,
+        *,
+        expected_binding: ContinuationRevisionBinding,
+        provider_call_correlation_id: str,
+    ) -> None:
+        """Restore strict OpenAI Responses replay state into a fresh client."""
+        (
+            call_id,
+            replay_items,
+            boundaries,
+        ) = self._continuation_snapshot_replay_items(
+            snapshot,
+            expected_binding=expected_binding,
+            provider_call_correlation_id=provider_call_correlation_id,
+        )
+        provider_idempotency_key = (
+            self._provider_idempotency_key_for_transport(
+                snapshot.provider_idempotency_key
+            )
+        )
+        if (
+            self._replay_association_poisoned
+            or call_id in self._replay_owner_registry()
+            or call_id in self._active_replay_call_id_registry()
+            or call_id in self._ambiguous_replay_ids()
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload",
+                "OpenAI replay destination is unavailable or ambiguous",
+            )
+        owner = _OpenAIReplayOwner(self._stream_retention_policy)
+        owner.begin_attempt()
+        try:
+            owner.restore_provider_idempotency_key(provider_idempotency_key)
+            for item in replay_items:
+                if not owner.admit(item):
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload.replay_items",
+                        "OpenAI replay item is not restorable",
+                    )
+            owner.commit_attempt()
+            owner.restore_reserved_call_boundaries(boundaries)
+            self._retain_replay_owner(owner, (call_id,))
+        except InputSnapshotError:
+            owner.release()
+            raise
+        except (
+            _ReasoningReplayRetentionError,
+            _ReplayOwnerAssociationError,
+            RuntimeError,
+        ) as exc:
+            owner.release()
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload",
+                "OpenAI replay state could not be restored",
+            ) from exc
+
+    @staticmethod
+    def _provider_idempotency_key_for_transport(
+        value: object,
+    ) -> ProviderIdempotencyKey:
+        """Return one bounded visible-ASCII OpenAI request key."""
+        if (
+            type(value) is not str
+            or not 1 <= len(value) <= 256
+            or any(
+                not character.isascii()
+                or ord(character) < 0x21
+                or ord(character) > 0x7E
+                for character in value
+            )
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.provider_idempotency_key",
+                "OpenAI idempotency key is not transport-safe",
+            )
+        return ProviderIdempotencyKey(value)
+
+    def validate_continuation_snapshot_call(
+        self,
+        snapshot: ContinuationSnapshot,
+        *,
+        expected_binding: ContinuationRevisionBinding,
+        provider_call_correlation_id: str,
+        expected_provider_name: str,
+        expected_arguments: Mapping[str, JsonValue],
+    ) -> None:
+        """Validate one exact reserved call before staging or dispatch."""
+        (
+            call_id,
+            replay_items,
+            boundaries,
+        ) = self._continuation_snapshot_replay_items(
+            snapshot,
+            expected_binding=expected_binding,
+            provider_call_correlation_id=provider_call_correlation_id,
+        )
+        if (
+            type(expected_provider_name) is not str
+            or not expected_provider_name.strip()
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.expected_provider_name",
+                "OpenAI reserved capability name is invalid",
+            )
+        if not isinstance(expected_arguments, Mapping):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.expected_arguments",
+                "OpenAI reserved capability arguments are invalid",
+            )
+        normalized_arguments = _strict_replay_json_copy(
+            _mutable_provider_json(expected_arguments)
+        )
+        if not isinstance(normalized_arguments, dict):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.expected_arguments",
+                "OpenAI reserved capability arguments are invalid",
+            )
+        self._validate_continuation_replay_items(
+            replay_items,
+            call_id,
+            boundaries,
+            expected_provider_name=expected_provider_name,
+            expected_arguments=cast(
+                dict[str, JsonValue],
+                normalized_arguments,
+            ),
+        )
+
+    def _continuation_snapshot_replay_items(
+        self,
+        snapshot: ContinuationSnapshot,
+        *,
+        expected_binding: ContinuationRevisionBinding,
+        provider_call_correlation_id: str,
+    ) -> tuple[
+        str,
+        tuple[dict[str, Any], ...],
+        tuple[_OpenAIReservedCallBoundary, ...],
+    ]:
+        """Return copied replay items after strict snapshot validation."""
+        self._raise_if_closed()
+        self._validate_continuation_revision_binding(expected_binding)
+        if type(snapshot) is not ContinuationSnapshot:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot",
+                "value must be a continuation snapshot",
+            )
+        if snapshot.snapshot_kind != self._CONTINUATION_SNAPSHOT_KIND:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_UNSUPPORTED,
+                "continuation_snapshot.snapshot_kind",
+                "OpenAI continuation snapshot kind is unsupported",
+            )
+        self._validate_continuation_snapshot_binding(
+            snapshot.revision_binding,
+            expected_binding,
+        )
+        call_id = self._validate_continuation_call_id(
+            provider_call_correlation_id
+        )
+        payload = snapshot.payload
+        if set(payload) != {
+            "reserved_capability_call_id",
+            "reserved_capability_boundaries",
+            "replay_items",
+        }:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload",
+                "OpenAI continuation payload fields are invalid",
+            )
+        stored_call_id = payload["reserved_capability_call_id"]
+        if stored_call_id != call_id:
+            raise InputSnapshotError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation_snapshot.payload.reserved_capability_call_id",
+                "OpenAI continuation call correlation does not match",
+            )
+        raw_items = payload["replay_items"]
+        if not isinstance(raw_items, tuple):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI replay items must be an immutable JSON sequence",
+            )
+        replay_items: list[dict[str, Any]] = []
+        for item in raw_items:
+            if not isinstance(item, Mapping):
+                raise InputSnapshotError(
+                    InputErrorCode.SNAPSHOT_INVALID,
+                    "continuation_snapshot.payload.replay_items",
+                    "OpenAI replay items must be JSON objects",
+                )
+            copied = _strict_replay_json_copy(_mutable_provider_json(item))
+            assert isinstance(copied, dict)
+            replay_items.append(cast(dict[str, Any], copied))
+        copied_items = tuple(replay_items)
+        boundaries = self._decode_reserved_call_boundaries(
+            payload["reserved_capability_boundaries"]
+        )
+        self._validate_continuation_replay_items(
+            copied_items,
+            call_id,
+            boundaries,
+        )
+        return call_id, copied_items, boundaries
+
+    def _continuation_replay_owner(
+        self,
+        call_id: str,
+    ) -> _OpenAIReplayOwner:
+        """Resolve one retained or live owner containing the reserved call."""
+        if (
+            self._replay_association_poisoned
+            or call_id in self._ambiguous_replay_ids()
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload",
+                "OpenAI replay state is unavailable or ambiguous",
+            )
+        owners: list[_OpenAIReplayOwner] = []
+
+        def append_owner(owner: _OpenAIReplayOwner | None) -> None:
+            if (
+                owner is not None
+                and not owner.released
+                and all(existing is not owner for existing in owners)
+            ):
+                owners.append(owner)
+
+        append_owner(self._replay_owner_registry().get(call_id))
+        append_owner(self._active_replay_call_id_registry().get(call_id))
+        for owner in self._active_replay_owner_registry().values():
+            items = owner.replay_items()
+            if any(
+                item.get("type") == "function_call"
+                and item.get("call_id") == call_id
+                for item in items
+            ):
+                append_owner(owner)
+        if len(owners) != 1:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload",
+                "OpenAI replay state is unavailable or ambiguous",
+            )
+        return owners[0]
+
+    @staticmethod
+    def _validate_continuation_call_id(value: object) -> str:
+        if type(value) is not str or not value.strip():
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.reserved_capability_call_id",
+                "OpenAI reserved capability call ID is invalid",
+            )
+        return value
+
+    @classmethod
+    def _validate_continuation_revision_binding(
+        cls,
+        value: object,
+    ) -> None:
+        if type(value) is not ContinuationRevisionBinding:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.revision_binding",
+                "OpenAI continuation requires a typed revision binding",
+            )
+        provider_family = str(value.provider_family)
+        if provider_family not in _OPENAI_REASONING_SUMMARY_PROVIDERS:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.revision_binding",
+                "snapshot provider is not OpenAI Responses",
+            )
+
+    @staticmethod
+    def _validate_continuation_snapshot_binding(
+        actual: ContinuationRevisionBinding,
+        expected: ContinuationRevisionBinding,
+    ) -> None:
+        if (
+            actual.provider_family != expected.provider_family
+            or actual.model_id != expected.model_id
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.revision_binding",
+                "snapshot provider or model is unavailable",
+            )
+        if actual != expected:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_REVISION_DRIFT,
+                "continuation_snapshot.revision_binding",
+                "snapshot configuration revision has drifted",
+            )
+
+    @staticmethod
+    def _encode_reserved_call_boundaries(
+        boundaries: tuple[_OpenAIReservedCallBoundary, ...],
+    ) -> tuple[Mapping[str, JsonValue], ...]:
+        return tuple(
+            {
+                "call_id": boundary.call_id,
+                "provider_name": boundary.provider_name,
+                "canonical_arguments": boundary.canonical_arguments,
+                "reasoning": tuple(
+                    {
+                        "item_id": reasoning.item_id,
+                        "encrypted_content_sha256": (
+                            reasoning.encrypted_content_sha256
+                        ),
+                    }
+                    for reasoning in boundary.reasoning
+                ),
+            }
+            for boundary in boundaries
+        )
+
+    @classmethod
+    def _decode_reserved_call_boundaries(
+        cls,
+        value: object,
+    ) -> tuple[_OpenAIReservedCallBoundary, ...]:
+        if type(value) is not tuple or not value:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.reserved_capability_boundaries",
+                "OpenAI reserved boundary manifest is invalid",
+            )
+        boundaries: list[_OpenAIReservedCallBoundary] = []
+        for item in value:
+            if not isinstance(item, Mapping) or set(item) != {
+                "call_id",
+                "provider_name",
+                "canonical_arguments",
+                "reasoning",
+            }:
+                raise InputSnapshotError(
+                    InputErrorCode.SNAPSHOT_INVALID,
+                    "continuation_snapshot.payload."
+                    "reserved_capability_boundaries",
+                    "OpenAI reserved boundary manifest fields are invalid",
+                )
+            call_id = cls._validate_continuation_call_id(item["call_id"])
+            provider_name = item["provider_name"]
+            canonical_arguments = item["canonical_arguments"]
+            raw_reasoning = item["reasoning"]
+            if (
+                type(provider_name) is not str
+                or not provider_name.strip()
+                or type(canonical_arguments) is not str
+                or not canonical_arguments
+                or type(raw_reasoning) is not tuple
+                or not raw_reasoning
+            ):
+                raise InputSnapshotError(
+                    InputErrorCode.SNAPSHOT_INVALID,
+                    "continuation_snapshot.payload."
+                    "reserved_capability_boundaries",
+                    "OpenAI reserved boundary manifest is incomplete",
+                )
+            decoded_arguments = cls._decode_continuation_call_arguments(
+                canonical_arguments
+            )
+            if (
+                cls._canonical_continuation_arguments(decoded_arguments)
+                != canonical_arguments
+            ):
+                raise InputSnapshotError(
+                    InputErrorCode.SNAPSHOT_INVALID,
+                    "continuation_snapshot.payload."
+                    "reserved_capability_boundaries",
+                    "OpenAI reserved boundary arguments are not canonical",
+                )
+            reasoning: list[_OpenAIReplayReasoningBoundary] = []
+            for reasoning_item in raw_reasoning:
+                if not isinstance(reasoning_item, Mapping) or set(
+                    reasoning_item
+                ) != {"item_id", "encrypted_content_sha256"}:
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload."
+                        "reserved_capability_boundaries",
+                        "OpenAI reserved reasoning boundary is invalid",
+                    )
+                item_id = reasoning_item["item_id"]
+                encrypted_digest = reasoning_item["encrypted_content_sha256"]
+                if (
+                    type(item_id) is not str
+                    or not item_id
+                    or not cls._is_sha256(encrypted_digest)
+                ):
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload."
+                        "reserved_capability_boundaries",
+                        "OpenAI reserved reasoning boundary is incomplete",
+                    )
+                reasoning.append(
+                    _OpenAIReplayReasoningBoundary(
+                        item_id=item_id,
+                        encrypted_content_sha256=cast(
+                            str,
+                            encrypted_digest,
+                        ),
+                    )
+                )
+            boundaries.append(
+                _OpenAIReservedCallBoundary(
+                    call_id=call_id,
+                    provider_name=provider_name,
+                    canonical_arguments=canonical_arguments,
+                    reasoning=tuple(reasoning),
+                )
+            )
+        return tuple(boundaries)
+
+    @classmethod
+    def _current_reserved_call_boundary(
+        cls,
+        items: Sequence[Mapping[str, object]],
+        call_id: str,
+    ) -> _OpenAIReservedCallBoundary:
+        current_indices = [
+            index
+            for index, item in enumerate(items)
+            if item.get("type") == "function_call"
+            and item.get("call_id") == call_id
+        ]
+        if len(current_indices) != 1:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI replay state requires exactly one current "
+                "reserved call",
+            )
+        current_index = current_indices[0]
+        if current_index != len(items) - 1:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI current reserved call must be the final replay item",
+            )
+        current = items[current_index]
+        provider_name = current.get("name")
+        raw_arguments = current.get("arguments")
+        if (
+            provider_name != RESERVED_INPUT_CAPABILITY_NAME
+            or type(raw_arguments) is not str
+            or not raw_arguments
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI current reserved capability changed",
+            )
+        arguments = cls._decode_continuation_call_arguments(raw_arguments)
+        cls._validate_reserved_input_arguments(arguments)
+        previous_call_index = max(
+            (
+                index
+                for index, item in enumerate(items[:current_index])
+                if item.get("type") == "function_call"
+            ),
+            default=-1,
+        )
+        reasoning = tuple(
+            cls._reasoning_boundary(item)
+            for item in items[previous_call_index + 1 : current_index]
+            if item.get("type") == "reasoning"
+        )
+        if not reasoning:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI current reserved call lacks fresh encrypted reasoning",
+            )
+        return _OpenAIReservedCallBoundary(
+            call_id=call_id,
+            provider_name=provider_name,
+            canonical_arguments=cls._canonical_continuation_arguments(
+                arguments
+            ),
+            reasoning=reasoning,
+        )
+
+    @classmethod
+    def _validate_continuation_replay_items(
+        cls,
+        items: Sequence[Mapping[str, object]],
+        call_id: str,
+        boundaries: tuple[_OpenAIReservedCallBoundary, ...],
+        *,
+        expected_provider_name: str = RESERVED_INPUT_CAPABILITY_NAME,
+        expected_arguments: Mapping[str, JsonValue] | None = None,
+    ) -> None:
+        if not boundaries or boundaries[-1].call_id != call_id:
+            raise InputSnapshotError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation_snapshot.payload.reserved_capability_boundaries",
+                "OpenAI current boundary correlation does not match",
+            )
+        boundary_call_ids = [boundary.call_id for boundary in boundaries]
+        if len(set(boundary_call_ids)) != len(boundary_call_ids):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.reserved_capability_boundaries",
+                "OpenAI reserved boundary call IDs must be unique",
+            )
+        replay_call_ids = [
+            item.get("call_id")
+            for item in items
+            if item.get("type") == "function_call"
+            and type(item.get("call_id")) is str
+            and bool(item.get("call_id"))
+        ]
+        if len(set(replay_call_ids)) != len(replay_call_ids):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI function call replay IDs must be unique",
+            )
+        replay_reasoning_ids = [
+            cls._reasoning_boundary(item).item_id
+            for item in items
+            if item.get("type") == "reasoning"
+        ]
+        if len(set(replay_reasoning_ids)) != len(replay_reasoning_ids):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reasoning replay IDs must be unique",
+            )
+        seen_call_ids: set[str] = set()
+        seen_reasoning_ids: set[str] = set()
+        boundary_index = 0
+        reasoning_since_call_boundary: list[_OpenAIReplayReasoningBoundary] = (
+            []
+        )
+        for item_index, item in enumerate(items):
+            item_type = item.get("type")
+            if item_type == "reasoning":
+                reasoning = cls._reasoning_boundary(item)
+                if reasoning.item_id in seen_reasoning_ids:
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload.replay_items",
+                        "OpenAI reasoning replay IDs must be unique",
+                    )
+                seen_reasoning_ids.add(reasoning.item_id)
+                reasoning_since_call_boundary.append(reasoning)
+            elif item_type == "function_call":
+                item_call_id = item.get("call_id")
+                item_name = item.get("name")
+                item_arguments = item.get("arguments")
+                if (
+                    type(item_call_id) is not str
+                    or not item_call_id
+                    or type(item_name) is not str
+                    or not item_name
+                    or type(item_arguments) is not str
+                    or not item_arguments
+                ):
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload.replay_items",
+                        "OpenAI function call replay state is incomplete",
+                    )
+                if item_call_id in seen_call_ids:
+                    raise InputSnapshotError(
+                        InputErrorCode.SNAPSHOT_INVALID,
+                        "continuation_snapshot.payload.replay_items",
+                        "OpenAI function call replay IDs must be unique",
+                    )
+                seen_call_ids.add(item_call_id)
+                arguments = cls._decode_continuation_call_arguments(
+                    item_arguments
+                )
+                canonical_arguments = cls._canonical_continuation_arguments(
+                    arguments
+                )
+                boundary = (
+                    boundaries[boundary_index]
+                    if boundary_index < len(boundaries)
+                    else None
+                )
+                if boundary is not None and item_call_id == boundary.call_id:
+                    if (
+                        item_name != boundary.provider_name
+                        or canonical_arguments != boundary.canonical_arguments
+                        or tuple(reasoning_since_call_boundary)
+                        != boundary.reasoning
+                        or boundary.provider_name != expected_provider_name
+                    ):
+                        raise InputSnapshotError(
+                            InputErrorCode.CORRELATION_MISMATCH,
+                            "continuation_snapshot.payload."
+                            "reserved_capability_boundaries",
+                            "OpenAI reserved boundary manifest drifted",
+                        )
+                    if not boundary.reasoning:
+                        raise InputSnapshotError(
+                            InputErrorCode.SNAPSHOT_INVALID,
+                            "continuation_snapshot.payload."
+                            "reserved_capability_boundaries",
+                            "OpenAI reserved boundary lacks encrypted "
+                            "reasoning",
+                        )
+                    cls._validate_reserved_input_arguments(arguments)
+                    if (
+                        item_call_id == call_id
+                        and expected_arguments is not None
+                        and arguments != expected_arguments
+                    ):
+                        raise InputSnapshotError(
+                            InputErrorCode.CORRELATION_MISMATCH,
+                            "continuation_snapshot.payload.replay_items",
+                            "OpenAI reserved capability arguments changed",
+                        )
+                    if (
+                        item_call_id == call_id
+                        and item_index != len(items) - 1
+                    ):
+                        raise InputSnapshotError(
+                            InputErrorCode.SNAPSHOT_INVALID,
+                            "continuation_snapshot.payload.replay_items",
+                            "OpenAI current reserved call must be the final "
+                            "replay item",
+                        )
+                    boundary_index += 1
+                elif item_call_id in boundary_call_ids:
+                    raise InputSnapshotError(
+                        InputErrorCode.CORRELATION_MISMATCH,
+                        "continuation_snapshot.payload."
+                        "reserved_capability_boundaries",
+                        "OpenAI reserved boundary manifest was reordered",
+                    )
+                elif item_name == expected_provider_name or set(arguments) == {
+                    "mode",
+                    "reason",
+                    "questions",
+                }:
+                    raise InputSnapshotError(
+                        InputErrorCode.CORRELATION_MISMATCH,
+                        "continuation_snapshot.payload."
+                        "reserved_capability_boundaries",
+                        "OpenAI reserved call is missing boundary metadata",
+                    )
+                reasoning_since_call_boundary.clear()
+        if boundary_index != len(boundaries):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.reserved_capability_boundaries",
+                "OpenAI reserved boundary manifest is incomplete",
+            )
+
+    @staticmethod
+    def _reasoning_boundary(
+        item: Mapping[str, object],
+    ) -> _OpenAIReplayReasoningBoundary:
+        item_id = item.get("id")
+        encrypted_content = item.get("encrypted_content")
+        if (
+            type(item_id) is not str
+            or not item_id
+            or type(encrypted_content) is not str
+            or not encrypted_content
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reasoning replay identity is incomplete",
+            )
+        return _OpenAIReplayReasoningBoundary(
+            item_id=item_id,
+            encrypted_content_sha256=sha256(
+                encrypted_content.encode("utf-8")
+            ).hexdigest(),
+        )
+
+    @staticmethod
+    def _canonical_continuation_arguments(
+        arguments: Mapping[str, object],
+    ) -> str:
+        return dumps(
+            arguments,
+            allow_nan=False,
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        )
+
+    @staticmethod
+    def _is_sha256(value: object) -> bool:
+        return (
+            type(value) is str
+            and len(value) == 64
+            and all(character in "0123456789abcdef" for character in value)
+        )
+
+    @staticmethod
+    def _decode_continuation_call_arguments(
+        value: str,
+    ) -> dict[str, object]:
+        try:
+            decoded = loads(
+                value,
+                object_pairs_hook=_unique_json_object,
+                parse_constant=_reject_json_constant,
+            )
+        except (JSONDecodeError, RecursionError, ValueError) as exc:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI function call arguments are invalid JSON",
+            ) from exc
+        if type(decoded) is not dict:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI function call arguments must be a JSON object",
+            )
+        return cast(dict[str, object], decoded)
+
+    @staticmethod
+    def _validate_reserved_input_arguments(
+        arguments: Mapping[str, object],
+    ) -> None:
+        if set(arguments) != {"mode", "reason", "questions"}:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reserved capability arguments are incomplete",
+            )
+        mode = arguments["mode"]
+        try:
+            if type(mode) is not str:
+                raise ValueError("mode must be a string")
+            RequirementMode(mode)
+        except (TypeError, ValueError) as exc:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reserved capability mode is invalid",
+            ) from exc
+        reason = arguments["reason"]
+        questions = arguments["questions"]
+        if (
+            type(reason) is not str
+            or not reason.strip()
+            or type(questions) is not list
+            or not 1 <= len(questions) <= 3
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reserved capability arguments are invalid",
+            )
+        try:
+            for question in questions:
+                decode_input_question(question)
+        except InputValidationError as exc:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation_snapshot.payload.replay_items",
+                "OpenAI reserved capability questions are invalid",
+            ) from exc
+
     async def __call__(
         self,
         model_id: str,
@@ -5747,7 +6759,7 @@ class OpenAIClient(TextGenerationVendor):
         *,
         instructions: str | None = None,
         timeout: int | float | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
     ) -> TextGenerationStream:
         self._raise_if_closed()
@@ -5756,17 +6768,25 @@ class OpenAIClient(TextGenerationVendor):
         replay_owner.begin_attempt()
         request_has_replay_items = replay_owner.item_count > 0
         try:
+            provider_idempotency_key = (
+                replay_owner.take_provider_idempotency_key()
+            )
             template_messages = self._template_messages(
                 messages,
-                tool=tool,
+                capability=capability,
                 replay_items=replay_owner.replay_items(),
             )
             use_reasoning_profile = self._uses_reasoning_profile(model_id)
+            extra_headers = {
+                "X-Title": "Avalan",
+                "HTTP-Referer": "https://github.com/avalan-ai/avalan",
+            }
+            if provider_idempotency_key is not None:
+                extra_headers[_OPENAI_IDEMPOTENCY_HEADER] = str(
+                    provider_idempotency_key
+                )
             kwargs: dict[str, Any] = {
-                "extra_headers": {
-                    "X-Title": "Avalan",
-                    "HTTP-Referer": "https://github.com/avalan-ai/avalan",
-                },
+                "extra_headers": extra_headers,
                 "model": model_id or self._DEFAULT_MODEL_ID,
                 "input": template_messages,
                 "store": False,
@@ -5831,8 +6851,11 @@ class OpenAIClient(TextGenerationVendor):
                     default=(self._stream_response_failed_retry_delay_seconds),
                 )
             )
-            if tool:
-                schemas = OpenAIClient._tool_schemas(tool)
+            if capability:
+                schemas = OpenAIClient._tool_schemas(
+                    capability,
+                    provider_family=self._usage_provider_family,
+                )
                 if schemas:
                     kwargs["tools"] = schemas
                     if (
@@ -5844,7 +6867,8 @@ class OpenAIClient(TextGenerationVendor):
                         kwargs["tool_choice"] = OpenAIClient._tool_choice(
                             settings.tool_choice,
                             schemas,
-                            tool=tool,
+                            capability=capability,
+                            provider_family=self._usage_provider_family,
                         )
             if include_values:
                 kwargs["include"] = include_values
@@ -5901,8 +6925,8 @@ class OpenAIClient(TextGenerationVendor):
             client_stream = await create_response()
             if use_async_generator:
                 stream_kwargs: dict[str, Any] = {}
-                if isinstance(tool, ToolManager):
-                    stream_kwargs["tool"] = tool
+                if capability is not None:
+                    stream_kwargs["capability"] = capability
                 if request_has_replay_items:
                     stream_kwargs["request_has_replay_items"] = True
                 response_stream = OpenAIStream(
@@ -5933,7 +6957,7 @@ class OpenAIClient(TextGenerationVendor):
             try:
                 response = await self._non_stream_result(
                     client_stream,
-                    tool=tool,
+                    capability=capability,
                     replay_owner=replay_owner,
                     request_has_replay_items=request_has_replay_items,
                 )
@@ -6380,7 +7404,7 @@ class OpenAIClient(TextGenerationVendor):
         exclude_roles: list[TemplateMessageRole] | None = None,
         *,
         replay_items: tuple[dict[str, Any], ...] = (),
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[TemplateMessage] | list[dict[str, Any]]:
         tool_messages = [
             message
@@ -6419,7 +7443,7 @@ class OpenAIClient(TextGenerationVendor):
         response_item_messages = self._response_item_tool_messages(
             tool_messages,
             replay_items=replay_items,
-            tool=tool,
+            capability=capability,
         )
         if response_item_messages is not None:
             messages_out.extend(response_item_messages)
@@ -6427,7 +7451,10 @@ class OpenAIClient(TextGenerationVendor):
 
         for tool_message in tool_messages:
             messages_out.extend(
-                self._synthetic_tool_messages(tool_message, tool=tool)
+                self._synthetic_tool_messages(
+                    tool_message,
+                    capability=capability,
+                )
             )
         return messages_out
 
@@ -6436,7 +7463,7 @@ class OpenAIClient(TextGenerationVendor):
         tool_messages: list[Message],
         *,
         replay_items: tuple[dict[str, Any], ...] = (),
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[dict[str, Any]] | None:
         if not replay_items:
             return None
@@ -6446,7 +7473,7 @@ class OpenAIClient(TextGenerationVendor):
         for tool_message in tool_messages:
             synthetic = self._synthetic_tool_messages(
                 tool_message,
-                tool=tool,
+                capability=capability,
             )
             call_id: str | None = None
             if len(synthetic) == 2:
@@ -6493,7 +7520,7 @@ class OpenAIClient(TextGenerationVendor):
         self,
         tool_message: Message,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[dict[str, Any]]:
         outcome = (
             tool_message.tool_call_result
@@ -6538,7 +7565,7 @@ class OpenAIClient(TextGenerationVendor):
                 "type": "function_call",
                 "name": TextGenerationVendor.provider_tool_name(
                     name,
-                    tool=tool,
+                    capability=capability,
                     provider_family=self._usage_provider_family,
                 ),
                 "call_id": call_id,
@@ -6550,6 +7577,16 @@ class OpenAIClient(TextGenerationVendor):
                 "output": to_json(output),
             },
         ]
+
+    @staticmethod
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> dict[str, Any]:
+        return {
+            "type": "function_call_output",
+            "call_id": str(result.call_id),
+            "output": to_json(result.provider_payload()),
+        }
 
     @staticmethod
     def _has_function_call_context(
@@ -6695,6 +7732,22 @@ class OpenAIClient(TextGenerationVendor):
         )
 
     @staticmethod
+    def _is_native_openai_responses_base_url(
+        base_url: str | None,
+    ) -> bool:
+        if base_url is None:
+            return True
+        if not isinstance(base_url, str):
+            return False
+        parsed = urlparse(base_url)
+        return (
+            parsed.scheme == "https"
+            and parsed.hostname == "api.openai.com"
+            and not parsed.query
+            and not parsed.fragment
+        )
+
+    @staticmethod
     def _azure_extra_query(
         base_url: str | None,
         azure_api_version: str | None,
@@ -6829,50 +7882,34 @@ class OpenAIClient(TextGenerationVendor):
         return f"data:{mime_type};base64,{image_data}"
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        provider_ready = isinstance(tool, ToolManager)
-        schemas = (
-            tool.provider_json_schemas(
-                provider_family=ProviderFamily.OPENAI.value
-            )
-            if provider_ready
-            else tool.json_schemas()
-        )
-        return (
-            [
-                {
-                    "type": t["type"],
-                    **t["function"],
-                    **(
-                        {}
-                        if provider_ready
-                        else {
-                            "name": TextGenerationVendor.encode_tool_name(
-                                t["function"]["name"]
-                            )
-                        }
-                    ),
-                }
-                for t in schemas
-                if t["type"] == "function"
-            ]
-            if schemas
-            else None
-        )
+    def _tool_schemas(
+        capability: ModelCapabilityCatalog,
+        *,
+        provider_family: ProviderFamily | str,
+    ) -> list[dict[str, Any]] | None:
+        schemas = capability.project(provider_family).schemas
+        tools: list[dict[str, Any]] = []
+        for schema in schemas:
+            if schema.get("type") != "function":
+                continue
+            function = schema.get("function")
+            if not isinstance(function, Mapping):
+                continue
+            tool = _mutable_provider_json({"type": "function", **function})
+            if isinstance(tool, dict):
+                tools.append(tool)
+        return tools or None
 
     @staticmethod
     def _tool_choice(
         tool_choice: str,
         schemas: Sequence[Mapping[str, Any]],
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog,
+        provider_family: ProviderFamily | str,
     ) -> dict[str, str]:
         assert tool_choice, "OpenAI tool_choice must be a tool name"
-        name = TextGenerationVendor.provider_tool_name(
-            tool_choice,
-            tool=tool,
-            provider_family=ProviderFamily.OPENAI,
-        )
+        name = capability.project(provider_family).tool_choice(tool_choice)
         schema_names = {schema.get("name") for schema in schemas}
         assert (
             name in schema_names
@@ -6883,7 +7920,7 @@ class OpenAIClient(TextGenerationVendor):
         self,
         response: object,
         *,
-        tool: ToolManager | None,
+        capability: ModelCapabilityCatalog | None,
         replay_owner: _OpenAIReplayOwner,
         request_has_replay_items: bool,
     ) -> TextGenerationNonStreamResult:
@@ -6899,7 +7936,7 @@ class OpenAIClient(TextGenerationVendor):
             replay_owner_retainer=self._retain_replay_owner,
             replay_owner_releaser=self._discard_replay_owner,
             request_has_replay_items=request_has_replay_items,
-            tool=tool,
+            capability=capability,
         )
         self._raise_if_closed()
         self._register_active_replay_stream(replay_owner, stream)
@@ -7435,7 +8472,7 @@ class OpenAIClient(TextGenerationVendor):
     def _non_stream_response_content(
         response: object,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         provider_family: ProviderFamily | str | None = ProviderFamily.OPENAI,
     ) -> str:
         parts: list[str] = []
@@ -7463,19 +8500,32 @@ class OpenAIClient(TextGenerationVendor):
                     OpenAIClient._response_field(call, "function") or call
                 )
                 provider_name = OpenAIClient._response_field(function, "name")
-                canonical_name = (
-                    TextGenerationVendor.canonical_tool_name(
-                        provider_name,
-                        tool=tool,
+                call_id = OpenAIClient._response_field(call, "call_id")
+                if call_id is None and capability is None:
+                    call_id = OpenAIClient._response_field(call, "id")
+                arguments = OpenAIClient._response_field(function, "arguments")
+                canonical_name: object | None = provider_name
+                if capability is not None:
+                    if not isinstance(provider_name, str):
+                        raise ValueError(
+                            "response tool call name must be a string"
+                        )
+                    decoded = capability.decode_call(
+                        ProviderCapabilityCall(
+                            call_id=cast(str | None, call_id),
+                            provider_name=provider_name,
+                            arguments=cast(
+                                str | Mapping[str, object] | None,
+                                arguments,
+                            ),
+                        ),
                         provider_family=provider_family,
                     )
-                    if isinstance(provider_name, str)
-                    and isinstance(tool, ToolManager)
-                    else provider_name
-                )
-                call_id = OpenAIClient._response_field(call, "id")
-                arguments = OpenAIClient._response_field(function, "arguments")
-                if isinstance(tool, ToolManager):
+                    canonical_name = (
+                        decoded.canonical_name
+                        if isinstance(decoded, TaskInputCapabilityCall)
+                        else decoded.name
+                    )
                     parts.append(
                         TextGenerationVendor.build_tool_call_text(
                             call_id,
@@ -7533,6 +8583,112 @@ class OpenAINonStreamingResponse(TextGenerationResponse):
 
 
 class OpenAIModel(TextGenerationVendorModel):
+    _continuation_capability_support: ProviderCapabilitySupport | None = None
+
+    @property
+    def provider_capability_support(self) -> ProviderCapabilitySupport:
+        """Return exact native OpenAI Responses capability proof."""
+        if not self._has_native_openai_responses_client():
+            return ProviderCapabilitySupport()
+        registered = self._continuation_capability_support
+        if registered is not None:
+            return registered
+        return ProviderCapabilitySupport(
+            structured_invocation=True,
+            stable_call_ids=True,
+            correlated_results=True,
+        )
+
+    def register_continuation_snapshot_codec(
+        self,
+        revision_binding: ContinuationRevisionBinding,
+    ) -> ProviderCapabilitySupport:
+        """Register durable replay for one exact native model revision."""
+        if not self._has_native_openai_responses_client():
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.provider",
+                "durable replay requires native OpenAI Responses",
+            )
+        client = cast(OpenAIClient, self._model)
+        OpenAIClient._validate_continuation_revision_binding(revision_binding)
+        model_id = self._model_id
+        if (
+            type(model_id) is not str
+            or str(revision_binding.provider_family)
+            != ProviderFamily.OPENAI.value
+            or str(revision_binding.model_id) != model_id
+            or not client._uses_reasoning_profile(model_id)
+        ):
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.revision_binding",
+                "model revision lacks native OpenAI reasoning replay",
+            )
+        registered = self._continuation_capability_support
+        if registered is not None:
+            codec = registered.continuation_snapshot_codec
+            assert codec is not None
+            if codec.revision_binding != revision_binding:
+                raise InputSnapshotError(
+                    InputErrorCode.SNAPSHOT_REVISION_DRIFT,
+                    "continuation_snapshot.revision_binding",
+                    "registered OpenAI continuation revision has drifted",
+                )
+            return registered
+        identity = "\x1f".join(
+            (
+                str(revision_binding.provider_family),
+                str(revision_binding.model_id),
+                str(revision_binding.provider_config_revision),
+                str(revision_binding.model_config_revision),
+                str(revision_binding.capability_revision),
+            )
+        )
+        identity_digest = sha256(identity.encode("utf-8")).hexdigest()
+        registry = ContinuationSnapshotCodecRegistry(
+            f"openai-responses-{identity_digest}"
+        )
+        reference = OpenAIClient.register_continuation_snapshot_codec(
+            registry,
+            codec_id=f"openai-responses-v1-{identity_digest}",
+            revision_binding=revision_binding,
+        )
+        support = ProviderCapabilitySupport(
+            structured_invocation=True,
+            stable_call_ids=True,
+            correlated_results=True,
+            continuation_snapshot_codec_registry=registry,
+            continuation_snapshot_codec=reference,
+        )
+        self._continuation_capability_support = support
+        return support
+
+    def _has_native_openai_responses_client(self) -> bool:
+        if not _is_exact_native_openai_type(self, "OpenAIModel"):
+            return False
+        client = getattr(self, "_model", None)
+        if not _is_exact_native_openai_type(client, "OpenAIClient"):
+            return False
+        sdk_client = getattr(client, "_client", None)
+        if sdk_client is None:
+            base_url = getattr(client, "_base_url", None)
+            if base_url is None:
+                return False
+        else:
+            sdk_base_url = getattr(sdk_client, "base_url", None)
+            if isinstance(sdk_base_url, str):
+                base_url = sdk_base_url
+            elif (
+                type(sdk_base_url).__module__.split(".", maxsplit=1)[0]
+                == "httpx"
+                and type(sdk_base_url).__name__ == "URL"
+            ):
+                base_url = str(sdk_base_url)
+            else:
+                return False
+        return OpenAIClient._is_native_openai_responses_base_url(base_url)
+
     @property
     def reasoning_summary_request_capability(
         self,
@@ -7636,18 +8792,26 @@ class OpenAIModel(TextGenerationVendorModel):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> TextGenerationResponse:
         generation_settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, generation_settings)
-        messages = self._messages(input, system_prompt, developer_prompt, tool)
+        messages = self._messages(
+            input,
+            system_prompt,
+            developer_prompt,
+            capability,
+        )
         streamer = await self._model(
             self._model_id,
             messages,
             generation_settings,
             instructions=instructions,
-            tool=tool,
+            capability=capability,
             use_async_generator=generation_settings.use_async_generator,
+        )
+        continuation_snapshot_adapter = (
+            self._model if isinstance(self._model, OpenAIClient) else None
         )
 
         if generation_settings.use_async_generator:
@@ -7657,6 +8821,7 @@ class OpenAIModel(TextGenerationVendorModel):
                 generation_settings=generation_settings,
                 settings=generation_settings,
                 use_async_generator=True,
+                continuation_snapshot_adapter=(continuation_snapshot_adapter),
             )
 
         static_text: str | None = None
@@ -7674,4 +8839,5 @@ class OpenAIModel(TextGenerationVendorModel):
             settings=generation_settings,
             use_async_generator=False,
             static_response_text=static_text,
+            continuation_snapshot_adapter=continuation_snapshot_adapter,
         )

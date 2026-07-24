@@ -203,11 +203,25 @@ def _terminal(
         StreamTerminalOutcome.COMPLETED: StreamItemKind.STREAM_COMPLETED,
         StreamTerminalOutcome.ERRORED: StreamItemKind.STREAM_ERRORED,
         StreamTerminalOutcome.CANCELLED: StreamItemKind.STREAM_CANCELLED,
+        StreamTerminalOutcome.INPUT_REQUIRED: (
+            StreamItemKind.STREAM_INPUT_REQUIRED
+        ),
     }[outcome]
+    correlation = (
+        StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        if outcome is StreamTerminalOutcome.INPUT_REQUIRED
+        else None
+    )
     return _item(
         sequence,
         kind,
         StreamChannel.CONTROL,
+        correlation=correlation,
         data=data,
         usage={} if outcome is StreamTerminalOutcome.COMPLETED else None,
         terminal_outcome=outcome,
@@ -395,6 +409,49 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
             if record["type"] == "response.output_item.done"
         )
         self.assertEqual(output_done["item"]["status"], "incomplete")
+
+    async def test_input_required_maps_to_native_incomplete_status(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        items = (
+            _started(10),
+            _item(
+                20,
+                StreamItemKind.INTERACTION_PENDING,
+                StreamChannel.INTERACTION,
+                correlation=correlation,
+            ),
+            _terminal(30, StreamTerminalOutcome.INPUT_REQUIRED),
+        )
+
+        records, stream_sync = await self._stream(
+            items,
+            response_id="response-input-required-stream",
+        )
+        self.assertEqual(
+            [record["type"] for record in records],
+            ["response.created", "response.incomplete"],
+        )
+        self.assertNotIn(
+            "response.failed", [record["type"] for record in records]
+        )
+        stream_sync.assert_not_awaited()
+
+        status_code, body, non_stream_sync = await self._non_stream(
+            items,
+            response_id="response-input-required-non-stream",
+        )
+        self.assertEqual(status_code, 200)
+        self.assertEqual(body["status"], "incomplete")
+        self.assertEqual(body["output"], [])
+        self.assertNotIn("error", body)
+        non_stream_sync.assert_not_awaited()
 
     async def test_summary_uses_exact_summary_lifecycle(self) -> None:
         response_id = "resp-summary"

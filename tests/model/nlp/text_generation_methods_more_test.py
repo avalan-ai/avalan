@@ -1,8 +1,9 @@
 import asyncio
 import time
 from logging import getLogger
-from threading import Event
+from threading import Event, Thread
 from types import ModuleType, SimpleNamespace
+from typing import Any
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import MagicMock, patch
 
@@ -21,6 +22,7 @@ from avalan.model.nlp.text.generation import (
     _configure_lossless_streamer_handoff,
     _is_event_loop_closed_error,
 )
+from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import CanonicalStreamItem, StreamItemKind
 
 
@@ -656,6 +658,165 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
 
         self.assertTrue(stopped.wait(1))
 
+    async def test_response_close_rejects_live_uncooperative_worker(
+        self,
+    ) -> None:
+        model = self._model()
+        worker_started = Event()
+        release_worker = Event()
+        workers: list[Thread] = []
+
+        class DummyStreamer:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.stop_signal = object()
+                self.text_queue: asyncio.Queue[object] = asyncio.Queue()
+                self.loop = asyncio.get_running_loop()
+
+            def __aiter__(self) -> "DummyStreamer":
+                return self
+
+            async def __anext__(self) -> object:
+                value = await self.text_queue.get()
+                if value is self.stop_signal:
+                    raise StopAsyncIteration
+                return value
+
+        def real_thread(*args: Any, **kwargs: Any) -> Thread:
+            worker = Thread(*args, **kwargs)
+            workers.append(worker)
+            return worker
+
+        def generate(*args: object, **kwargs: object) -> None:
+            worker_started.set()
+            release_worker.wait()
+
+        settings = GenerationSettings(max_new_tokens=2)
+        response = TextGenerationResponse(
+            model._stream_generator,
+            inputs={"input_ids": torch.tensor([[1, 2]])},
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+            stopping_criterias=None,
+            skip_special_tokens=False,
+        )
+
+        try:
+            with (
+                patch(
+                    "avalan.model.nlp.text.generation."
+                    "AsyncTextIteratorStreamer",
+                    DummyStreamer,
+                ),
+                patch(
+                    "avalan.model.nlp.text.generation.Thread",
+                    side_effect=real_thread,
+                ),
+                patch.object(
+                    generation_module,
+                    "_STREAM_THREAD_JOIN_TIMEOUT_SECONDS",
+                    0.05,
+                ),
+                patch.object(
+                    generation_module,
+                    "_STREAMER_TIMEOUT_SECONDS",
+                    0.01,
+                ),
+                patch.object(
+                    TextGenerationModel,
+                    "_generate_output",
+                    side_effect=generate,
+                ),
+            ):
+                started = await response.__aiter__().__anext__()
+                self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+                self.assertTrue(
+                    await asyncio.to_thread(worker_started.wait, 1.0)
+                )
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "generation worker did not terminate during stream close",
+                ):
+                    await asyncio.wait_for(response.aclose(), timeout=0.5)
+                self.assertTrue(workers[0].is_alive())
+
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "generation worker did not terminate during stream close",
+                ):
+                    await asyncio.wait_for(response.aclose(), timeout=0.1)
+        finally:
+            release_worker.set()
+            if workers:
+                await asyncio.to_thread(workers[0].join, 1.0)
+
+        self.assertFalse(workers[0].is_alive())
+
+    async def test_stream_repeats_shutdown_error_during_unwind(self) -> None:
+        model = self._model()
+
+        class EmptyStreamer:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                pass
+
+            def __aiter__(self) -> "EmptyStreamer":
+                return self
+
+            async def __anext__(self) -> str:
+                raise StopAsyncIteration
+
+        class NeverStoppingThread:
+            def __init__(self, *args: object, **kwargs: object) -> None:
+                self.ident = 123
+                self.name = str(kwargs["name"])
+
+            def start(self) -> None:
+                pass
+
+            def is_alive(self) -> bool:
+                return True
+
+        with (
+            patch(
+                "avalan.model.nlp.text.generation.AsyncTextIteratorStreamer",
+                EmptyStreamer,
+            ),
+            patch(
+                "avalan.model.nlp.text.generation.Thread",
+                NeverStoppingThread,
+            ),
+            patch.object(
+                generation_module,
+                "_STREAM_THREAD_JOIN_TIMEOUT_SECONDS",
+                0.0,
+            ),
+        ):
+            items = [
+                item
+                async for item in model._stream_generator(
+                    {"input_ids": torch.tensor([[1, 2]])},
+                    GenerationSettings(max_new_tokens=2),
+                    None,
+                    False,
+                )
+            ]
+
+        self.assertEqual(
+            [item.kind for item in items],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        assert isinstance(items[1].data, dict)
+        self.assertEqual(
+            items[1].data["message"],
+            "generation worker did not terminate during stream close",
+        )
+
     async def test_stream_generator_emits_worker_error_terminal(self):
         model = TextGenerationModel(
             "m",
@@ -957,9 +1118,20 @@ class StreamGeneratorTestCase(IsolatedAsyncioTestCase):
                 False,
             )
             started = await stream.__anext__()
-            errored = await stream.__anext__()
+            remaining = [item async for item in stream]
 
         self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+        self.assertEqual(
+            [item.kind for item in remaining],
+            [
+                StreamItemKind.ANSWER_DELTA,
+                StreamItemKind.ANSWER_DONE,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(remaining[0].text_delta, "partial")
+        errored = remaining[-2]
         self.assertIs(errored.kind, StreamItemKind.STREAM_ERRORED)
         assert isinstance(errored.data, dict)
         self.assertEqual(errored.data["message"], "chunk generation failure")

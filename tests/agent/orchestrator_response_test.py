@@ -2,6 +2,7 @@ from asyncio import (
     CancelledError,
     Future,
     create_task,
+    current_task,
     get_running_loop,
     sleep,
     wait_for,
@@ -66,6 +67,12 @@ from avalan.event import Event, EventPayloadKind, EventType
 from avalan.event.manager import EventManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import (
+    CapabilityBatchRejectionCode,
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+)
 from avalan.model.nlp.text.vendor.openai import OpenAIStream
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
@@ -105,6 +112,58 @@ from avalan.tool.shell.entities import (
 from avalan.tool.shell.input_files import shell_input_file_filter
 from avalan.tool.shell.settings import ShellToolSettings
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
+
+
+def _parser_catalog(
+    canonical_name: str,
+    *,
+    tool_format: ToolFormat | None = None,
+) -> ModelCapabilityCatalog:
+    return ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=(
+                ModelCapabilityDescriptor(
+                    canonical_name=canonical_name,
+                    description=f"Invoke {canonical_name}.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                ),
+            ),
+            tool_format=tool_format,
+        )
+    )
+
+
+def _posthoc_capability(
+    calls_by_text: dict[str, list[ToolCall]],
+) -> ModelCapabilityCatalog:
+    names = tuple(
+        sorted(
+            {call.name for calls in calls_by_text.values() for call in calls}
+        )
+    )
+    catalog = ModelCapabilityCatalog.create(
+        DomainCapabilitySeed(
+            descriptors=tuple(
+                ModelCapabilityDescriptor(
+                    canonical_name=name,
+                    description=f"Invoke {name}.",
+                    parameter_schema={
+                        "type": "object",
+                        "additionalProperties": True,
+                    },
+                )
+                for name in names
+            )
+        )
+    )
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    capability.get_calls.side_effect = calls_by_text.get
+    capability.project.side_effect = catalog.project
+    capability.classify_batch.side_effect = catalog.classify_batch
+    return cast(ModelCapabilityCatalog, capability)
 
 
 class _DummyEngine:
@@ -778,12 +837,16 @@ def _make_response(
     engine_args: dict,
     **kwargs,
 ) -> OrchestratorResponse:
+    kwargs.setdefault(
+        "enable_tool_parsing", kwargs.get("capability") is not None
+    )
     agent_id = kwargs.get("agent_id")
     participant_id = kwargs.get("participant_id")
     session_id = kwargs.get("session_id")
     context = ModelCallContext(
         specification=operation.specification,
         input=input_value,
+        capability=kwargs.get("capability"),
         engine_args=dict(engine_args),
         agent_id=agent_id,
         participant_id=participant_id,
@@ -1375,18 +1438,10 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         tool_manager = AsyncMock(spec=ToolManager)
-        tool_manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        tool_manager.tool_call_status.side_effect = (
-            base_parser.tool_call_status
-        )
-        tool_manager.get_calls.side_effect = base_parser
-        tool_manager.tool_format = ToolFormat.HARMONY
         tool_manager.is_empty = False
         tool_manager.return_value = None
+        capability = _parser_catalog("mytool", tool_format=ToolFormat.HARMONY)
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -1396,6 +1451,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool_manager,
+            capability=capability,
         )
 
         items = await _collect_stream_items(resp)
@@ -1432,18 +1488,13 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         tool_manager = AsyncMock(spec=ToolManager)
-        tool_manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        tool_manager.tool_call_status.side_effect = (
-            base_parser.tool_call_status
-        )
-        tool_manager.get_calls.side_effect = base_parser
-        tool_manager.tool_format = ToolFormat.HARMONY
         tool_manager.is_empty = False
         tool_manager.return_value = None
+        capability = _parser_catalog(
+            "browser.open",
+            tool_format=ToolFormat.HARMONY,
+        )
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -1453,6 +1504,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool_manager,
+            capability=capability,
         )
 
         items = await _collect_stream_items(resp)
@@ -1498,18 +1550,13 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             settings=settings,
         )
 
-        base_parser = ToolCallParser(tool_format=ToolFormat.HARMONY)
         tool_manager = AsyncMock(spec=ToolManager)
-        tool_manager.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        tool_manager.tool_call_status.side_effect = (
-            base_parser.tool_call_status
-        )
-        tool_manager.get_calls.side_effect = base_parser
-        tool_manager.tool_format = ToolFormat.HARMONY
         tool_manager.is_empty = False
         tool_manager.return_value = None
+        capability = _parser_catalog(
+            "functions.browser.open",
+            tool_format=ToolFormat.HARMONY,
+        )
 
         resp = _make_response(
             Message(role=MessageRole.USER, content="hi"),
@@ -1519,6 +1566,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool_manager,
+            capability=capability,
         )
 
         items = await _collect_stream_items(resp)
@@ -1550,15 +1598,9 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             '<tool_call>{"name": "calc", "arguments": {"x": 1}}</tool_call>'
         )
         response = _response_from_items(*_canonical_answer_items(tool_text))
-        base_parser = ToolCallParser()
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        tool.tool_call_status.side_effect = base_parser.tool_call_status
-        tool.get_calls.side_effect = base_parser
-        tool.tool_format = None
+        capability = _parser_catalog("calc")
 
         async def execute(
             call: ToolCall,
@@ -1580,6 +1622,7 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            capability=capability,
         )
 
         items = await _collect_stream_items(resp)
@@ -4876,7 +4919,11 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             tool=tool,
             enable_tool_parsing=False,
         )
-        checker = AsyncMock(side_effect=CancelledError())
+
+        async def checker() -> None:
+            if current_task() is orchestrated._pending_tool_batch_task:
+                raise CancelledError()
+
         orchestrated.set_cancellation_checker(checker)
         iterator = orchestrated.__aiter__()
 
@@ -7570,12 +7617,12 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             observed_tool_call_ids,
-            ["call1", "call1", "orchestrator-tool-call-1"],
+            ["call1", "call1", "call1"],
         )
         validate_canonical_stream_items(canonical_items)
         validate_tool_lifecycle_items(canonical_items)
 
-    async def test_to_str_reserves_diagnostic_only_tool_call_id(
+    async def test_to_str_rejects_diagnostic_and_domain_batch(
         self,
     ) -> None:
         engine = _DummyEngine()
@@ -7652,50 +7699,41 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=ModelCapabilityCatalog.create(
+                tool.export_model_capability_seed()
+            ),
             enable_tool_parsing=False,
         )
 
-        self.assertEqual(await response.to_str(), "done")
-        self.assertEqual(observed, ["first", "second"])
+        self.assertEqual(await response.to_str(), "")
+        self.assertEqual(observed, [])
         canonical_items = response.canonical_items
         diagnostic_codes = [
             item.data["code"]
             for item in canonical_items
             if (
                 item.kind is StreamItemKind.STREAM_DIAGNOSTIC
-                and item.correlation.tool_call_id == "call1"
+                and isinstance(item.data, dict)
             )
         ]
-        self.assertIn(
-            "orchestrator.tool_call.done_before_ready",
-            diagnostic_codes,
-        )
-        ready_ids = [
-            item.correlation.tool_call_id
-            for item in canonical_items
-            if item.kind is StreamItemKind.TOOL_CALL_READY
-        ]
-        self.assertEqual(ready_ids, ["call2", "orchestrator-tool-call-1"])
-        self.assertNotIn("call1", ready_ids)
-        terminal_ids = [
-            item.correlation.tool_call_id
-            for item in canonical_items
-            if item.kind is StreamItemKind.TOOL_EXECUTION_COMPLETED
-        ]
-        self.assertEqual(terminal_ids, ready_ids)
-        child_contexts = [
-            call_args.args[0] for call_args in agent.await_args_list
-        ]
-        observed_tool_call_ids = [
-            message.tool_calls[0].id
-            for context in child_contexts
-            for message in cast(list[Message], context.input)
-            if message.tool_calls
-        ]
         self.assertEqual(
-            observed_tool_call_ids,
-            ["call2", "call2", "orchestrator-tool-call-1"],
+            diagnostic_codes,
+            [CapabilityBatchRejectionCode.MALFORMED_CALL.value],
         )
+        self.assertFalse(
+            any(
+                item.kind
+                in {
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                    StreamItemKind.TOOL_EXECUTION_STARTED,
+                    StreamItemKind.TOOL_EXECUTION_COMPLETED,
+                }
+                for item in canonical_items
+            )
+        )
+        agent.assert_not_awaited()
         validate_canonical_stream_items(canonical_items)
         validate_tool_lifecycle_items(canonical_items)
 
@@ -7808,9 +7846,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 arguments={"name": "second"},
             ),
         ]
-        cast(Any, tool).get_calls = MagicMock(
-            side_effect=lambda text: calls if text == "tools" else None
-        )
+        capability = _posthoc_capability({"tools": calls})
         response: OrchestratorResponse
 
         def confirm(call: ToolCall) -> str:
@@ -7848,6 +7884,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
             tool_confirm=confirm,
             enable_tool_parsing=False,
         )
@@ -7989,9 +8026,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                         arguments={"name": "second", "delay": 0.001},
                     ),
                 ]
-                cast(Any, tool).get_calls = MagicMock(
-                    side_effect=lambda text: calls if text == "tools" else None
-                )
+                capability = _posthoc_capability({"tools": calls})
                 response: OrchestratorResponse
 
                 def confirm(call: ToolCall) -> str:
@@ -8035,6 +8070,7 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                     {},
                     event_manager=event_manager,
                     tool=tool,
+                    capability=capability,
                     tool_confirm=confirm,
                     enable_tool_parsing=False,
                 )
@@ -9271,10 +9307,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [ToolCall(id=uuid4(), name="calc", arguments=None)]
-            if text == "call"
-            else None
+        capability = _posthoc_capability(
+            {"call": [ToolCall(id=uuid4(), name="calc", arguments=None)]}
         )
 
         async def tool_exec(call, context: ToolCallContext):
@@ -9301,6 +9335,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
             enable_tool_parsing=False,
         )
 
@@ -9376,10 +9411,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
                 name="shell.tesseract",
                 arguments={"path": "GENERATED_PREFIX-1.png"},
             )
-            manager.get_calls = MagicMock(
-                side_effect=lambda text: (
-                    [first_call, second_call] if text == "call" else None
-                )
+            capability = _posthoc_capability(
+                {"call": [first_call, second_call]}
             )
             engine = _DummyEngine()
             agent = AsyncMock(spec=EngineAgent)
@@ -9393,6 +9426,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
                 operation,
                 {},
                 tool=manager,
+                capability=capability,
                 enable_tool_parsing=False,
             )
 
@@ -10070,9 +10104,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [call] if text == "call" else None
-        )
+        capability = _posthoc_capability({"call": [call]})
 
         async def tool_exec(
             call: ToolCall,
@@ -10102,6 +10134,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {"response_format": response_format},
             tool=tool,
+            capability=capability,
             enable_tool_parsing=False,
         )
 
@@ -10127,17 +10160,9 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         outer_response = _string_response("call", async_gen=True)
         call = ToolCall(id=uuid4(), name="calc", arguments=None)
-        base_parser = ToolCallParser()
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.is_potential_tool_call.side_effect = (
-            base_parser.is_potential_tool_call
-        )
-        tool.tool_call_status.side_effect = base_parser.tool_call_status
-        tool.get_calls.side_effect = lambda text: (
-            [call] if text == "call" else None
-        )
-        tool.tool_format = None
+        capability = _posthoc_capability({"call": [call]})
 
         async def tool_exec(call, context: ToolCallContext):
             return ToolCallResult(
@@ -10161,6 +10186,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
             enable_tool_parsing=False,
         )
 
@@ -10203,9 +10229,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id="call-1", name="calc", arguments=None)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [call] if text == "call" else None
-        )
+        capability = _posthoc_capability({"call": [call]})
 
         async def tool_exec(call, context: ToolCallContext):
             return ToolCallResult(
@@ -10224,6 +10248,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -10264,10 +10290,12 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
         tool.parallel_tool_calls = False
-        tool.get_calls.side_effect = lambda text: {
-            "first-call": [first_call],
-            "second-call": [second_call],
-        }.get(text)
+        capability = _posthoc_capability(
+            {
+                "first-call": [first_call],
+                "second-call": [second_call],
+            }
+        )
 
         async def tool_exec(
             call: ToolCall,
@@ -10290,6 +10318,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            capability=capability,
             enable_tool_parsing=False,
         )
 
@@ -10349,7 +10378,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
 
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
+        capability = _posthoc_capability({"structured": [call]})
 
         async def tool_exec(call, context: ToolCallContext):
             return ToolCallResult(
@@ -10373,13 +10402,15 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             {},
             event_manager=event_manager,
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
 
         self.assertEqual(result, "4")
         tool.assert_awaited_once()
-        tool.get_calls.assert_any_call("4")
+        capability.get_calls.assert_any_call("4")
         context = agent.await_args.args[0]
         assert isinstance(context.input, list)
         self.assertEqual(context.input[-2].tool_calls[0].id, "call1")
@@ -10445,7 +10476,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
+        capability = _posthoc_capability({"structured": [call]})
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -10461,12 +10492,13 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            capability=capability,
             enable_tool_parsing=False,
         )
 
         self.assertEqual(await resp.to_str(), "done")
         tool.assert_awaited_once()
-        tool.get_calls.assert_any_call("done")
+        capability.get_calls.assert_any_call("done")
         agent.assert_awaited_once()
         canonical_items = resp.canonical_items
         validate_canonical_stream_items(canonical_items)
@@ -10491,7 +10523,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -10632,7 +10663,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.side_effect = RuntimeError("boom")
 
         resp = _make_response(
@@ -10685,7 +10715,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.side_effect = CancelledError()
 
         resp = _make_response(
@@ -10812,7 +10841,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -10863,7 +10891,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -10940,7 +10967,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -10998,7 +11024,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
         tool.return_value = ToolCallResult(
             id="result1",
             call=call,
@@ -11066,7 +11091,6 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         outer_response = _tool_call_response(call)
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.return_value = None
 
         async def execute(
             call: ToolCall,
@@ -11383,9 +11407,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         call = ToolCall(id="call1", name="calc", arguments={})
         tool = AsyncMock(spec=ToolManager)
         tool.is_empty = False
-        tool.get_calls.side_effect = lambda text: (
-            [call] if text == "call" else None
-        )
+        capability = _posthoc_capability({"call": [call]})
         tool.return_value = None
 
         resp = _make_response(
@@ -11395,6 +11417,8 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             tool=tool,
+            capability=capability,
+            enable_tool_parsing=False,
         )
 
         result = await resp.to_str()
@@ -11477,7 +11501,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         task = create_task(complete_batch())
         self.assertEqual(await task, [outcome])
         resp._pending_tool_batch_task = task
-        resp._consume_pending_tool_batch(task)
+        await resp._consume_pending_tool_batch(task)
 
         self.assertEqual(cast(list[object], resp._call_history), [result])
 
@@ -12318,7 +12342,7 @@ class OrchestratorResponseToStrTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(
             tool_call_observations,
-            [["call1"], ["call1", "orchestrator-tool-call-1"]],
+            [["call1"], ["call1", "call1"]],
         )
         self.assertEqual(
             tool_result_observations,
@@ -12560,7 +12584,7 @@ class OrchestratorResponseContextTestCase(IsolatedAsyncioTestCase):
         )
 
         parent = resp._context
-        child = resp._make_child_context(
+        child = await resp._make_child_context(
             Message(role=MessageRole.USER, content="hello")
         )
 

@@ -1,7 +1,7 @@
 from ....entities import (
     EngineMessage,
+    EngineMessageIdempotencyKey,
     EngineMessageScored,
-    Message,
     MessageRole,
     TextPartition,
 )
@@ -9,6 +9,7 @@ from ....memory.permanent import (
     PermanentMessageMemory,
     VectorFunction,
 )
+from ....memory.permanent.codec import decode_message_data
 from ....model.nlp.sentence import SentenceTransformerModel
 from . import ElasticsearchMemory
 
@@ -101,7 +102,11 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
             self._session_id,
             partitions,
             created_at=now_utc,
-            message_id=uuid4(),
+            message_id=(
+                engine_message.idempotency_key.value
+                if engine_message.idempotency_key is not None
+                else uuid4()
+            ),
         )
         key = (
             f"{self._index}/{message.session_id}/{message.id}.json"
@@ -163,9 +168,14 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
                 EngineMessage(
                     agent_id=UUID(meta["agent_id"]),
                     model_id=meta["model_id"],
-                    message=Message(
-                        role=MessageRole(meta["author"]),
-                        content=meta["data"],
+                    message=decode_message_data(
+                        MessageRole(meta["author"]),
+                        meta["data"],
+                    ),
+                    idempotency_key=(
+                        EngineMessageIdempotencyKey(value=UUID(meta["id"]))
+                        if meta.get("id") is not None
+                        else None
                     ),
                 )
             )
@@ -216,8 +226,14 @@ class ElasticsearchMessageMemory(ElasticsearchMemory, PermanentMessageMemory):
                 EngineMessageScored(
                     agent_id=UUID(meta["agent_id"]),
                     model_id=meta["model_id"],
-                    message=Message(
-                        role=MessageRole(meta["author"]), content=meta["data"]
+                    message=decode_message_data(
+                        MessageRole(meta["author"]),
+                        meta["data"],
+                    ),
+                    idempotency_key=(
+                        EngineMessageIdempotencyKey(value=UUID(meta["id"]))
+                        if meta.get("id") is not None
+                        else None
                     ),
                     score=item.get("Score", 0.0),
                 )

@@ -1,3 +1,9 @@
+from ...agent.execution import (
+    DurableInteractionRuntime,
+    ExecutionCorrelationError,
+    ExecutionInputRequiredError,
+    InteractionRuntime,
+)
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
@@ -13,6 +19,7 @@ from ...entities import (
     MessageRole,
 )
 from ...filesystem import read_text
+from ...interaction import RunId, TaskId
 from ...model.file_delivery import (
     FileDeliveryDecision,
     FileDeliveryMode,
@@ -22,7 +29,11 @@ from ...model.file_delivery import (
 )
 from ...tool.context import ToolSettingsContext
 from ..artifact import ArtifactStoreError
-from ..context import TaskInputFile, TaskTargetContext
+from ..context import (
+    TaskDurableResumeHandle,
+    TaskInputFile,
+    TaskTargetContext,
+)
 from ..definition import (
     TaskDefinition,
     TaskInputType,
@@ -39,7 +50,13 @@ from ..schema import (
     canonical_schema_json,
 )
 from ..skills import task_effective_skills_settings
-from ..target import TaskTargetRunner, TaskValidationContext
+from ..target import (
+    TaskTargetOutcome,
+    TaskTargetRunner,
+    TaskValidationContext,
+    completed_task_target_outcome,
+    suspended_task_target_outcome,
+)
 from ..text_strategy import (
     TextStrategyKind,
     TextStrategyPlan,
@@ -55,6 +72,7 @@ from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
+from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
 from mimetypes import guess_extension
 from pathlib import Path
@@ -75,6 +93,10 @@ from jinja2 import (
 
 FileDeliveryProfileResolver = Callable[[str | None], FileDeliveryProfile]
 TokenCounter = Callable[[str], int]
+DurableInteractionRuntimeFactory = Callable[
+    [TaskTargetContext],
+    DurableInteractionRuntime | Awaitable[DurableInteractionRuntime],
+]
 
 
 class AgentOrchestrator(Protocol):
@@ -87,7 +109,12 @@ class AgentOrchestrator(Protocol):
         traceback: object | None,
     ) -> bool | None: ...
 
-    async def __call__(self, input: Input) -> object: ...
+    async def __call__(
+        self,
+        input: Input,
+        *,
+        interaction_runtime: InteractionRuntime | None = None,
+    ) -> object: ...
 
 
 class AgentOrchestratorLoader(Protocol):
@@ -129,6 +156,9 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         token_counter: TokenCounter | None = None,
         tool_settings: ToolSettingsContext | None = None,
         require_shell_pipeline_opt_in: bool = False,
+        durable_interaction_runtime_factory: (
+            DurableInteractionRuntimeFactory | None
+        ) = None,
         uri: str | None = None,
     ) -> None:
         self._loader = loader
@@ -145,6 +175,11 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         self._tool_settings = tool_settings
         assert isinstance(require_shell_pipeline_opt_in, bool)
         self._require_shell_pipeline_opt_in = require_shell_pipeline_opt_in
+        if durable_interaction_runtime_factory is not None:
+            assert callable(durable_interaction_runtime_factory)
+        self._durable_interaction_runtime_factory = (
+            durable_interaction_runtime_factory
+        )
         self._uri = uri
 
     async def validate_definition(
@@ -197,7 +232,24 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         issues.extend(_validate_agent_output_schema(definition, config))
         return tuple(issues)
 
-    async def run(self, context: TaskTargetContext) -> object:
+    def supports_durable_resume(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        """Return whether this runner owns the durable agent target."""
+        return target_type is TaskTargetType.AGENT
+
+    def supports_durable_suspension(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        """Return whether this runner can stage durable agent input."""
+        return (
+            target_type is TaskTargetType.AGENT
+            and self._durable_interaction_runtime_factory is not None
+        )
+
+    async def run(self, context: TaskTargetContext) -> TaskTargetOutcome:
         assert isinstance(context, TaskTargetContext)
         assert context.definition.execution.type == TaskTargetType.AGENT
         await context.check_cancelled()
@@ -210,6 +262,12 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             profile=profile,
             token_counter=self._token_counter,
         )
+        if (
+            text_plan is not None
+            and text_plan.kind is TextStrategyKind.MAP_REDUCE
+            and self.supports_durable_suspension(TaskTargetType.AGENT)
+        ):
+            raise TaskValidationError((_durable_map_reduce_issue(),))
         orchestrator = await self._loader.from_file(
             str(self._agent_path(context.definition)),
             agent_id=self._agent_id,
@@ -219,31 +277,122 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                 context.definition
             ),
         )
+        interaction_runtime = await self._interaction_runtime(context)
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
                 await context.check_cancelled()
-                if (
-                    text_plan is not None
-                    and text_plan.kind == TextStrategyKind.MAP_REDUCE
-                ):
-                    response = await _run_map_reduce(
-                        orchestrator,
-                        context=context,
-                        plan=text_plan,
-                        token_counter=self._token_counter,
-                        token_limit=(
-                            context.definition.limits.total_tokens or maxsize
-                        ),
+                try:
+                    if (
+                        text_plan is not None
+                        and text_plan.kind == TextStrategyKind.MAP_REDUCE
+                    ):
+                        response = await _run_map_reduce(
+                            orchestrator,
+                            context=context,
+                            plan=text_plan,
+                            token_counter=self._token_counter,
+                            token_limit=(
+                                context.definition.limits.total_tokens
+                                or maxsize
+                            ),
+                            interaction_runtime=interaction_runtime,
+                        )
+                    else:
+                        response = await _invoke_agent_orchestrator(
+                            orchestrator,
+                            agent_input,
+                            interaction_runtime=interaction_runtime,
+                        )
+                except ExecutionInputRequiredError as error:
+                    return _suspended_agent_target_outcome(
+                        error,
+                        interaction_runtime=interaction_runtime,
                     )
-                else:
-                    response = await orchestrator(agent_input)
                 _attach_cancellation_checker(response, context.check_cancelled)
                 try:
-                    output = await _agent_output(context.definition, response)
+                    try:
+                        output = await _agent_output(
+                            context.definition,
+                            response,
+                        )
+                    except ExecutionInputRequiredError as error:
+                        return _suspended_agent_target_outcome(
+                            error,
+                            interaction_runtime=interaction_runtime,
+                        )
                 finally:
                     await context.observe_usage(response)
                 await context.check_cancelled()
-                return output
+                return completed_task_target_outcome(output)
+
+    async def resume(
+        self,
+        context: TaskTargetContext,
+        durable_resume: TaskDurableResumeHandle,
+    ) -> TaskTargetOutcome:
+        """Resume an admitted agent continuation without replaying input."""
+        assert isinstance(context, TaskTargetContext)
+        assert context.definition.execution.type == TaskTargetType.AGENT
+        if context.durable_resume is not durable_resume:
+            raise ExecutionCorrelationError(
+                "durable resume handle must match the task context"
+            )
+        await context.check_cancelled()
+        async with _durable_agent_event_listener(durable_resume, context):
+            try:
+                response = await durable_resume.dispatch()
+            except ExecutionInputRequiredError as error:
+                return _suspended_agent_target_outcome(
+                    error,
+                    interaction_runtime=None,
+                    resumed=True,
+                )
+            _attach_cancellation_checker(response, context.check_cancelled)
+            try:
+                try:
+                    output = await _agent_output(
+                        context.definition,
+                        response,
+                    )
+                except ExecutionInputRequiredError as error:
+                    return _suspended_agent_target_outcome(
+                        error,
+                        interaction_runtime=None,
+                        resumed=True,
+                    )
+                finally:
+                    await context.observe_usage(response)
+            finally:
+                await _close_agent_response(response)
+            await context.check_cancelled()
+            return completed_task_target_outcome(output)
+
+    async def _interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> DurableInteractionRuntime | None:
+        factory = self._durable_interaction_runtime_factory
+        if factory is None:
+            return None
+        runtime = factory(context)
+        if isawaitable(runtime):
+            runtime = await runtime
+        if type(runtime) is not DurableInteractionRuntime:
+            raise TypeError(
+                "durable interaction runtime factory returned invalid state"
+            )
+        expected_run_id = RunId(context.execution.run_id)
+        if runtime.run_id != expected_run_id:
+            raise ExecutionCorrelationError(
+                "durable interaction runtime must bind the task run"
+            )
+        if runtime.task_id is not None and runtime.task_id != TaskId(
+            context.execution.run_id
+        ):
+            raise ExecutionCorrelationError(
+                "durable interaction task identity must bind the task run"
+            )
+        return runtime
 
     def _agent_path(self, definition: TaskDefinition) -> Path:
         ref = Path(definition.execution.ref)
@@ -354,7 +503,7 @@ def _attach_cancellation_checker(
 
 @asynccontextmanager
 async def _agent_event_listener(
-    orchestrator: AgentOrchestrator,
+    orchestrator: object,
     context: TaskTargetContext,
 ) -> AsyncIterator[None]:
     if context.event_listener is None:
@@ -374,6 +523,22 @@ async def _agent_event_listener(
     finally:
         if callable(remove_listener):
             remove_listener(context.event_listener)
+
+
+@asynccontextmanager
+async def _durable_agent_event_listener(
+    durable_resume: TaskDurableResumeHandle,
+    context: TaskTargetContext,
+) -> AsyncIterator[None]:
+    listener = context.event_listener
+    if listener is None:
+        yield
+        return
+    registration = durable_resume.register_event_listener(listener)
+    try:
+        yield
+    finally:
+        registration.close()
 
 
 async def _agent_input(
@@ -1158,6 +1323,7 @@ async def _run_map_reduce(
     plan: TextStrategyPlan,
     token_counter: TokenCounter,
     token_limit: int,
+    interaction_runtime: InteractionRuntime | None,
 ) -> object:
     assert callable(token_counter)
     assert isinstance(token_limit, int)
@@ -1166,8 +1332,10 @@ async def _run_map_reduce(
     summaries: list[str] = []
     for chunk in plan.chunks:
         await context.check_cancelled()
-        response = await orchestrator(
-            _text_strategy_input((*plan.prompt_texts, chunk.text))
+        response = await _invoke_agent_orchestrator(
+            orchestrator,
+            _text_strategy_input((*plan.prompt_texts, chunk.text)),
+            interaction_runtime=interaction_runtime,
         )
         _attach_cancellation_checker(response, context.check_cancelled)
         try:
@@ -1192,7 +1360,53 @@ async def _run_map_reduce(
                 ),
             )
         )
-    return await orchestrator(_text_strategy_input(reduce_texts))
+    return await _invoke_agent_orchestrator(
+        orchestrator,
+        _text_strategy_input(reduce_texts),
+        interaction_runtime=interaction_runtime,
+    )
+
+
+async def _invoke_agent_orchestrator(
+    orchestrator: AgentOrchestrator,
+    input: Input,
+    *,
+    interaction_runtime: InteractionRuntime | None,
+) -> object:
+    if interaction_runtime is None:
+        return await orchestrator(input)
+    return await orchestrator(
+        input,
+        interaction_runtime=interaction_runtime,
+    )
+
+
+def _suspended_agent_target_outcome(
+    error: ExecutionInputRequiredError,
+    *,
+    interaction_runtime: DurableInteractionRuntime | None,
+    resumed: bool = False,
+) -> TaskTargetOutcome:
+    durable = error.durable
+    if (interaction_runtime is not None or resumed) and (
+        durable is None or not error.result.detached_resumption_available
+    ):
+        raise ExecutionCorrelationError(
+            "durable agent input must carry detached replay state"
+        ) from error
+    if interaction_runtime is None and durable is not None and not resumed:
+        raise ExecutionCorrelationError(
+            "durable replay state requires a durable task runtime"
+        ) from error
+    return suspended_task_target_outcome(
+        error.result,
+        checkpoint_id=(
+            str(durable.continuation.continuation_id)
+            if durable is not None
+            else None
+        ),
+        durable=durable,
+    )
 
 
 def _input_text_blocks(value: Input) -> tuple[str, ...]:
@@ -1312,6 +1526,8 @@ async def _response_json_payload(response: object) -> object:
     to_json = getattr(response, "to_json")
     try:
         return await to_json()
+    except ExecutionInputRequiredError:
+        raise
     except Exception as exc:
         raise TaskProviderStructuredOutputError() from exc
 
@@ -1336,6 +1552,14 @@ async def _response_text(response: object) -> str:
     return str(type(response).__name__)
 
 
+async def _close_agent_response(response: object) -> None:
+    close = getattr(response, "aclose", None)
+    if callable(close):
+        result = close()
+        if isawaitable(result):
+            await result
+
+
 def _is_json_value(value: object) -> bool:
     if value is None or isinstance(value, str | bool | int | float):
         return not isinstance(value, float) or value == value
@@ -1357,6 +1581,21 @@ def _agent_target_issue(*, path: str) -> TaskValidationIssue:
         hint=(
             "Use a readable agent definition with valid agent and engine"
             " sections."
+        ),
+        category=TaskValidationCategory.UNSUPPORTED,
+    )
+
+
+def _durable_map_reduce_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="task.file_delivery.unsupported",
+        path="input.files",
+        message=(
+            "Detached durable input is unavailable during agent map-reduce."
+        ),
+        hint=(
+            "Use a single-call delivery strategy or a non-durable agent "
+            "runtime until composite checkpoints are supported."
         ),
         category=TaskValidationCategory.UNSUPPORTED,
     )

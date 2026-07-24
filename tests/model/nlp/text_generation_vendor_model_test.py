@@ -173,7 +173,12 @@ class CallTestCase(IsolatedAsyncioTestCase):
         model._messages = MagicMock(return_value=messages)
 
         async def fake_model(
-            model_id, msgs, opts, *, tool=None, use_async_generator=True
+            model_id,
+            msgs,
+            opts,
+            *,
+            capability=None,
+            use_async_generator=True,
         ):
             self.assertEqual(model_id, "m")
             self.assertIs(msgs, messages)
@@ -187,14 +192,14 @@ class CallTestCase(IsolatedAsyncioTestCase):
             "input",
             system_prompt="sys",
             settings=gen_settings,
-            tool=None,
+            capability=None,
         )
         model._messages.assert_called_once_with("input", "sys", None, None)
         model._model.assert_awaited_once_with(
             "m",
             messages,
             gen_settings,
-            tool=None,
+            capability=None,
             use_async_generator=True,
         )
         self.assertIsInstance(response, TextGenerationResponse)

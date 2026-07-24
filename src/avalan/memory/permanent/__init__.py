@@ -1,12 +1,12 @@
 from ...entities import (
     EngineMessage,
-    MessageContentImage,
-    MessageContentText,
+    EngineMessageIdempotencyKey,
     MessageRole,
     TextPartition,
 )
 from ...memory import MemoryStore as MemoryStoreBase
 from ...memory import MessageMemory
+from .codec import decode_message_data, encode_message_data
 
 from abc import abstractmethod
 from collections.abc import Mapping
@@ -232,6 +232,7 @@ class PermanentMessageMemory(MessageMemory):
         engine_message: EngineMessage,
         partitions: list[TextPartition],
     ) -> None:
+        """Persist a message idempotently when it carries a stable key."""
         raise NotImplementedError()
 
     @abstractmethod
@@ -267,17 +268,12 @@ class PermanentMessageMemory(MessageMemory):
         message_id: UUID | None = None,
     ) -> tuple[PermanentMessage, list[PermanentMessagePartition]]:
         if message_id is None:
-            message_id = uuid4()
-        content = engine_message.message.content
-        data = (
-            content.text
-            if isinstance(content, MessageContentText)
-            else (
-                str(content.image_url)
-                if isinstance(content, MessageContentImage)
-                else str(content)
+            message_id = (
+                engine_message.idempotency_key.value
+                if engine_message.idempotency_key is not None
+                else uuid4()
             )
-        )
+        data = encode_message_data(engine_message.message)
 
         message = PermanentMessage(
             id=message_id,
@@ -302,6 +298,16 @@ class PermanentMessageMemory(MessageMemory):
             for i, p in enumerate(partitions)
         ]
         return message, message_partitions
+
+    @staticmethod
+    def _decode_message(message: PermanentMessage) -> EngineMessage:
+        role = MessageRole(message.author)
+        return EngineMessage(
+            agent_id=message.agent_id,
+            model_id=message.model_id,
+            message=decode_message_data(role, message.data),
+            idempotency_key=EngineMessageIdempotencyKey(value=message.id),
+        )
 
     @staticmethod
     def _build_session(

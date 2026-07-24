@@ -128,13 +128,8 @@ class RecordingToolResolver:
     def list_tools(self) -> list[ToolDescriptor]:
         return self.manager.list_tools()
 
-    def resolve_tool_name(
-        self, name: str, *, provider_originated: bool = False
-    ) -> ToolNameResolution:
-        return self.manager.resolve_tool_name(
-            name,
-            provider_originated=provider_originated,
-        )
+    def resolve_tool_name(self, name: str) -> ToolNameResolution:
+        return self.manager.resolve_tool_name(name)
 
     def validate_tool_call(self, call: ToolCall) -> ToolCallDiagnostic | None:
         return self.manager.validate_tool_call(call)
@@ -156,9 +151,7 @@ class StaticToolResolver:
     def list_tools(self) -> list[ToolDescriptor]:
         return self.descriptors
 
-    def resolve_tool_name(
-        self, name: str, *, provider_originated: bool = False
-    ) -> ToolNameResolution:
+    def resolve_tool_name(self, name: str) -> ToolNameResolution:
         return ToolNameResolution(
             requested_name=name,
             status=ToolNameResolutionStatus.EXACT,

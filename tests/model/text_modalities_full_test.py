@@ -487,7 +487,7 @@ def test_text_generation_call_local_uses_manual_sampling(
             local_engine_uri,
             model,
             operation,
-            tool=None,
+            capability=None,
         )
     )
     assert result == "result"
@@ -521,13 +521,13 @@ def test_text_generation_call_mlx_branch(
         modality=Modality.TEXT_GENERATION,
         text_params=text_params,
     )
-    tool = object()
+    capability = object()
     result = run(
         modality(
             local_engine_uri,
             model,
             operation,
-            tool=tool,
+            capability=capability,
         )
     )
     assert result == "result"
@@ -537,9 +537,9 @@ def test_text_generation_call_mlx_branch(
         "system_prompt",
         "developer_prompt",
         "settings",
-        "tool",
+        "capability",
     }
-    assert kwargs["tool"] is tool
+    assert kwargs["capability"] is capability
 
 
 def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
@@ -579,9 +579,16 @@ def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
         modality=Modality.TEXT_GENERATION,
         text_params=text_params,
     )
-    tool = object()
+    capability = object()
 
-    result = run(modality(local_engine_uri, model, operation, tool=tool))
+    result = run(
+        modality(
+            local_engine_uri,
+            model,
+            operation,
+            capability=capability,
+        )
+    )
 
     assert result == "result"
     assert len(model.calls) == 1
@@ -593,14 +600,14 @@ def test_text_generation_call_ds4_branch_avoids_tokenizer_kwargs(
         "settings",
         "manual_sampling",
         "pick",
-        "tool",
+        "capability",
     }
     assert kwargs["system_prompt"] == "sys"
     assert kwargs["developer_prompt"] == "dev"
     assert kwargs["settings"] == operation.generation_settings
     assert kwargs["manual_sampling"] is True
     assert kwargs["pick"] == 3
-    assert kwargs["tool"] is tool
+    assert kwargs["capability"] is capability
 
 
 def test_text_generation_call_ds4_branch_forwards_instructions(
@@ -658,9 +665,16 @@ def test_text_generation_call_remote_does_not_probe_mlx(
             developer_prompt="dev",
         ),
     )
-    tool = object()
+    capability = object()
 
-    result = run(modality(remote_engine_uri, model, operation, tool=tool))
+    result = run(
+        modality(
+            remote_engine_uri,
+            model,
+            operation,
+            capability=capability,
+        )
+    )
 
     assert result == "result"
     assert len(model.calls) == 1
@@ -669,9 +683,9 @@ def test_text_generation_call_remote_does_not_probe_mlx(
         "system_prompt",
         "developer_prompt",
         "settings",
-        "tool",
+        "capability",
     }
-    assert kwargs["tool"] is tool
+    assert kwargs["capability"] is capability
 
 
 def test_text_generation_call_remote_forwards_instructions(

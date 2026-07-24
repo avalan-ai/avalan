@@ -1,0 +1,3115 @@
+{
+  "schema_version": 2,
+  "feature": "structured_task_input",
+  "observation_window": "from provider capability composition through terminal public result and cleanup",
+  "domain_side_effect_scope": "all non-input Tool calls, task artifacts, flow effects, protected actions, and sibling agent work caused by the failing branch",
+  "surfaces": [
+    {
+      "id": "cli-model-run-attached-tty",
+      "description": "CLI model using attached controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-model-run-piped-with-tty",
+      "description": "CLI model using piped initial input with a separate controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-model-run-fully-headless-durable",
+      "description": "CLI model using fully headless durable controller.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-model-run-sessionless",
+      "description": "CLI model using sessionless execution without retained continuation.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-agent-run-attached-tty",
+      "description": "CLI agent using attached controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-agent-run-piped-with-tty",
+      "description": "CLI agent using piped initial input with a separate controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-agent-run-fully-headless-durable",
+      "description": "CLI agent using fully headless durable controller.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-agent-run-sessionless",
+      "description": "CLI agent using sessionless execution without retained continuation.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-flow-run-attached-tty",
+      "description": "CLI flow using attached controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-flow-run-piped-with-tty",
+      "description": "CLI flow using piped initial input with a separate controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-flow-run-fully-headless-durable",
+      "description": "CLI flow using fully headless durable controller.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-flow-run-sessionless",
+      "description": "CLI flow using sessionless execution without retained continuation.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-direct-attached-tty",
+      "description": "CLI task-direct using attached controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-direct-piped-with-tty",
+      "description": "CLI task-direct using piped initial input with a separate controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-direct-fully-headless-durable",
+      "description": "CLI task-direct using fully headless durable controller.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-direct-sessionless",
+      "description": "CLI task-direct using sessionless execution without retained continuation.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-enqueue-worker-attached-tty",
+      "description": "CLI task-enqueue-worker using attached controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-enqueue-worker-piped-with-tty",
+      "description": "CLI task-enqueue-worker using piped initial input with a separate controlling terminal.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-enqueue-worker-fully-headless-durable",
+      "description": "CLI task-enqueue-worker using fully headless durable controller.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-task-enqueue-worker-sessionless",
+      "description": "CLI task-enqueue-worker using sessionless execution without retained continuation.",
+      "active_from_phase": 7
+    },
+    {
+      "id": "cli-agent-serve",
+      "description": "agent serve remote host.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "cli-agent-proxy",
+      "description": "agent proxy remote host.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "cli-flow-inspect",
+      "description": "CLI flow inspect control.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "cli-flow-trace",
+      "description": "CLI flow trace control.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "cli-flow-cancel",
+      "description": "CLI flow cancel control.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "cli-flow-resume",
+      "description": "CLI flow resume control.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "cli-task-inspect",
+      "description": "CLI task inspect control.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "cli-task-events",
+      "description": "CLI task events control.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "sdk-attached",
+      "description": "Public async SDK with an attached handler.",
+      "active_from_phase": 6
+    },
+    {
+      "id": "sdk-headless-predeclared",
+      "description": "Headless SDK with trusted predeclared values.",
+      "active_from_phase": 6
+    },
+    {
+      "id": "sdk-headless-durable",
+      "description": "Headless SDK with a durable external controller.",
+      "active_from_phase": 6
+    },
+    {
+      "id": "sdk-serverless-durable",
+      "description": "Serverless SDK host with durable handoff before process exit.",
+      "active_from_phase": 6
+    },
+    {
+      "id": "sdk-sessionless",
+      "description": "SDK host with no handler and no retained continuation.",
+      "active_from_phase": 6
+    },
+    {
+      "id": "http-engine",
+      "description": "Authenticated HTTP surface engine.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-chat-completions-stream",
+      "description": "Authenticated HTTP surface chat-completions-stream.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-chat-completions-nonstream",
+      "description": "Authenticated HTTP surface chat-completions-nonstream.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-responses-stream",
+      "description": "Authenticated HTTP surface responses-stream.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-responses-nonstream",
+      "description": "Authenticated HTTP surface responses-nonstream.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-run",
+      "description": "Authenticated HTTP surface flow-run.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-inspect",
+      "description": "Authenticated HTTP surface flow-inspect.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-trace",
+      "description": "Authenticated HTTP surface flow-trace.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-events-json",
+      "description": "Authenticated HTTP surface flow-events-json.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-events-stream",
+      "description": "Authenticated HTTP surface flow-events-stream.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-cancel",
+      "description": "Authenticated HTTP surface flow-cancel.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-flow-resume",
+      "description": "Authenticated HTTP surface flow-resume.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "mcp-inbound-elicitation-form",
+      "description": "MCP direction and mode inbound-elicitation-form.",
+      "active_from_phase": 10
+    },
+    {
+      "id": "mcp-inbound-elicitation-url-auth",
+      "description": "MCP direction and mode inbound-elicitation-url-auth.",
+      "active_from_phase": 10
+    },
+    {
+      "id": "mcp-inbound-task",
+      "description": "MCP direction and mode inbound-task.",
+      "active_from_phase": 10
+    },
+    {
+      "id": "mcp-downstream-elicitation",
+      "description": "MCP direction and mode downstream-elicitation.",
+      "active_from_phase": 10
+    },
+    {
+      "id": "a2a-server",
+      "description": "A2A structured input server direction.",
+      "active_from_phase": 11
+    },
+    {
+      "id": "a2a-downstream",
+      "description": "A2A structured input downstream direction.",
+      "active_from_phase": 11
+    },
+    {
+      "id": "task-target-agent-direct",
+      "description": "Task target agent in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-agent-queue",
+      "description": "Task target agent in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-flow-direct",
+      "description": "Task target flow in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-flow-queue",
+      "description": "Task target flow in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-task-direct",
+      "description": "Task target task in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-task-queue",
+      "description": "Task target task in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-model-direct",
+      "description": "Task target model in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-model-queue",
+      "description": "Task target model in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-callable-direct",
+      "description": "Task target callable in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-callable-queue",
+      "description": "Task target callable in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-tool-direct",
+      "description": "Task target tool in direct mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-target-tool-queue",
+      "description": "Task target tool in queue mode.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-client-inspect",
+      "description": "Public TaskClient inspect control.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-client-events",
+      "description": "Public TaskClient events control.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "task-client-cancel",
+      "description": "Public TaskClient cancel control.",
+      "active_from_phase": 5
+    },
+    {
+      "id": "flow-node-input",
+      "description": "Strict flow node kind input.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-constant",
+      "description": "Strict flow node kind constant.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-pass-through",
+      "description": "Strict flow node kind pass-through.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-select",
+      "description": "Strict flow node kind select.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-validation",
+      "description": "Strict flow node kind validation.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-decision",
+      "description": "Strict flow node kind decision.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-join",
+      "description": "Strict flow node kind join.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-agent",
+      "description": "Strict flow node kind agent.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-tool",
+      "description": "Strict flow node kind tool.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-file-conversion",
+      "description": "Strict flow node kind file-conversion.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-human-review",
+      "description": "Strict flow node kind human-review.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-notification",
+      "description": "Strict flow node kind notification.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "flow-node-subflow",
+      "description": "Strict flow node kind subflow.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "nested-agent-branch",
+      "description": "Nested-agent branch with origin-scoped routing.",
+      "active_from_phase": 9
+    },
+    {
+      "id": "http-input-inspect",
+      "description": "Planned authenticated structured-input inspection endpoint.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-input-poll",
+      "description": "Planned authenticated structured-input polling endpoint.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-input-resolve",
+      "description": "Planned authenticated structured-input resolution endpoint.",
+      "active_from_phase": 8
+    },
+    {
+      "id": "http-input-cancel",
+      "description": "Planned authenticated structured-input cancellation endpoint.",
+      "active_from_phase": 8
+    }
+  ],
+  "conditions": [
+    {
+      "id": "INPUT-F-01",
+      "description": "No input-capable host is available.",
+      "active_from_phase": 3,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-02",
+      "description": "Initial standard input is piped or closed.",
+      "active_from_phase": 7,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-03",
+      "description": "The controlling terminal disappears while waiting.",
+      "active_from_phase": 7,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-04",
+      "description": "A submitted answer has the wrong semantic type.",
+      "active_from_phase": 1,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-05",
+      "description": "A submitted selection contains an unknown choice value.",
+      "active_from_phase": 1,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-06",
+      "description": "An accepted response omits a required answer.",
+      "active_from_phase": 1,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-07",
+      "description": "An authorized semantically identical resolution is repeated.",
+      "active_from_phase": 2,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-08",
+      "description": "A conflicting second resolution follows the winner.",
+      "active_from_phase": 2,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-09",
+      "description": "The continuation has expired before resolution.",
+      "active_from_phase": 5,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-10",
+      "description": "The containing run is cancelled with pending input.",
+      "active_from_phase": 4,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-11",
+      "description": "The originating turn is superseded.",
+      "active_from_phase": 4,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-12",
+      "description": "A durable synchronous caller's input handoff wait budget is exhausted while the required interaction remains pending.",
+      "active_from_phase": 6,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-13",
+      "description": "An advisory wait budget is exhausted.",
+      "active_from_phase": 6,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-14",
+      "description": "A renderer cannot honor an advisory UI hint.",
+      "active_from_phase": 7,
+      "requirement_id": "INPUT-N-106"
+    },
+    {
+      "id": "INPUT-F-15",
+      "description": "A protocol peer lacks the negotiated capability.",
+      "active_from_phase": 3,
+      "requirement_id": "INPUT-N-106"
+    }
+  ],
+  "applicability_rules": [
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "task-target-agent-direct",
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=task.interaction_unavailable_completed.v1",
+      "status_or_exit": "task_state=succeeded",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-durable",
+        "sdk-headless-predeclared",
+        "sdk-serverless-durable",
+        "sdk-sessionless"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=sdk.failed.v1",
+      "status_or_exit": "result=AgentRunFailed",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-agent-run-sessionless",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-flow-run-sessionless",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-model-run-sessionless",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-direct-sessionless",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty",
+        "cli-task-enqueue-worker-sessionless"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=cli.unavailable.v1",
+      "status_or_exit": "exit=69",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "cli-agent-proxy",
+        "cli-agent-serve",
+        "http-chat-completions-nonstream",
+        "http-chat-completions-stream",
+        "http-engine",
+        "http-flow-resume",
+        "http-flow-run",
+        "http-responses-nonstream",
+        "http-responses-stream"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=http.unavailable.v1",
+      "status_or_exit": "http=503",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "cli-flow-resume",
+        "flow-node-agent",
+        "flow-node-constant",
+        "flow-node-decision",
+        "flow-node-file-conversion",
+        "flow-node-human-review",
+        "flow-node-input",
+        "flow-node-join",
+        "flow-node-notification",
+        "flow-node-pass-through",
+        "flow-node-select",
+        "flow-node-subflow",
+        "flow-node-tool",
+        "flow-node-validation"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=flow.interaction_unavailable.v1",
+      "status_or_exit": "flow_state=running",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=nested.interaction_unavailable.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=task.interaction_unavailable.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-elicitation-url-auth",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=mcp.unavailable_error.v1",
+      "status_or_exit": "jsonrpc_error=-32001",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=a2a.unavailable_error.v1",
+      "status_or_exit": "jsonrpc_error=-31910",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-01",
+      "surface_ids": [
+        "task-target-callable-direct",
+        "task-target-callable-queue",
+        "task-target-model-direct",
+        "task-target-model-queue",
+        "task-target-task-direct",
+        "task-target-task-queue",
+        "task-target-tool-direct",
+        "task-target-tool-queue"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=task.interaction_unavailable.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01"
+    },
+    {
+      "condition_id": "INPUT-F-02",
+      "surface_ids": [
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->answered",
+      "public_result": "envelope=cli.completed.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_02"
+    },
+    {
+      "condition_id": "INPUT-F-03",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=cli.cancelled.v1",
+      "status_or_exit": "exit=130",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_03"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending_attached.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "exception=InputValidationError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=cli.validation_error.v1",
+      "status_or_exit": "interaction_state=pending",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.observation_pending.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.validation_error.v1",
+      "status_or_exit": "http=422",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.interaction_pending.v1",
+      "status_or_exit": "flow_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=nested.interaction_pending.v1",
+      "status_or_exit": "branch_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=mcp.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-04",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=a2a.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending_attached.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "exception=InputValidationError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=cli.validation_error.v1",
+      "status_or_exit": "interaction_state=pending",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.observation_pending.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.validation_error.v1",
+      "status_or_exit": "http=422",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.interaction_pending.v1",
+      "status_or_exit": "flow_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=nested.interaction_pending.v1",
+      "status_or_exit": "branch_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=mcp.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-05",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=a2a.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending_attached.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.validation_error.v1",
+      "status_or_exit": "exception=InputValidationError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=cli.validation_error.v1",
+      "status_or_exit": "interaction_state=pending",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.observation_pending.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.validation_error.v1",
+      "status_or_exit": "http=422",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.interaction_pending.v1",
+      "status_or_exit": "flow_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=nested.interaction_pending.v1",
+      "status_or_exit": "branch_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=mcp.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-06",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=a2a.invalid_params_error.v1",
+      "status_or_exit": "jsonrpc_error=-32602",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered_queued.v1",
+      "status_or_exit": "task_state=queued",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=sdk.resolution_accepted.v1",
+      "status_or_exit": "broker_result=InteractionStoreReplayed",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=sdk.resolution_accepted.v1",
+      "status_or_exit": "result=InputResolutionAccepted",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.observation_answered.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=cli.resolution_accepted.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.observation_answered.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=http.observation_answered.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=http.resolution_accepted.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=flow.interaction_answered.v1",
+      "status_or_exit": "flow_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=flow.observation_answered.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=nested.interaction_answered.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=mcp.task_working.v1",
+      "status_or_exit": "task_status=working",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-07",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=a2a.task_working.v1",
+      "status_or_exit": "task_state=TASK_STATE_WORKING",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered_queued.v1",
+      "status_or_exit": "task_state=queued",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=sdk.already_resolved.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=sdk.already_resolved.v1",
+      "status_or_exit": "exception=InputAlreadyResolvedError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.observation_answered.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=cli.already_resolved.v1",
+      "status_or_exit": "exit=73",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.observation_answered.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=http.already_resolved.v1",
+      "status_or_exit": "http=409",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=http.observation_answered.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=flow.interaction_answered.v1",
+      "status_or_exit": "flow_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=flow.observation_answered.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=nested.interaction_answered.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=task.interaction_answered.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=mcp.conflict_error.v1",
+      "status_or_exit": "jsonrpc_error=-32009",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-08",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "answered->answered",
+      "public_result": "envelope=a2a.conflict_error.v1",
+      "status_or_exit": "jsonrpc_error=-31911",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=task.interaction_expired.v1",
+      "status_or_exit": "task_state=expired",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=task.interaction_expired_attached.v1",
+      "status_or_exit": "task_state=failed",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=sdk.expired.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=sdk.expired.v1",
+      "status_or_exit": "exception=InputExpiredError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=task.observation_expired.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=cli.expired.v1",
+      "status_or_exit": "exit=74",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=task.observation_expired.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=http.expired.v1",
+      "status_or_exit": "http=410",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=http.observation_expired.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=flow.interaction_expired.v1",
+      "status_or_exit": "flow_state=failed",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=flow.observation_expired.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=nested.interaction_expired.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=task.interaction_expired.v1",
+      "status_or_exit": "task_state=expired",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=mcp.expired_error.v1",
+      "status_or_exit": "jsonrpc_error=-32010",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-09",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->expired",
+      "public_result": "envelope=a2a.expired_error.v1",
+      "status_or_exit": "jsonrpc_error=-31912",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "task-client-cancel"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=task.cancellation_ack.v1",
+      "status_or_exit": "client_result=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "task-target-agent-direct",
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=task.interaction_cancelled.v1",
+      "status_or_exit": "task_state=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=sdk.cancelled.v1",
+      "status_or_exit": "broker_result=CancelInteractionApplied",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=sdk.cancelled.v1",
+      "status_or_exit": "task_state=TaskRunState.CANCELLED",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=task.observation_cancelled.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=cli.cancelled.v1",
+      "status_or_exit": "exit=130",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=task.observation_cancelled.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "http-flow-cancel"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=http.cancellation_ack.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "cli-agent-proxy",
+        "cli-agent-serve",
+        "http-chat-completions-nonstream",
+        "http-chat-completions-stream",
+        "http-engine",
+        "http-flow-run",
+        "http-responses-nonstream",
+        "http-responses-stream"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=http.cancelled.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=http.cancelled.v1",
+      "status_or_exit": "http=409",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=http.observation_cancelled.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "cli-flow-cancel"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=flow.cancellation_ack.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=flow.interaction_cancelled.v1",
+      "status_or_exit": "flow_state=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=flow.observation_cancelled.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=nested.interaction_cancelled.v1",
+      "status_or_exit": "branch_state=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=task.interaction_cancelled.v1",
+      "status_or_exit": "task_state=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=mcp.task_cancelled.v1",
+      "status_or_exit": "task_status=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-10",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->cancelled",
+      "public_result": "envelope=a2a.task_canceled.v1",
+      "status_or_exit": "task_state=TASK_STATE_CANCELED",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "task-target-agent-direct"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=task.interaction_superseded_attached.v1",
+      "status_or_exit": "task_state=failed",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 5,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=task.interaction_superseded_cancelled.v1",
+      "status_or_exit": "task_state=cancelled",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-predeclared"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=sdk.superseded.v1",
+      "status_or_exit": "broker_result=ResolveInteractionRejected",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=sdk.superseded.v1",
+      "status_or_exit": "exception=InputSupersededError",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=task.observation_superseded.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=cli.superseded.v1",
+      "status_or_exit": "exit=75",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=task.observation_superseded.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=http.observation_superseded.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "http-input-resolve"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=http.superseded.v1",
+      "status_or_exit": "http=409",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=flow.interaction_superseded.v1",
+      "status_or_exit": "flow_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=flow.observation_superseded.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=nested.interaction_superseded.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=task.interaction_superseded.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=mcp.conflict_error.v1",
+      "status_or_exit": "jsonrpc_error=-32009",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-11",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->superseded",
+      "public_result": "envelope=a2a.superseded_error.v1",
+      "status_or_exit": "jsonrpc_error=-31913",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "sdk-headless-durable",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=sdk.input_required.v1",
+      "status_or_exit": "result=AgentRunInputRequired",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "task-target-agent-direct",
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "cli-agent-run-fully-headless-durable",
+        "cli-flow-run-fully-headless-durable",
+        "cli-model-run-fully-headless-durable",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-enqueue-worker-fully-headless-durable"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=cli.input_required.v1",
+      "status_or_exit": "exit=75",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "cli-agent-proxy",
+        "cli-agent-serve",
+        "http-chat-completions-nonstream",
+        "http-chat-completions-stream",
+        "http-engine",
+        "http-flow-run",
+        "http-responses-nonstream",
+        "http-responses-stream"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.input_required.v1",
+      "status_or_exit": "http=202",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=http.observation_pending.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.interaction_pending.v1",
+      "status_or_exit": "flow_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=flow.observation_pending.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=nested.interaction_pending.v1",
+      "status_or_exit": "branch_state=paused",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=task.interaction_pending.v1",
+      "status_or_exit": "task_state=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=mcp.task_input_required.v1",
+      "status_or_exit": "task_status=input_required",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-12",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->pending",
+      "public_result": "envelope=a2a.task_input_required.v1",
+      "status_or_exit": "task_state=TASK_STATE_INPUT_REQUIRED",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "sdk-attached",
+        "sdk-headless-durable",
+        "sdk-headless-predeclared",
+        "sdk-serverless-durable"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=sdk.completed.v1",
+      "status_or_exit": "result=AgentRunCompleted",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "task-target-agent-direct",
+        "task-target-agent-queue"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=task.interaction_timed_out.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "task-client-events",
+        "task-client-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=task.observation_timed_out.v1",
+      "status_or_exit": "client_result=ok",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "cli-task-events",
+        "cli-task-inspect"
+      ],
+      "active_from_phase": 6,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=task.observation_timed_out.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-fully-headless-durable",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-fully-headless-durable",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-fully-headless-durable",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-fully-headless-durable",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-fully-headless-durable",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=cli.timed_out.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "http-flow-events-json",
+        "http-flow-events-stream",
+        "http-flow-inspect",
+        "http-flow-trace",
+        "http-input-inspect",
+        "http-input-poll"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=http.observation_timed_out.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "cli-agent-proxy",
+        "cli-agent-serve",
+        "http-chat-completions-nonstream",
+        "http-chat-completions-stream",
+        "http-engine",
+        "http-flow-run",
+        "http-responses-nonstream",
+        "http-responses-stream"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=http.timed_out.v1",
+      "status_or_exit": "http=200",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "flow-node-agent",
+        "flow-node-subflow"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=flow.interaction_timed_out.v1",
+      "status_or_exit": "flow_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "cli-flow-inspect",
+        "cli-flow-trace"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=flow.observation_timed_out.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "nested-agent-branch"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=nested.interaction_timed_out.v1",
+      "status_or_exit": "branch_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "task-target-flow-direct",
+        "task-target-flow-queue"
+      ],
+      "active_from_phase": 9,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=task.interaction_timed_out.v1",
+      "status_or_exit": "task_state=running",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=mcp.task_working.v1",
+      "status_or_exit": "task_status=working",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-13",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->timed_out",
+      "public_result": "envelope=a2a.task_working.v1",
+      "status_or_exit": "task_state=TASK_STATE_WORKING",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13"
+    },
+    {
+      "condition_id": "INPUT-F-14",
+      "surface_ids": [
+        "cli-agent-run-attached-tty",
+        "cli-agent-run-piped-with-tty",
+        "cli-flow-run-attached-tty",
+        "cli-flow-run-piped-with-tty",
+        "cli-model-run-attached-tty",
+        "cli-model-run-piped-with-tty",
+        "cli-task-direct-attached-tty",
+        "cli-task-direct-piped-with-tty",
+        "cli-task-enqueue-worker-attached-tty",
+        "cli-task-enqueue-worker-piped-with-tty"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->answered",
+      "public_result": "envelope=cli.completed.v1",
+      "status_or_exit": "exit=0",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_14"
+    },
+    {
+      "condition_id": "INPUT-F-14",
+      "surface_ids": [
+        "sdk-attached"
+      ],
+      "active_from_phase": 12,
+      "expected_transition": "pending->answered",
+      "public_result": "envelope=sdk.completed.v1",
+      "status_or_exit": "result=CompletedResult",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_14"
+    },
+    {
+      "condition_id": "INPUT-F-14",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form",
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "pending->answered",
+      "public_result": "envelope=mcp.task_working.v1",
+      "status_or_exit": "task_status=working",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14"
+    },
+    {
+      "condition_id": "INPUT-F-14",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "pending->answered",
+      "public_result": "envelope=a2a.task_working.v1",
+      "status_or_exit": "task_state=TASK_STATE_WORKING",
+      "provider_call_count": 2,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14"
+    },
+    {
+      "condition_id": "INPUT-F-15",
+      "surface_ids": [
+        "cli-agent-proxy",
+        "cli-agent-serve",
+        "http-chat-completions-nonstream",
+        "http-chat-completions-stream",
+        "http-engine",
+        "http-flow-run",
+        "http-responses-nonstream",
+        "http-responses-stream"
+      ],
+      "active_from_phase": 8,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=http.unavailable.v1",
+      "status_or_exit": "http=503",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_15"
+    },
+    {
+      "condition_id": "INPUT-F-15",
+      "surface_ids": [
+        "mcp-downstream-elicitation",
+        "mcp-inbound-elicitation-form"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=mcp.unavailable_error.v1",
+      "status_or_exit": "jsonrpc_error=-32001",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15"
+    },
+    {
+      "condition_id": "INPUT-F-15",
+      "surface_ids": [
+        "mcp-inbound-task"
+      ],
+      "active_from_phase": 10,
+      "expected_transition": "running->running",
+      "public_result": "envelope=mcp.ordinary_result.v1",
+      "status_or_exit": "result=ordinary",
+      "provider_call_count": 1,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15"
+    },
+    {
+      "condition_id": "INPUT-F-15",
+      "surface_ids": [
+        "a2a-downstream",
+        "a2a-server"
+      ],
+      "active_from_phase": 11,
+      "expected_transition": "created->unavailable",
+      "public_result": "envelope=a2a.extension_required_error.v1",
+      "status_or_exit": "jsonrpc_error=-32008",
+      "provider_call_count": 0,
+      "domain_side_effect_count": 0,
+      "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
+    }
+  ],
+  "matrix_sha256": "ac54c4a83110b537e0b742affac6e767a65057441e61a325b20a979c2b544de4"
+}

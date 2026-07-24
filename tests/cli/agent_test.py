@@ -45,6 +45,7 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallParseOutcome,
     ToolCallRecoveryFormat,
     ToolCallToken,
     ToolFormat,
@@ -56,6 +57,7 @@ from avalan.memory import RecentMessageMemory
 from avalan.memory.manager import MemoryManager
 from avalan.memory.permanent import PermanentMessageMemory, VectorFunction
 from avalan.model.call import ModelCall, ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.parsers.tool import ToolCallResponseParser
 from avalan.model.stream import (
@@ -4587,19 +4589,22 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
         )
         fallback.assert_not_called()
 
-    async def test_run_passes_tool_manager_to_model_call(self):
+    async def test_run_passes_capability_catalog_to_model_call(self):
         self.args.tool = ["math"]
 
-        tool_manager = MagicMock(spec=ToolManager)
+        tool_manager = ToolManager.create_instance()
         self.orch.tool = tool_manager
+        capability = ModelCapabilityCatalog.create(
+            tool_manager.export_model_capability_seed()
+        )
 
         class DummyEngine:
             model_id = "m"
             model_type = "t"
-            last_tool = None
+            last_capability = None
 
-            async def __call__(self, *_a, tool=None, **_k):
-                DummyEngine.last_tool = tool
+            async def __call__(self, *_a, capability=None, **_k):
+                DummyEngine.last_capability = capability
                 return "out"
 
             def input_token_count(self, *_a, **_k):
@@ -4607,11 +4612,14 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
 
         class DummyModelManager:
             def __init__(self) -> None:
-                self.passed_tool = None
+                self.passed_capability = None
 
             async def __call__(self, task: ModelCall):
-                self.passed_tool = task.tool
-                return await task.model(None, tool=task.tool)
+                self.passed_capability = task.capability
+                return await task.model(
+                    None,
+                    capability=task.capability,
+                )
 
         engine_uri = EngineUri(
             host=None,
@@ -4641,6 +4649,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 return {}
 
             async def _run(self, context: ModelCallContext, input, **_kwargs):
+                assert context.capability is capability
                 operation = Operation(
                     generation_settings=GenerationSettings(),
                     input=input,
@@ -4655,7 +4664,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                         engine_uri=engine_uri,
                         model=engine,
                         operation=operation,
-                        tool=self._tool,
+                        capability=context.capability,
                         context=context,
                     )
                 )
@@ -4674,6 +4683,7 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             context = ModelCallContext(
                 specification=Specification(role="assistant", goal=None),
                 input=Message(role=MessageRole.USER, content="hi"),
+                capability=capability,
             )
             await agent(context)
             return DummyOrchestratorResponse()
@@ -4709,8 +4719,15 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 self.args, self.console, self.theme, self.hub, self.logger, 1
             )
 
-        self.assertIs(model_manager.passed_tool, tool_manager)
-        self.assertIs(DummyEngine.last_tool, tool_manager)
+        self.assertIsInstance(
+            model_manager.passed_capability,
+            ModelCapabilityCatalog,
+        )
+        self.assertIs(model_manager.passed_capability, capability)
+        self.assertIs(
+            DummyEngine.last_capability,
+            capability,
+        )
 
     async def test_tool_format_sets_tool_manager_format(self):
         self.args.specifications_file = None
@@ -5342,12 +5359,15 @@ class CliAgentMixedTokensTestCase(unittest.IsolatedAsyncioTestCase):
                 reasoning_settings=ReasoningSettings(),
                 logger=getLogger(),
             )
-            tm = MagicMock()
-            tm.is_potential_tool_call.return_value = True
-            tm.get_calls.return_value = None
+            capability = MagicMock(spec=ModelCapabilityCatalog)
+            capability.is_potential_tool_call.return_value = True
+            capability.parse_calls.return_value = ToolCallParseOutcome()
+            capability.stream_buffer_diagnostics.return_value = []
             base_parser = ToolCallParser()
-            tm.tool_call_status.side_effect = base_parser.tool_call_status
-            tp = ToolCallResponseParser(tm, None)
+            capability.tool_call_status.side_effect = (
+                base_parser.tool_call_status
+            )
+            tp = ToolCallResponseParser(capability, None)
             sequence = [
                 "X",
                 "<think>",

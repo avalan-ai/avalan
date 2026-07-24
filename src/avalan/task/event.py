@@ -3,6 +3,13 @@ from ..event import (
     EventObservabilityPayload,
     EventPayloadKind,
     EventType,
+    validate_observer_id,
+)
+from ..interaction import (
+    AnswerProvenance,
+    InputErrorCode,
+    RequestState,
+    ResolutionStatus,
 )
 from ..types import (
     JsonValue,
@@ -85,7 +92,24 @@ _STREAM_TERMINAL_OUTCOMES = frozenset(
         "cancelled",
         "completed",
         "errored",
+        "input_required",
     }
+)
+_INTERACTION_OBSERVABILITY_BOOLEAN_FIELDS = frozenset(
+    {
+        "duplicate",
+        "stale",
+    }
+)
+_INTERACTION_REQUEST_STATES = frozenset(item.value for item in RequestState)
+_INTERACTION_RESOLUTION_STATUSES = frozenset(
+    item.value for item in ResolutionStatus
+)
+_INTERACTION_PROVENANCE_CATEGORIES = frozenset(
+    item.value for item in AnswerProvenance
+)
+_INTERACTION_VALIDATION_CODES = frozenset(
+    item.value for item in InputErrorCode
 )
 _TELEMETRY_NAME_CHARACTERS = frozenset("._:-")
 _TELEMETRY_NAME_LIMIT = 256
@@ -101,7 +125,44 @@ class TaskEventCategory(StrEnum):
     ENGINE = "engine"
     MEMORY = "memory"
     USAGE = "usage"
+    INTERACTION = "interaction"
     UNKNOWN = "unknown"
+
+
+class TaskInteractionEventType(StrEnum):
+    INPUT_REQUIRED = "task_input_required"
+    INPUT_RESUMED = "task_input_resumed"
+    INPUT_CANCELLED = "task_input_cancelled"
+    INPUT_EXPIRED = "task_input_expired"
+    INPUT_SUPERSEDED = "task_input_superseded"
+
+
+def task_interaction_event_payload(
+    *,
+    event_type: TaskInteractionEventType,
+    request_id: str,
+    continuation_id: str,
+    segment_id: str,
+    next_segment_id: str | None = None,
+) -> TaskEventValue:
+    assert isinstance(event_type, TaskInteractionEventType)
+    _assert_non_empty_string(request_id, "request_id")
+    _assert_non_empty_string(continuation_id, "continuation_id")
+    _assert_non_empty_string(segment_id, "segment_id")
+    if next_segment_id is not None:
+        _assert_non_empty_string(next_segment_id, "next_segment_id")
+        assert event_type in {
+            TaskInteractionEventType.INPUT_RESUMED,
+            TaskInteractionEventType.INPUT_SUPERSEDED,
+        }
+    value: dict[str, object] = {
+        "request_id": request_id,
+        "continuation_id": continuation_id,
+        "segment_id": segment_id,
+    }
+    if next_segment_id is not None:
+        value["next_segment_id"] = next_segment_id
+    return freeze_task_event_value(value)
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -155,6 +216,7 @@ class SanitizedTaskUsageEvent:
     source: UsageSource
     totals: UsageTotals
     attempt_id: str | None = None
+    segment_id: str | None = None
     metadata: Mapping[str, object] | None = None
     event_type: str = _USAGE_OBSERVED_EVENT_TYPE
     category: TaskEventCategory = TaskEventCategory.USAGE
@@ -164,6 +226,11 @@ class SanitizedTaskUsageEvent:
         _assert_non_empty_string(self.run_id, "run_id")
         if self.attempt_id is not None:
             _assert_non_empty_string(self.attempt_id, "attempt_id")
+        if self.segment_id is not None:
+            _assert_non_empty_string(self.segment_id, "segment_id")
+            assert (
+                self.attempt_id is not None
+            ), "segment usage requires an attempt"
         assert isinstance(self.source, UsageSource)
         assert isinstance(self.totals, UsageTotals)
         assert self.totals.has_observations
@@ -228,6 +295,7 @@ def sanitize_raw_task_event(
     )
     assert isinstance(payload, dict)
     _restore_reasoning_observability(event, payload)
+    _restore_interaction_observability(event, payload)
     return SanitizedTaskEventDraft(
         event_type=event_type,
         category=task_event_category(event_type),
@@ -278,6 +346,85 @@ def _restore_reasoning_observability(
     usage = _reasoning_observability_usage(source.get("usage"))
     if usage:
         canonical_stream["usage"] = usage
+
+
+def _restore_interaction_observability(
+    event: object,
+    payload: dict[str, PrivacySafeValue],
+) -> None:
+    observability_payload = getattr(event, "observability_payload", None)
+    if not isinstance(observability_payload, EventObservabilityPayload):
+        return
+    if observability_payload.kind not in {
+        EventPayloadKind.CANONICAL_STREAM,
+        EventPayloadKind.INTERACTION_LIFECYCLE,
+    }:
+        return
+    event_type = _raw_event_type(event)
+    if event_type != EventType.INTERACTION_LIFECYCLE.value:
+        return
+    payload.pop("canonical_stream", None)
+    payload.pop("interaction_lifecycle", None)
+    interaction = _interaction_observability_fields(observability_payload.data)
+    if interaction:
+        payload["interaction_lifecycle"] = interaction
+
+
+def _interaction_observability_fields(
+    source: Mapping[str, object],
+) -> dict[str, PrivacySafeValue]:
+    interaction: dict[str, PrivacySafeValue] = {}
+    for field_name in (
+        "agent_id",
+        "branch_id",
+        "request_id",
+        "run_id",
+        "turn_id",
+    ):
+        value = source.get(field_name)
+        try:
+            interaction[field_name] = validate_observer_id(value, field_name)
+        except AssertionError:
+            return {}
+    task_id = source.get("task_id")
+    if task_id is not None:
+        try:
+            interaction["task_id"] = validate_observer_id(task_id, "task_id")
+        except AssertionError:
+            return {}
+    state = source.get("state")
+    if not isinstance(state, str) or state not in _INTERACTION_REQUEST_STATES:
+        return {}
+    interaction["state"] = state
+    resolution = source.get("resolution_category")
+    if (
+        isinstance(resolution, str)
+        and resolution in _INTERACTION_RESOLUTION_STATUSES
+    ):
+        interaction["resolution_category"] = resolution
+    provenance = source.get("provenance_category")
+    if (
+        isinstance(provenance, str)
+        and provenance in _INTERACTION_PROVENANCE_CATEGORIES
+    ):
+        interaction["provenance_category"] = provenance
+    surface = source.get("surface")
+    if _is_safe_provider_event_type(surface):
+        interaction["surface"] = cast(str, surface)
+    wait_duration_ms = source.get("wait_duration_ms")
+    if _is_non_negative_int(wait_duration_ms):
+        interaction["wait_duration_ms"] = cast(int, wait_duration_ms)
+    validation_code = source.get("validation_code")
+    if (
+        isinstance(validation_code, str)
+        and validation_code in _INTERACTION_VALIDATION_CODES
+    ):
+        interaction["validation_code"] = validation_code
+    for field_name in _INTERACTION_OBSERVABILITY_BOOLEAN_FIELDS:
+        value = source.get(field_name)
+        if isinstance(value, bool):
+            interaction[field_name] = value
+    return interaction
 
 
 def _reasoning_observability_summary(
@@ -412,6 +559,8 @@ def task_event_category(event_type: str) -> TaskEventCategory:
         return TaskEventCategory.MODEL
     if event_type.startswith("memory_"):
         return TaskEventCategory.MEMORY
+    if event_type.startswith("interaction_"):
+        return TaskEventCategory.INTERACTION
     if event_type.startswith("container_"):
         return TaskEventCategory.UNKNOWN
     if event_type in _USAGE_EVENT_TYPES:
@@ -469,6 +618,12 @@ def _raw_event_payload(event: object) -> Mapping[str, object]:
         and observability_payload.kind is EventPayloadKind.CANONICAL_STREAM
     ):
         payload["canonical_stream"] = dict(observability_payload.data)
+    elif (
+        isinstance(observability_payload, EventObservabilityPayload)
+        and observability_payload.kind
+        is EventPayloadKind.INTERACTION_LIFECYCLE
+    ):
+        payload["interaction_lifecycle"] = dict(observability_payload.data)
     started = getattr(event, "started", None)
     finished = getattr(event, "finished", None)
     elapsed = getattr(event, "elapsed", None)

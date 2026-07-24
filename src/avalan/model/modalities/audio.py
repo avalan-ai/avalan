@@ -8,11 +8,11 @@ from ...entities import (
     OperationParameters,
     TransformerEngineSettings,
 )
-from ...tool.manager import ToolManager
 from ..audio.classification import AudioClassificationModel
 from ..audio.generation import AudioGenerationModel
 from ..audio.speech import TextToSpeechModel
 from ..audio.speech_recognition import SpeechRecognitionModel
+from ..capability import ModelCapabilityCatalog
 from .registry import ModalityRegistry
 
 from argparse import Namespace
@@ -64,7 +64,7 @@ class AudioClassificationModality:
         engine_uri: EngineUri,
         model: AudioClassificationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -121,7 +121,7 @@ class AudioSpeechRecognitionModality:
         engine_uri: EngineUri,
         model: SpeechRecognitionModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -180,7 +180,7 @@ class AudioTextToSpeechModality:
         engine_uri: EngineUri,
         model: TextToSpeechModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -245,7 +245,7 @@ class AudioGenerationModality:
         engine_uri: EngineUri,
         model: AudioGenerationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.input

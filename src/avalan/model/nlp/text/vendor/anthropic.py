@@ -10,6 +10,7 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    normalize_tool_arguments,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -23,11 +24,19 @@ from .....model.stream import (
     StreamReasoningRepresentation,
     StreamReasoningSegmentState,
     StreamVisibility,
+    TextGenerationNonStreamResult,
+    TextGenerationNonStreamToolCall,
     TextGenerationSingleStream,
+    TextGenerationStream,
 )
-from .....tool.manager import ToolManager
 from .....types import LooseJsonValue
 from .....utils import to_json, tool_call_diagnostic_payload
+from ....capability import (
+    CorrelatedCapabilityResult,
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
 from . import (
@@ -52,6 +61,16 @@ _ANTHROPIC_USAGE_KEYS = (
     "output_tokens",
     "output_tokens_details",
 )
+
+
+def _mutable_provider_json(value: object) -> object:
+    if isinstance(value, Mapping):
+        return {
+            key: _mutable_provider_json(item) for key, item in value.items()
+        }
+    if isinstance(value, tuple | list):
+        return [_mutable_provider_json(item) for item in value]
+    return value
 
 
 def _field(value: object, attribute: str) -> object | None:
@@ -99,20 +118,20 @@ class AnthropicStream(TextGenerationVendorStream):
     _canonical_ready_tool_call_ids: set[str]
     _canonical_done_tool_call_ids: set[str]
     _reasoning_segments: StreamReasoningSegmentState
-    _tool_manager: ToolManager | None
+    _capability_catalog: ModelCapabilityCatalog | None
 
     def __init__(
         self,
         events: AsyncIterator[object],
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ):
         self._events = events
         self._canonical_tool_blocks = {}
         self._canonical_ready_tool_call_ids = set()
         self._canonical_done_tool_call_ids = set()
         self._reasoning_segments = StreamReasoningSegmentState()
-        self._tool_manager = tool
+        self._capability_catalog = capability
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             async for item in self.canonical_stream(
@@ -277,6 +296,7 @@ class AnthropicStream(TextGenerationVendorStream):
             "id": call_id,
             "name": name,
             "arguments_seen": False,
+            "arguments": "",
         }
         return ()
 
@@ -324,6 +344,7 @@ class AnthropicStream(TextGenerationVendorStream):
                 raise ValueError("anthropic tool call is missing start event")
             call_id = cast(str, block["id"])
             block["arguments_seen"] = True
+            block["arguments"] = cast(str, block["arguments"]) + partial_json
             return (
                 StreamProviderEvent(
                     kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -377,7 +398,27 @@ class AnthropicStream(TextGenerationVendorStream):
                 event_type,
             )
         )
-        result.extend(self._mark_tool_ready(call_id, name, provider_payload))
+        arguments = (
+            cast(str, cached.get("arguments", ""))
+            if cached is not None
+            else ""
+        )
+        if not arguments:
+            tool_input = _field(block, "input")
+            if tool_input not in (None, ""):
+                arguments = (
+                    tool_input
+                    if isinstance(tool_input, str)
+                    else to_json(tool_input)
+                )
+        result.extend(
+            self._mark_tool_ready(
+                call_id,
+                name,
+                arguments,
+                provider_payload,
+            )
+        )
         result.append(
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_DONE,
@@ -431,6 +472,7 @@ class AnthropicStream(TextGenerationVendorStream):
         self,
         call_id: str,
         name: object | None,
+        arguments: str,
         provider_payload: LooseJsonValue | None,
     ) -> tuple[StreamProviderEvent, ...]:
         if call_id in self._canonical_done_tool_call_ids:
@@ -438,15 +480,26 @@ class AnthropicStream(TextGenerationVendorStream):
         if call_id in self._canonical_ready_tool_call_ids:
             return ()
         self._canonical_ready_tool_call_ids.add(call_id)
-        canonical_name = (
-            TextGenerationVendor.canonical_tool_name(
-                name,
-                tool=self._tool_manager,
+        canonical_name = name
+        if isinstance(name, str) and self._capability_catalog is not None:
+            decoded = self._capability_catalog.decode_call(
+                ProviderCapabilityCall(
+                    call_id=call_id,
+                    provider_name=name,
+                    arguments=arguments or None,
+                ),
                 provider_family=ProviderFamily.ANTHROPIC,
             )
-            if isinstance(name, str)
-            else name
-        )
+            canonical_name = (
+                decoded.canonical_name
+                if isinstance(decoded, TaskInputCapabilityCall)
+                else decoded.name
+            )
+        elif isinstance(name, str):
+            try:
+                canonical_name = TextGenerationVendor.canonical_tool_name(name)
+            except AssertionError:
+                pass
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_READY,
@@ -507,9 +560,9 @@ class AnthropicClient(TextGenerationVendor):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
         use_async_generator: bool = True,
-    ) -> TextGenerationVendorStream:
+    ) -> TextGenerationStream:
         self._validate_reasoning_summary_request(settings)
         assert (
             instructions is None
@@ -519,16 +572,30 @@ class AnthropicClient(TextGenerationVendor):
         template_messages = self._template_messages(
             messages,
             ["system"],
-            tool=tool,
+            capability=capability,
         )
         kwargs: dict[str, Any] = {
             "model": model_id,
             "system": system_prompt,
             "messages": template_messages,
             "max_tokens": settings.max_new_tokens,
-            "tools": AnthropicClient._tool_schemas(tool) if tool else [],
-            "tool_choice": {"type": "auto"},
         }
+        schemas = (
+            AnthropicClient._tool_schemas(capability) if capability else None
+        )
+        if schemas:
+            kwargs["tools"] = schemas
+            if settings.tool_choice is None:
+                kwargs["tool_choice"] = {"type": "auto"}
+            else:
+                assert capability is not None
+                provider_name = capability.project(
+                    ProviderFamily.ANTHROPIC
+                ).tool_choice(settings.tool_choice)
+                kwargs["tool_choice"] = {
+                    "type": "tool",
+                    "name": provider_name,
+                }
         if settings.temperature is not None:
             kwargs["temperature"] = settings.temperature
         extra_headers = AnthropicClient._extra_headers(messages)
@@ -543,19 +610,29 @@ class AnthropicClient(TextGenerationVendor):
                 stream = self._client.messages.stream(**kwargs)
                 events = await self._exit_stack.enter_async_context(stream)
                 stream_kwargs: dict[str, Any] = {}
-                if isinstance(tool, ToolManager):
-                    stream_kwargs["tool"] = tool
+                if capability is not None:
+                    stream_kwargs["capability"] = capability
                 return AnthropicStream(events=events, **stream_kwargs)
 
             response = await self._client.messages.create(**kwargs)
-            content = self._non_stream_response_content(response, tool=tool)
-            return cast(
-                TextGenerationVendorStream,
-                TextGenerationSingleStream(
-                    content,
+            answer_text, calls = self._non_stream_response_parts(
+                response,
+                capability=capability,
+            )
+            usage = getattr(response, "usage", None)
+            if calls:
+                return TextGenerationNonStreamResult.from_provider_parts(
+                    answer_text=answer_text,
+                    calls=calls,
                     provider_family=ProviderFamily.ANTHROPIC,
-                    usage=getattr(response, "usage", None),
-                ),
+                    usage=usage,
+                    answer_event_type="message.text",
+                    terminal_event_type="message.completed",
+                )
+            return TextGenerationSingleStream(
+                answer_text,
+                provider_family=ProviderFamily.ANTHROPIC,
+                usage=usage,
             )
         except Exception as error:
             AnthropicClient._translate_api_error(model_id, error)
@@ -566,7 +643,7 @@ class AnthropicClient(TextGenerationVendor):
         messages: list[Message],
         exclude_roles: list[TemplateMessageRole] | None = None,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> list[TemplateMessage]:
         template_messages: list[dict[str, Any]] = []
         excluded_roles = set(exclude_roles or [])
@@ -628,7 +705,7 @@ class AnthropicClient(TextGenerationVendor):
                 if call_id not in tool_call_ids:
                     tool_use_block = AnthropicClient._tool_use_block(
                         call,
-                        tool=tool,
+                        capability=capability,
                     )
                     if last_assistant_index is not None:
                         assistant_message = template_messages[
@@ -664,7 +741,7 @@ class AnthropicClient(TextGenerationVendor):
                     content.append(
                         AnthropicClient._tool_use_block(
                             tool_call,
-                            tool=tool,
+                            capability=capability,
                         )
                     )
                     if tool_call.id is not None:
@@ -725,14 +802,14 @@ class AnthropicClient(TextGenerationVendor):
     def _tool_use_block(
         call: ToolCall | MessageToolCall,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> dict[str, Any]:
         return {
             "type": "tool_use",
             "id": str(call.id) if call.id is not None else "",
             "name": TextGenerationVendor.provider_tool_name(
                 call.name,
-                tool=tool,
+                capability=capability,
                 provider_family=ProviderFamily.ANTHROPIC,
             ),
             "input": call.arguments or {},
@@ -752,7 +829,7 @@ class AnthropicClient(TextGenerationVendor):
                 or diagnostic.requested_name
                 or "tool"
             ),
-            arguments=cast(Any, message.arguments or {}),
+            arguments=normalize_tool_arguments(message.arguments or {}),
         )
 
     @staticmethod
@@ -787,6 +864,21 @@ class AnthropicClient(TextGenerationVendor):
         if isinstance(result, ToolCallError):
             tool_result_content["is_error"] = True
         return {"role": "user", "content": [tool_result_content]}
+
+    @staticmethod
+    def capability_result_message(
+        result: CorrelatedCapabilityResult,
+    ) -> dict[str, Any]:
+        return {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": str(result.call_id),
+                    "content": to_json(result.provider_payload()),
+                }
+            ],
+        }
 
     @staticmethod
     def _output_config(
@@ -914,94 +1006,95 @@ class AnthropicClient(TextGenerationVendor):
         )
 
     @staticmethod
-    def _tool_schemas(tool: ToolManager) -> list[dict[str, Any]] | None:
-        provider_ready = isinstance(tool, ToolManager)
-        schemas = (
-            tool.provider_json_schemas(
-                provider_family=ProviderFamily.ANTHROPIC.value
-            )
-            if provider_ready
-            else tool.json_schemas()
-        )
-        return (
-            [
+    def _tool_schemas(
+        capability: ModelCapabilityCatalog,
+    ) -> list[dict[str, Any]] | None:
+        schemas = capability.project(ProviderFamily.ANTHROPIC).schemas
+        tools: list[dict[str, Any]] = []
+        for schema in schemas:
+            if schema.get("type") != "function":
+                continue
+            function = schema.get("function")
+            if not isinstance(function, Mapping):
+                continue
+            parameters = function.get("parameters")
+            if not isinstance(parameters, Mapping):
+                continue
+            input_schema = _mutable_provider_json(
                 {
-                    "name": (
-                        t["function"]["name"]
-                        if provider_ready
-                        else TextGenerationVendor.encode_tool_name(
-                            t["function"]["name"]
-                        )
-                    ),
-                    "description": t["function"]["description"],
-                    "input_schema": {
-                        **t["function"]["parameters"],
-                        "additionalProperties": False,
-                    },
+                    **parameters,
+                    "additionalProperties": False,
                 }
-                for t in schemas
-                if t["type"] == "function"
-            ]
-            if schemas
-            else None
-        )
+            )
+            tools.append(
+                {
+                    "name": function.get("name", ""),
+                    "description": function.get("description", ""),
+                    "input_schema": input_schema,
+                }
+            )
+        return tools or None
 
     @staticmethod
     def _non_stream_response_content(
         response: object,
         *,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> str:
+        answer_text, calls = AnthropicClient._non_stream_response_parts(
+            response,
+            capability=capability,
+        )
+        return answer_text + "".join(
+            TextGenerationVendor.build_tool_call_text(
+                call.call_id,
+                call.name,
+                call.arguments,
+                tool_name_is_canonical=True,
+            )
+            for call in calls
+        )
+
+    @staticmethod
+    def _non_stream_response_parts(
+        response: object,
+        *,
+        capability: ModelCapabilityCatalog | None = None,
+    ) -> tuple[str, tuple[TextGenerationNonStreamToolCall, ...]]:
         def _get(value: object, attribute: str) -> object | None:
             if isinstance(value, dict):
                 return value.get(attribute)
             return getattr(value, attribute, None)
 
         parts: list[str] = []
+        calls: list[TextGenerationNonStreamToolCall] = []
         content_blocks = _get(response, "content")
         if not isinstance(content_blocks, list):
-            return "".join(parts)
+            return "", ()
         for block in content_blocks:
             block_type = _get(block, "type")
             if block_type == "text":
                 text = _get(block, "text")
-                if isinstance(text, str):
+                if type(text) is str:
                     parts.append(text)
                 continue
 
             if block_type == "tool_use":
                 provider_name = _get(block, "name")
-                canonical_name = (
-                    TextGenerationVendor.canonical_tool_name(
-                        provider_name,
-                        tool=tool,
+                call_id = _get(block, "id")
+                arguments = _get(block, "input")
+                calls.append(
+                    TextGenerationVendor.non_stream_tool_call(
+                        call_id=call_id,
+                        provider_name=provider_name,
+                        arguments=arguments,
+                        capability=capability,
                         provider_family=ProviderFamily.ANTHROPIC,
+                        provider_event_type="message.tool_use",
                     )
-                    if isinstance(provider_name, str)
-                    and isinstance(tool, ToolManager)
-                    else provider_name
                 )
-                if isinstance(tool, ToolManager):
-                    parts.append(
-                        TextGenerationVendor.build_tool_call_text(
-                            _get(block, "id"),
-                            canonical_name,
-                            _get(block, "input"),
-                            tool_name_is_canonical=isinstance(
-                                canonical_name, str
-                            ),
-                        )
-                    )
-                else:
-                    parts.append(
-                        TextGenerationVendor.build_tool_call_text(
-                            _get(block, "id"),
-                            canonical_name,
-                            _get(block, "input"),
-                        )
-                    )
 
-        return "".join(parts)
+        return "".join(parts), tuple(calls)
 
     @staticmethod
     def _error_message(error: Exception) -> str:

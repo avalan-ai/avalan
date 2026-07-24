@@ -411,14 +411,15 @@ class _MCPReasoningSegment:
             self.completed = True
             self.status = "completed"
             self.terminal_outcome = "completed"
-        else:
-            self.completed = False
-            self.status = "incomplete"
-            self.terminal_outcome = (
-                "failed"
-                if outcome is StreamTerminalOutcome.ERRORED
-                else "cancelled"
-            )
+            return
+        self.completed = False
+        self.status = "incomplete"
+        terminal_outcomes = {
+            StreamTerminalOutcome.ERRORED: "failed",
+            StreamTerminalOutcome.CANCELLED: "cancelled",
+            StreamTerminalOutcome.INPUT_REQUIRED: "input_required",
+        }
+        self.terminal_outcome = terminal_outcomes[outcome]
 
 
 class _MCPReasoningOwner:
@@ -1085,6 +1086,7 @@ class StreamResponse(Protocol):
     _response_iterator: AsyncIterator[ResponseItem] | None
 
     async def to_str(self) -> str: ...
+    async def sync_messages(self) -> None: ...
     def __aiter__(self) -> AsyncIterator[ResponseItem]: ...
 
 
@@ -1692,7 +1694,7 @@ async def _stream_mcp_response(
             resource_store, state.resources
         )
         await resource_store.prune_closed()
-        await orchestrator.sync_messages()
+        await orchestrator.sync_messages(response)
         raise
     except CancelledError:
         cancel_event.set()
@@ -1737,7 +1739,7 @@ async def _stream_mcp_response(
                 for payload in emit(message):
                     yield payload
         finally:
-            await orchestrator.sync_messages()
+            await orchestrator.sync_messages(response)
         return
 
     if finished_normally:
@@ -1771,7 +1773,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
 
         snapshot = state.accumulator.snapshot()
@@ -1794,7 +1796,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
         if snapshot.terminal_outcome is StreamTerminalOutcome.ERRORED:
             await _cleanup_mcp_stream_sources(
@@ -1821,7 +1823,7 @@ async def _stream_mcp_response(
                     for payload in emit(message):
                         yield payload
             finally:
-                await orchestrator.sync_messages()
+                await orchestrator.sync_messages(response)
             return
 
         answer_text = sanitize_model_visible_server_protocol_text(
@@ -1888,7 +1890,7 @@ async def _stream_mcp_response(
                 for payload in emit(message):
                     yield payload
         finally:
-            await orchestrator.sync_messages()
+            await orchestrator.sync_messages(response)
 
 
 async def _mcp_notifications(
@@ -1939,6 +1941,10 @@ async def _mcp_canonical_stream_item_notifications(
                 item.sequence,
             )
         )
+        if item.terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+            raise StreamValidationError(
+                "MCP input-required projection is unavailable"
+            )
     if item.kind is StreamItemKind.FLOW_EVENT:
         notifications.append(_canonical_flow_notification(item))
         return notifications
@@ -2210,6 +2216,7 @@ def _canonical_reasoning_deltas(
         StreamItemKind.STREAM_COMPLETED,
         StreamItemKind.STREAM_ERRORED,
         StreamItemKind.STREAM_CANCELLED,
+        StreamItemKind.STREAM_INPUT_REQUIRED,
         StreamItemKind.STREAM_CLOSED,
         StreamItemKind.USAGE_UPDATE,
         StreamItemKind.USAGE_COMPLETED,

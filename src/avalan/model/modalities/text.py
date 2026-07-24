@@ -14,7 +14,7 @@ from ...entities import (
     OperationTextParameters,
     TransformerEngineSettings,
 )
-from ...tool.manager import ToolManager
+from ..capability import ModelCapabilityCatalog
 from ..criteria import KeywordStoppingCriteria
 from ..reasoning import validate_reasoning_summary_request
 from .registry import ModalityRegistry
@@ -339,7 +339,7 @@ class TextGenerationModality:
         engine_uri: EngineUri,
         model: TextGenerationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         generation_settings = (
             operation.generation_settings or GenerationSettings()
@@ -369,7 +369,7 @@ class TextGenerationModality:
                     skip_special_tokens=(
                         text_params.skip_special_tokens or False
                     ),
-                    tool=tool,
+                    capability=capability,
                 )
             return await model(
                 operation.input,
@@ -380,7 +380,7 @@ class TextGenerationModality:
                 manual_sampling=text_params.manual_sampling or False,
                 pick=text_params.pick_tokens,
                 skip_special_tokens=text_params.skip_special_tokens or False,
-                tool=tool,
+                capability=capability,
             )
         if is_ds4:
             if text_params.instructions is not None:
@@ -394,7 +394,7 @@ class TextGenerationModality:
                     ),
                     manual_sampling=text_params.manual_sampling or False,
                     pick=text_params.pick_tokens,
-                    tool=tool,
+                    capability=capability,
                 )
             return await model(
                 operation.input,
@@ -403,7 +403,7 @@ class TextGenerationModality:
                 settings=operation.generation_settings or GenerationSettings(),
                 manual_sampling=text_params.manual_sampling or False,
                 pick=text_params.pick_tokens,
-                tool=tool,
+                capability=capability,
             )
         if text_params.instructions is not None:
             return await model(
@@ -412,14 +412,14 @@ class TextGenerationModality:
                 system_prompt=text_params.system_prompt,
                 developer_prompt=text_params.developer_prompt,
                 settings=operation.generation_settings or GenerationSettings(),
-                tool=tool,
+                capability=capability,
             )
         return await model(
             operation.input,
             system_prompt=text_params.system_prompt,
             developer_prompt=text_params.developer_prompt,
             settings=operation.generation_settings or GenerationSettings(),
-            tool=tool,
+            capability=capability,
         )
 
 
@@ -477,7 +477,7 @@ class TextQuestionAnsweringModality:
         engine_uri: EngineUri,
         model: QuestionAnsweringModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -540,7 +540,7 @@ class TextSequenceClassificationModality:
         engine_uri: EngineUri,
         model: SequenceClassificationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert operation.input
         return await model(operation.input)
@@ -598,7 +598,7 @@ class TextSequenceToSequenceModality:
         engine_uri: EngineUri,
         model: SequenceToSequenceModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
         criteria = _stopping_criteria(operation, model)
@@ -663,7 +663,7 @@ class TextTokenClassificationModality:
         engine_uri: EngineUri,
         model: TokenClassificationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
         return await model(
@@ -729,7 +729,7 @@ class TextTranslationModality:
         engine_uri: EngineUri,
         model: TranslationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.input

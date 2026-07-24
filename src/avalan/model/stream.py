@@ -1,3 +1,12 @@
+from ..event import project_observer_id
+from ..interaction import (
+    AgentId,
+    BranchId,
+    ContinuationId,
+    InputRequestId,
+    RequestState,
+)
+from ..interaction.validation import validate_opaque_id
 from ..observability import observability_key_sample
 from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
@@ -5,13 +14,15 @@ from .provider import ProviderFamily, provider_family_value
 from abc import ABC, abstractmethod
 from asyncio import CancelledError
 from collections import deque
-from collections.abc import AsyncIterable, Awaitable, Iterable
-from dataclasses import dataclass, field
+from collections.abc import AsyncIterable, Awaitable, Iterable, Mapping
+from dataclasses import dataclass, field, replace
 from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from inspect import isawaitable
-from json import JSONDecodeError, loads
+from json import dumps, loads
+from re import Pattern, compile
+from types import MappingProxyType
 from typing import Any, AsyncIterator, cast
 
 
@@ -20,6 +31,7 @@ class StreamChannel(StrEnum):
     REASONING = "reasoning"
     TOOL_CALL = "tool_call"
     TOOL_EXECUTION = "tool_execution"
+    INTERACTION = "interaction"
     FLOW = "flow"
     USAGE = "usage"
     CONTROL = "control"
@@ -46,11 +58,21 @@ class StreamItemKind(StrEnum):
     FLOW_EVENT = "flow.event"
     USAGE_UPDATE = "usage.update"
     USAGE_COMPLETED = "usage.completed"
+    INTERACTION_CREATED = "interaction.created"
+    INTERACTION_PENDING = "interaction.pending"
+    INTERACTION_ANSWERED = "interaction.answered"
+    INTERACTION_DECLINED = "interaction.declined"
+    INTERACTION_CANCELLED = "interaction.cancelled"
+    INTERACTION_TIMED_OUT = "interaction.timed_out"
+    INTERACTION_UNAVAILABLE = "interaction.unavailable"
+    INTERACTION_EXPIRED = "interaction.expired"
+    INTERACTION_SUPERSEDED = "interaction.superseded"
     STREAM_STARTED = "stream.started"
     STREAM_DIAGNOSTIC = "stream.diagnostic"
     STREAM_COMPLETED = "stream.completed"
     STREAM_ERRORED = "stream.errored"
     STREAM_CANCELLED = "stream.cancelled"
+    STREAM_INPUT_REQUIRED = "stream.input_required"
     STREAM_CLOSED = "stream.closed"
 
 
@@ -58,6 +80,7 @@ class StreamTerminalOutcome(StrEnum):
     COMPLETED = "completed"
     ERRORED = "errored"
     CANCELLED = "cancelled"
+    INPUT_REQUIRED = "input_required"
 
 
 class StreamVisibility(StrEnum):
@@ -364,6 +387,11 @@ class StreamItemCorrelation:
     provider_summary_index: int | None = None
     task_id: str | None = None
     artifact_id: str | None = None
+    request_id: InputRequestId | None = None
+    continuation_id: ContinuationId | None = None
+    agent_id: AgentId | None = None
+    branch_id: BranchId | None = None
+    parent_branch_id: BranchId | None = None
 
     def __post_init__(self) -> None:
         for field_name, value in (
@@ -379,6 +407,26 @@ class StreamItemCorrelation:
             if value is not None:
                 assert isinstance(value, str), f"{field_name} must be a string"
                 assert value.strip(), f"{field_name} must not be empty"
+        for field_name, constructor in (
+            ("request_id", InputRequestId),
+            ("continuation_id", ContinuationId),
+            ("agent_id", AgentId),
+            ("branch_id", BranchId),
+            ("parent_branch_id", BranchId),
+        ):
+            value = getattr(self, field_name)
+            if value is not None:
+                object.__setattr__(
+                    self,
+                    field_name,
+                    constructor(validate_opaque_id(value, field_name)),
+                )
+        if self.task_id is not None and self._has_interaction_identity:
+            object.__setattr__(
+                self,
+                "task_id",
+                validate_opaque_id(self.task_id, "task_id"),
+            )
         if self.parent_sequence is not None:
             assert isinstance(
                 self.parent_sequence, int
@@ -405,12 +453,39 @@ class StreamItemCorrelation:
             ("protocol_item_id", self.protocol_item_id),
             ("provider_output_index", self.provider_output_index),
             ("provider_summary_index", self.provider_summary_index),
-            ("task_id", self.task_id),
             ("artifact_id", self.artifact_id),
         ):
             if value is not None:
                 result[field_name] = value
+        if self.task_id is not None:
+            result["task_id"] = (
+                project_observer_id(self.task_id, "task_id")
+                if self._has_interaction_identity
+                else self.task_id
+            )
+        for field_name, value in (
+            ("request_id", self.request_id),
+            ("continuation_id", self.continuation_id),
+            ("agent_id", self.agent_id),
+            ("branch_id", self.branch_id),
+            ("parent_branch_id", self.parent_branch_id),
+        ):
+            if value is not None:
+                result[field_name] = project_observer_id(value, field_name)
         return result
+
+    @property
+    def _has_interaction_identity(self) -> bool:
+        return any(
+            value is not None
+            for value in (
+                self.request_id,
+                self.continuation_id,
+                self.agent_id,
+                self.branch_id,
+                self.parent_branch_id,
+            )
+        )
 
 
 _EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
@@ -468,6 +543,7 @@ class StreamReasoningSegment:
             assert self.terminal_outcome in (
                 StreamTerminalOutcome.ERRORED,
                 StreamTerminalOutcome.CANCELLED,
+                StreamTerminalOutcome.INPUT_REQUIRED,
             )
 
 
@@ -642,6 +718,7 @@ class StreamProviderEvent:
         assert isinstance(self.kind, StreamItemKind)
         assert self.kind is not StreamItemKind.STREAM_STARTED
         assert self.kind is not StreamItemKind.STREAM_CLOSED
+        assert self.kind not in _INTERACTION_STREAM_KINDS
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
         assert isinstance(self.metadata, dict), "metadata must be a dict"
@@ -1082,7 +1159,7 @@ class CanonicalStreamItem:
     visibility: StreamVisibility = StreamVisibility.PUBLIC
     reasoning_representation: StreamReasoningRepresentation | None = None
     segment_instance_ordinal: int | None = None
-    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, LooseJsonValue] = field(default_factory=dict)
     provider_payload: LooseJsonValue | None = None
     provider_family: str | None = None
     provider_event_type: str | None = None
@@ -1101,9 +1178,22 @@ class CanonicalStreamItem:
         assert isinstance(self.kind, StreamItemKind)
         assert isinstance(self.channel, StreamChannel)
         assert self.channel is stream_channel_for_kind(self.kind)
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            for field_name in ("stream_session_id", "run_id", "turn_id"):
+                object.__setattr__(
+                    self,
+                    field_name,
+                    validate_opaque_id(getattr(self, field_name), field_name),
+                )
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
-        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        assert isinstance(self.metadata, Mapping), "metadata must be a mapping"
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            object.__setattr__(
+                self,
+                "metadata",
+                MappingProxyType(dict(self.metadata)),
+            )
         if self.text_delta is not None:
             assert isinstance(self.text_delta, str)
         if self.provider_family is not None:
@@ -1131,10 +1221,27 @@ class CanonicalStreamItem:
         return is_tool_execution_terminal_kind(self.kind)
 
     def to_trace_dict(self) -> dict[str, object]:
+        self._validate_kind_payload()
+        interaction = self.kind in _INTERACTION_STREAM_KINDS
         result: dict[str, object] = {
-            "stream_session_id": self.stream_session_id,
-            "run_id": self.run_id,
-            "turn_id": self.turn_id,
+            "stream_session_id": (
+                project_observer_id(
+                    self.stream_session_id,
+                    "stream_session_id",
+                )
+                if interaction
+                else self.stream_session_id
+            ),
+            "run_id": (
+                project_observer_id(self.run_id, "run_id")
+                if interaction
+                else self.run_id
+            ),
+            "turn_id": (
+                project_observer_id(self.turn_id, "turn_id")
+                if interaction
+                else self.turn_id
+            ),
             "sequence": self.sequence,
             "kind": self.kind.value,
             "channel": self.channel.value,
@@ -1181,6 +1288,20 @@ class CanonicalStreamItem:
         if self.kind in _TOOL_CORRELATED_KINDS:
             assert self.correlation.tool_call_id is not None
 
+        _validate_interaction_item_payload(
+            self.kind,
+            self.correlation,
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            data=self.data,
+            usage=self.usage,
+            metadata=self.metadata,
+            provider_payload=self.provider_payload,
+            provider_family=self.provider_family,
+            provider_event_type=self.provider_event_type,
+        )
+
         if self.usage is not None:
             assert self.kind in _USAGE_KINDS or (
                 self.kind is StreamItemKind.STREAM_COMPLETED
@@ -1211,7 +1332,7 @@ class StreamConsumerProjection:
     visibility: StreamVisibility = StreamVisibility.PUBLIC
     reasoning_representation: StreamReasoningRepresentation | None = None
     segment_instance_ordinal: int | None = None
-    metadata: dict[str, LooseJsonValue] = field(default_factory=dict)
+    metadata: Mapping[str, LooseJsonValue] = field(default_factory=dict)
     provider_family: str | None = None
     provider_event_type: str | None = None
 
@@ -1227,9 +1348,22 @@ class StreamConsumerProjection:
         assert isinstance(self.kind, StreamItemKind)
         assert isinstance(self.channel, StreamChannel)
         assert self.channel is stream_channel_for_kind(self.kind)
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            for field_name in ("stream_session_id", "run_id", "turn_id"):
+                object.__setattr__(
+                    self,
+                    field_name,
+                    validate_opaque_id(getattr(self, field_name), field_name),
+                )
         assert isinstance(self.correlation, StreamItemCorrelation)
         assert isinstance(self.visibility, StreamVisibility)
-        assert isinstance(self.metadata, dict), "metadata must be a dict"
+        assert isinstance(self.metadata, Mapping), "metadata must be a mapping"
+        if self.kind in _INTERACTION_STREAM_KINDS:
+            object.__setattr__(
+                self,
+                "metadata",
+                MappingProxyType(dict(self.metadata)),
+            )
         if self.text_delta is not None:
             assert isinstance(self.text_delta, str)
         if self.terminal_outcome is not None:
@@ -1264,6 +1398,20 @@ class StreamConsumerProjection:
         if self.kind in _TOOL_CORRELATED_KINDS:
             assert self.correlation.tool_call_id is not None
 
+        _validate_interaction_item_payload(
+            self.kind,
+            self.correlation,
+            stream_session_id=self.stream_session_id,
+            run_id=self.run_id,
+            turn_id=self.turn_id,
+            data=self.data,
+            usage=self.usage,
+            metadata=self.metadata,
+            provider_payload=None,
+            provider_family=self.provider_family,
+            provider_event_type=self.provider_event_type,
+        )
+
         if self.usage is not None:
             assert self.kind in _USAGE_KINDS or (
                 self.kind is StreamItemKind.STREAM_COMPLETED
@@ -1283,6 +1431,7 @@ class StreamConsumerProjection:
         item: CanonicalStreamItem,
     ) -> "StreamConsumerProjection":
         assert isinstance(item, CanonicalStreamItem)
+        item._validate_kind_payload()
         return cls(
             stream_session_id=item.stream_session_id,
             run_id=item.run_id,
@@ -1322,6 +1471,7 @@ def canonical_item_from_consumer_projection(
     projection: StreamConsumerProjection,
 ) -> CanonicalStreamItem:
     assert isinstance(projection, StreamConsumerProjection)
+    projection._validate_kind_payload()
     return CanonicalStreamItem(
         stream_session_id=projection.stream_session_id,
         run_id=projection.run_id,
@@ -1545,6 +1695,9 @@ def stream_observability_payload(
     item: CanonicalStreamItem,
 ) -> dict[str, LooseJsonValue]:
     assert isinstance(item, CanonicalStreamItem)
+    item._validate_kind_payload()
+    if item.kind in _INTERACTION_STREAM_KINDS:
+        return _interaction_stream_observability_payload(item)
     payload: dict[str, LooseJsonValue] = {
         "stream_session_id": item.stream_session_id,
         "run_id": item.run_id,
@@ -1568,6 +1721,41 @@ def stream_observability_payload(
         payload["provider_family"] = item.provider_family
     if item.provider_event_type is not None:
         payload["provider_event_type"] = item.provider_event_type
+    return payload
+
+
+def _interaction_stream_observability_payload(
+    item: CanonicalStreamItem,
+) -> dict[str, LooseJsonValue]:
+    correlation = item.correlation
+    assert correlation.request_id is not None
+    assert correlation.agent_id is not None
+    assert correlation.branch_id is not None
+    state = _INTERACTION_KIND_STATES.get(item.kind, RequestState.PENDING)
+    payload: dict[str, LooseJsonValue] = {
+        "request_id": project_observer_id(
+            correlation.request_id,
+            "request_id",
+        ),
+        "run_id": project_observer_id(item.run_id, "run_id"),
+        "turn_id": project_observer_id(item.turn_id, "turn_id"),
+        "agent_id": project_observer_id(
+            correlation.agent_id,
+            "agent_id",
+        ),
+        "branch_id": project_observer_id(
+            correlation.branch_id,
+            "branch_id",
+        ),
+        "state": state.value,
+    }
+    if correlation.task_id is not None:
+        payload["task_id"] = project_observer_id(
+            correlation.task_id,
+            "task_id",
+        )
+    if state not in {RequestState.CREATED, RequestState.PENDING}:
+        payload["resolution_category"] = state.value
     return payload
 
 
@@ -1684,18 +1872,47 @@ _STREAM_KIND_CHANNELS: dict[StreamItemKind, StreamChannel] = {
     StreamItemKind.FLOW_EVENT: StreamChannel.FLOW,
     StreamItemKind.USAGE_UPDATE: StreamChannel.USAGE,
     StreamItemKind.USAGE_COMPLETED: StreamChannel.USAGE,
+    StreamItemKind.INTERACTION_CREATED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_PENDING: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_ANSWERED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_DECLINED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_CANCELLED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_TIMED_OUT: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_UNAVAILABLE: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_EXPIRED: StreamChannel.INTERACTION,
+    StreamItemKind.INTERACTION_SUPERSEDED: StreamChannel.INTERACTION,
     StreamItemKind.STREAM_STARTED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_DIAGNOSTIC: StreamChannel.CONTROL,
     StreamItemKind.STREAM_COMPLETED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_ERRORED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_CANCELLED: StreamChannel.CONTROL,
+    StreamItemKind.STREAM_INPUT_REQUIRED: StreamChannel.CONTROL,
     StreamItemKind.STREAM_CLOSED: StreamChannel.CONTROL,
 }
 _STREAM_TERMINAL_OUTCOMES: dict[StreamItemKind, StreamTerminalOutcome] = {
     StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
     StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
     StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+    StreamItemKind.STREAM_INPUT_REQUIRED: StreamTerminalOutcome.INPUT_REQUIRED,
 }
+_INTERACTION_KIND_STATES: dict[StreamItemKind, RequestState] = {
+    StreamItemKind.INTERACTION_CREATED: RequestState.CREATED,
+    StreamItemKind.INTERACTION_PENDING: RequestState.PENDING,
+    StreamItemKind.INTERACTION_ANSWERED: RequestState.ANSWERED,
+    StreamItemKind.INTERACTION_DECLINED: RequestState.DECLINED,
+    StreamItemKind.INTERACTION_CANCELLED: RequestState.CANCELLED,
+    StreamItemKind.INTERACTION_TIMED_OUT: RequestState.TIMED_OUT,
+    StreamItemKind.INTERACTION_UNAVAILABLE: RequestState.UNAVAILABLE,
+    StreamItemKind.INTERACTION_EXPIRED: RequestState.EXPIRED,
+    StreamItemKind.INTERACTION_SUPERSEDED: RequestState.SUPERSEDED,
+}
+_INTERACTION_LIFECYCLE_KINDS = frozenset(_INTERACTION_KIND_STATES)
+_INTERACTION_STREAM_KINDS = frozenset(
+    {
+        *_INTERACTION_LIFECYCLE_KINDS,
+        StreamItemKind.STREAM_INPUT_REQUIRED,
+    }
+)
 _TEXT_DELTA_KINDS = frozenset(
     {
         StreamItemKind.ANSWER_DELTA,
@@ -1769,6 +1986,70 @@ _STREAM_PERFORMANCE_BUDGET_FIELDS = (
 )
 
 
+def _validate_interaction_item_payload(
+    kind: StreamItemKind,
+    correlation: StreamItemCorrelation,
+    *,
+    stream_session_id: str,
+    run_id: str,
+    turn_id: str,
+    data: LooseJsonValue | None,
+    usage: LooseJsonValue | None,
+    metadata: Mapping[str, LooseJsonValue],
+    provider_payload: LooseJsonValue | None,
+    provider_family: str | None,
+    provider_event_type: str | None,
+) -> None:
+    if kind not in _INTERACTION_STREAM_KINDS:
+        return
+    for field_name, value in (
+        ("request_id", correlation.request_id),
+        ("continuation_id", correlation.continuation_id),
+        ("agent_id", correlation.agent_id),
+        ("branch_id", correlation.branch_id),
+    ):
+        assert value is not None, f"{kind.value} requires {field_name}"
+    for field_name, canonical_value in (
+        ("stream_session_id", stream_session_id),
+        ("run_id", run_id),
+        ("turn_id", turn_id),
+    ):
+        assert (
+            validate_opaque_id(canonical_value, field_name) == canonical_value
+        )
+    for field_name, optional_canonical_value in (
+        ("request_id", correlation.request_id),
+        ("continuation_id", correlation.continuation_id),
+        ("task_id", correlation.task_id),
+        ("agent_id", correlation.agent_id),
+        ("branch_id", correlation.branch_id),
+        ("parent_branch_id", correlation.parent_branch_id),
+    ):
+        if optional_canonical_value is not None:
+            assert (
+                validate_opaque_id(optional_canonical_value, field_name)
+                == optional_canonical_value
+            )
+    prohibited_correlation = (
+        correlation.provider_request_id,
+        correlation.model_continuation_id,
+        correlation.tool_call_id,
+        correlation.flow_run_id,
+        correlation.node_id,
+        correlation.protocol_item_id,
+        correlation.provider_output_index,
+        correlation.provider_summary_index,
+        correlation.artifact_id,
+    )
+    assert all(value is None for value in prohibited_correlation)
+    assert data is None
+    assert usage is None
+    assert not metadata
+    assert provider_payload is None
+    assert provider_family is None
+    assert provider_event_type is None
+
+
 @dataclass(slots=True)
 class _ToolLifecycleState:
     ready: bool = False
@@ -1803,6 +2084,12 @@ class _ToolExecutionBoundaryState:
 class _ModelContinuationBoundaryState:
     started: bool = False
     terminal_kind: StreamItemKind | None = None
+
+
+@dataclass(slots=True)
+class _InteractionBoundaryState:
+    state: RequestState
+    correlation_identity: tuple[str | None, ...]
 
 
 def _assert_positive_int(value: object, field_name: str) -> None:
@@ -2165,13 +2452,16 @@ def validate_canonical_stream_items(
     tool_call_states: dict[str, _ToolCallBoundaryState] = {}
     tool_execution_states: dict[str, _ToolExecutionBoundaryState] = {}
     model_continuation_states: dict[str, _ModelContinuationBoundaryState] = {}
+    interaction_states: dict[str, _InteractionBoundaryState] = {}
 
     for index, item in enumerate(result):
+        item._validate_kind_payload()
         _validate_stream_start(item, index == 0)
         _validate_sequence_identity(item, session_id, run_id, turn_id)
         last_sequence = _validate_sequence_order(item, last_sequence)
         _validate_parent_sequence(item)
         _observe_canonical_reasoning_segment(reasoning_segments, item)
+        _validate_interaction_boundary(item, interaction_states)
 
         if closed:
             raise StreamValidationError("stream item emitted after closed")
@@ -2210,6 +2500,7 @@ def validate_canonical_stream_items(
         _validate_tool_execution_boundary(item, tool_execution_states)
 
         if outcome is not None:
+            _validate_interaction_terminal_outcome(item, interaction_states)
             if (
                 outcome is StreamTerminalOutcome.COMPLETED
                 and not usage_completed
@@ -2473,6 +2764,99 @@ def _validate_model_continuation_boundary(
     if not state.started:
         raise StreamValidationError("model continuation terminal before start")
     state.terminal_kind = item.kind
+
+
+def _validate_interaction_boundary(
+    item: CanonicalStreamItem,
+    states: dict[str, _InteractionBoundaryState],
+) -> None:
+    if item.kind not in _INTERACTION_STREAM_KINDS:
+        return
+    request_id = item.correlation.request_id
+    assert request_id is not None
+    identity = _interaction_correlation_identity(item.correlation)
+    current = states.get(request_id)
+    if item.kind is StreamItemKind.STREAM_INPUT_REQUIRED:
+        if current is None or current.state is not RequestState.PENDING:
+            raise StreamValidationError(
+                "input_required emitted without a pending interaction"
+            )
+        if current.correlation_identity != identity:
+            raise StreamValidationError(
+                "interaction correlation changed before input_required"
+            )
+        return
+
+    next_state = _INTERACTION_KIND_STATES[item.kind]
+    if current is None:
+        if any(
+            state.state in {RequestState.CREATED, RequestState.PENDING}
+            for state in states.values()
+        ):
+            raise StreamValidationError(
+                "multiple interaction requests in one stream"
+            )
+        states[request_id] = _InteractionBoundaryState(
+            state=next_state,
+            correlation_identity=identity,
+        )
+        return
+    if current.correlation_identity != identity:
+        raise StreamValidationError("interaction correlation changed")
+    if current.state is RequestState.CREATED:
+        expected_state = RequestState.PENDING
+    elif current.state is RequestState.PENDING:
+        expected_state = next_state
+        if next_state in {RequestState.CREATED, RequestState.PENDING}:
+            raise StreamValidationError("illegal interaction state transition")
+    else:
+        raise StreamValidationError(
+            "interaction item emitted after terminal state"
+        )
+    if next_state is not expected_state:
+        raise StreamValidationError("illegal interaction state transition")
+    current.state = next_state
+
+
+def _validate_interaction_terminal_outcome(
+    item: CanonicalStreamItem,
+    states: dict[str, _InteractionBoundaryState],
+) -> None:
+    outcome = stream_terminal_outcome_for_kind(item.kind)
+    assert outcome is not None
+    pending = tuple(
+        state
+        for state in states.values()
+        if state.state is RequestState.PENDING
+    )
+    created = tuple(
+        state
+        for state in states.values()
+        if state.state is RequestState.CREATED
+    )
+    if outcome is StreamTerminalOutcome.INPUT_REQUIRED:
+        if len(pending) != 1 or created:
+            raise StreamValidationError(
+                "input_required requires exactly one pending interaction"
+            )
+        return
+    if pending or created:
+        raise StreamValidationError(
+            "unresolved interaction cannot use this stream terminal outcome"
+        )
+
+
+def _interaction_correlation_identity(
+    correlation: StreamItemCorrelation,
+) -> tuple[str | None, ...]:
+    return (
+        correlation.request_id,
+        correlation.continuation_id,
+        correlation.task_id,
+        correlation.agent_id,
+        correlation.branch_id,
+        correlation.parent_branch_id,
+    )
 
 
 def _validate_open_channel_boundaries_closed(
@@ -2892,6 +3276,7 @@ class StreamReasoningSegmentAccumulator:
         if self._terminal_outcome in (
             StreamTerminalOutcome.ERRORED,
             StreamTerminalOutcome.CANCELLED,
+            StreamTerminalOutcome.INPUT_REQUIRED,
         ):
             return StreamReasoningSegmentStatus.INCOMPLETE, False
         return StreamReasoningSegmentStatus.IN_PROGRESS, False
@@ -2939,6 +3324,7 @@ class CanonicalStreamAccumulator:
         self._model_continuation_states: dict[
             str, _ModelContinuationBoundaryState
         ] = {}
+        self._interaction_states: dict[str, _InteractionBoundaryState] = {}
 
     @property
     def retention_policy(self) -> StreamRetentionPolicy:
@@ -3053,6 +3439,7 @@ class CanonicalStreamAccumulator:
         return self.items
 
     def _validate_next(self, item: CanonicalStreamItem) -> None:
+        item._validate_kind_payload()
         is_first = self._session_id is None
         _validate_stream_start(item, is_first)
 
@@ -3097,8 +3484,12 @@ class CanonicalStreamAccumulator:
         _validate_reasoning_boundary(item, self._reasoning_boundary)
         _validate_tool_call_boundary(item, self._tool_call_states)
         _validate_tool_execution_boundary(item, self._tool_execution_states)
+        _validate_interaction_boundary(item, self._interaction_states)
 
         if outcome is not None:
+            _validate_interaction_terminal_outcome(
+                item, self._interaction_states
+            )
             if (
                 outcome is StreamTerminalOutcome.COMPLETED
                 and not self._usage_completed
@@ -3402,12 +3793,110 @@ class _LocalTextSourceFragment:
             _assert_non_negative_int(self.source_index, "source_index")
 
 
+LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID = "avalan.local_tool_call.v1"
+LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY = "structured_output.protocol"
+NATIVE_STRUCTURED_OUTPUT_METADATA_KEY = "structured_output.native"
+
+_LOCAL_TOOL_CALL_FRAME_PATTERN: Pattern[str] = compile(
+    r'^<tool_call id=(?P<call_id>"(?:[^"\\]|\\.)*") '
+    r'name=(?P<name>"(?:[^"\\]|\\.)*")>'
+    r"(?P<arguments>[\s\S]*)</tool_call>$"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class _LocalToolCallFrame:
+    call_id: str
+    name: str
+    arguments: dict[str, object]
+    arguments_start: int
+    arguments_end: int
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.call_id, "call_id")
+        _assert_non_empty_string(self.name, "name")
+        assert isinstance(self.arguments, dict)
+        _assert_non_negative_int(self.arguments_start, "arguments_start")
+        _assert_non_negative_int(self.arguments_end, "arguments_end")
+        assert self.arguments_end >= self.arguments_start
+
+
+def _reject_local_json_constant(value: str) -> object:
+    raise ValueError(f"non-JSON constant: {value}")
+
+
+def _local_json_object(
+    pairs: list[tuple[str, object]],
+) -> dict[str, object]:
+    result: dict[str, object] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def _local_tool_call_frame(text: str) -> _LocalToolCallFrame | None:
+    """Return one trusted frame only when it occupies the whole response."""
+    match = _LOCAL_TOOL_CALL_FRAME_PATTERN.fullmatch(text)
+    if match is None:
+        return None
+    try:
+        call_id = loads(match.group("call_id"))
+        name = loads(match.group("name"))
+        arguments = loads(
+            match.group("arguments"),
+            object_pairs_hook=_local_json_object,
+            parse_constant=_reject_local_json_constant,
+        )
+    except (UnicodeError, ValueError):
+        return None
+    if (
+        not isinstance(call_id, str)
+        or not call_id.strip()
+        or not isinstance(name, str)
+        or not name.strip()
+        or not isinstance(arguments, dict)
+    ):
+        return None
+    return _LocalToolCallFrame(
+        call_id=call_id,
+        name=name,
+        arguments=arguments,
+        arguments_start=match.start("arguments"),
+        arguments_end=match.end("arguments"),
+    )
+
+
+def local_tool_call_control_frame(
+    call_id: str,
+    name: str,
+    arguments: Mapping[str, object],
+) -> str:
+    """Return one canonical local structured tool-call frame."""
+    _assert_non_empty_string(call_id, "call_id")
+    _assert_non_empty_string(name, "name")
+    assert isinstance(arguments, Mapping)
+    call_id_json = dumps(call_id, ensure_ascii=False)
+    name_json = dumps(name, ensure_ascii=False)
+    arguments_json = dumps(
+        dict(arguments),
+        allow_nan=False,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+    return (
+        f"<tool_call id={call_id_json} name={name_json}>"
+        f"{arguments_json}</tool_call>"
+    )
+
+
 @dataclass(slots=True)
 class _LocalTextStreamParser:
+    parse_tool_calls: bool = True
     _reasoning_start_tag: str = "<think>"
     _reasoning_end_tag: str = "</think>"
-    _tool_start_tag: str = "<tool_call"
-    _tool_end_tag: str = "</tool_call>"
     _reasoning_buffer: str = ""
     _reasoning_fragments: deque[_LocalTextSourceFragment] = field(
         default_factory=deque
@@ -3417,15 +3906,9 @@ class _LocalTextStreamParser:
     _reasoning_segments: StreamReasoningSegmentState = field(
         default_factory=StreamReasoningSegmentState
     )
-    _tool_buffer: str = ""
-    _tool_fragments: deque[_LocalTextSourceFragment] = field(
+    _exact_response_fragments: deque[_LocalTextSourceFragment] = field(
         default_factory=deque
     )
-    _tool_state: str = "outside"
-    _tool_call_id: str | None = None
-    _tool_call_index: int = 0
-    _tool_name: str | None = None
-    _tool_argument_deltas: list[str] = field(default_factory=list)
     _next_source_index: int = 0
 
     def push(
@@ -3446,9 +3929,17 @@ class _LocalTextStreamParser:
             metadata=dict(metadata or {}),
             source_index=source_index,
         )
+        if self.parse_tool_calls:
+            self._exact_response_fragments.append(fragment)
+            return ()
         return self._push_reasoning(fragment)
 
-    def flush(self) -> tuple[StreamProviderEvent, ...]:
+    def flush(
+        self, *, completed: bool = True
+    ) -> tuple[StreamProviderEvent, ...]:
+        assert isinstance(completed, bool)
+        if self.parse_tool_calls:
+            return self._flush_exact_response(completed=completed)
         events: list[StreamProviderEvent] = []
         if self._reasoning_buffer:
             fragments = self._take_reasoning_fragments(
@@ -3464,8 +3955,103 @@ class _LocalTextStreamParser:
             self._reasoning_active = False
             self._append_reasoning_done(events)
         self._append_pending_reasoning_done(events)
-        events.extend(self._flush_tool())
         return tuple(events)
+
+    def _flush_exact_response(
+        self, *, completed: bool
+    ) -> tuple[StreamProviderEvent, ...]:
+        fragments = tuple(self._exact_response_fragments)
+        self._exact_response_fragments.clear()
+        if not fragments:
+            return ()
+        text = "".join(fragment.text for fragment in fragments)
+        frame = _local_tool_call_frame(text) if completed else None
+        if frame is None:
+            return tuple(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=fragment.text,
+                    metadata=self._exact_protocol_metadata(fragment.metadata),
+                )
+                for fragment in fragments
+            )
+
+        correlation = StreamItemCorrelation(tool_call_id=frame.call_id)
+        argument_fragments = self._source_fragment_slice(
+            fragments,
+            frame.arguments_start,
+            frame.arguments_end,
+        )
+        events = [
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                text_delta=fragment.text,
+                correlation=correlation,
+                metadata=self._exact_protocol_metadata(fragment.metadata),
+            )
+            for fragment in argument_fragments
+        ]
+        control_metadata = self._exact_protocol_metadata({})
+        events.extend(
+            (
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_READY,
+                    data={
+                        "name": frame.name,
+                        "arguments": frame.arguments,
+                    },
+                    correlation=correlation,
+                    metadata=control_metadata,
+                ),
+                StreamProviderEvent(
+                    kind=StreamItemKind.TOOL_CALL_DONE,
+                    correlation=correlation,
+                    metadata=control_metadata,
+                ),
+            )
+        )
+        return tuple(events)
+
+    @staticmethod
+    def _exact_protocol_metadata(
+        metadata: Mapping[str, LooseJsonValue],
+    ) -> dict[str, LooseJsonValue]:
+        return {
+            **metadata,
+            LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY: (
+                LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+            ),
+        }
+
+    @staticmethod
+    def _source_fragment_slice(
+        fragments: Iterable[_LocalTextSourceFragment],
+        start: int,
+        end: int,
+    ) -> tuple[_LocalTextSourceFragment, ...]:
+        _assert_non_negative_int(start, "start")
+        _assert_non_negative_int(end, "end")
+        assert end >= start
+        position = 0
+        selected: list[_LocalTextSourceFragment] = []
+        for fragment in fragments:
+            fragment_end = position + len(fragment.text)
+            overlap_start = max(start, position)
+            overlap_end = min(end, fragment_end)
+            if overlap_start < overlap_end:
+                selected.append(
+                    _LocalTextSourceFragment(
+                        text=fragment.text[
+                            overlap_start - position : overlap_end - position
+                        ],
+                        metadata=dict(fragment.metadata),
+                        source_index=fragment.source_index,
+                    )
+                )
+            position = fragment_end
+        assert position >= end
+        assert "".join(fragment.text for fragment in selected)
+        return tuple(selected)
 
     def _push_reasoning(
         self, fragment: _LocalTextSourceFragment
@@ -3555,147 +4141,10 @@ class _LocalTextStreamParser:
         fragments = tuple(fragments)
         if not fragments:
             return ()
-        self._tool_buffer += "".join(fragment.text for fragment in fragments)
-        for fragment in fragments:
-            self._append_source_fragment(self._tool_fragments, fragment)
-        events: list[StreamProviderEvent] = []
-        while self._tool_buffer:
-            if self._tool_state == "outside":
-                start_index = self._tool_start_index()
-                if start_index is not None:
-                    self._append_answer_fragments(
-                        events,
-                        self._take_tool_fragments(start_index),
-                    )
-                    self._tool_buffer = self._tool_buffer[start_index:]
-                    self._tool_state = "opening"
-                    self._tool_call_id = self._next_tool_call_id()
-                    continue
-                flush_length = self._tool_flushable_prefix_length()
-                if not flush_length:
-                    break
-                self._append_answer_fragments(
-                    events,
-                    self._take_tool_fragments(flush_length),
-                )
-                self._tool_buffer = self._tool_buffer[flush_length:]
-                continue
-
-            if self._tool_state == "opening":
-                tag_end = self._tool_buffer.find(">")
-                if tag_end == -1:
-                    break
-                opening_tag = self._tool_buffer[: tag_end + 1]
-                self._tool_name = self._tool_name_from_opening_tag(opening_tag)
-                self._discard_tool_fragments(tag_end + 1)
-                self._tool_buffer = self._tool_buffer[tag_end + 1 :]
-                self._tool_state = "body"
-                continue
-
-            end_index = self._tool_buffer.find(self._tool_end_tag)
-            if end_index != -1:
-                self._append_tool_argument_fragments(
-                    events,
-                    self._take_tool_fragments(end_index),
-                )
-                self._discard_tool_fragments(len(self._tool_end_tag))
-                self._tool_buffer = self._tool_buffer[
-                    end_index + len(self._tool_end_tag) :
-                ]
-                events.extend(self._tool_call_boundary_events())
-                self._clear_tool_call()
-                continue
-            flush_length = self._flushable_prefix_length(
-                self._tool_buffer,
-                self._tool_end_tag,
-            )
-            if not flush_length:
-                break
-            self._append_tool_argument_fragments(
-                events,
-                self._take_tool_fragments(flush_length),
-            )
-            self._tool_buffer = self._tool_buffer[flush_length:]
-        return tuple(events)
-
-    def _flush_tool(self) -> tuple[StreamProviderEvent, ...]:
-        events: list[StreamProviderEvent] = []
-        fragments = self._take_tool_fragments(len(self._tool_buffer))
-        if self._tool_state == "outside":
-            self._append_answer_fragments(events, fragments)
-            self._tool_buffer = ""
-            return tuple(events)
-
-        self._append_tool_argument_fragments(events, fragments)
-        self._tool_buffer = ""
-        assert self._tool_call_id is not None
-        events.append(
-            StreamProviderEvent(
-                kind=StreamItemKind.STREAM_DIAGNOSTIC,
-                data={
-                    "code": "tool_call.malformed",
-                    "message": "unterminated tool call",
-                    "tool_call_id": self._tool_call_id,
-                },
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-                visibility=StreamVisibility.DIAGNOSTIC,
-            )
-        )
-        self._clear_tool_call()
-        return tuple(events)
-
-    def _tool_call_boundary_events(self) -> tuple[StreamProviderEvent, ...]:
-        assert self._tool_call_id is not None
-        arguments, valid_arguments = self._tool_buffer_arguments()
-        if not valid_arguments:
-            return (
-                StreamProviderEvent(
-                    kind=StreamItemKind.STREAM_DIAGNOSTIC,
-                    data={
-                        "code": "tool_call.malformed",
-                        "message": "malformed tool call arguments",
-                        "tool_call_id": self._tool_call_id,
-                    },
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=self._tool_call_id
-                    ),
-                    visibility=StreamVisibility.DIAGNOSTIC,
-                ),
-            )
-
-        data: dict[str, object] = {
-            "name": self._tool_name,
-            "arguments": arguments,
-        }
-        return (
-            StreamProviderEvent(
-                kind=StreamItemKind.TOOL_CALL_READY,
-                data=data,
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-            ),
-            StreamProviderEvent(
-                kind=StreamItemKind.TOOL_CALL_DONE,
-                correlation=StreamItemCorrelation(
-                    tool_call_id=self._tool_call_id
-                ),
-            ),
-        )
-
-    def _tool_buffer_arguments(self) -> tuple[object, bool]:
-        text = "".join(self._tool_argument_deltas)
-        if not text.strip():
-            return {}, True
-        try:
-            parsed = loads(text)
-        except JSONDecodeError:
-            return None, False
-        if not isinstance(parsed, dict):
-            return None, False
-        return parsed, True
+        assert not self.parse_tool_calls
+        answer_events: list[StreamProviderEvent] = []
+        self._append_answer_fragments(answer_events, fragments)
+        return tuple(answer_events)
 
     def _append_answer_fragments(
         self,
@@ -3763,26 +4212,6 @@ class _LocalTextStreamParser:
             metadata=event_metadata,
         )
 
-    def _append_tool_argument_fragments(
-        self,
-        events: list[StreamProviderEvent],
-        fragments: Iterable[_LocalTextSourceFragment],
-    ) -> None:
-        for fragment in fragments:
-            self._reasoning_segments.complete_segment()
-            assert self._tool_call_id is not None
-            self._tool_argument_deltas.append(fragment.text)
-            events.append(
-                StreamProviderEvent(
-                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                    text_delta=fragment.text,
-                    correlation=StreamItemCorrelation(
-                        tool_call_id=self._tool_call_id
-                    ),
-                    metadata=dict(fragment.metadata),
-                )
-            )
-
     def _take_reasoning_fragments(
         self, length: int
     ) -> tuple[_LocalTextSourceFragment, ...]:
@@ -3790,14 +4219,6 @@ class _LocalTextStreamParser:
 
     def _discard_reasoning_fragments(self, length: int) -> None:
         self._take_reasoning_fragments(length)
-
-    def _take_tool_fragments(
-        self, length: int
-    ) -> tuple[_LocalTextSourceFragment, ...]:
-        return self._take_source_fragments(self._tool_fragments, length)
-
-    def _discard_tool_fragments(self, length: int) -> None:
-        self._take_tool_fragments(length)
 
     @staticmethod
     def _take_source_fragments(
@@ -3850,66 +4271,19 @@ class _LocalTextStreamParser:
             return
         fragments.append(fragment)
 
-    def _next_tool_call_id(self) -> str:
-        self._tool_call_index += 1
-        return f"local-tool-call-{self._tool_call_index}"
-
-    @staticmethod
-    def _tool_name_from_opening_tag(opening_tag: str) -> str | None:
-        for quote in ("'", '"'):
-            marker = f"name={quote}"
-            start = opening_tag.find(marker)
-            if start == -1:
-                continue
-            value_start = start + len(marker)
-            value_end = opening_tag.find(quote, value_start)
-            if value_end != -1:
-                return opening_tag[value_start:value_end]
-        return None
-
-    def _tool_start_index(self) -> int | None:
-        search_from = 0
-        while True:
-            start_index = self._tool_buffer.find(
-                self._tool_start_tag, search_from
-            )
-            if start_index == -1:
-                return None
-
-            boundary_index = start_index + len(self._tool_start_tag)
-            if boundary_index == len(self._tool_buffer):
-                return None
-
-            boundary = self._tool_buffer[boundary_index]
-            if boundary == ">" or boundary.isspace():
-                return start_index
-
-            search_from = start_index + 1
-
     def _awaiting_repeated_reasoning_start(self) -> bool:
         stripped = self._reasoning_buffer.lstrip()
         if not stripped:
             return True
         return self._reasoning_start_tag.startswith(stripped)
 
-    def _tool_flushable_prefix_length(self) -> int:
-        return self._flushable_prefix_length(
-            self._tool_buffer,
-            self._tool_start_tag,
-            keep_full_marker=True,
-        )
-
     @staticmethod
     def _flushable_prefix_length(
         buffer: str,
         marker: str,
-        *,
-        keep_full_marker: bool = False,
     ) -> int:
         keep = 0
-        marker_suffix_length = (
-            len(marker) if keep_full_marker else len(marker) - 1
-        )
+        marker_suffix_length = len(marker) - 1
         max_suffix = min(len(buffer), marker_suffix_length)
         for length in range(max_suffix, 0, -1):
             if marker.startswith(buffer[-length:]):
@@ -3917,18 +4291,17 @@ class _LocalTextStreamParser:
                 break
         return len(buffer) - keep
 
-    def _clear_tool_call(self) -> None:
-        self._tool_state = "outside"
-        self._tool_call_id = None
-        self._tool_name = None
-        self._tool_argument_deltas.clear()
-
 
 @dataclass(slots=True)
 class LocalTextStreamEventParser:
-    _parser: _LocalTextStreamParser = field(
-        default_factory=_LocalTextStreamParser
-    )
+    parse_tool_calls: bool = True
+    _parser: _LocalTextStreamParser = field(init=False)
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.parse_tool_calls, bool)
+        self._parser = _LocalTextStreamParser(
+            parse_tool_calls=self.parse_tool_calls
+        )
 
     def push(
         self,
@@ -3939,8 +4312,10 @@ class LocalTextStreamEventParser:
         assert metadata is None or isinstance(metadata, dict)
         return self._parser.push(text, metadata)
 
-    def flush(self) -> tuple[StreamProviderEvent, ...]:
-        return self._parser.flush()
+    def flush(
+        self, *, completed: bool = True
+    ) -> tuple[StreamProviderEvent, ...]:
+        return self._parser.flush(completed=completed)
 
 
 def stream_token_metadata(
@@ -4611,6 +4986,25 @@ class TextGenerationSingleStream(TextGenerationStream):
         return item
 
 
+@dataclass(frozen=True, kw_only=True, slots=True)
+class TextGenerationNonStreamToolCall:
+    """Carry one trusted provider-native non-stream tool call."""
+
+    call_id: str
+    name: str
+    arguments: str
+    provider_event_type: str
+
+    def __post_init__(self) -> None:
+        _assert_non_empty_string(self.call_id, "call_id")
+        _assert_non_empty_string(self.name, "name")
+        assert isinstance(self.arguments, str)
+        _assert_non_empty_string(
+            self.provider_event_type,
+            "provider_event_type",
+        )
+
+
 class TextGenerationNonStreamResult(TextGenerationStream):
     """Expose a provider-neutral rich non-stream generation result."""
 
@@ -4647,6 +5041,132 @@ class TextGenerationNonStreamResult(TextGenerationStream):
         self._provider_family = normalized_provider_family
         self._usage = usage
         self._generator = None
+
+    @classmethod
+    def from_events(
+        cls,
+        events: Iterable[StreamProviderEvent],
+        *,
+        provider_family: ProviderFamily | str | None = None,
+        usage: object | None = None,
+        terminal_event_type: str | None = None,
+    ) -> "TextGenerationNonStreamResult":
+        """Build a complete result from trusted provider events."""
+        normalized_events = list(events)
+        if not normalized_events or not is_stream_terminal_kind(
+            normalized_events[-1].kind
+        ):
+            normalized_events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.STREAM_COMPLETED,
+                    provider_event_type=terminal_event_type,
+                )
+            )
+        answer_text = "".join(
+            event.text_delta or ""
+            for event in normalized_events
+            if event.kind is StreamItemKind.ANSWER_DELTA
+        )
+        return cls(
+            normalized_events,
+            answer_text=answer_text,
+            provider_family=provider_family,
+            usage=usage,
+        )
+
+    @classmethod
+    def from_provider_parts(
+        cls,
+        *,
+        answer_text: str,
+        calls: Iterable[TextGenerationNonStreamToolCall],
+        provider_family: ProviderFamily | str,
+        usage: object | None = None,
+        answer_event_type: str,
+        terminal_event_type: str,
+    ) -> "TextGenerationNonStreamResult":
+        """Build a result from native answer and tool-call fields."""
+        assert isinstance(answer_text, str)
+        _assert_non_empty_string(answer_event_type, "answer_event_type")
+        _assert_non_empty_string(terminal_event_type, "terminal_event_type")
+        events: list[StreamProviderEvent] = []
+        if answer_text:
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.ANSWER_DELTA,
+                    text_delta=answer_text,
+                    provider_event_type=answer_event_type,
+                )
+            )
+        for call in calls:
+            assert isinstance(call, TextGenerationNonStreamToolCall)
+            correlation = StreamItemCorrelation(tool_call_id=call.call_id)
+            events.extend(
+                (
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        text_delta=call.arguments,
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_READY,
+                        data={"name": call.name},
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_DONE,
+                        correlation=correlation,
+                        provider_event_type=call.provider_event_type,
+                    ),
+                )
+            )
+        if usage is not None:
+            events.append(
+                StreamProviderEvent(
+                    kind=StreamItemKind.USAGE_COMPLETED,
+                    usage=cast(LooseJsonValue, usage),
+                    provider_event_type=terminal_event_type,
+                )
+            )
+        return cls.from_events(
+            events,
+            provider_family=provider_family,
+            usage=usage,
+            terminal_event_type=terminal_event_type,
+        )
+
+    @classmethod
+    def from_local_text(
+        cls,
+        text: str,
+        *,
+        provider_family: str,
+        provider_event_type: str,
+        usage: object | None = None,
+    ) -> "TextGenerationNonStreamResult":
+        """Parse exact local control frames at the model boundary."""
+        assert isinstance(text, str)
+        _assert_non_empty_string(provider_family, "provider_family")
+        _assert_non_empty_string(provider_event_type, "provider_event_type")
+        parser = LocalTextStreamEventParser(parse_tool_calls=True)
+        events = [*parser.push(text), *parser.flush()]
+        typed_events = (
+            replace(
+                event,
+                provider_event_type=(
+                    event.provider_event_type or provider_event_type
+                ),
+            )
+            for event in events
+        )
+        return cls.from_events(
+            typed_events,
+            provider_family=provider_family,
+            usage=usage,
+            terminal_event_type=f"{provider_event_type}.completed",
+        )
 
     @property
     def events(self) -> tuple[StreamProviderEvent, ...]:

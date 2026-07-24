@@ -3,8 +3,8 @@
 from ....entities import ToolCallDiagnostic, ToolFormat
 from ....event.manager import EventManager
 from ....tool.dsml import DsmlTools
-from ....tool.manager import ToolManager
 from ....tool.parser import ToolCallParser
+from ...capability import ModelCapabilityCatalog
 from ...stream import (
     StreamItemCorrelation,
     StreamItemKind,
@@ -404,10 +404,10 @@ class ToolCallResponseParser:
 
     def __init__(
         self,
-        tool_manager: ToolManager,
+        capability: ModelCapabilityCatalog,
         event_manager: EventManager | None,
     ) -> None:
-        self._tool_manager = tool_manager
+        self._capability = capability
         self._event_manager = event_manager
         self._buffer = StringIO()
         self._tool_buffer = _IncrementalTextBuffer()
@@ -431,7 +431,7 @@ class ToolCallResponseParser:
         self, token_str: str
     ) -> Iterable[_ToolCallResponseParserItem]:
         buffer_value = self._buffer.getvalue()
-        should_check = self._tool_manager.is_potential_tool_call(
+        should_check = self._capability.is_potential_tool_call(
             buffer_value, token_str
         )
         if (
@@ -454,7 +454,7 @@ class ToolCallResponseParser:
 
         if not self._inside_call:
             candidate = self._pending_str + token_str
-            status = self._tool_manager.tool_call_status(candidate)
+            status = self._capability.tool_call_status(candidate)
             if (
                 not self._pending_tokens
                 and self._has_tool_marker(token_str)
@@ -479,7 +479,7 @@ class ToolCallResponseParser:
                     self._append_visible_output(result, split_prefix)
                     self._append_visible_text(split_prefix)
                     candidate = tool_token
-                    status = self._tool_manager.tool_call_status(candidate)
+                    status = self._capability.tool_call_status(candidate)
             if status is ToolCallParser.ToolCallBufferStatus.PREFIX:
                 self._pending_tokens.append(tool_token)
                 self._pending_str = candidate
@@ -538,21 +538,6 @@ class ToolCallResponseParser:
                 if close is not None
                 else None
             )
-            if closed_split is None and not issubclass(
-                type(self._tool_manager), ToolManager
-            ):
-                combined_tool_text = (
-                    self._tool_buffer.getvalue()
-                    + pending_visible_suffix
-                    + token_str
-                )
-                status = self._tool_manager.tool_call_status(
-                    combined_tool_text
-                )
-                if status is ToolCallParser.ToolCallBufferStatus.CLOSED:
-                    closed_split = self._split_closed_visible_suffix(
-                        combined_tool_text
-                    )
             if closed_split is not None:
                 tool_text, visible_suffix = closed_split
                 uncommitted_tool_length = max(
@@ -586,16 +571,8 @@ class ToolCallResponseParser:
             return result
 
         if self._inside_call and terminal_status is None:
-            if type(self._tool_manager) is ToolManager:
-                return result
-            buffer_text = self._parse_text()
-            status = self._tool_manager.tool_call_status(buffer_text)
-            if status is not ToolCallParser.ToolCallBufferStatus.CLOSED:
-                return result
-            self._inside_call = False
-            terminal_status = status
-        else:
-            buffer_text = self._parse_text()
+            return result
+        buffer_text = self._parse_text()
 
         parse_text = self._closed_parse_text(buffer_text, visible_suffix)
         calls, diagnostics = self._parse_buffer(parse_text)
@@ -643,19 +620,19 @@ class ToolCallResponseParser:
             or self._diagnostic_tool_call_id(diagnostics)
             or self._ensure_tool_call_id()
         )
-        message = (
-            diagnostics[0].message if diagnostics else "Malformed tool call."
-        )
+        message = "Tool call could not be decoded."
         provider_event = StreamProviderEvent(
             kind=StreamItemKind.STREAM_DIAGNOSTIC,
             data={
                 "code": "tool_call.malformed",
                 "message": message,
+                "stage": "parse",
                 "tool_call_id": tool_call_id,
                 "diagnostics": [
                     self._diagnostic_data(diagnostic)
-                    for diagnostic in diagnostics
+                    for diagnostic in diagnostics[:8]
                 ],
+                "diagnostic_count": len(diagnostics),
             },
             correlation=StreamItemCorrelation(tool_call_id=tool_call_id),
             visibility=StreamVisibility.DIAGNOSTIC,
@@ -727,7 +704,7 @@ class ToolCallResponseParser:
             buffer_text = self._parse_text()
             calls: list[Any] | None = None
             diagnostics: list[ToolCallDiagnostic] = []
-            if self._tool_manager.tool_format is ToolFormat.HARMONY:
+            if self._capability.tool_format is ToolFormat.HARMONY:
                 calls, diagnostics = self._parse_buffer(
                     f"{buffer_text}<|call|>"
                 )
@@ -845,7 +822,7 @@ class ToolCallResponseParser:
     def _tool_argument_delta(
         self, token: str
     ) -> ToolCallResponseParserOutput | None:
-        if getattr(self._tool_manager, "tool_format", None) is ToolFormat.DSML:
+        if getattr(self._capability, "tool_format", None) is ToolFormat.DSML:
             return self._dsml_tool_argument_delta(token)
 
         if "}" not in token:
@@ -949,7 +926,7 @@ class ToolCallResponseParser:
 
     def _stream_tool_payload(self, text: str) -> str | None:
         if (
-            getattr(self._tool_manager, "tool_format", None)
+            getattr(self._capability, "tool_format", None)
             is ToolFormat.HARMONY
         ):
             marker = "<|message|>"
@@ -1012,26 +989,23 @@ class ToolCallResponseParser:
     @staticmethod
     def _diagnostic_data(diagnostic: ToolCallDiagnostic) -> dict[str, Any]:
         data: dict[str, Any] = {
-            "id": str(diagnostic.id),
             "code": diagnostic.code.value,
             "stage": diagnostic.stage.value,
             "status": diagnostic.status.value,
-            "message": diagnostic.message,
             "retryable": diagnostic.retryable,
-            "details": diagnostic.details,
+            "detail_count": len(diagnostic.details),
+            "correlated": diagnostic.call_id is not None,
         }
-        if diagnostic.call_id is not None:
-            data["call_id"] = str(diagnostic.call_id)
-        if diagnostic.requested_name is not None:
-            data["requested_name"] = diagnostic.requested_name
-        if diagnostic.canonical_name is not None:
-            data["canonical_name"] = diagnostic.canonical_name
-        if diagnostic.duration_ms is not None:
-            data["duration_ms"] = diagnostic.duration_ms
-        if diagnostic.started_at is not None:
-            data["started_at"] = diagnostic.started_at.isoformat()
-        if diagnostic.finished_at is not None:
-            data["finished_at"] = diagnostic.finished_at.isoformat()
+        stream_status = diagnostic.details.get("stream_status")
+        if stream_status in {
+            "none",
+            "prefix",
+            "open",
+            "closed",
+            "malformed",
+            "unterminated",
+        }:
+            data["details"] = {"stream_status": stream_status}
         return data
 
     def _reset_tool_close_state(self, text: str = "") -> None:
@@ -1083,7 +1057,7 @@ class ToolCallResponseParser:
             if index == 0:
                 return None
             suffix = candidate[index:]
-            suffix_status = self._tool_manager.tool_call_status(suffix)
+            suffix_status = self._capability.tool_call_status(suffix)
             if suffix_status is not ToolCallParser.ToolCallBufferStatus.NONE:
                 return candidate[:index], suffix, suffix_status
 
@@ -1108,7 +1082,7 @@ class ToolCallResponseParser:
 
         for index in marker_indexes:
             suffix = token_str[index:]
-            suffix_status = self._tool_manager.tool_call_status(suffix)
+            suffix_status = self._capability.tool_call_status(suffix)
             if suffix_status is not ToolCallParser.ToolCallBufferStatus.NONE:
                 return token_str[:index], suffix
 
@@ -1222,7 +1196,7 @@ class ToolCallResponseParser:
 
     def _tool_marker_starts(self) -> tuple[str, ...]:
         markers = ["<tool_call", "<tool ", "<tool>"]
-        tool_format = getattr(self._tool_manager, "tool_format", None)
+        tool_format = getattr(self._capability, "tool_format", None)
         if tool_format is ToolFormat.HARMONY:
             markers.extend(
                 [
@@ -1364,7 +1338,7 @@ class ToolCallResponseParser:
 
     def _tool_marker_ends(self) -> tuple[str, ...]:
         markers = ["</tool_call>", "</tool>"]
-        tool_format = getattr(self._tool_manager, "tool_format", None)
+        tool_format = getattr(self._capability, "tool_format", None)
         if tool_format is ToolFormat.HARMONY:
             markers.append("<|call|>")
         if tool_format is ToolFormat.DSML:
@@ -1381,7 +1355,7 @@ class ToolCallResponseParser:
         return tuple(sorted(self._tool_marker_ends(), key=len, reverse=True))
 
     def _visible_tool_marker_ends(self) -> tuple[str, ...]:
-        tool_format = getattr(self._tool_manager, "tool_format", None)
+        tool_format = getattr(self._capability, "tool_format", None)
         if tool_format is ToolFormat.HARMONY:
             return ("<|channel|>final<|message|>",)
         return ()
@@ -1413,7 +1387,7 @@ class ToolCallResponseParser:
 
     def _closed_parse_text(self, text: str, visible_suffix: str) -> str:
         if (
-            getattr(self._tool_manager, "tool_format", None)
+            getattr(self._capability, "tool_format", None)
             is ToolFormat.HARMONY
             and visible_suffix.startswith("<|channel|>final<|message|>")
             and "<|call|>" not in text
@@ -1424,17 +1398,13 @@ class ToolCallResponseParser:
     def _parse_buffer(
         self, text: str
     ) -> tuple[list[Any] | None, list[ToolCallDiagnostic]]:
-        if issubclass(type(self._tool_manager), ToolManager):
-            outcome = self._tool_manager.parse_calls(text)
-            return outcome.calls or None, outcome.diagnostics
-        return self._tool_manager.get_calls(text), []
+        outcome = self._capability.parse_calls(text)
+        return outcome.calls or None, outcome.diagnostics
 
     def _stream_buffer_diagnostics(
         self, text: str
     ) -> list[ToolCallDiagnostic]:
-        if issubclass(type(self._tool_manager), ToolManager):
-            return self._tool_manager.stream_buffer_diagnostics(text)
-        return []
+        return self._capability.stream_buffer_diagnostics(text)
 
     def _clear_buffers(self, visible_text: str = "") -> None:
         self._buffer = StringIO()

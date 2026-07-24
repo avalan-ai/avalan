@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "feature": "structured_task_input",
+  "inventory_sha256": "c75145467fe15a1cd55b6bb10e7dd16fc5ff8e4b25b530c2d7f147ab3c641887",
+  "removals": [
+    {
+      "id": "tool-manager-provider-coupling",
+      "current_path": "src/avalan/tool/manager.py",
+      "remove_by_phase": 3,
+      "replacement": "dedicated model-capability composition outside domain Tool parsing, permissions, confirmation, and execution",
+      "evidence": "Provider-facing schema projection and parsing were removed from ToolManager; it now exports one callable-free domain seed while ModelCapabilityCatalog owns model schemas, names, decoding, and validation"
+    },
+    {
+      "id": "completion-only-results",
+      "current_path": "src/avalan/agent/orchestrator/response/orchestrator_response.py:120",
+      "remove_by_phase": 4,
+      "replacement": "typed completed, input_required, errored, and cancelled execution result union",
+      "evidence": "OrchestratorResponse currently exposes completion-shaped string and stream conversion without a public suspended-result discriminator"
+    },
+    {
+      "id": "engine-agent-reusable-mutable-fields",
+      "current_path": "src/avalan/agent/engine.py:310",
+      "remove_by_phase": 4,
+      "replacement": "per-invocation immutable EngineAgent execution state",
+      "evidence": "EngineAgent invocation mutates _last_prompt at line 310 and _last_output at line 375, so concurrent suspended runs cannot share those fields"
+    },
+    {
+      "id": "orchestrator-reusable-mutable-fields",
+      "current_path": "src/avalan/agent/orchestrator/__init__.py:130",
+      "remove_by_phase": 4,
+      "replacement": "run-scoped immutable orchestrator state and per-run engine registries",
+      "evidence": "Orchestrator reuses _engines, _engine_agents, _model_ids, _operation_step, and _last_engine_agent across calls"
+    },
+    {
+      "id": "orchestrator-response-continuation-state",
+      "current_path": "src/avalan/agent/orchestrator/response/orchestrator_response.py:221",
+      "remove_by_phase": 4,
+      "replacement": "explicit run-scoped continuation object with independently owned queues, counters, and provider responses",
+      "evidence": "OrchestratorResponse currently co-locates _calls, _parser_queue, _tool_result_outcomes, _tool_cycle_count, _consecutive_non_executed_cycles, _response, and _model_responses"
+    },
+    {
+      "id": "chat-sse-fake-turn",
+      "current_path": "src/avalan/server/routers/chat.py:167",
+      "remove_by_phase": 8,
+      "replacement": "genuine execution origin turn_id",
+      "evidence": "source literal chat-sse-turn"
+    },
+    {
+      "id": "responses-sse-fake-turn",
+      "current_path": "src/avalan/server/routers/responses.py:1617",
+      "remove_by_phase": 8,
+      "replacement": "genuine execution origin turn_id",
+      "evidence": "source literal responses-sse-turn"
+    },
+    {
+      "id": "responses-non-stream-fake-turn",
+      "current_path": "src/avalan/server/routers/responses.py:1782",
+      "remove_by_phase": 8,
+      "replacement": "genuine execution origin turn_id",
+      "evidence": "source literal responses-non-stream-turn"
+    },
+    {
+      "id": "mcp-fake-turn",
+      "current_path": "src/avalan/server/routers/mcp.py:1671",
+      "remove_by_phase": 10,
+      "replacement": "genuine downstream and host turn identity",
+      "evidence": "source literal mcp-turn"
+    },
+    {
+      "id": "flow-run-equals-turn",
+      "current_path": "src/avalan/flow/runtime.py:497",
+      "remove_by_phase": 9,
+      "replacement": "distinct run_id and turn_id",
+      "evidence": "Flow runtime assigns flow_run_id to both run_id and turn_id at lines 496-497"
+    },
+    {
+      "id": "a2a-task-context-correlation",
+      "current_path": "src/avalan/server/a2a/router.py:1104",
+      "remove_by_phase": 11,
+      "replacement": "distinct A2A task/context and canonical run/turn identities",
+      "evidence": "A2A server projection currently reuses task_id and context_id as run_id and turn_id"
+    },
+    {
+      "id": "model-single-stream-correlation",
+      "current_path": "src/avalan/model/stream.py:4469",
+      "remove_by_phase": 4,
+      "replacement": "genuine model-call execution origin",
+      "evidence": "source literals single-run and single-turn"
+    },
+    {
+      "id": "model-non-stream-correlation",
+      "current_path": "src/avalan/model/stream.py:4715",
+      "remove_by_phase": 4,
+      "replacement": "genuine non-stream execution origin",
+      "evidence": "source literals non-stream-run and non-stream-turn"
+    },
+    {
+      "id": "legacy-chat-sse-correlation-assertion",
+      "current_path": "tests/server/chat_router_unit_test.py:1068",
+      "remove_by_phase": 8,
+      "replacement": "assert the genuine origin turn_id propagated from run state",
+      "evidence": "test_create_chat_completion_stream currently asserts the literal turn_id chat-sse-turn"
+    },
+    {
+      "id": "legacy-responses-sse-correlation-assertion",
+      "current_path": "tests/server/create_response_sse_test.py:440",
+      "remove_by_phase": 8,
+      "replacement": "assert the genuine origin turn_id propagated into Responses SSE",
+      "evidence": "the Responses SSE projection assertion currently pins the literal responses-sse-turn"
+    },
+    {
+      "id": "legacy-mcp-correlation-assertion",
+      "current_path": "tests/server/mcp_router_test.py:3521",
+      "remove_by_phase": 10,
+      "replacement": "assert the genuine downstream or host origin turn_id",
+      "evidence": "the MCP stream assertion currently pins the literal turn_id mcp-turn"
+    }
+  ]
+}

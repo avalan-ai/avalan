@@ -23,6 +23,7 @@ from avalan.entities import (
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -648,14 +649,16 @@ class A2AToolSetTestCase(TestCase):
         )
 
         names = {descriptor.name for descriptor in manager.list_tools()}
+        schemas = (
+            ModelCapabilityCatalog.create(
+                manager.export_model_capability_seed()
+            )
+            .project()
+            .schemas
+        )
         self.assertEqual(names, {"a2a.call", "shell.pipeline"})
         self.assertEqual(
-            len(
-                {
-                    schema["function"]["name"]
-                    for schema in manager.json_schemas() or []
-                }
-            ),
+            len({schema["function"]["name"] for schema in schemas}),
             2,
         )
 
@@ -698,6 +701,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         app.state.stack = stack
         app.state.agent_id = None
         events: list[ToolExecutionStreamEvent] = []
+        response = _CanonicalResponse()
 
         async def stream(event: ToolExecutionStreamEvent) -> None:
             events.append(event)
@@ -705,7 +709,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         async def fake_orchestrate(
             *args: object, **kwargs: object
         ) -> tuple["_CanonicalResponse", UUID, int]:
-            return _CanonicalResponse(), uuid4(), 123
+            return response, uuid4(), 123
 
         a2a_router.install_a2a_routes(
             app,
@@ -733,6 +737,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         self.assertEqual(loader.from_file_calls, 1)
         self.assertIs(app.state.orchestrator, orchestrator)
         self.assertEqual(orchestrator.sync_count, 1)
+        self.assertIs(orchestrator.synced_responses[0], response)
 
         self.assertEqual(result["content"], [{"type": "text", "text": "25"}])
         structured = cast(dict[str, Any], result["structuredContent"])
@@ -764,12 +769,13 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
         app.state.stack = stack
         app.state.agent_id = None
         captured_requests: list[ChatCompletionRequest] = []
+        response = _CanonicalResponse()
 
         async def fake_orchestrate(
             request: ChatCompletionRequest, *args: object, **kwargs: object
         ) -> tuple["_CanonicalResponse", UUID, int]:
             captured_requests.append(request)
-            return _CanonicalResponse(), uuid4(), 123
+            return response, uuid4(), 123
 
         a2a_router.install_a2a_routes(
             app,
@@ -813,6 +819,8 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
                 )
 
         self.assertEqual(result["content"], [{"type": "text", "text": "25"}])
+        self.assertEqual(orchestrator.sync_count, 1)
+        self.assertIs(orchestrator.synced_responses[0], response)
         self.assertEqual(len(captured_requests), 1)
         message = captured_requests[0].messages[0]
         content = message.content
@@ -850,6 +858,9 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
             tool=served_manager,
         )
         events: list[ToolExecutionStreamEvent] = []
+        response = _CanonicalResponse(
+            _a2a_pipeline_items_for_served_orchestrator(orchestrator)
+        )
 
         async def stream(event: ToolExecutionStreamEvent) -> None:
             events.append(event)
@@ -858,13 +869,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
             *args: object, **kwargs: object
         ) -> tuple["_CanonicalResponse", UUID, int]:
             self.assertIs(args[2], orchestrator)
-            return (
-                _CanonicalResponse(
-                    _a2a_pipeline_items_for_served_orchestrator(args[2])
-                ),
-                uuid4(),
-                123,
-            )
+            return response, uuid4(), 123
 
         a2a_router.install_a2a_routes(
             app,
@@ -891,6 +896,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(loader.from_file_calls, 1)
         self.assertEqual(orchestrator.sync_count, 1)
+        self.assertIs(orchestrator.synced_responses[0], response)
         structured = cast(dict[str, Any], result["structuredContent"])
         artifacts = cast(list[dict[str, Any]], structured["artifacts"])
         pipeline_artifacts = [
@@ -927,18 +933,15 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
             "test.a2a.tool.pipeline.denied",
             tool=served_manager,
         )
+        response = _CanonicalResponse(
+            _a2a_pipeline_items_for_served_orchestrator(orchestrator)
+        )
 
         async def fake_orchestrate(
             *args: object, **kwargs: object
         ) -> tuple["_CanonicalResponse", UUID, int]:
             self.assertIs(args[2], orchestrator)
-            return (
-                _CanonicalResponse(
-                    _a2a_pipeline_items_for_served_orchestrator(args[2])
-                ),
-                uuid4(),
-                123,
-            )
+            return response, uuid4(), 123
 
         a2a_router.install_a2a_routes(
             app,
@@ -965,6 +968,7 @@ class A2ACallToolHttpE2ETestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(loader.from_file_calls, 1)
         self.assertEqual(orchestrator.sync_count, 1)
+        self.assertIs(orchestrator.synced_responses[0], response)
         structured = cast(dict[str, Any], result["structuredContent"])
         artifacts = cast(list[dict[str, Any]], structured["artifacts"])
         diagnostic_artifact = next(
@@ -1095,13 +1099,15 @@ class _E2EOrchestrator:
     def __init__(self, tool: ToolManager | None = None) -> None:
         self.id = UUID(int=2)
         self.sync_count = 0
+        self.synced_responses: list[object] = []
         self._tool = tool
 
     @property
     def tool(self) -> ToolManager | None:
         return self._tool
 
-    async def sync_messages(self) -> None:
+    async def sync_messages(self, response: object) -> None:
+        self.synced_responses.append(response)
         self.sync_count += 1
 
 

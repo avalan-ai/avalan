@@ -665,7 +665,7 @@ async def model_run(
                 engine_uri=engine_uri,
                 model=model,
                 operation=operation,
-                tool=None,
+                capability=None,
                 context=context,
             )
             output = await manager(task)
@@ -1100,6 +1100,13 @@ async def token_generation(
                     side_channel_events_enabled = False
                     stop_signal.set()
                 await reduce_projection(projection)
+                if (
+                    projection.terminal_outcome
+                    is StreamTerminalOutcome.INPUT_REQUIRED
+                ):
+                    raise StreamValidationError(
+                        "CLI input-required projection is unavailable"
+                    )
         except BaseException:
             stop_signal.set()
             raise

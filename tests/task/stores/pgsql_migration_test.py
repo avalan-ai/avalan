@@ -1,8 +1,9 @@
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from importlib import import_module
 from pathlib import Path
 from sys import modules
-from types import SimpleNamespace
+from types import ModuleType, SimpleNamespace
 from typing import cast
 from unittest import TestCase, main
 
@@ -84,10 +85,10 @@ class PgsqlMigrationSchemaTest(TestCase):
     ) -> None:
         schema = "\n".join(task_pgsql_schema_statements())
 
-        for state in TaskRunState:
-            self.assertIn(f"'{state.value}'", schema)
-        for state in TaskAttemptState:
-            self.assertIn(f"'{state.value}'", schema)
+        for run_state in TaskRunState:
+            self.assertIn(f"'{run_state.value}'", schema)
+        for attempt_state in TaskAttemptState:
+            self.assertIn(f"'{attempt_state.value}'", schema)
         for purpose in TaskArtifactPurpose:
             self.assertIn(f"'{purpose.value}'", schema)
 
@@ -410,7 +411,10 @@ class PgsqlMigrationHelperTest(TestCase):
     def test_invalid_helper_settings_fail_fast(self) -> None:
         modules = FakeAlembicModules()
 
-        for factory in (
+        invalid_settings_factories: tuple[
+            Callable[[], PgsqlTaskMigrationSettings],
+            ...,
+        ] = (
             lambda: PgsqlTaskMigrationSettings(url=""),
             lambda: PgsqlTaskMigrationSettings(
                 url="postgresql+psycopg://localhost/avalan",
@@ -420,7 +424,8 @@ class PgsqlMigrationHelperTest(TestCase):
                 url="postgresql+psycopg://localhost/avalan",
                 version_table="1bad",
             ),
-        ):
+        )
+        for factory in invalid_settings_factories:
             with self.assertRaises(AssertionError):
                 factory()
 
@@ -556,16 +561,31 @@ class PgsqlMigrationEnvironmentTest(TestCase):
         old_sqlalchemy = modules.get("sqlalchemy")
         old_env = modules.pop(module_name, None)
         fake_connection = connection or FakeSqlalchemyConnection()
-        modules["alembic"] = SimpleNamespace(context=context)
-        modules["sqlalchemy"] = SimpleNamespace(
-            engine_from_config=lambda *args, **kwargs: (
-                FakeSqlalchemyConnectable(
-                    fake_connection,
-                )
-            ),
-            pool=SimpleNamespace(NullPool=object),
-            text=lambda value: value,
+
+        def engine_from_config(
+            configuration: dict[str, object],
+            *,
+            prefix: str,
+            poolclass: object,
+        ) -> FakeSqlalchemyConnectable:
+            del configuration, prefix, poolclass
+            return FakeSqlalchemyConnectable(fake_connection)
+
+        def text(value: str) -> str:
+            return value
+
+        fake_alembic = ModuleType("alembic")
+        setattr(fake_alembic, "context", context)
+        fake_sqlalchemy = ModuleType("sqlalchemy")
+        setattr(fake_sqlalchemy, "engine_from_config", engine_from_config)
+        setattr(
+            fake_sqlalchemy,
+            "pool",
+            SimpleNamespace(NullPool=object),
         )
+        setattr(fake_sqlalchemy, "text", text)
+        modules["alembic"] = fake_alembic
+        modules["sqlalchemy"] = fake_sqlalchemy
         try:
             import_module(module_name)
         finally:
@@ -590,7 +610,9 @@ class PgsqlMigrationRevisionTest(TestCase):
         )
         fake_op = FakeRevisionOp()
         old_alembic = modules.get("alembic")
-        modules["alembic"] = SimpleNamespace(op=fake_op)
+        fake_alembic = ModuleType("alembic")
+        setattr(fake_alembic, "op", fake_op)
+        modules["alembic"] = fake_alembic
         try:
             revision_module.upgrade()
         finally:
@@ -601,17 +623,116 @@ class PgsqlMigrationRevisionTest(TestCase):
 
         self.assertEqual(
             fake_op.bind.statements,
-            list(task_pgsql_schema_statements()),
+            list(revision_module.TASK_SCHEMA_STATEMENTS),
         )
 
-    def test_revision_downgrade_is_forward_only(self) -> None:
+    def test_durable_revision_extends_aggregated_schema(self) -> None:
         revision_module = import_module(
             "avalan.task.stores.pgsql_migrations.versions."
-            "v20260530_0001_task_schema"
+            "v20260723_0002_durable_interactions"
         )
+        fake_op = FakeRevisionOp()
+        old_alembic = modules.get("alembic")
+        fake_alembic = ModuleType("alembic")
+        setattr(fake_alembic, "op", fake_op)
+        modules["alembic"] = fake_alembic
+        try:
+            revision_module.upgrade()
+        finally:
+            if old_alembic is None:
+                modules.pop("alembic", None)
+            else:
+                modules["alembic"] = old_alembic
 
-        with self.assertRaises(NotImplementedError):
-            revision_module.downgrade()
+        self.assertEqual(
+            fake_op.bind.statements,
+            list(revision_module.TASK_SCHEMA_STATEMENTS),
+        )
+        schema = "\n".join(task_pgsql_schema_statements())
+        self.assertIn('"interaction_continuations"', schema)
+        self.assertIn('"task_attempt_segments"', schema)
+        self.assertIn('"checkpoint_id" TEXT DEFAULT NULL', schema)
+        self.assertIn(
+            '"ck_task_attempt_segments_checkpoint_correlation"',
+            schema,
+        )
+        self.assertIn(
+            'DROP INDEX IF EXISTS "uq_task_queue_items_one_active_per_run"',
+            schema,
+        )
+        self.assertNotIn(
+            'DROP INDEX IF EXISTS "uq_task_queue_items_active_run"',
+            schema,
+        )
+        self.assertIn(
+            '"interaction_delete_orphaned_branches"',
+            schema,
+        )
+        self.assertIn(
+            '"trg_interaction_delete_orphaned_branches"',
+            schema,
+        )
+        self.assertIn(
+            'PRIMARY KEY ("run_id", "branch_id", "scope_identity_digest")',
+            schema,
+        )
+        self.assertIn(
+            '"interaction_lock_scope_before_record_delete"',
+            schema,
+        )
+        self.assertIn(
+            '"trg_interaction_lock_scope_before_record_delete"',
+            schema,
+        )
+        self.assertIn(
+            'BEFORE DELETE ON "interaction_records"',
+            schema,
+        )
+        self.assertIn(
+            'AFTER DELETE ON "interaction_records"',
+            schema,
+        )
+        self.assertGreaterEqual(
+            schema.count("pg_advisory_xact_lock"),
+            2,
+        )
+        self.assertGreaterEqual(
+            schema.count("'avalan.interaction.retention.v1'"),
+            2,
+        )
+        self.assertIn(
+            '"scope_identity_digest" = OLD."scope_identity_digest"',
+            schema,
+        )
+        self.assertIn('"scope_identity_digest" TEXT NOT NULL', schema)
+        self.assertIn(
+            '"ck_interaction_records_scope_identity_digest"',
+            schema,
+        )
+        self.assertIn(
+            '"ck_interaction_branches_scope_identity_digest"',
+            schema,
+        )
+        self.assertIn(
+            '"ix_interaction_records_correlation_scope"',
+            schema,
+        )
+        self.assertIn('"ix_interaction_branches_scope"', schema)
+
+    def test_revision_downgrade_is_forward_only(self) -> None:
+        for revision in (
+            "v20260530_0001_task_schema",
+            "v20260723_0002_durable_interactions",
+        ):
+            with self.subTest(revision=revision):
+                revision_module = import_module(
+                    "avalan.task.stores.pgsql_migrations.versions." + revision
+                )
+                with self.assertRaisesRegex(
+                    NotImplementedError,
+                    "forward-only",
+                ):
+                    revision_module.downgrade()
 
 
 if __name__ == "__main__":

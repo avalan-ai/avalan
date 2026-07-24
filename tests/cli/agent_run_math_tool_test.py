@@ -41,6 +41,7 @@ from avalan.entities import (
 from avalan.event import Event, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCall, ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -310,11 +311,11 @@ class GatedCalculatorTool(Tool):
 class DummyEngine:
     model_id = "m"
     model_type = "t"
-    last_tool = None
+    last_capability = None
     tokenizer = MagicMock()
 
-    async def __call__(self, input, *, tool=None):
-        DummyEngine.last_tool = tool
+    async def __call__(self, input, *, capability=None):
+        DummyEngine.last_capability = capability
         if isinstance(input, Message):
             return _canonical_tool_call_response()
         else:
@@ -332,29 +333,32 @@ class DummyDs4Engine(DummyEngine):
     model_type = "ds4"
     tokenizer = None
 
-    async def __call__(self, input, *, tool=None):
-        DummyEngine.last_tool = tool
+    async def __call__(self, input, *, capability=None):
+        DummyEngine.last_capability = capability
         if isinstance(input, Message):
             return _canonical_tool_call_response()
-        return await super().__call__(input, tool=tool)
+        return await super().__call__(input, capability=capability)
 
 
 class FileEchoEngine(DummyEngine):
     def __init__(self) -> None:
         self.seen_input = None
 
-    async def __call__(self, input, *, tool=None):
+    async def __call__(self, input, *, capability=None):
         self.seen_input = input
         return _canonical_answer_response("file received")
 
 
 class DummyModelManager:
     def __init__(self) -> None:
-        self.passed_tool = None
+        self.passed_capability = None
 
     async def __call__(self, task: ModelCall):
-        self.passed_tool = task.tool
-        return await task.model(task.operation.input, tool=task.tool)
+        self.passed_capability = task.capability
+        return await task.model(
+            task.operation.input,
+            capability=task.capability,
+        )
 
 
 class DummyAgent(EngineAgent):
@@ -362,6 +366,7 @@ class DummyAgent(EngineAgent):
         return {}
 
     async def _run(self, context: ModelCallContext, input, **_kwargs):
+        assert context.capability is not None
         operation = EntitiesOperation(
             generation_settings=GenerationSettings(),
             input=input,
@@ -375,7 +380,7 @@ class DummyAgent(EngineAgent):
                 engine_uri=self._engine_uri,
                 model=self._model,
                 operation=operation,
-                tool=self._tool,
+                capability=context.capability,
                 context=context,
             )
         )
@@ -407,6 +412,9 @@ class DummyOrchestrator:
                 enable_tools=["math.calculator"],
                 settings=ToolManagerSettings(),
             )
+        )
+        self.capability = ModelCapabilityCatalog.create(
+            self.tool.export_model_capability_seed()
         )
         self.engine_uri = engine_uri or EngineUri(
             host=None,
@@ -450,6 +458,7 @@ class DummyOrchestrator:
         context = ModelCallContext(
             specification=self._operation.specification,
             input=message,
+            capability=self.capability,
         )
         response = await self.agent(context)
         return agent_cmds.OrchestratorResponse(
@@ -461,6 +470,7 @@ class DummyOrchestrator:
             context,
             event_manager=self.event_manager,
             tool=self.tool,
+            capability=context.capability,
         )
 
 
@@ -1298,7 +1308,14 @@ class AgentRunMathToolTestCase(unittest.IsolatedAsyncioTestCase):
         hub.can_access.assert_not_called()
         hub.model.assert_not_called()
         live_patch.assert_called_once()
-        self.assertIs(DummyEngine.last_tool, orch.tool)
+        self.assertIs(
+            orch.model_manager.passed_capability,
+            orch.capability,
+        )
+        self.assertIs(
+            DummyEngine.last_capability,
+            orch.capability,
+        )
         self.assertTrue(
             any(
                 print_call.args

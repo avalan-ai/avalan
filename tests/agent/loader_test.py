@@ -15,9 +15,11 @@ from uuid import uuid4
 from async_helpers import run_async
 from jinja2 import Environment, FileSystemLoader
 
+from avalan.agent.execution import AgentExecution
 from avalan.agent.loader import (
     OrchestratorLoader,
     _merge_shell_tool_settings,
+    _normalize_file_run_reasoning,
     _shell_tool_runtime_settings,
 )
 from avalan.cli.commands import agent as agent_cmds
@@ -60,6 +62,8 @@ from avalan.isolation import (
     SandboxProfileSelection,
     trusted_isolation_source,
 )
+from avalan.model import ModelCapabilityCatalog
+from avalan.model.capability import ProviderCapabilitySupport
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
@@ -437,21 +441,50 @@ async def _loaded_agent_model_input(
         async def __call__(self, context: Any) -> object:
             captured_contexts.append(context)
             self.last_prompt = (context.input, None, None, None)
-            return MagicMock(
+            self.output = MagicMock(
                 input_token_count=1,
                 output_token_count=1,
                 usage=None,
             )
+            return self.output
 
-        async def sync_messages(self) -> None:
+        async def sync_messages(
+            self,
+            execution: AgentExecution | None = None,
+        ) -> None:
+            assert execution is None or isinstance(execution, AgentExecution)
             return None
+
+        def acknowledge_provider_handoff(self, response: object) -> None:
+            assert response is self.output
+
+        async def drain_pending_provider_cleanups(
+            self,
+            execution: AgentExecution | None = None,
+            *,
+            abandon_unclaimed: bool = False,
+        ) -> tuple[BaseException, ...]:
+            assert execution is None or isinstance(execution, AgentExecution)
+            assert isinstance(abandon_unclaimed, bool)
+            return ()
 
         def __str__(self) -> str:
             return "capturing-template-engine-agent"
 
+    class CapturingOrchestratorResponse:
+        execution = None
+        ownership_cleanup_complete = True
+
+        async def aclose(self) -> None:
+            return None
+
+        async def sync_messages(self) -> None:
+            return None
+
     fake_engine = MagicMock(model_id="m", tokenizer=None)
     fake_engine.__enter__.return_value = fake_engine
     fake_engine.__exit__.return_value = None
+    fake_engine.provider_capability_support = ProviderCapabilitySupport()
 
     model_manager = MagicMock()
     model_manager.__enter__.return_value = model_manager
@@ -501,7 +534,7 @@ async def _loaded_agent_model_input(
                 ),
                 patch(
                     "avalan.agent.orchestrator.OrchestratorResponse",
-                    return_value="resp",
+                    return_value=CapturingOrchestratorResponse(),
                 ),
                 patch("avalan.agent.loader.HAS_GRAPH_DEPENDENCIES", False),
                 patch("avalan.agent.loader.HAS_CODE_DEPENDENCIES", False),
@@ -776,9 +809,10 @@ async def _load_shell_agent_tool_result(
                     agent_id=uuid4(),
                 )
 
-                schemas = agent.tool.json_schemas() or []
                 schema_names = [
-                    schema["function"]["name"] for schema in schemas
+                    descriptor.schema["function"]["name"]
+                    for descriptor in agent.tool.list_tools()
+                    if descriptor.schema is not None
                 ]
                 outcome = await agent.tool.execute_call(
                     ToolCall(
@@ -1528,7 +1562,13 @@ class LoaderFromFileTestCase(IsolatedAsyncioTestCase):
 
         manager = _shell_only_manager(kwargs)
         self.assertEqual(manager.list_tools(), [])
-        self.assertIsNone(manager.provider_json_schemas())
+        self.assertTrue(
+            ModelCapabilityCatalog.create(
+                manager.export_model_capability_seed()
+            )
+            .project()
+            .is_empty
+        )
         self.assertIsNone(manager.describe_tool("shell.pipeline"))
         resolution = manager.resolve_tool_name("shell.pipeline")
         self.assertIs(resolution.status, ToolNameResolutionStatus.DISABLED)
@@ -2208,17 +2248,25 @@ required = true
     ) -> None:
         image = "ghcr.io/example/tools@sha256:" + "4" * 64
 
+        class FakeEnvelopedAgent:
+            def __init__(self) -> None:
+                self.definition_locators = []
+
+            def bind_execution_definition_locator(self, locator) -> None:
+                self.definition_locators.append(locator)
+
         class FakeAgentEnvelopeLoader:
             trusted_runtime_envelope_runner = True
 
             def __init__(self) -> None:
                 self.plan = None
                 self.kwargs = None
+                self.agent = FakeEnvelopedAgent()
 
             async def load_agent_runtime_envelope(self, plan, **kwargs):
                 self.plan = plan
                 self.kwargs = kwargs
-                return "enveloped"
+                return self.agent
 
         with NamedTemporaryFile("w+", suffix=".toml") as tmp:
             tmp.write(_minimal_agent_toml() + f"""
@@ -2259,9 +2307,13 @@ readiness_timeout_seconds = 12
                 tool_settings=ToolSettingsContext(extra={"caller": "ok"}),
             )
 
-            self.assertEqual(result, "enveloped")
+            self.assertIs(result, envelope_loader.agent)
             assert envelope_loader.plan is not None
             assert envelope_loader.kwargs is not None
+            self.assertEqual(
+                envelope_loader.agent.definition_locators,
+                [Path(tmp.name).resolve(strict=True).as_uri()],
+            )
             self.assertEqual(
                 envelope_loader.kwargs["call_options_override"],
                 {
@@ -2988,10 +3040,10 @@ mode = "sanitized"
             settings=settings,
         )
 
-        provider_schemas = manager.provider_json_schemas(
-            provider_family="openai"
-        )
-        assert provider_schemas is not None
+        projection = ModelCapabilityCatalog.create(
+            manager.export_model_capability_seed()
+        ).project("openai")
+        provider_schemas = projection.schemas
         provider_names = [
             schema["function"]["name"] for schema in provider_schemas
         ]
@@ -3000,12 +3052,10 @@ mode = "sanitized"
             provider_names,
             ["pdfinfo", "shell_pdftoppm", "tesseract"],
         )
-        resolution = manager.resolve_tool_name(
-            "shell_pdftoppm",
-            provider_originated=True,
+        self.assertEqual(
+            projection.canonical_name("shell_pdftoppm"),
+            "shell.pdftoppm",
         )
-        self.assertIs(resolution.status, ToolNameResolutionStatus.EXACT)
-        self.assertEqual(resolution.canonical_name, "shell.pdftoppm")
 
     async def test_from_file_loads_tool_name_policy_empty_prefix(self):
         kwargs = await _from_file_tool_manager_kwargs(
@@ -5083,6 +5133,19 @@ uri = "ai://local/model"
                 "engine": {"uri": "ai://local/model"},
                 "run": {"reasoning": {"summary": "auto"}},
             }
+        )
+        OrchestratorLoader.validate_agent_config(
+            {
+                "agent": {"role": "assistant"},
+                "engine": {"uri": "ai://local/model"},
+                "run": {"reasoning": {"effort": "high"}},
+            }
+        )
+        reasoning_without_summary = {"run": {"reasoning": {"effort": "high"}}}
+        _normalize_file_run_reasoning(reasoning_without_summary)
+        self.assertEqual(
+            reasoning_without_summary,
+            {"run": {"reasoning": {"effort": "high"}}},
         )
 
     async def test_permanent_memory_from_file(self):

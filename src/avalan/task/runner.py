@@ -53,7 +53,12 @@ from .definition import (
     TaskOutputType,
 )
 from .error import TaskError, TaskErrorValue, classify_task_error
-from .event import TaskEventCategory, freeze_task_event_value
+from .event import (
+    TaskEventCategory,
+    TaskInteractionEventType,
+    freeze_task_event_value,
+    task_interaction_event_payload,
+)
 from .input import (
     TaskFileConversionRequest,
     TaskFileDescriptor,
@@ -94,9 +99,14 @@ from .skills import (
     task_definition_with_skills_identity,
     task_skill_audit_event_publisher,
 )
-from .state import TaskAttemptState, TaskRunState
+from .state import (
+    TaskAttemptSegmentState,
+    TaskAttemptState,
+    TaskRunState,
+)
 from .store import (
     TaskAttempt,
+    TaskAttemptSegment,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
@@ -109,8 +119,11 @@ from .store import (
 )
 from .target import (
     CallableTaskTargetRunner,
+    TaskTargetCompleted,
     TaskTargetRunner,
+    TaskTargetSuspended,
     TaskValidationContext,
+    task_target_outcome,
 )
 from .usage import usage_observations_from_response
 from .validation import (
@@ -159,7 +172,26 @@ class TaskDirectTarget(Protocol):
 class TaskRunResult:
     run: TaskRun
     attempt: TaskAttempt
+    segment: TaskAttemptSegment | None = None
     output: object = None
+    input_required: TaskTargetSuspended | None = None
+
+    def __post_init__(self) -> None:
+        assert isinstance(self.run, TaskRun)
+        assert isinstance(self.attempt, TaskAttempt)
+        if self.segment is not None:
+            assert isinstance(self.segment, TaskAttemptSegment)
+            assert self.segment.run_id == self.run.run_id
+            assert self.segment.attempt_id == self.attempt.attempt_id
+        if self.input_required is not None:
+            assert type(self.input_required) is TaskTargetSuspended
+            assert self.run.state == TaskRunState.INPUT_REQUIRED
+            assert self.attempt.state == TaskAttemptState.SUSPENDED
+            assert self.output is None
+
+    @property
+    def suspended(self) -> bool:
+        return self.input_required is not None
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -583,6 +615,71 @@ def validate_explicit_task_input_files(
 
 
 class TaskRunFinalizer:
+    async def finalize_suspended(
+        self,
+        *,
+        store: TaskStore,
+        run: TaskRun,
+        attempt: TaskAttempt,
+        segment: TaskAttemptSegment,
+        outcome: TaskTargetSuspended,
+    ) -> TaskRunResult:
+        required = outcome.input_required
+        result = TaskExecutionResult(
+            metadata={
+                "interaction": {
+                    "kind": required.kind.value,
+                    "request_id": str(required.request_id),
+                    "continuation_id": str(required.continuation_id),
+                    "detached_resumption_available": (
+                        required.detached_resumption_available
+                    ),
+                    "checkpoint_id": outcome.checkpoint_id,
+                }
+            }
+        )
+        segment = await store.transition_attempt_segment(
+            segment.segment_id,
+            from_states={TaskAttemptSegmentState.RUNNING},
+            to_state=TaskAttemptSegmentState.SUSPENDED,
+            reason="input_required",
+            request_id=str(required.request_id),
+            continuation_id=str(required.continuation_id),
+            checkpoint_id=outcome.checkpoint_id,
+        )
+        attempt = await store.transition_attempt(
+            attempt.attempt_id,
+            from_states={TaskAttemptState.RUNNING},
+            to_state=TaskAttemptState.SUSPENDED,
+            reason="input_required",
+            result=result,
+        )
+        run = await store.transition_run(
+            run.run_id,
+            from_states={TaskRunState.RUNNING},
+            to_state=TaskRunState.INPUT_REQUIRED,
+            reason="input_required",
+            result=result,
+        )
+        await store.append_event(
+            run.run_id,
+            attempt_id=attempt.attempt_id,
+            event_type=TaskInteractionEventType.INPUT_REQUIRED.value,
+            category=TaskEventCategory.INTERACTION,
+            payload=task_interaction_event_payload(
+                event_type=TaskInteractionEventType.INPUT_REQUIRED,
+                request_id=str(required.request_id),
+                continuation_id=str(required.continuation_id),
+                segment_id=segment.segment_id,
+            ),
+        )
+        return TaskRunResult(
+            run=run,
+            attempt=attempt,
+            segment=segment,
+            input_required=outcome,
+        )
+
     async def finalize_success(
         self,
         *,
@@ -959,6 +1056,19 @@ class DirectTaskRunner:
             except TaskStoreConflictError:
                 raise
             except BaseException as error:
+                await self._close_running_segment(
+                    attempt,
+                    state=(
+                        TaskAttemptSegmentState.ABANDONED
+                        if isinstance(error, CancelledError)
+                        else TaskAttemptSegmentState.FAILED
+                    ),
+                    reason=(
+                        "cancelled"
+                        if isinstance(error, CancelledError)
+                        else "execution_failed"
+                    ),
+                )
                 if isinstance(error, TaskRunExpiredError):
                     return await self._finalizer.finalize_expired(
                         store=self._store,
@@ -1058,12 +1168,15 @@ class DirectTaskRunner:
         sanitizer: PrivacySanitizer,
         expires_at: datetime | None,
     ) -> TaskRunResult:
+        segment = await self._start_attempt_segment(attempt)
+
         async def observe_usage(response: object) -> None:
             await self._record_usage(
                 response,
                 definition=definition,
                 run=run,
                 attempt=attempt,
+                segment=segment,
             )
 
         observed_usage_ids: set[str] = set()
@@ -1073,6 +1186,7 @@ class DirectTaskRunner:
                 response,
                 run_id=run.run_id,
                 attempt_id=attempt.attempt_id,
+                segment_id=segment.segment_id,
                 usage_observer=self._event_observer,
                 observed_usage_ids=observed_usage_ids,
             )
@@ -1116,6 +1230,11 @@ class DirectTaskRunner:
             await usage_tracker.observe(output)
             output_issues = validate_task_output(definition, output)
             if output_issues:
+                await self._transition_segment(
+                    segment,
+                    to_state=TaskAttemptSegmentState.FAILED,
+                    reason="output_invalid",
+                )
                 return await self._finalizer.finalize_failure(
                     store=self._store,
                     run=run,
@@ -1138,6 +1257,11 @@ class DirectTaskRunner:
                     sanitizer=sanitizer,
                 )
             await self._check_cancellation_or_expiry(run, expires_at)
+            segment = await self._transition_segment(
+                segment,
+                to_state=TaskAttemptSegmentState.SUCCEEDED,
+                reason="completed",
+            )
             finalized = await self._finalizer.finalize_success(
                 store=self._store,
                 run=run,
@@ -1147,6 +1271,7 @@ class DirectTaskRunner:
             return TaskRunResult(
                 run=finalized.run,
                 attempt=finalized.attempt,
+                segment=segment,
                 output=output,
             )
         context = TaskTargetContext(
@@ -1173,14 +1298,35 @@ class DirectTaskRunner:
             file_converters=self._file_converters,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
-        output = await wait_for(
-            self._target.run(context),
-            timeout=definition.run.timeout_seconds,
+        target_outcome = task_target_outcome(
+            await wait_for(
+                self._target.run(context),
+                timeout=definition.run.timeout_seconds,
+            )
         )
         await self._check_cancellation_or_expiry(run, expires_at)
+        if type(target_outcome) is TaskTargetSuspended:
+            if target_outcome.durable is not None:
+                raise TaskRunnerError(
+                    "durable task suspension requires a queued coordinator"
+                )
+            return await self._finalizer.finalize_suspended(
+                store=self._store,
+                run=run,
+                attempt=attempt,
+                segment=segment,
+                outcome=target_outcome,
+            )
+        assert type(target_outcome) is TaskTargetCompleted
+        output = target_outcome.output
         await usage_tracker.observe(output)
         output_issues = validate_task_output(definition, output)
         if output_issues:
+            await self._transition_segment(
+                segment,
+                to_state=TaskAttemptSegmentState.FAILED,
+                reason="output_invalid",
+            )
             return await self._finalizer.finalize_failure(
                 store=self._store,
                 run=run,
@@ -1202,6 +1348,11 @@ class DirectTaskRunner:
             sanitizer=sanitizer,
         )
         await self._check_cancellation_or_expiry(run, expires_at)
+        segment = await self._transition_segment(
+            segment,
+            to_state=TaskAttemptSegmentState.SUCCEEDED,
+            reason="completed",
+        )
         try:
             result = await self._finalizer.finalize_success(
                 store=self._store,
@@ -1215,7 +1366,63 @@ class DirectTaskRunner:
         return TaskRunResult(
             run=result.run,
             attempt=result.attempt,
+            segment=segment,
             output=output,
+        )
+
+    async def _start_attempt_segment(
+        self,
+        attempt: TaskAttempt,
+    ) -> TaskAttemptSegment:
+        segments = await self._store.list_attempt_segments(attempt.attempt_id)
+        previous = segments[-1] if segments else None
+        segment = await self._store.create_attempt_segment(
+            attempt.attempt_id,
+            resumed_from_segment_id=(
+                previous.segment_id
+                if previous is not None
+                and previous.state == TaskAttemptSegmentState.SUSPENDED
+                else None
+            ),
+        )
+        return await self._store.transition_attempt_segment(
+            segment.segment_id,
+            from_states={TaskAttemptSegmentState.CREATED},
+            to_state=TaskAttemptSegmentState.RUNNING,
+            reason="started",
+        )
+
+    async def _transition_segment(
+        self,
+        segment: TaskAttemptSegment,
+        *,
+        to_state: TaskAttemptSegmentState,
+        reason: str,
+    ) -> TaskAttemptSegment:
+        return await self._store.transition_attempt_segment(
+            segment.segment_id,
+            from_states={TaskAttemptSegmentState.RUNNING},
+            to_state=to_state,
+            reason=reason,
+        )
+
+    async def _close_running_segment(
+        self,
+        attempt: TaskAttempt,
+        *,
+        state: TaskAttemptSegmentState,
+        reason: str,
+    ) -> None:
+        segments = await self._store.list_attempt_segments(attempt.attempt_id)
+        if (
+            not segments
+            or segments[-1].state != TaskAttemptSegmentState.RUNNING
+        ):
+            return
+        await self._transition_segment(
+            segments[-1],
+            to_state=state,
+            reason=reason,
         )
 
     def _validate(
@@ -1688,6 +1895,7 @@ class DirectTaskRunner:
         definition: TaskDefinition,
         run: TaskRun,
         attempt: TaskAttempt,
+        segment: TaskAttemptSegment,
     ) -> None:
         await record_response_usage(
             self._observability_sink_for(definition),
@@ -1695,6 +1903,7 @@ class DirectTaskRunner:
             response=response,
             run_id=run.run_id,
             attempt_id=attempt.attempt_id,
+            segment_id=segment.segment_id,
             usage_observer=self._event_observer,
         )
 

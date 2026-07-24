@@ -15,6 +15,7 @@ from avalan.agent import (
     NoOperationAvailableException,
     Specification,
 )
+from avalan.agent.execution import AgentExecutionStatus, ModelPromptRecord
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.renderer import Renderer
 from avalan.entities import (
@@ -33,15 +34,36 @@ from avalan.entities import (
 from avalan.event import EventType
 from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
+from avalan.model.capability import (
+    ModelCapabilityCatalog,
+    ProviderCapabilitySupport,
+    TaskInputCapabilityAdvertisement,
+)
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import ShellToolSettings
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
+class _ResponseFixture(str):
+    """Represent one terminal synchronizable orchestrator response."""
+
+    execution: MagicMock
+    ownership_cleanup_complete: bool
+    sync_messages: AsyncMock
+
+    def __new__(cls) -> "_ResponseFixture":
+        return super().__new__(cls, "resp")
+
+    def __init__(self) -> None:
+        self.execution = MagicMock(status=AgentExecutionStatus.COMPLETED)
+        self.ownership_cleanup_complete = True
+        self.aclose = AsyncMock()
+        self.sync_messages = AsyncMock()
+
+
 class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
     def setUp(self):
-        Orchestrator._engine_agents = {}
         engine_uri = EngineUri(
             host=None,
             port=None,
@@ -65,6 +87,9 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.memory = MagicMock(spec=MemoryManager)
         self.memory.participant_id = uuid4()
         self.tool = MagicMock(spec=ToolManager)
+        self.tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         self.event_manager = MagicMock(spec=EventManager)
         self.orch = Orchestrator(
             self.logger,
@@ -75,15 +100,26 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             [self.operation],
         )
         self.engine_agent = AsyncMock()
+        self.engine_agent.acknowledge_provider_handoff = MagicMock()
+        self.engine_agent.drain_pending_provider_cleanups = AsyncMock(
+            return_value=()
+        )
         self.engine_agent.engine = MagicMock(
-            model_id="m", tokenizer=MagicMock(eos_token="<eos>")
+            model_id="m",
+            provider_capability_support=ProviderCapabilitySupport(
+                structured_invocation=True,
+                stable_call_ids=True,
+                correlated_results=True,
+            ),
+            tokenizer=MagicMock(eos_token="<eos>"),
         )
         self.engine_agent.input_token_count = 5
         env_hash = dumps(asdict(self.environment))
         self.orch._engine_agents[env_hash] = self.engine_agent
+        self.orch._last_engine_agent = self.engine_agent
         patcher = patch(
             "avalan.agent.orchestrator.OrchestratorResponse",
-            lambda *a, **k: "resp",
+            lambda *a, **k: _ResponseFixture(),
         )
         self.addCleanup(patcher.stop)
         patcher.start()
@@ -93,7 +129,9 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
     async def test_call_executes_operation(self):
         resp = await self.orch("hi")
         self.engine_agent.assert_awaited_once()
-        self.tool.set_eos_token.assert_called_once_with("<eos>")
+        self.tool.set_eos_token.assert_not_called()
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(context.capability.domain_seed.eos_token, "<eos>")
         self.assertEqual(resp, "resp")
         self.assertIs(self.orch.engine_agent, self.engine_agent)
         self.assertIs(self.orch.engine, self.engine_agent.engine)
@@ -101,6 +139,85 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIs(self.orch.memory, self.memory)
         self.assertIs(self.orch.tool, self.tool)
         self.assertIs(self.orch.event_manager, self.event_manager)
+
+    async def test_cancelled_initial_model_dispatch_cancels_execution(
+        self,
+    ) -> None:
+        self.engine_agent.side_effect = CancelledError()
+
+        with self.assertRaises(CancelledError):
+            await self.orch("hi")
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(
+            context.execution.status,
+            AgentExecutionStatus.CANCELLED,
+        )
+
+    async def test_failed_initial_model_dispatch_fails_execution(self) -> None:
+        self.engine_agent.side_effect = RuntimeError("provider failed")
+
+        with self.assertRaisesRegex(RuntimeError, "provider failed"):
+            await self.orch("hi")
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(
+            context.execution.status,
+            AgentExecutionStatus.ERRORED,
+        )
+
+    async def test_call_shares_one_capability_catalog(self) -> None:
+        captured: dict[str, object] = {}
+
+        def response_factory(*args: object, **kwargs: object) -> str:
+            captured["context"] = args[5]
+            captured["capability"] = kwargs["capability"]
+            return "resp"
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            response_factory,
+        ):
+            response = await self.orch("hi")
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertEqual(response, "resp")
+        self.assertIsInstance(context.capability, ModelCapabilityCatalog)
+        self.assertTrue(context.capability.support.structured_invocation)
+        self.assertTrue(context.capability.support.stable_call_ids)
+        self.assertTrue(context.capability.support.correlated_results)
+        self.assertIs(captured["context"], context)
+        self.assertIs(captured["capability"], context.capability)
+        self.tool.export_model_capability_seed.assert_called_once_with()
+
+    async def test_call_advertises_incapable_without_provider_proof(
+        self,
+    ) -> None:
+        self.engine_agent.engine.provider_capability_support = (
+            ProviderCapabilitySupport()
+        )
+
+        await self.orch("hi")
+
+        context = self.engine_agent.await_args.args[0]
+        self.assertFalse(context.capability.support.structured_invocation)
+        self.assertFalse(context.capability.support.stable_call_ids)
+        self.assertFalse(context.capability.support.correlated_results)
+        self.assertIs(
+            context.capability.task_input_advertisement,
+            TaskInputCapabilityAdvertisement.INCAPABLE,
+        )
+
+    async def test_call_rejects_untrusted_provider_support(self) -> None:
+        self.engine_agent.engine.provider_capability_support = MagicMock()
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "engine provider_capability_support must be trusted support",
+        ):
+            await self.orch("hi")
+
+        self.engine_agent.assert_not_awaited()
 
     async def test_call_uses_default_maximum_tool_cycles(self):
         captured = {}
@@ -359,12 +476,19 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             Message(role=MessageRole.ASSISTANT, content="25"),
             Message(role=MessageRole.USER, content="and that times two?"),
         ]
-        self.engine_agent.last_prompt = (
-            effective_messages,
-            None,
-            None,
-            None,
-        )
+
+        async def run_with_effective_prompt(context):
+            await context.execution.record_prompt(
+                ModelPromptRecord(
+                    input=effective_messages,
+                    instructions=None,
+                    system_prompt=None,
+                    developer_prompt=None,
+                )
+            )
+            return "result"
+
+        self.engine_agent.side_effect = run_with_effective_prompt
 
         def response_factory(input_value, *args, **kwargs):
             del args, kwargs
@@ -378,7 +502,8 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             resp = await self.orch("and that times two?")
 
         self.assertEqual(resp, "resp")
-        self.assertIs(captured["input"], effective_messages)
+        self.assertEqual(captured["input"], effective_messages)
+        self.assertIsNot(captured["input"], effective_messages)
 
     async def test_call_injects_shell_manifest_after_user_template(self):
         with TemporaryDirectory() as tmp:
@@ -420,21 +545,25 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(resp, "resp")
         context = self.engine_agent.await_args.args[0]
         model_input = context.input
-        assert isinstance(model_input, Message)
-        assert isinstance(model_input.content, list)
+        assert isinstance(model_input, list)
+        self.assertEqual(len(model_input), 1)
+        model_message = model_input[0]
+        assert isinstance(model_message, Message)
+        assert isinstance(model_message.content, list)
         self.assertEqual(
-            model_input.content[0],
+            model_message.content[0],
             MessageContentText(
                 type="text",
                 text="Review: summarize this file",
             ),
         )
-        self.assertIs(model_input.content[1], file_content)
-        assert isinstance(model_input.content[2], MessageContentText)
-        self.assertIn("report.pdf", model_input.content[2].text)
+        self.assertEqual(model_message.content[1], file_content)
+        self.assertIsNot(model_message.content[1], file_content)
+        assert isinstance(model_message.content[2], MessageContentText)
+        self.assertIn("report.pdf", model_message.content[2].text)
         self.assertIn(
             "inputs/batches/client_docs/report.pdf",
-            model_input.content[2].text,
+            model_message.content[2].text,
         )
 
     async def test_shell_manifest_skips_missing_targets_and_unavailable_files(
@@ -594,8 +723,11 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
             if c.args[0].type == EventType.ENGINE_RUN_AFTER
         )
 
-        self.assertIsInstance(before.payload["input"], Message)
-        self.assertEqual(before.payload["input"].content, "hi")
+        event_input = before.payload["input"]
+        self.assertIsInstance(event_input, list)
+        self.assertEqual(len(event_input), 1)
+        self.assertIsInstance(event_input[0], Message)
+        self.assertEqual(event_input[0].content, "hi")
         self.assertIs(before.payload["specification"], self.spec)
         self.assertIsNone(before.finished)
         self.assertIsNone(before.elapsed)
@@ -607,15 +739,19 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(after.elapsed)
 
     async def test_call_no_operation_available(self):
-        self.orch._operation_step = self.orch._total_operations
         with self.assertRaises(NoOperationAvailableException):
-            await self.orch("hi")
+            await self.orch(
+                "hi",
+                operation_index=self.orch._total_operations,
+            )
 
     async def test_aexit_saves_message(self):
-        msg = AsyncMock(to_str=AsyncMock(return_value="text"))
-        agent = MagicMock(engine=MagicMock(model_id="m"), output=msg)
-        agent.sync_messages = AsyncMock()
-        self.orch._last_engine_agent = agent
+        response = MagicMock(
+            execution=MagicMock(status=AgentExecutionStatus.RUNNING)
+        )
+        response.aclose = AsyncMock()
+        response.sync_messages = AsyncMock()
+        self.orch._pending_responses[id(response)] = response
         self.memory.has_permanent_message = True
         self.memory.has_recent_message = False
         self.orch._engines_stack.__exit__ = MagicMock(return_value="done")
@@ -623,15 +759,19 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
         engine.wait_closed = AsyncMock()
         self.orch._engines = [engine]
         result = await self.orch.__aexit__(None, None, None)
-        agent.sync_messages.assert_awaited_once()
+        response.aclose.assert_awaited_once()
+        response.sync_messages.assert_awaited_once()
         self.memory.__exit__.assert_called_once_with(None, None, None)
         engine.wait_closed.assert_awaited_once()
         self.assertEqual(result, "done")
 
-    async def test_aexit_skips_message_sync_on_keyboard_interrupt(self):
-        agent = MagicMock(engine=MagicMock(model_id="m"))
-        agent.sync_messages = AsyncMock()
-        self.orch._last_engine_agent = agent
+    async def test_aexit_runs_all_cleanup_on_keyboard_interrupt(self):
+        response = MagicMock(
+            execution=MagicMock(status=AgentExecutionStatus.RUNNING)
+        )
+        response.aclose = AsyncMock()
+        response.sync_messages = AsyncMock()
+        self.orch._pending_responses[id(response)] = response
         self.orch._engines_stack.__exit__ = MagicMock(return_value=False)
         engine = MagicMock()
         engine.wait_closed = AsyncMock()
@@ -639,20 +779,25 @@ class OrchestratorCallTestCase(unittest.IsolatedAsyncioTestCase):
 
         await self.orch.__aexit__(KeyboardInterrupt, KeyboardInterrupt(), None)
 
-        agent.sync_messages.assert_not_awaited()
-        engine.wait_closed.assert_not_awaited()
+        response.aclose.assert_awaited_once()
+        response.sync_messages.assert_awaited_once()
+        engine.wait_closed.assert_awaited_once()
         self.memory.__exit__.assert_called_once()
         self.orch._engines_stack.__exit__.assert_called_once()
 
-    async def test_aexit_skips_message_sync_on_cancelled_error(self):
-        agent = MagicMock(engine=MagicMock(model_id="m"))
-        agent.sync_messages = AsyncMock()
-        self.orch._last_engine_agent = agent
+    async def test_aexit_runs_response_cleanup_on_cancelled_error(self):
+        response = MagicMock(
+            execution=MagicMock(status=AgentExecutionStatus.RUNNING)
+        )
+        response.aclose = AsyncMock()
+        response.sync_messages = AsyncMock()
+        self.orch._pending_responses[id(response)] = response
         self.orch._engines_stack.__exit__ = MagicMock(return_value=False)
 
         await self.orch.__aexit__(CancelledError, CancelledError(), None)
 
-        agent.sync_messages.assert_not_awaited()
+        response.aclose.assert_awaited_once()
+        response.sync_messages.assert_awaited_once()
 
 
 class OrchestratorInputTokenCountTestCase(unittest.IsolatedAsyncioTestCase):
@@ -745,13 +890,14 @@ class OrchestratorAenterTestCase(unittest.IsolatedAsyncioTestCase):
         tool = MagicMock(spec=ToolManager)
         event_manager = MagicMock(spec=EventManager)
         logger = MagicMock()
-        Orchestrator._engine_agents = {}
         orch = Orchestrator(
             logger, model_manager, memory, tool, event_manager, [op]
         )
+        agent = MagicMock(output=None, sync_messages=AsyncMock())
+        agent.drain_pending_provider_cleanups = AsyncMock(return_value=())
         with patch(
             "avalan.agent.orchestrator.TemplateEngineAgent",
-            return_value=MagicMock(output=None, sync_messages=AsyncMock()),
+            return_value=agent,
         ) as tpatch:
             async with orch:
                 pass

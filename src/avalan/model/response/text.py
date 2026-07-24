@@ -1,4 +1,5 @@
 from ...entities import GenerationSettings
+from ...interaction import ProviderContinuationSnapshotAdapter
 from ..stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
@@ -17,7 +18,7 @@ from ..stream import (
 )
 from . import InvalidJsonResponseException
 
-from asyncio import CancelledError
+from asyncio import CancelledError, Task, create_task, sleep, wait
 from collections.abc import AsyncIterable, Mapping
 from enum import Enum
 from inspect import isawaitable
@@ -47,6 +48,12 @@ _LEGACY_SDK_RESULT_TYPE_NAMES = frozenset(
 _SINGLE_USE_STREAM_ERROR = (
     "TextGenerationResponse stream session is single-use"
 )
+_INTERRUPTED_PROVIDER_EXCEPTIONS = (
+    CancelledError,
+    KeyboardInterrupt,
+    SystemExit,
+)
+_PROVIDER_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 class _StreamSessionState(Enum):
@@ -125,6 +132,10 @@ def _is_legacy_sdk_result_type(result_type: type[object]) -> bool:
     )
 
 
+class _TextGenerationWorkerShutdownError(RuntimeError):
+    """Report a worker that outlived bounded stream cleanup."""
+
+
 class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _json_patterns: list[Pattern[str]] = [
         # Markdown code fence with explicit json tag
@@ -153,6 +164,8 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _output_closed: bool = False
     _closed_source_ids: set[int]
     _cancelled_source_ids: set[int]
+    _cleanup_failures: dict[tuple[str, int], Exception]
+    _cleanup_tasks: dict[str, Task[None]]
     _session_state: _StreamSessionState
     _bos_token: str | None = None
     _stream_accumulator: CanonicalStreamAccumulator | None = None
@@ -161,6 +174,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _can_think: bool = False
     _is_thinking: bool = False
     _manual_thinking: bool = False
+    _continuation_snapshot_adapter: (
+        ProviderContinuationSnapshotAdapter | None
+    ) = None
 
     def __init__(
         self,
@@ -171,6 +187,9 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         generation_settings: GenerationSettings | None = None,
         bos_token: str | None = None,
         provider_family: str | None = None,
+        continuation_snapshot_adapter: (
+            ProviderContinuationSnapshotAdapter | None
+        ) = None,
         **kwargs: Any,
     ) -> None:
         self._args = args
@@ -181,11 +200,42 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         self._generation_settings = generation_settings
         self._bos_token = bos_token
         self._provider_family = provider_family
+        if continuation_snapshot_adapter is not None:
+            if (
+                not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "export_continuation_snapshot",
+                        None,
+                    )
+                )
+                or not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "import_continuation_snapshot",
+                        None,
+                    )
+                )
+                or not callable(
+                    getattr(
+                        continuation_snapshot_adapter,
+                        "validate_continuation_snapshot_call",
+                        None,
+                    )
+                )
+            ):
+                raise TypeError(
+                    "continuation_snapshot_adapter must export, import, and "
+                    "validate reserved calls"
+                )
+        self._continuation_snapshot_adapter = continuation_snapshot_adapter
         self._on_consumed_callbacks = []
         self._final_text = None
         self._output_closed = False
         self._closed_source_ids = set()
         self._cancelled_source_ids = set()
+        self._cleanup_failures = {}
+        self._cleanup_tasks = {}
         self._session_state = _StreamSessionState.NOT_STARTED
         self._manual_thinking = False
         self._reset_iteration_state()
@@ -277,7 +327,17 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         if self._buffer.tell():
             return
 
-        result = self._output_fn(*self._args, **self._kwargs)
+        result = (
+            self._output_fn
+            if isinstance(
+                self._output_fn,
+                (
+                    TextGenerationNonStreamResult,
+                    TextGenerationSingleStream,
+                ),
+            )
+            else self._output_fn(*self._args, **self._kwargs)
+        )
         if isinstance(
             result, (TextGenerationNonStreamResult, TextGenerationSingleStream)
         ):
@@ -305,12 +365,24 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         return self._output_token_count
 
     @property
+    def cleanup_complete(self) -> bool:
+        """Return whether the active provider source closed successfully."""
+        return self._output_closed and not self._cleanup_tasks
+
+    @property
     def usage(self) -> object | None:
         if self._stream_accumulator:
             usage = self._stream_accumulator.final_usage
             if usage is not None:
                 return cast(object, usage)
         return self._provider_usage()
+
+    @property
+    def continuation_snapshot_adapter(
+        self,
+    ) -> ProviderContinuationSnapshotAdapter | None:
+        """Return explicit provider-owned durable replay support."""
+        return self._continuation_snapshot_adapter
 
     def _provider_usage(self) -> object | None:
         usage = getattr(self._output_fn, "usage", None)
@@ -549,7 +621,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     ) -> AsyncIterator[CanonicalStreamItem]:
         self._start_stream_output()
         assert self._output is not None
-        failed = False
+        primary_failure: BaseException | None = None
         try:
             try:
                 first_item = await self._output.__anext__()
@@ -585,20 +657,22 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 count_output=False,
             ):
                 yield item
-        except Exception:
-            failed = True
+        except BaseException as error:
+            primary_failure = error
+            await self._settle_iteration_failure(error)
             raise
         finally:
-            await self._close_session_sources(
-                trigger_callbacks=(
-                    not failed
-                    and self._session_state is _StreamSessionState.ACTIVE
-                    and self._validation_failure_message is None
-                ),
-                mark_closed=(
-                    self._session_state is not _StreamSessionState.FINALIZED
-                ),
-            )
+            if primary_failure is None:
+                await self._close_session_sources(
+                    trigger_callbacks=(
+                        self._session_state is _StreamSessionState.ACTIVE
+                        and self._validation_failure_message is None
+                    ),
+                    mark_closed=(
+                        self._session_state
+                        is not _StreamSessionState.FINALIZED
+                    ),
+                )
 
     async def _record_canonical_stream_final_text(
         self,
@@ -612,7 +686,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         if self._stream_accumulator is None:
             self._stream_accumulator = CanonicalStreamAccumulator()
         completed = False
-        failed = False
+        primary_failure: BaseException | None = None
         try:
             async for item in items:
                 yield await self._record_returned_item(
@@ -622,19 +696,20 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 raise_terminal_exception=False
             )
             completed = True
-        except Exception:
-            failed = True
+        except BaseException as error:
+            primary_failure = error
+            await self._settle_iteration_failure(error)
             raise
         finally:
-            await self._close_session_sources(
-                trigger_callbacks=(
-                    not completed
-                    and not failed
-                    and self._session_state is _StreamSessionState.ACTIVE
-                    and self._validation_failure_message is None
-                ),
-                mark_closed=not completed,
-            )
+            if primary_failure is None:
+                await self._close_session_sources(
+                    trigger_callbacks=(
+                        not completed
+                        and self._session_state is _StreamSessionState.ACTIVE
+                        and self._validation_failure_message is None
+                    ),
+                    mark_closed=not completed,
+                )
 
     def consumer_projections(
         self,
@@ -688,10 +763,24 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         yield item
 
     async def aclose(self) -> None:
-        await self._close_session_sources(
-            trigger_callbacks=True,
-            mark_closed=True,
-        )
+        cleanup_failures = self._reap_cleanup_tasks(exclude="aclose")
+        try:
+            await self._run_bounded_cleanup_stage(
+                "aclose",
+                lambda: self._close_session_sources(
+                    trigger_callbacks=True,
+                    mark_closed=True,
+                ),
+            )
+        except BaseException as cleanup_failure:
+            cleanup_failures.append(cleanup_failure)
+        if cleanup_failures:
+            primary_failure = cleanup_failures[0]
+            self._attach_cleanup_failures(
+                primary_failure,
+                cleanup_failures[1:],
+            )
+            raise primary_failure
 
     def _is_stream_closed(self) -> bool:
         return self._output_closed and self._session_state in (
@@ -700,15 +789,74 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         )
 
     async def cancel(self) -> None:
-        if self._session_state is _StreamSessionState.CLOSED_CANCELLED:
+        if self.cleanup_complete and self._session_state in (
+            _StreamSessionState.CLOSED_CANCELLED,
+            _StreamSessionState.FINALIZED,
+        ):
             return
-        if self._session_state is _StreamSessionState.FINALIZED:
-            return
-        await self._call_output_cleanup("cancel")
-        await self._close_session_sources(
-            trigger_callbacks=True,
-            mark_closed=True,
+        await self._run_bounded_cleanup_stage(
+            "cancel",
+            lambda: self._call_output_cleanup("cancel"),
         )
+        await self.aclose()
+
+    @staticmethod
+    def _observe_cleanup_task(task: Task[None]) -> None:
+        """Observe a retained cleanup task's eventual terminal failure."""
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except BaseException:
+            return
+
+    def _reap_cleanup_tasks(self, *, exclude: str) -> list[BaseException]:
+        """Collect completed retained cleanup failures exactly once."""
+        cleanup_failures: list[BaseException] = []
+        for stage, task in tuple(self._cleanup_tasks.items()):
+            if stage == exclude or not task.done():
+                continue
+            if self._cleanup_tasks.get(stage) is task:
+                self._cleanup_tasks.pop(stage)
+            try:
+                task.result()
+            except CancelledError:
+                continue
+            except BaseException as cleanup_failure:
+                cleanup_failures.append(cleanup_failure)
+        return cleanup_failures
+
+    async def _run_bounded_cleanup_stage(
+        self,
+        stage: str,
+        cleanup: Callable[[], Awaitable[None]],
+    ) -> None:
+        """Run or poll one explicitly owned cleanup stage within a deadline."""
+        task = self._cleanup_tasks.get(stage)
+        if task is None:
+
+            async def run_cleanup() -> None:
+                await cleanup()
+
+            task = create_task(run_cleanup())
+            task.add_done_callback(self._observe_cleanup_task)
+            self._cleanup_tasks[stage] = task
+        await sleep(0)
+        if not task.done():
+            await wait(
+                {task},
+                timeout=_PROVIDER_CLEANUP_TIMEOUT_SECONDS,
+            )
+        if not task.done():
+            task.cancel()
+            await sleep(0)
+            raise TimeoutError(
+                f"provider {stage} cleanup exceeded "
+                f"{_PROVIDER_CLEANUP_TIMEOUT_SECONDS:g} seconds"
+            )
+        if self._cleanup_tasks.get(stage) is task:
+            self._cleanup_tasks.pop(stage)
+        task.result()
 
     async def _close_session_sources(
         self,
@@ -761,12 +909,68 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             if source_id in seen or source_id in cleanup_source_ids:
                 continue
             seen.add(source_id)
+            cleanup_key = (method_name, source_id)
+            cleanup_failure = self._cleanup_failures.get(cleanup_key)
+            if cleanup_failure is not None:
+                raise cleanup_failure
             method = getattr(source, method_name, None)
             if method is None:
                 continue
             assert callable(method)
-            await self._close_output(cast(Callable[[], object], method))
+            try:
+                await self._close_output(cast(Callable[[], object], method))
+            except Exception as exc:
+                if isinstance(exc, _TextGenerationWorkerShutdownError):
+                    self._cleanup_failures[cleanup_key] = exc
+                raise
             cleanup_source_ids.add(source_id)
+
+    @staticmethod
+    def _attach_cleanup_failures(
+        primary_failure: BaseException,
+        cleanup_failures: list[BaseException],
+    ) -> None:
+        """Attach provider cleanup failures without replacing the primary."""
+        seen_failure_ids = {id(primary_failure)}
+        for cleanup_failure in cleanup_failures:
+            if id(cleanup_failure) in seen_failure_ids:
+                continue
+            seen_failure_ids.add(id(cleanup_failure))
+            primary_failure.add_note(
+                "post-provider cleanup failure: "
+                f"{cleanup_failure.__class__.__name__}: "
+                f"{cleanup_failure}"
+            )
+
+    async def _settle_iteration_failure(
+        self,
+        primary_failure: BaseException,
+    ) -> None:
+        """Close a failed provider read while preserving its primary exit."""
+        cleanup_failures: list[BaseException] = []
+        interrupted = isinstance(
+            primary_failure,
+            _INTERRUPTED_PROVIDER_EXCEPTIONS,
+        )
+        if interrupted:
+            try:
+                await self._run_bounded_cleanup_stage(
+                    "cancel",
+                    lambda: self._call_output_cleanup("cancel"),
+                )
+            except BaseException as cleanup_failure:
+                cleanup_failures.append(cleanup_failure)
+        try:
+            await self._run_bounded_cleanup_stage(
+                "aclose",
+                lambda: self._close_session_sources(
+                    trigger_callbacks=interrupted,
+                    mark_closed=True,
+                ),
+            )
+        except BaseException as cleanup_failure:
+            cleanup_failures.append(cleanup_failure)
+        self._attach_cleanup_failures(primary_failure, cleanup_failures)
 
     @staticmethod
     async def _close_output(aclose: Callable[[], object]) -> None:
@@ -778,6 +982,8 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             assert result is None
 
     async def __anext__(self) -> CanonicalStreamItem:
+        if self._is_stream_closed():
+            raise StopAsyncIteration
         assert self._output
         try:
             item = await self._output.__anext__()
@@ -786,35 +992,18 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                 await self._finalize_stream_accumulation(
                     raise_terminal_exception=False
                 )
-            except StreamValidationError as exc:
-                self._validation_failure_message = str(exc)
-                await self._close_session_sources(
-                    trigger_callbacks=False,
-                    mark_closed=True,
-                )
-                raise
-            except (Exception, CancelledError):
-                await self._close_session_sources(
-                    trigger_callbacks=False,
-                    mark_closed=True,
-                )
+            except BaseException as error:
+                if isinstance(error, StreamValidationError):
+                    self._validation_failure_message = str(error)
+                await self._settle_iteration_failure(error)
                 raise
             await self._close_session_sources(
                 trigger_callbacks=False,
                 mark_closed=False,
             )
             raise
-        except CancelledError:
-            await self._close_session_sources(
-                trigger_callbacks=True,
-                mark_closed=True,
-            )
-            raise
-        except Exception:
-            await self._close_session_sources(
-                trigger_callbacks=False,
-                mark_closed=True,
-            )
+        except BaseException as error:
+            await self._settle_iteration_failure(error)
             raise
 
         return await self._record_returned_item(
@@ -846,24 +1035,10 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             if count_output:
                 self._output_token_count += 1
             return item
-        except StreamValidationError as exc:
-            self._validation_failure_message = str(exc)
-            await self._close_session_sources(
-                trigger_callbacks=False,
-                mark_closed=True,
-            )
-            raise
-        except CancelledError:
-            await self._close_session_sources(
-                trigger_callbacks=True,
-                mark_closed=True,
-            )
-            raise
-        except Exception:
-            await self._close_session_sources(
-                trigger_callbacks=False,
-                mark_closed=True,
-            )
+        except BaseException as error:
+            if isinstance(error, StreamValidationError):
+                self._validation_failure_message = str(error)
+            await self._settle_iteration_failure(error)
             raise
 
     def __str__(self) -> str:

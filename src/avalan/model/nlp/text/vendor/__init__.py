@@ -8,7 +8,7 @@ from .....model.nlp.text.generation import TextGenerationModel
 from .....model.reasoning import validate_reasoning_summary_request
 from .....model.response.text import TextGenerationResponse
 from .....model.vendor import TextGenerationVendor
-from .....tool.manager import ToolManager
+from ....capability import ModelCapabilityCatalog
 
 from abc import ABC, abstractmethod
 from base64 import b64decode
@@ -154,11 +154,13 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
         settings: GenerationSettings | None = None,
         *,
         instructions: str | None = None,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> TextGenerationResponse:
         gen_settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, gen_settings)
-        messages = self._messages(input, system_prompt, developer_prompt, tool)
+        messages = self._messages(
+            input, system_prompt, developer_prompt, capability
+        )
         instruction_kwargs: dict[str, str] = (
             {"instructions": instructions} if instructions is not None else {}
         )
@@ -167,7 +169,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
             messages,
             gen_settings,
             **instruction_kwargs,
-            tool=tool,
+            capability=capability,
             use_async_generator=gen_settings.use_async_generator,
         )
         return TextGenerationResponse(

@@ -1,6 +1,53 @@
 from ..entities import ImageEntity
 from .call import ModelCall as ModelCall
 from .call import ModelCallContext as ModelCallContext
+from .capability import (
+    CapabilityBatchAccepted as CapabilityBatchAccepted,
+)
+from .capability import (
+    CapabilityBatchClassification as CapabilityBatchClassification,
+)
+from .capability import (
+    CapabilityBatchRejected as CapabilityBatchRejected,
+)
+from .capability import (
+    CapabilityBatchRejectionCode as CapabilityBatchRejectionCode,
+)
+from .capability import (
+    ContinuationSnapshotCodecRegistry as ContinuationSnapshotCodecRegistry,
+)
+from .capability import (
+    CorrelatedCapabilityResult as CorrelatedCapabilityResult,
+)
+from .capability import DomainCapabilityCall as DomainCapabilityCall
+from .capability import DomainCapabilitySeed as DomainCapabilitySeed
+from .capability import ModelCapabilityCatalog as ModelCapabilityCatalog
+from .capability import (
+    ModelCapabilityDescriptor as ModelCapabilityDescriptor,
+)
+from .capability import ModelCapabilityError as ModelCapabilityError
+from .capability import ModelCapabilityKind as ModelCapabilityKind
+from .capability import (
+    ModelCapabilityValidationError as ModelCapabilityValidationError,
+)
+from .capability import (
+    ProviderCapabilityCall as ProviderCapabilityCall,
+)
+from .capability import (
+    ProviderCapabilityProjection as ProviderCapabilityProjection,
+)
+from .capability import (
+    ProviderCapabilitySupport as ProviderCapabilitySupport,
+)
+from .capability import (
+    RegisteredContinuationSnapshotCodec as RegisteredContinuationSnapshotCodec,
+)
+from .capability import (
+    TaskInputCapabilityAdvertisement as TaskInputCapabilityAdvertisement,
+)
+from .capability import (
+    TaskInputCapabilityCall as TaskInputCapabilityCall,
+)
 from .file_delivery import FileDeliveryDecision as FileDeliveryDecision
 from .file_delivery import FileDeliveryDiagnostic as FileDeliveryDiagnostic
 from .file_delivery import FileDeliveryLimit as FileDeliveryLimit

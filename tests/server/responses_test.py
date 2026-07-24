@@ -89,16 +89,26 @@ async def _canonical_answer_gen(
 
 
 class StreamingOrchestrator(Orchestrator):
-    def __init__(self) -> None:  # type: ignore[no-untyped-def]
-        pass
+    model_ids = {"m"}
+
+    def __init__(self) -> None:
+        self._pending_response: object | None = None
+        self.sync_count = 0
 
     async def __call__(self, messages, settings=None):
-        return TextGenerationResponse(
+        response = TextGenerationResponse(
             lambda: _canonical_answer_gen("a", "b"),
             logger=getLogger(),
             use_async_generator=True,
             provider_family="transformers",
         )
+        self._pending_response = response
+        return response
+
+    async def sync_messages(self, response: object) -> None:
+        assert response is self._pending_response
+        self._pending_response = None
+        self.sync_count += 1
 
 
 class _FakeReasoningAdapter:
@@ -220,6 +230,7 @@ async def _canonical_mixed_reasoning_gen() -> (
 class MixedReasoningOrchestrator(Orchestrator):
     def __init__(self) -> None:  # type: ignore[no-untyped-def]
         self._model_ids = {"server-model"}
+        self._pending_response: object | None = None
         self.synced = 0
         self.call_kwargs: list[dict[str, object]] = []
         self.adapter = _FakeReasoningAdapter(
@@ -233,14 +244,22 @@ class MixedReasoningOrchestrator(Orchestrator):
         _ = messages
         assert isinstance(settings, GenerationSettings)
         self.call_kwargs.append(kwargs)
-        return await self.adapter(settings)
+        response = await self.adapter(settings)
+        self._pending_response = response
+        return response
 
-    async def sync_messages(self):  # type: ignore[override]
+    async def sync_messages(  # type: ignore[override]
+        self,
+        response: object,
+    ) -> None:
+        assert response is self._pending_response
+        self._pending_response = None
         self.synced += 1
 
 
 class SimpleOrchestrator(Orchestrator):
     def __init__(self) -> None:  # type: ignore[no-untyped-def]
+        self._pending_response: object | None = None
         self.synced = False
         self._model_ids = {"server-model"}
         self.last_messages = None
@@ -253,14 +272,21 @@ class SimpleOrchestrator(Orchestrator):
         def output_fn(**_):
             return "c"
 
-        return TextGenerationResponse(
+        response = TextGenerationResponse(
             output_fn,
             logger=getLogger(),
             use_async_generator=False,
             inputs={"input_ids": [[1, 2, 3]]},
         )
+        self._pending_response = response
+        return response
 
-    async def sync_messages(self):  # type: ignore[override]
+    async def sync_messages(  # type: ignore[override]
+        self,
+        response: object,
+    ) -> None:
+        assert response is self._pending_response
+        self._pending_response = None
         self.synced = True
 
 
@@ -272,6 +298,7 @@ class EventfulServerOrchestrator(Orchestrator):
             mode=EventManagerMode.SERVER,
             collect_stats=collect_stats,
         )
+        self._pending_response: object | None = None
         self._streaming = streaming
 
     async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
@@ -280,24 +307,31 @@ class EventfulServerOrchestrator(Orchestrator):
             await self.event_manager.trigger(Event(type=EventType.START))
 
         if self._streaming:
-            return TextGenerationResponse(
+            response = TextGenerationResponse(
                 lambda: _canonical_answer_gen("bounded"),
                 logger=getLogger(),
                 use_async_generator=True,
                 provider_family="transformers",
             )
+        else:
 
-        def output_fn(**_):
-            return "bounded"
+            def output_fn(**_):
+                return "bounded"
 
-        return TextGenerationResponse(
-            output_fn,
-            logger=getLogger(),
-            use_async_generator=False,
-        )
+            response = TextGenerationResponse(
+                output_fn,
+                logger=getLogger(),
+                use_async_generator=False,
+            )
+        self._pending_response = response
+        return response
 
-    async def sync_messages(self):  # type: ignore[override]
-        return None
+    async def sync_messages(  # type: ignore[override]
+        self,
+        response: object,
+    ) -> None:
+        assert response is self._pending_response
+        self._pending_response = None
 
 
 class UnsupportedSummaryOrchestrator(Orchestrator):
@@ -353,7 +387,8 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
 
     async def test_streaming_responses(self):
         app = self.FastAPI()
-        app.state.orchestrator = StreamingOrchestrator()
+        orchestrator = StreamingOrchestrator()
+        app.state.orchestrator = orchestrator
         app.include_router(self.responses.router)
 
         client = self.TestClient(app)
@@ -377,6 +412,7 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("event: response.completed", lines)
         self.assertEqual(lines[-1], "")
+        self.assertEqual(orchestrator.sync_count, 1)
 
     async def test_non_streaming_response(self):
         app = self.FastAPI()

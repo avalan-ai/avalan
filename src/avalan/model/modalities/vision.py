@@ -8,7 +8,7 @@ from ...entities import (
     OperationVisionParameters,
     TransformerEngineSettings,
 )
-from ...tool.manager import ToolManager
+from ..capability import ModelCapabilityCatalog
 from ..vision.classification import ImageClassificationModel
 from ..vision.decoder import VisionEncoderDecoderModel
 from ..vision.detection import ObjectDetectionModel
@@ -71,7 +71,7 @@ class VisionEncoderDecoderModality:
         engine_uri: EngineUri,
         model: VisionEncoderDecoderModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -133,7 +133,7 @@ class VisionImageClassificationModality:
         engine_uri: EngineUri,
         model: ImageClassificationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -187,7 +187,7 @@ class VisionImageToTextModality:
         engine_uri: EngineUri,
         model: ImageToTextModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -257,7 +257,7 @@ class VisionImageTextToTextModality:
         engine_uri: EngineUri,
         model: ImageTextToTextModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -333,7 +333,7 @@ class VisionObjectDetectionModality:
         engine_uri: EngineUri,
         model: ObjectDetectionModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -394,7 +394,7 @@ class VisionTextToImageModality:
         engine_uri: EngineUri,
         model: TextToImageModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -463,7 +463,7 @@ class VisionTextToAnimationModality:
         engine_uri: EngineUri,
         model: TextToAnimationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -542,7 +542,7 @@ class VisionTextToVideoModality:
         engine_uri: EngineUri,
         model: TextToVideoModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert operation.input
         assert operation.parameters["vision"]
@@ -620,7 +620,7 @@ class VisionSemanticSegmentationModality:
         engine_uri: EngineUri,
         model: SemanticSegmentationModel,
         operation: Operation,
-        tool: ToolManager | None = None,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]

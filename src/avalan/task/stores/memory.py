@@ -23,9 +23,16 @@ from ..idempotency import (
     TaskIdempotencyReservation,
     TaskIdempotencyReservationResult,
 )
-from ..state import TaskAttemptState, TaskRunState, is_terminal_run_state
+from ..state import (
+    TaskAttemptSegmentState,
+    TaskAttemptState,
+    TaskRunState,
+    is_terminal_run_state,
+)
 from ..store import (
     TaskAttempt,
+    TaskAttemptSegment,
+    TaskAttemptSegmentTransition,
     TaskAttemptTransition,
     TaskClaim,
     TaskDefinitionRecord,
@@ -38,8 +45,10 @@ from ..store import (
     TaskTransition,
     allows_cancel_request_without_claim_token,
     ensure_attempt_is_mutable,
+    ensure_attempt_segment_is_mutable,
     ensure_run_is_mutable,
     freeze_snapshot_metadata,
+    validate_attempt_segment_transition_request,
     validate_attempt_transition_request,
     validate_run_transition_request,
 )
@@ -71,8 +80,13 @@ class InMemoryTaskStore:
         self._runs: dict[str, TaskRun] = {}
         self._attempts: dict[str, TaskAttempt] = {}
         self._attempt_ids_by_run_id: dict[str, list[str]] = {}
+        self._attempt_segments: dict[str, TaskAttemptSegment] = {}
+        self._segment_ids_by_attempt_id: dict[str, list[str]] = {}
         self._run_transitions: dict[str, list[TaskTransition]] = {}
         self._attempt_transitions: dict[str, list[TaskAttemptTransition]] = {}
+        self._segment_transitions: dict[
+            str, list[TaskAttemptSegmentTransition]
+        ] = {}
         self._events_by_run_id: dict[str, list[SanitizedTaskEvent]] = {}
         self._usage_by_run_id: dict[str, list[UsageRecord]] = {}
         self._usage_by_id: dict[str, UsageRecord] = {}
@@ -194,7 +208,12 @@ class InMemoryTaskStore:
             updated = replace(
                 run,
                 state=to_state,
-                claim=None if is_terminal_run_state(to_state) else run.claim,
+                claim=(
+                    None
+                    if is_terminal_run_state(to_state)
+                    or to_state == TaskRunState.INPUT_REQUIRED
+                    else run.claim
+                ),
                 updated_at=now,
                 result=result if result is not None else run.result,
             )
@@ -250,6 +269,17 @@ class InMemoryTaskStore:
                 claim=claim,
             )
             self._runs[run.run_id] = updated
+            if run.last_attempt_id is not None:
+                previous_attempt = self._attempts[run.last_attempt_id]
+                if previous_attempt.state == TaskAttemptState.SUSPENDED:
+                    self._attempts[previous_attempt.attempt_id] = replace(
+                        previous_attempt,
+                        context=replace(
+                            previous_attempt.context,
+                            claim=claim,
+                        ),
+                        updated_at=now,
+                    )
             self._run_transitions[run.run_id].append(transition)
             return updated
 
@@ -289,6 +319,7 @@ class InMemoryTaskStore:
             self._attempts[attempt_id] = attempt
             attempt_ids.append(attempt_id)
             self._attempt_transitions[attempt_id] = []
+            self._segment_ids_by_attempt_id[attempt_id] = []
             self._runs[run_id] = replace(
                 run,
                 last_attempt_id=attempt_id,
@@ -374,6 +405,164 @@ class InMemoryTaskStore:
             self._attempt_or_raise(attempt_id)
             return tuple(self._attempt_transitions[attempt_id])
 
+    async def create_attempt_segment(
+        self,
+        attempt_id: str,
+        *,
+        claim_token: str | None = None,
+        resumed_from_segment_id: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(attempt_id, "attempt_id")
+        if resumed_from_segment_id is not None:
+            _assert_non_empty_string(
+                resumed_from_segment_id,
+                "resumed_from_segment_id",
+            )
+        async with self._lock:
+            attempt = self._attempt_or_raise(attempt_id)
+            run = self._run_or_raise(attempt.run_id)
+            self._verify_claim_token(run, claim_token)
+            if attempt.state not in {
+                TaskAttemptState.CREATED,
+                TaskAttemptState.RUNNING,
+            }:
+                raise TaskStoreConflictError(
+                    "task attempt cannot start a segment"
+                )
+            segment_ids = self._segment_ids_by_attempt_id[attempt_id]
+            if segment_ids:
+                previous = self._attempt_segments[segment_ids[-1]]
+                if previous.state not in {
+                    TaskAttemptSegmentState.SUSPENDED,
+                    TaskAttemptSegmentState.FAILED,
+                    TaskAttemptSegmentState.ABANDONED,
+                }:
+                    raise TaskStoreConflictError(
+                        "task attempt already has an active segment"
+                    )
+                if resumed_from_segment_id != previous.segment_id:
+                    raise TaskStoreConflictError(
+                        "resumed segment must link the prior segment"
+                    )
+            elif resumed_from_segment_id is not None:
+                raise TaskStoreConflictError(
+                    "initial segment cannot resume another segment"
+                )
+            created_at = self._now()
+            segment = TaskAttemptSegment(
+                segment_id=self._new_id(),
+                attempt_id=attempt.attempt_id,
+                run_id=attempt.run_id,
+                segment_number=len(segment_ids) + 1,
+                state=TaskAttemptSegmentState.CREATED,
+                claim=run.claim,
+                resumed_from_segment_id=resumed_from_segment_id,
+                created_at=created_at,
+                updated_at=created_at,
+                metadata=freeze_snapshot_metadata(metadata),
+            )
+            self._attempt_segments[segment.segment_id] = segment
+            segment_ids.append(segment.segment_id)
+            self._segment_transitions[segment.segment_id] = []
+            return segment
+
+    async def get_attempt_segment(
+        self,
+        segment_id: str,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(segment_id, "segment_id")
+        async with self._lock:
+            return self._segment_or_raise(segment_id)
+
+    async def list_attempt_segments(
+        self,
+        attempt_id: str,
+    ) -> tuple[TaskAttemptSegment, ...]:
+        _assert_non_empty_string(attempt_id, "attempt_id")
+        async with self._lock:
+            self._attempt_or_raise(attempt_id)
+            return tuple(
+                self._attempt_segments[segment_id]
+                for segment_id in self._segment_ids_by_attempt_id[attempt_id]
+            )
+
+    async def transition_attempt_segment(
+        self,
+        segment_id: str,
+        *,
+        from_states: Collection[TaskAttemptSegmentState],
+        to_state: TaskAttemptSegmentState,
+        reason: str,
+        request_id: str | None = None,
+        continuation_id: str | None = None,
+        checkpoint_id: str | None = None,
+        claim_token: str | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskAttemptSegment:
+        _assert_non_empty_string(segment_id, "segment_id")
+        _assert_non_empty_string(reason, "reason")
+        assert (request_id is None) == (
+            continuation_id is None
+        ), "request and continuation identifiers must be paired"
+        if checkpoint_id is not None:
+            _assert_non_empty_string(checkpoint_id, "checkpoint_id")
+            assert (
+                request_id is not None
+            ), "checkpoint identifiers require interaction correlation"
+        async with self._lock:
+            segment = self._segment_or_raise(segment_id)
+            ensure_attempt_segment_is_mutable(segment.state)
+            run = self._run_or_raise(segment.run_id)
+            self._verify_claim_token(run, claim_token)
+            validate_attempt_segment_transition_request(
+                current_state=segment.state,
+                from_states=from_states,
+                to_state=to_state,
+            )
+            if to_state == TaskAttemptSegmentState.SUSPENDED:
+                _assert_non_empty_string(request_id, "request_id")
+                _assert_non_empty_string(
+                    continuation_id,
+                    "continuation_id",
+                )
+            elif request_id is not None:
+                raise AssertionError(
+                    "only suspended segments have request correlation"
+                )
+            now = self._now()
+            transition = TaskAttemptSegmentTransition(
+                transition_id=self._new_id(),
+                segment_id=segment.segment_id,
+                attempt_id=segment.attempt_id,
+                run_id=segment.run_id,
+                from_state=segment.state,
+                to_state=to_state,
+                reason=reason,
+                created_at=now,
+                metadata=freeze_snapshot_metadata(metadata),
+            )
+            updated = replace(
+                segment,
+                state=to_state,
+                request_id=request_id,
+                continuation_id=continuation_id,
+                checkpoint_id=checkpoint_id,
+                updated_at=now,
+            )
+            self._attempt_segments[segment.segment_id] = updated
+            self._segment_transitions[segment.segment_id].append(transition)
+            return updated
+
+    async def list_attempt_segment_transitions(
+        self,
+        segment_id: str,
+    ) -> tuple[TaskAttemptSegmentTransition, ...]:
+        _assert_non_empty_string(segment_id, "segment_id")
+        async with self._lock:
+            self._segment_or_raise(segment_id)
+            return tuple(self._segment_transitions[segment_id])
+
     async def append_event(
         self,
         run_id: str,
@@ -451,6 +640,7 @@ class InMemoryTaskStore:
         source: UsageSource,
         totals: UsageTotals,
         attempt_id: str | None = None,
+        segment_id: str | None = None,
         usage_id: str | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> UsageRecord:
@@ -459,6 +649,9 @@ class InMemoryTaskStore:
         assert isinstance(totals, UsageTotals)
         if attempt_id is not None:
             _assert_non_empty_string(attempt_id, "attempt_id")
+        if segment_id is not None:
+            _assert_non_empty_string(segment_id, "segment_id")
+            assert attempt_id is not None
         if usage_id is not None:
             _assert_non_empty_string(usage_id, "usage_id")
         async with self._lock:
@@ -469,12 +662,22 @@ class InMemoryTaskStore:
                     raise TaskStoreNotFoundError(
                         "task attempt was not found for run"
                     )
+            if segment_id is not None:
+                segment = self._segment_or_raise(segment_id)
+                if (
+                    segment.run_id != run_id
+                    or segment.attempt_id != attempt_id
+                ):
+                    raise TaskStoreNotFoundError(
+                        "task attempt segment was not found for run"
+                    )
             if usage_id is not None:
                 existing = self._usage_by_id.get(usage_id)
                 if existing is not None:
                     if (
                         existing.run_id != run_id
                         or existing.attempt_id != attempt_id
+                        or existing.segment_id != segment_id
                     ):
                         raise TaskStoreConflictError(
                             "task usage id is already recorded"
@@ -489,6 +692,7 @@ class InMemoryTaskStore:
                 usage_id=record_id,
                 run_id=run_id,
                 attempt_id=attempt_id,
+                segment_id=segment_id,
                 sequence=len(self._usage_by_run_id[run_id]) + 1,
                 source=source,
                 totals=totals,
@@ -763,6 +967,14 @@ class InMemoryTaskStore:
         except KeyError as error:
             raise TaskStoreNotFoundError(
                 "task attempt was not found"
+            ) from error
+
+    def _segment_or_raise(self, segment_id: str) -> TaskAttemptSegment:
+        try:
+            return self._attempt_segments[segment_id]
+        except KeyError as error:
+            raise TaskStoreNotFoundError(
+                "task attempt segment was not found"
             ) from error
 
     def _artifact_or_raise(self, artifact_id: str) -> TaskArtifactRecord:

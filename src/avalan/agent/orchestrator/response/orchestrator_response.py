@@ -15,13 +15,56 @@ from ....entities import (
     ToolDescriptor,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
+    normalize_tool_arguments,
 )
 from ....event import Event, EventObservabilityPayload, EventType
 from ....event.manager import EventManager
+from ....interaction.broker import (
+    InteractionBrokerRequest,
+    InteractionRequestResult,
+)
+from ....interaction.continuation import (
+    derive_continuation_dispatch_id,
+    derive_provider_idempotency_key,
+)
+from ....interaction.durable import DurableInteractionSuspension
+from ....interaction.entities import (
+    RESERVED_INPUT_CAPABILITY_NAME,
+    AnswerProvenance,
+    ContinuationId,
+    InputModelResult,
+    InputRequest,
+    InputRequiredResult,
+    RequestState,
+    ResumeInputContinuation,
+    TerminateInputContinuation,
+)
+from ....interaction.handler import (
+    InputHandlerContext,
+    _InputHandlerOutcome,
+)
+from ....interaction.state import project_resolution_to_model
+from ....interaction.store import (
+    CreateInteractionApplied,
+    InteractionExecutionScope,
+    TerminalizeInteractionScopeCommand,
+)
 from ....model.call import ModelCallContext
+from ....model.capability import (
+    CapabilityBatchAccepted,
+    CapabilityBatchRejected,
+    CapabilityBatchRejectionCode,
+    ModelCapabilityCatalog,
+    ModelCapabilityValidationError,
+    ProviderCapabilityCall,
+    TaskInputCapabilityCall,
+)
 from ....model.response.parsers.tool import ToolCallResponseParser
 from ....model.response.text import TextGenerationResponse
 from ....model.stream import (
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID,
+    LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY,
+    NATIVE_STRUCTURED_OUTPUT_METADATA_KEY,
     CanonicalStreamItem,
     StreamChannel,
     StreamConsumerProjection,
@@ -59,6 +102,16 @@ from ....tool_cycles import (
 from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
 from ...engine import EngineAgent
+from ...execution import (
+    AgentExecution,
+    AgentExecutionStatus,
+    AttachedInteractionRuntime,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+    ExecutionInputRequiredError,
+    ExecutionTerminatedError,
+)
+from ...orchestrator_response_contract import DurableOrchestratorResponse
 
 from asyncio import (
     FIRST_COMPLETED,
@@ -67,6 +120,7 @@ from asyncio import (
     create_task,
     ensure_future,
     gather,
+    shield,
     sleep,
     wait,
 )
@@ -74,6 +128,7 @@ from asyncio import (
     Event as AsyncioEvent,
 )
 from base64 import b64encode
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, is_dataclass, replace
 from hashlib import sha256
 from inspect import Signature, isawaitable, signature
@@ -85,6 +140,7 @@ from uuid import UUID, uuid4
 
 _ToolConfirmationAction = Awaitable[str | bool | None] | str | bool | None
 _T = TypeVar("_T")
+_CLEANUP_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -117,7 +173,10 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
 _INVALID_TOOL_CALL_ARGUMENTS = object()
 
 
-class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
+class OrchestratorResponse(
+    DurableOrchestratorResponse,
+    AsyncIterator[CanonicalStreamItem],
+):
     """Async iterator handling tool execution during streaming."""
 
     _LEGACY_STREAM_ERROR = (
@@ -136,6 +195,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _engine_args: dict[str, Any]
     _event_manager: EventManager | None
     _tool_manager: ToolManager | None
+    _capability_catalog: ModelCapabilityCatalog | None
     _calls: Queue[ToolCall]
     _tool_result_outcomes: Queue[_ToolExecutionOutcome]
     _input: Input
@@ -168,6 +228,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _canonical_reasoning_segments: StreamReasoningSegmentState
     _canonical_item_available: AsyncioEvent
     _canonical_tool_call_lifecycles: dict[str, _CanonicalToolCallLifecycle]
+    _staged_tool_call_items: list[CanonicalStreamItem]
+    _staged_tool_batch_invalid: bool
+    _staged_tool_batch_rejection_code: CapabilityBatchRejectionCode | None
+    _staged_tool_batch_present: bool
+    _classified_tool_call_object_ids: set[int]
+    _canonical_tool_call_provider_families: dict[str, str]
+    _provider_tool_call_ids_by_canonical_id: dict[str, str]
+    _text_parser_tool_call_ids: set[str]
     _canonical_tool_call_argument_delta_ids: set[str]
     _canonical_tool_call_ready_ids: set[str]
     _canonical_tool_call_done_ids: set[str]
@@ -176,15 +244,32 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     _canonical_tool_execution_terminal_ids: set[str]
     _canonical_tool_call_reserved_ids: set[str]
     _response_tool_call_id_aliases: dict[str, str]
+    _response_reserved_tool_call_ids: set[str]
     _canonical_tool_call_ids_by_object: dict[int, str]
     _canonical_tool_call_index: int
     _canonical_tool_call_diagnostic_index: int
     _active_model_continuation_id: str | None
     _response_drained: bool
+    _response_answer_start_index: int
     _pending_tool_batch_task: Task[list[_ToolExecutionOutcome]] | None
     _maximum_tool_cycles: MaximumToolCycles
     _block_repeated_tool_calls: bool
     _final_response_text: str | None
+    _task_input_call: TaskInputCapabilityCall | None
+    _execution: AgentExecution | None
+    _pending_interaction_task: Task[InteractionRequestResult] | None
+    _pending_interaction_call: TaskInputCapabilityCall | None
+    _pending_interaction_assistant_text: str
+    _active_interaction_request: InputRequest | None
+    _pending_interaction_published: bool
+    _input_required_result: InputRequiredResult | None
+    _execution_terminated: bool
+    _execution_finalized: bool
+    _execution_cleanup_task: Task[tuple[BaseException, ...]] | None
+    _cancellation_cleanup_task: Task[None] | None
+    _provider_cleanup_complete: bool
+    _interaction_cleanup_complete: bool
+    _interaction_cleanup_task: Task[None] | None
 
     def __init__(
         self,
@@ -206,10 +291,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         block_repeated_tool_calls: bool = False,
         enable_tool_parsing: bool = True,
         maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
+        initial_tool_cycle_count: int = 0,
+        capability: ModelCapabilityCatalog | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         assert type(block_repeated_tool_calls) is bool
         maximum_tool_cycles = validate_maximum_tool_cycles(maximum_tool_cycles)
+        assert (
+            type(initial_tool_cycle_count) is int
+            and initial_tool_cycle_count >= 0
+        ), "initial_tool_cycle_count must be a non-negative integer"
+        assert (
+            maximum_tool_cycles == UNLIMITED_TOOL_CYCLES
+            or initial_tool_cycle_count <= maximum_tool_cycles
+        ), "initial tool cycles exceed the configured maximum"
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -217,14 +312,28 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._engine_args = engine_args
         self._event_manager = event_manager
         self._tool_manager = None if tool and tool.is_empty else tool
+        context_capability = context.capability
+        if capability is None:
+            capability = context_capability
+        elif context_capability is None:
+            context = replace(context, capability=capability)
+        else:
+            assert (
+                context_capability is capability
+            ), "response capability must match the model-call context"
+        self._capability_catalog = capability
+        assert (
+            not enable_tool_parsing or capability is not None
+        ), "tool parsing requires an explicit model capability catalog"
         self._context = context
+        self._execution = context.execution
         self._finished = False
         self._step = 0
         self._tool_context = None
         self._call_history = []
         self._attempted_call_signatures = set()
         self._tool_cycle_signatures = set()
-        self._tool_cycle_count = 0
+        self._tool_cycle_count = initial_tool_cycle_count
         self._consecutive_non_executed_cycles = 0
         self._agent_id = agent_id
         self._participant_id = participant_id
@@ -237,8 +346,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._cancellation_checker = None
         self._model_responses = [response]
         self._tool_parser = (
-            ToolCallResponseParser(self._tool_manager, self._event_manager)
-            if enable_tool_parsing and self._tool_manager
+            ToolCallResponseParser(capability, self._event_manager)
+            if enable_tool_parsing and capability is not None
             else None
         )
         self._canonical_items = []
@@ -246,11 +355,37 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_sequence = 0
         self._canonical_stream_terminal = None
         self._canonical_stream_closed = False
-        self._canonical_stream_session_id = str(session_id or uuid4())
-        self._canonical_run_id = str(agent_id or uuid4())
-        self._canonical_turn_id = str(participant_id or uuid4())
-        self._canonical_correlation = StreamItemCorrelation(
-            task_id=str(agent_id) if agent_id is not None else None
+        origin = (
+            self._execution.initial_origin
+            if self._execution is not None
+            else None
+        )
+        self._canonical_stream_session_id = str(
+            origin.stream_session_id
+            if origin is not None
+            else session_id or uuid4()
+        )
+        self._canonical_run_id = str(
+            origin.run_id if origin is not None else agent_id or uuid4()
+        )
+        self._canonical_turn_id = str(
+            origin.turn_id if origin is not None else participant_id or uuid4()
+        )
+        self._canonical_correlation = (
+            StreamItemCorrelation(
+                task_id=(
+                    str(origin.task_id)
+                    if origin is not None and origin.task_id is not None
+                    else None
+                ),
+                agent_id=origin.agent_id,
+                branch_id=origin.branch_id,
+                parent_branch_id=origin.parent_branch_id,
+            )
+            if origin is not None
+            else StreamItemCorrelation(
+                task_id=str(agent_id) if agent_id is not None else None
+            )
         )
         self._canonical_answer_started = False
         self._canonical_answer_done = False
@@ -259,6 +394,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_reasoning_segments = StreamReasoningSegmentState()
         self._canonical_item_available = AsyncioEvent()
         self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._classified_tool_call_object_ids = set()
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
         self._canonical_tool_call_argument_delta_ids = set()
         self._canonical_tool_call_ready_ids = set()
         self._canonical_tool_call_done_ids = set()
@@ -267,19 +410,116 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._canonical_tool_execution_terminal_ids = set()
         self._canonical_tool_call_reserved_ids = set()
         self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
         self._canonical_tool_call_ids_by_object = {}
         self._canonical_tool_call_index = 0
         self._canonical_tool_call_diagnostic_index = 0
         self._active_model_continuation_id = None
         self._response_drained = False
+        self._response_answer_start_index = 0
         self._pending_tool_batch_task = None
         self._maximum_tool_cycles = maximum_tool_cycles
         self._block_repeated_tool_calls = block_repeated_tool_calls
         self._final_response_text = None
+        self._task_input_call = None
+        self._pending_interaction_task = None
+        self._pending_interaction_call = None
+        self._pending_interaction_assistant_text = ""
+        self._active_interaction_request = None
+        self._pending_interaction_published = False
+        self._input_required_result = None
+        self._execution_terminated = False
+        self._execution_finalized = False
+        self._execution_cleanup_task = None
+        self._cancellation_cleanup_task = None
+        self._provider_cleanup_complete = False
+        self._interaction_cleanup_complete = False
+        self._interaction_cleanup_task = None
 
     @property
     def input_token_count(self) -> int:
         return self._response.input_token_count
+
+    @property
+    def execution(self) -> AgentExecution | None:
+        """Return the invocation state owned by this exact response."""
+        return self._execution
+
+    @property
+    def continuation_generation_settings(self) -> dict[str, Any]:
+        """Return provider-neutral settings for durable continuation."""
+        settings = self._continuation_engine_args()
+        settings["maximum_tool_cycles"] = self._maximum_tool_cycles
+        settings["block_repeated_tool_calls"] = self._block_repeated_tool_calls
+        return settings
+
+    @property
+    def continuation_tool_loop_count(self) -> int:
+        """Return completed domain-tool cycles before suspension."""
+        return self._tool_cycle_count
+
+    @property
+    def ownership_cleanup_complete(self) -> bool:
+        """Return whether terminal cleanup permits ownership release."""
+        execution = self._execution
+        return (
+            execution is None
+            or execution.status
+            not in {
+                AgentExecutionStatus.CANCELLED,
+                AgentExecutionStatus.ERRORED,
+            }
+            or (
+                self._provider_cleanup_complete
+                and (
+                    self._execution_cleanup_task is None
+                    or self._execution_cleanup_task.done()
+                )
+                and (
+                    execution.interaction_runtime is None
+                    or self._interaction_cleanup_complete
+                )
+            )
+        )
+
+    async def aclose(self) -> None:
+        """Close this response and retry incomplete cancellation cleanup."""
+        execution = self._execution
+        if (
+            execution is None
+            or execution.status is AgentExecutionStatus.COMPLETED
+        ):
+            await self._response.aclose()
+            return
+        if execution.status is AgentExecutionStatus.INPUT_REQUIRED:
+            if (
+                isinstance(
+                    execution.interaction_runtime,
+                    AttachedInteractionRuntime,
+                )
+                and self._pending_interaction_task is not None
+            ):
+                await self._converge_stream_cancellation()
+            else:
+                await self._close_provider_response()
+            return
+        if execution.status is AgentExecutionStatus.ERRORED:
+            await self._converge_stream_error_cleanup()
+            return
+        await self._converge_stream_cancellation()
+
+    async def sync_messages(self) -> None:
+        """Synchronize memory for this response's exact invocation once."""
+        if not self.ownership_cleanup_complete:
+            execution = self._execution
+            if (
+                execution is not None
+                and execution.status is AgentExecutionStatus.ERRORED
+            ):
+                await self._converge_stream_error_cleanup()
+            else:
+                await self._converge_stream_cancellation()
+        await self._engine_agent.sync_messages(self._execution)
 
     @property
     def output_token_count(self) -> int:
@@ -305,6 +545,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     @property
     def canonical_items(self) -> tuple[CanonicalStreamItem, ...]:
         return tuple(self._canonical_items)
+
+    @property
+    def task_input_call(self) -> TaskInputCapabilityCall | None:
+        """Return the validated reserved call awaiting control-plane wiring."""
+        return self._task_input_call
 
     async def consumer_projections(
         self,
@@ -334,6 +579,20 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self,
         item: object,
     ) -> None:
+        if (
+            self._capability_catalog is not None
+            and getattr(item, "kind", None) is StreamItemKind.STREAM_DIAGNOSTIC
+        ):
+            self._mark_staged_tool_batch_invalid()
+            return
+        correlation = getattr(item, "correlation", None)
+        if isinstance(correlation, StreamItemCorrelation):
+            tool_call_id = correlation.tool_call_id
+            if self._is_valid_tool_call_id(tool_call_id):
+                assert tool_call_id is not None
+                self._text_parser_tool_call_ids.add(
+                    self._canonical_lifecycle_tool_call_id(tool_call_id)
+                )
         if isinstance(item, StreamProviderEvent):
             self._append_canonical_provider_event_item(item)
             return
@@ -382,6 +641,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             StreamItemKind.STREAM_ERRORED,
             StreamItemKind.STREAM_CANCELLED,
         ):
+            if event.kind is StreamItemKind.STREAM_COMPLETED:
+                return None
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 event.kind,
                 data=event.data,
@@ -410,6 +672,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert event.kind in _TOOL_CALL_LIFECYCLE_KINDS
         tool_call_id = correlation.tool_call_id
         if not self._is_valid_tool_call_id(tool_call_id):
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid(
+                    CapabilityBatchRejectionCode.MISSING_CALL_ID
+                )
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=None,
                 code="orchestrator.tool_call.missing_id",
@@ -434,6 +701,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 tool_call_id=tool_call_id,
             )
             state.invalid = True
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid()
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=tool_call_id,
                 code="orchestrator.tool_call.missing_argument_delta",
@@ -487,10 +757,12 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         if item.terminal_outcome is not None:
             if item.kind is StreamItemKind.STREAM_COMPLETED:
                 return None
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 item.kind,
                 data=item.data,
                 usage=item.usage,
+                correlation=correlation,
             )
             return None
         assert self._canonical_stream_terminal is None
@@ -547,7 +819,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         reasoning_representation: StreamReasoningRepresentation | None,
         segment_instance_ordinal: int | None,
         correlation: StreamItemCorrelation,
-        metadata: dict[str, Any],
+        metadata: Mapping[str, Any],
     ) -> None:
         if kind is not StreamItemKind.REASONING_DELTA:
             self._canonical_reasoning_segments.complete_segment()
@@ -560,7 +832,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 visibility=visibility,
                 reasoning_representation=reasoning_representation,
                 segment_instance_ordinal=segment_instance_ordinal,
-                metadata=metadata,
+                metadata=dict(metadata),
             )
         )
 
@@ -604,6 +876,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             item.kind is not StreamItemKind.ANSWER_DELTA
             or item.text_delta is None
             or self._tool_parser is None
+            or self._is_locally_classified_answer(item)
         ):
             return False
         canonicalizes = getattr(
@@ -612,6 +885,16 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             False,
         )
         return canonicalizes if isinstance(canonicalizes, bool) else False
+
+    @staticmethod
+    def _is_locally_classified_answer(
+        item: CanonicalStreamItem,
+    ) -> bool:
+        return item.kind is StreamItemKind.ANSWER_DELTA and (
+            item.metadata.get(NATIVE_STRUCTURED_OUTPUT_METADATA_KEY) is True
+            or item.metadata.get(LOCAL_STRUCTURED_OUTPUT_PROTOCOL_METADATA_KEY)
+            == LOCAL_STRUCTURED_OUTPUT_PROTOCOL_ID
+        )
 
     def _canonical_token_event_item(
         self,
@@ -656,7 +939,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         ):
             await self._emit_token_generated_event(canonical_item)
             self._step += 1
-            if self._tool_parser:
+            if self._tool_parser and not (
+                self._is_locally_classified_answer(canonical_item)
+            ):
                 for parser_item in await self._tool_parser.push(
                     canonical_item.text_delta
                 ):
@@ -699,6 +984,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         data: Any | None,
         metadata: dict[str, Any] | None,
     ) -> dict[str, Any] | None:
+        if self._capability_catalog is not None:
+            return metadata
         if tool_display_projection_from_metadata(metadata) is not None:
             return metadata
         if not isinstance(data, dict):
@@ -716,9 +1003,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 else None
             ),
         )
+        projection = self._tool_call_display_projection(call)
         return {
             **({} if metadata is None else metadata),
-            **self._tool_call_display_metadata(call),
+            **cast(
+                dict[str, Any],
+                tool_display_projection_metadata(projection),
+            ),
         }
 
     def _append_canonical_tool_call_lifecycle_item(
@@ -730,13 +1021,18 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         usage: Any | None = None,
         correlation: StreamItemCorrelation,
         visibility: StreamVisibility = StreamVisibility.PUBLIC,
-        metadata: dict[str, Any] | None = None,
+        metadata: Mapping[str, Any] | None = None,
         provider_family: str | None = None,
         provider_event_type: str | None = None,
     ) -> CanonicalStreamItem | None:
         assert kind in _TOOL_CALL_LIFECYCLE_KINDS
         tool_call_id = correlation.tool_call_id
         if not self._is_valid_tool_call_id(tool_call_id):
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid(
+                    CapabilityBatchRejectionCode.MISSING_CALL_ID
+                )
+                return None
             return self._append_canonical_tool_call_lifecycle_diagnostic(
                 tool_call_id=None,
                 code="orchestrator.tool_call.missing_id",
@@ -747,6 +1043,23 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert tool_call_id is not None
         tool_call_id = self._canonical_lifecycle_tool_call_id(tool_call_id)
         correlation = replace(correlation, tool_call_id=tool_call_id)
+        if provider_family is not None:
+            existing_family = self._canonical_tool_call_provider_families.get(
+                tool_call_id
+            )
+            if (
+                existing_family is not None
+                and existing_family != provider_family
+            ):
+                if self._capability_catalog is not None:
+                    self._mark_staged_tool_batch_invalid()
+                    return None
+                raise StreamValidationError(
+                    "tool-call lifecycle provider family changed"
+                )
+            self._canonical_tool_call_provider_families[tool_call_id] = (
+                provider_family
+            )
         state = self._canonical_tool_call_lifecycle(tool_call_id)
         state.correlation = self._merged_tool_call_correlation(
             state.correlation,
@@ -760,7 +1073,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             tool_call_id=tool_call_id,
             state=state,
         )
-        if diagnostic is not None:
+        if diagnostic is not None or state.invalid:
             if not state.queued:
                 state.invalid = True
                 self._close_invalid_tool_call_lifecycle(
@@ -769,29 +1082,105 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
             return diagnostic
 
-        if kind is StreamItemKind.TOOL_CALL_READY:
-            metadata = self._tool_call_ready_display_metadata(
+        item_metadata = None if metadata is None else dict(metadata)
+        if (
+            kind is StreamItemKind.TOOL_CALL_READY
+            and self._capability_catalog is None
+        ):
+            item_metadata = self._tool_call_ready_display_metadata(
                 tool_call_id,
                 data,
-                metadata,
+                item_metadata,
             )
 
-        item = self._append_canonical_item(
-            kind,
-            text_delta=text_delta,
-            data=data,
-            usage=usage,
-            correlation=correlation,
-            visibility=visibility,
-            metadata=metadata,
-            provider_family=provider_family,
-            provider_event_type=provider_event_type,
+        item = (
+            self._stage_canonical_tool_call_item(
+                kind,
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                correlation=correlation,
+                visibility=visibility,
+                metadata=item_metadata,
+                provider_family=provider_family,
+                provider_event_type=provider_event_type,
+            )
+            if self._capability_catalog is not None
+            else self._append_canonical_item(
+                kind,
+                text_delta=text_delta,
+                data=data,
+                usage=usage,
+                correlation=correlation,
+                visibility=visibility,
+                metadata=item_metadata,
+                provider_family=provider_family,
+                provider_event_type=provider_event_type,
+            )
         )
         if item is None:
             return None
         if kind is StreamItemKind.TOOL_CALL_DONE:
             self._queue_completed_canonical_tool_call(tool_call_id, state)
         return item
+
+    def _stage_canonical_tool_call_item(
+        self,
+        kind: StreamItemKind,
+        *,
+        text_delta: str | None,
+        data: Any | None,
+        usage: Any | None,
+        correlation: StreamItemCorrelation,
+        visibility: StreamVisibility,
+        metadata: dict[str, Any] | None,
+        provider_family: str | None,
+        provider_event_type: str | None,
+    ) -> CanonicalStreamItem:
+        """Stage a model-authored tool-call lifecycle item privately."""
+        assert kind in _TOOL_CALL_LIFECYCLE_KINDS
+        item = CanonicalStreamItem(
+            stream_session_id=self._canonical_stream_session_id,
+            run_id=self._canonical_run_id,
+            turn_id=self._canonical_turn_id,
+            sequence=self._canonical_sequence,
+            kind=kind,
+            channel=stream_channel_for_kind(kind),
+            correlation=correlation,
+            text_delta=text_delta,
+            data=cast(Any, data),
+            usage=cast(Any, usage),
+            visibility=visibility,
+            metadata=metadata or {},
+            provider_family=provider_family,
+            provider_event_type=provider_event_type,
+        )
+        self._staged_tool_call_items.append(item)
+        self._staged_tool_batch_present = True
+        tool_call_id = correlation.tool_call_id
+        assert tool_call_id is not None
+        state = self._canonical_tool_call_lifecycle(tool_call_id)
+        if kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+            assert text_delta is not None
+            state.argument_deltas.append(text_delta)
+        elif kind is StreamItemKind.TOOL_CALL_READY:
+            state.ready_item = item
+        else:
+            state.done = True
+        return item
+
+    def _mark_staged_tool_batch_invalid(
+        self,
+        code: CapabilityBatchRejectionCode = (
+            CapabilityBatchRejectionCode.MALFORMED_CALL
+        ),
+    ) -> None:
+        """Mark the current model tool-call batch invalid privately."""
+        assert isinstance(code, CapabilityBatchRejectionCode)
+        self._staged_tool_batch_present = True
+        self._staged_tool_batch_invalid = True
+        if self._staged_tool_batch_rejection_code is None:
+            self._staged_tool_batch_rejection_code = code
 
     def _canonical_tool_call_item_diagnostic(
         self,
@@ -1015,6 +1404,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert isinstance(message, str)
         assert message.strip()
         assert isinstance(details, dict)
+        if self._capability_catalog is not None:
+            self._mark_staged_tool_batch_invalid()
+            if self._is_valid_tool_call_id(tool_call_id):
+                assert tool_call_id is not None
+                state = self._canonical_tool_call_lifecycles.get(tool_call_id)
+                if state is not None:
+                    state.invalid = True
+            return None
         if self._is_valid_tool_call_id(tool_call_id):
             assert tool_call_id is not None
             correlation_id = tool_call_id
@@ -1050,6 +1447,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert tool_call_id
         if state.done:
             return
+        if self._capability_catalog is not None:
+            self._mark_staged_tool_batch_invalid()
+            state.done = True
+            return
         if not state.argument_deltas and state.ready_item is None:
             return
         self._append_canonical_item(
@@ -1069,6 +1470,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 continue
             state.invalid = True
             state.incomplete_diagnostic_emitted = True
+            if self._capability_catalog is not None:
+                self._mark_staged_tool_batch_invalid()
+                state.done = True
+                continue
             if state.ready_item is None:
                 self._append_canonical_tool_call_lifecycle_diagnostic(
                     tool_call_id=tool_call_id,
@@ -1143,8 +1548,18 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         )
 
     def _begin_tool_call_lifecycle_response(self) -> None:
+        self._response_answer_start_index = len(self._canonical_items)
         self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._classified_tool_call_object_ids = set()
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
         self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
         self._canonical_reasoning_segments = StreamReasoningSegmentState()
 
     def _canonical_lifecycle_tool_call_id(self, source_id: str) -> str:
@@ -1155,10 +1570,14 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             return alias
         if not self._canonical_tool_call_id_used(source_id):
             self._reserve_canonical_tool_call_id(source_id)
+            self._response_reserved_tool_call_ids.add(source_id)
             self._response_tool_call_id_aliases[source_id] = source_id
+            self._provider_tool_call_ids_by_canonical_id[source_id] = source_id
             return source_id
         alias = self._next_generated_tool_call_id()
+        self._response_reserved_tool_call_ids.add(alias)
         self._response_tool_call_id_aliases[source_id] = alias
+        self._provider_tool_call_ids_by_canonical_id[alias] = source_id
         return alias
 
     def _reserve_canonical_tool_call_id(self, tool_call_id: str) -> None:
@@ -1207,6 +1626,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     def can_think(self) -> bool:
         return self._response.can_think
 
+    @property
+    def event_manager(self) -> EventManager | None:
+        """Return the event manager owned by this response runtime."""
+        return self._event_manager
+
     def set_cancellation_checker(
         self,
         checker: Callable[[], Awaitable[None]] | None,
@@ -1221,25 +1645,30 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         self._response.set_thinking(thinking)
 
     async def to_str(self) -> str:
+        self._raise_if_terminal_failure()
         if self._final_response_text is not None:
+            self._raise_if_completion_lost()
             return self._final_response_text
         if not self._canonical_items:
             self._append_canonical_item(StreamItemKind.STREAM_STARTED)
         try:
             output = await self._react(self._response)
-        except CancelledError:
-            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
-            raise
-        except Exception as exc:
-            self._finish_canonical_stream(
-                StreamItemKind.STREAM_ERRORED,
-                data={
-                    "error_type": exc.__class__.__name__,
-                    "message": str(exc),
-                },
+            await self._finalize_execution(
+                StreamItemKind.STREAM_COMPLETED,
+                output=self._current_response_answer_text(),
             )
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_COMPLETED)
+            )
+            self._raise_if_completion_lost()
+        except (ExecutionInputRequiredError, ExecutionTerminatedError):
             raise
-        self._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
+        except CancelledError as exc:
+            await self._settle_cancellation_failure(exc)
+            raise
+        except BaseException as exc:
+            await self._settle_stream_failure(exc)
+            raise
         self._final_response_text = output
         return output
 
@@ -1266,14 +1695,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._begin_tool_call_lifecycle_response()
         self._calls = self._make_staging_queue()
         self._parser_queue = self._make_staging_queue()
-        self._tool_context = ToolCallContext(
-            input=self._input,
-            agent_id=self._agent_id,
-            participant_id=self._participant_id,
-            session_id=self._session_id,
-            calls=list(self._call_history),
-            cancellation_checker=self._cancellation_checker,
-        )
+        self._tool_context = self._new_tool_context(self._input)
         self._tool_result_outcomes = self._make_staging_queue()
         self._response_drained = False
         self._step = 0
@@ -1288,17 +1710,35 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
     async def __anext__(self) -> CanonicalStreamItem:
         assert self._response_iterator
 
-        while True:
-            item = self._next_canonical_yield_item()
-            if item is not None:
-                return item
-            try:
-                await self._next_item()
-            except StopAsyncIteration:
+        try:
+            while True:
                 item = self._next_canonical_yield_item()
                 if item is not None:
                     return item
-                raise
+                if self._canonical_stream_terminal is not None:
+                    task = self._pending_tool_batch_task
+                    if task is not None:
+                        if not task.done():
+                            await wait({task})
+                        await self._consume_pending_tool_batch(task)
+                    raise StopAsyncIteration
+                try:
+                    await self._next_item()
+                except StopAsyncIteration:
+                    item = self._next_canonical_yield_item()
+                    if item is not None:
+                        return item
+                    raise
+        except CancelledError as exc:
+            await self._settle_cancellation_failure(exc)
+            raise
+        except StopAsyncIteration:
+            raise
+        except ExecutionInputRequiredError:
+            raise
+        except BaseException as exc:
+            await self._settle_stream_failure(exc)
+            raise
 
     def _next_canonical_yield_item(self) -> CanonicalStreamItem | None:
         if self._canonical_yield_index >= len(self._canonical_items):
@@ -1315,6 +1755,10 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
         await self._propagate_cancellation_to_pending_work()
 
+        if self._pending_interaction_task is not None:
+            await self._poll_pending_interaction()
+            return None
+
         if self._parser_queue and not self._parser_queue.empty():
             self._append_canonical_response_item(self._parser_queue.get())
             return None
@@ -1323,11 +1767,21 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             await self._await_pending_tool_batch()
             return None
 
-        if self._response_drained and not self._calls.empty():
+        if self._response_drained and (
+            not self._calls.empty() or self._staged_tool_batch_present
+        ):
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
             calls = self._drain_tool_call_batch()
+            if self._task_input_call is not None:
+                execution = self._execution
+                if execution is None or execution.interaction_runtime is None:
+                    return None
+                call = self._task_input_call
+                self._task_input_call = None
+                await self._start_task_input(call)
+                return None
             if not calls:
                 return None
             self._pending_tool_batch_task = create_task(
@@ -1360,14 +1814,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 ):
                     continue
                 tool_outcomes.append(tool_result)
+                provider_result = self._provider_facing_tool_outcome(
+                    tool_result
+                )
                 tool_messages.extend(
                     self._tool_observation_messages(
-                        tool_result,
-                        call=outcome.call,
+                        provider_result,
+                        call=self._provider_facing_tool_call(outcome.call),
                         json_output=True,
                     )
                 )
 
+            if self._execution is not None and tool_messages:
+                await self._execution.record_messages(tuple(tool_messages))
             if not self._should_continue_tool_cycle(
                 tool_messages,
                 tool_outcomes,
@@ -1377,7 +1836,15 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     await self._event_manager.trigger(
                         Event(type=EventType.END)
                     )
-                self._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
+                await self._finalize_execution(
+                    StreamItemKind.STREAM_COMPLETED,
+                    output=self._current_response_answer_text(),
+                )
+                self._finish_canonical_stream(
+                    self._execution_terminal_kind(
+                        StreamItemKind.STREAM_COMPLETED
+                    )
+                )
                 raise StopAsyncIteration
 
             assert self._input and (
@@ -1396,17 +1863,15 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
             messages.extend(tool_messages)
             self._input = cast(Input, messages)
-            self._tool_context = ToolCallContext(
-                input=self._input,
-                agent_id=self._agent_id,
-                participant_id=self._participant_id,
-                session_id=self._session_id,
-                calls=list(self._call_history),
-                cancellation_checker=self._cancellation_checker,
-            )
+            self._tool_context = self._new_tool_context(self._input)
 
-            model_context = self._make_child_context(messages)
-            continuation_id = str(uuid4())
+            model_context = await self._make_child_context(messages)
+            model_origin = model_context.execution_origin
+            continuation_id = str(
+                model_origin.model_call_id
+                if model_origin is not None
+                else uuid4()
+            )
             continuation_item = self._append_canonical_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_STARTED,
                 continuation_id,
@@ -1420,12 +1885,22 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 inner_response = await self._await_with_session_cancellation(
                     self._engine_agent(model_context)
                 )
-            except CancelledError:
+            except CancelledError as exc:
                 self._append_canonical_model_continuation(
                     StreamItemKind.MODEL_CONTINUATION_CANCELLED,
                     continuation_id,
                 )
-                self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+                try:
+                    await self._finalize_execution(
+                        StreamItemKind.STREAM_CANCELLED
+                    )
+                    self._finish_canonical_stream(
+                        self._execution_terminal_kind(
+                            StreamItemKind.STREAM_CANCELLED
+                        )
+                    )
+                except BaseException as cleanup_failure:
+                    self._attach_cleanup_failures(exc, [cleanup_failure])
                 raise
             except Exception as exc:
                 self._append_canonical_model_continuation(
@@ -1436,6 +1911,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                         "message": str(exc),
                     },
                 )
+                await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
                 self._finish_canonical_stream(
                     StreamItemKind.STREAM_ERRORED,
                     data={
@@ -1446,23 +1922,36 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 raise
             assert inner_response
             assert isinstance(inner_response, TextGenerationResponse)
-            self._model_responses.append(inner_response)
-            self._response = inner_response
-            self._response_drained = False
-            self._set_active_model_continuation(continuation_id)
-            self._prepare_iteration(reset_yield_index=False)
+            await self._install_continuation_response(
+                inner_response,
+                continuation_id,
+                activate=True,
+            )
 
             return None
 
         try:
             response_item = self._response_iterator.__anext__()
-            item = (
-                await self._await_with_session_cancellation(response_item)
-                if self._active_model_continuation_id is not None
-                else await response_item
-            )
+            item = await self._await_with_session_cancellation(response_item)
             canonical_item = self._canonical_item_from_response_item(item)
             await self._process_canonical_response_item(canonical_item)
+            task_input = self._classify_completed_task_input_boundary(
+                canonical_item
+            )
+            if task_input is not None:
+                execution = self._execution
+                durable_runtime = execution is not None and isinstance(
+                    execution.interaction_runtime,
+                    DurableInteractionRuntime,
+                )
+                if not durable_runtime:
+                    await self._response.aclose()
+                    self._response_drained = True
+                self._finish_active_model_continuation(
+                    StreamItemKind.MODEL_CONTINUATION_COMPLETED
+                )
+                self._task_input_call = None
+                await self._start_task_input(task_input)
         except StopAsyncIteration:
             self._response_drained = True
             continuation_item = self._finish_active_model_continuation(
@@ -1475,6 +1964,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             try:
                 await self._flush_canonical_text_tool_call_parser_stage()
             except Exception as exc:
+                self._discard_untrusted_response_tool_call_batch()
                 self._finish_canonical_stream(
                     StreamItemKind.STREAM_ERRORED,
                     data={
@@ -1486,6 +1976,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             self._finalize_incomplete_canonical_tool_calls()
             if (
                 not self._calls.empty()
+                or self._staged_tool_batch_present
                 or not self._tool_result_outcomes.empty()
             ):
                 return await self._next_item()
@@ -1493,16 +1984,21 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 self._finished = True
                 await self._event_manager.trigger(Event(type=EventType.END))
 
-            self._finish_canonical_stream(StreamItemKind.STREAM_COMPLETED)
-            raise
-        except CancelledError:
-            await self._cancel_active_model_continuation_response()
-            self._finish_active_model_continuation(
-                StreamItemKind.MODEL_CONTINUATION_CANCELLED
+            await self._finalize_execution(
+                StreamItemKind.STREAM_COMPLETED,
+                output=self._current_response_answer_text(),
             )
-            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_COMPLETED)
+            )
+            raise
+        except CancelledError as exc:
+            await self._settle_cancellation_failure(exc)
+            raise
+        except ExecutionInputRequiredError:
             raise
         except Exception as exc:
+            await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_ERROR,
                 data={
@@ -1510,6 +2006,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     "message": str(exc),
                 },
             )
+            self._discard_untrusted_response_tool_call_batch()
             self._finish_canonical_stream(
                 StreamItemKind.STREAM_ERRORED,
                 data={
@@ -1566,13 +2063,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
         try:
             await self._raise_if_cancelled(finish_stream=False)
-        except CancelledError:
-            await self._cancel_pending_tool_batch()
-            await self._cancel_active_model_continuation_response()
-            self._finish_active_model_continuation(
-                StreamItemKind.MODEL_CONTINUATION_CANCELLED
-            )
-            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+        except CancelledError as exc:
+            await self._settle_cancellation_failure(exc)
             raise
 
     async def _await_pending_tool_batch(self) -> None:
@@ -1580,7 +2072,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert task is not None
 
         if task.done():
-            self._consume_pending_tool_batch(task)
+            await self._consume_pending_tool_batch(task)
             return
 
         item_task = create_task(self._canonical_item_available.wait())
@@ -1599,14 +2091,17 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
             if cancellation_task is not None and cancellation_task in done:
                 await cancellation_task
-        except CancelledError:
+        except CancelledError as exc:
             item_task.cancel()
             await gather(item_task, return_exceptions=True)
             if cancellation_task is not None:
                 cancellation_task.cancel()
                 await gather(cancellation_task, return_exceptions=True)
-            await self._cancel_pending_tool_batch()
-            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+            try:
+                await self._cancel_pending_tool_batch()
+                self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
             raise
 
         if item_task in pending:
@@ -1621,30 +2116,464 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
 
         if self._canonical_yield_index < len(self._canonical_items):
             return
-        self._consume_pending_tool_batch(task)
+        await self._consume_pending_tool_batch(task)
 
     async def _cancel_pending_tool_batch(self) -> None:
         task = self._pending_tool_batch_task
         if task is None:
             return
+        await self._cancel_task_with_deadline(
+            task,
+            "pending tool batch",
+        )
+        if task.done() and self._pending_tool_batch_task is task:
+            self._pending_tool_batch_task = None
+
+    @staticmethod
+    async def _cancel_task_with_deadline(
+        task: Task[Any],
+        stage: str,
+    ) -> None:
+        """Cancel and observe one owned task within the cleanup deadline."""
         if not task.done():
             task.cancel()
-            await gather(task, return_exceptions=True)
-        self._pending_tool_batch_task = None
+            await sleep(0)
+        if not task.done():
+            await wait({task}, timeout=_CLEANUP_TIMEOUT_SECONDS)
+        if not task.done():
+            raise TimeoutError(
+                f"{stage} cleanup exceeded "
+                f"{_CLEANUP_TIMEOUT_SECONDS:g} seconds"
+            )
+        try:
+            task.result()
+        except BaseException:
+            return
+
+    @staticmethod
+    async def _await_cleanup_task_with_deadline(
+        task: Task[None],
+        stage: str,
+    ) -> None:
+        """Await one retryable cleanup task within a fixed deadline."""
+        await sleep(0)
+        if not task.done():
+            await wait({task}, timeout=_CLEANUP_TIMEOUT_SECONDS)
+        if not task.done():
+            task.cancel()
+            await sleep(0)
+            raise TimeoutError(
+                f"{stage} cleanup exceeded "
+                f"{_CLEANUP_TIMEOUT_SECONDS:g} seconds"
+            )
+        task.result()
+
+    @staticmethod
+    def _observe_cleanup_task(task: Task[Any]) -> None:
+        """Observe an explicitly retained cleanup task when it finishes."""
+        if task.cancelled():
+            return
+        try:
+            task.exception()
+        except BaseException:
+            return
+
+    async def _settle_execution_with_deadline(
+        self,
+        *,
+        cancelled: bool,
+    ) -> tuple[BaseException, ...]:
+        """Join retryable execution settlement within the cleanup budget."""
+        execution = self._execution
+        assert execution is not None
+        task = self._execution_cleanup_task
+        if task is None:
+            task = create_task(
+                execution.settle_provider_exit(cancelled=cancelled)
+            )
+            task.add_done_callback(self._observe_cleanup_task)
+            self._execution_cleanup_task = task
+        await sleep(0)
+        if not task.done():
+            await wait({task}, timeout=_CLEANUP_TIMEOUT_SECONDS)
+        if not task.done():
+            task.cancel()
+            await sleep(0)
+            if task.done() and self._execution_cleanup_task is task:
+                self._execution_cleanup_task = None
+            raise TimeoutError(
+                "execution terminalization cleanup exceeded "
+                f"{_CLEANUP_TIMEOUT_SECONDS:g} seconds"
+            )
+        if self._execution_cleanup_task is task:
+            self._execution_cleanup_task = None
+        return task.result()
 
     async def _cancel_active_model_continuation_response(self) -> None:
         if self._active_model_continuation_id is None:
             return
-        await self._response.cancel()
+        await self._cancel_provider_response()
 
-    def _consume_pending_tool_batch(
+    def _provider_response_cleanup_is_complete(self) -> bool:
+        """Return cleanup state without masking an existing stream failure."""
+        return bool(getattr(self._response, "cleanup_complete", False))
+
+    async def _cancel_provider_response(self) -> None:
+        """Cancel and close the current provider response idempotently."""
+        if self._provider_cleanup_complete:
+            return
+        try:
+            await self._response.cancel()
+        finally:
+            try:
+                await self._response.aclose()
+            finally:
+                self._provider_cleanup_complete = (
+                    self._provider_response_cleanup_is_complete()
+                )
+
+    async def _close_provider_response(self) -> None:
+        """Retry closing the active provider without cancelling it again."""
+        if self._provider_cleanup_complete:
+            return
+        try:
+            await self._response.aclose()
+        finally:
+            self._provider_cleanup_complete = (
+                self._provider_response_cleanup_is_complete()
+            )
+
+    async def _converge_stream_cancellation(self) -> None:
+        """Converge every cancellation exit on one terminal execution."""
+        task = self._cancellation_cleanup_task
+        if task is None:
+            task = create_task(self._run_stream_cancellation_cleanup())
+            self._cancellation_cleanup_task = task
+        try:
+            await shield(task)
+        finally:
+            if task.done() and self._cancellation_cleanup_task is task:
+                self._cancellation_cleanup_task = None
+
+    async def _settle_cancellation_failure(
+        self,
+        primary_failure: CancelledError,
+    ) -> None:
+        """Preserve cancellation and avoid duplicate same-boundary retries."""
+        notes = getattr(primary_failure, "__notes__", ())
+        if any(
+            note.startswith("post-provider cleanup failure:") for note in notes
+        ):
+            self._provider_cleanup_complete = (
+                self._provider_response_cleanup_is_complete()
+            )
+            return
+        try:
+            await self._converge_stream_cancellation()
+        except BaseException as cleanup_failure:
+            self._attach_cleanup_failures(
+                primary_failure,
+                [cleanup_failure],
+            )
+
+    async def _run_stream_cancellation_cleanup(self) -> None:
+        """Run one coalesced provider and branch cancellation attempt."""
+        cleanup_failures: list[BaseException] = []
+        try:
+            await self._cancel_pending_tool_batch()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._cancel_provider_response()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._cancel_pending_interaction()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._finalize_execution(StreamItemKind.STREAM_CANCELLED)
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            self._discard_untrusted_response_tool_call_batch()
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_CANCELLED)
+            )
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        self._raise_cleanup_failures(cleanup_failures)
+
+    async def _converge_stream_error_cleanup(self) -> None:
+        """Join one retryable provider and branch cleanup after an error."""
+        task = self._cancellation_cleanup_task
+        if task is None:
+            task = create_task(self._run_stream_error_cleanup())
+            self._cancellation_cleanup_task = task
+        try:
+            await shield(task)
+        finally:
+            if task.done() and self._cancellation_cleanup_task is task:
+                self._cancellation_cleanup_task = None
+
+    async def _run_stream_error_cleanup(self) -> None:
+        """Retry incomplete errored provider and branch cleanup once."""
+        cleanup_failures: list[BaseException] = []
+        try:
+            await self._cancel_pending_tool_batch()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._close_provider_response()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            await self._cancel_pending_interaction()
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        try:
+            self._discard_untrusted_response_tool_call_batch()
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_ERRORED)
+            )
+        except BaseException as exc:
+            cleanup_failures.append(exc)
+        self._raise_cleanup_failures(cleanup_failures)
+
+    @staticmethod
+    def _attach_cleanup_failures(
+        primary_failure: BaseException,
+        cleanup_failures: list[BaseException],
+    ) -> None:
+        """Attach cleanup failures without replacing the stream primary."""
+        seen_failure_ids = {id(primary_failure)}
+        for cleanup_failure in cleanup_failures:
+            if id(cleanup_failure) in seen_failure_ids:
+                continue
+            seen_failure_ids.add(id(cleanup_failure))
+            primary_failure.add_note(
+                "post-provider cleanup failure: "
+                f"{cleanup_failure.__class__.__name__}: "
+                f"{cleanup_failure}"
+            )
+
+    @classmethod
+    def _raise_cleanup_failures(
+        cls,
+        cleanup_failures: list[BaseException],
+    ) -> None:
+        """Raise the first cleanup failure with later failures as notes."""
+        if not cleanup_failures:
+            return
+        primary_failure = cleanup_failures[0]
+        cls._attach_cleanup_failures(
+            primary_failure,
+            cleanup_failures[1:],
+        )
+        raise primary_failure
+
+    def _execution_terminal_kind(
+        self,
+        proposed_kind: StreamItemKind,
+    ) -> StreamItemKind:
+        """Return the canonical terminal matching actual execution state."""
+        execution = self._execution
+        if execution is None:
+            return proposed_kind
+        return {
+            AgentExecutionStatus.COMPLETED: StreamItemKind.STREAM_COMPLETED,
+            AgentExecutionStatus.CANCELLED: StreamItemKind.STREAM_CANCELLED,
+            AgentExecutionStatus.ERRORED: StreamItemKind.STREAM_ERRORED,
+        }.get(execution.status, proposed_kind)
+
+    def _raise_if_completion_lost(self) -> None:
+        """Reject a success projection when another terminal owner won."""
+        self._raise_if_terminal_failure()
+        execution = self._execution
+        execution_status = execution.status if execution is not None else None
+        canonical_terminal = self._canonical_stream_terminal
+        if (
+            execution_status in (None, AgentExecutionStatus.COMPLETED)
+            and canonical_terminal is StreamTerminalOutcome.COMPLETED
+        ):
+            return
+        raise RuntimeError("execution did not complete successfully")
+
+    def _raise_if_terminal_failure(self) -> None:
+        """Surface an already settled non-success terminal before reuse."""
+        execution = self._execution
+        execution_status = execution.status if execution is not None else None
+        canonical_terminal = self._canonical_stream_terminal
+        if (
+            execution_status is AgentExecutionStatus.CANCELLED
+            or canonical_terminal is StreamTerminalOutcome.CANCELLED
+        ):
+            raise CancelledError("execution was cancelled before completion")
+        if (
+            execution_status is AgentExecutionStatus.ERRORED
+            or canonical_terminal is StreamTerminalOutcome.ERRORED
+        ):
+            raise RuntimeError("execution failed before completion")
+
+    async def _install_continuation_response(
+        self,
+        response: TextGenerationResponse,
+        continuation_id: str,
+        *,
+        activate: bool,
+    ) -> None:
+        """Install one continuation locally before acknowledging handoff."""
+        try:
+            self._model_responses.append(response)
+            if activate:
+                self._response = response
+                self._response_drained = False
+            self._set_active_model_continuation(continuation_id)
+            if activate:
+                self._prepare_iteration(reset_yield_index=False)
+            self._engine_agent.acknowledge_provider_handoff(response)
+        except BaseException as primary_failure:
+            await self._settle_continuation_handoff_failure(
+                response,
+                primary_failure,
+            )
+            raise
+
+    async def _settle_continuation_handoff_failure(
+        self,
+        response: TextGenerationResponse,
+        primary_failure: BaseException,
+    ) -> None:
+        """Settle either owner after continuation installation fails."""
+        execution = self._execution
+        cancelled = isinstance(
+            primary_failure,
+            (CancelledError, KeyboardInterrupt, CommandAbortException),
+        )
+
+        async def capture(
+            operation: Awaitable[Any],
+        ) -> tuple[BaseException, ...]:
+            try:
+                result = await operation
+            except BaseException as error:
+                return (error,)
+            if isinstance(result, tuple) and all(
+                isinstance(item, BaseException) for item in result
+            ):
+                return cast(tuple[BaseException, ...], result)
+            return ()
+
+        cancel_task = create_task(capture(response.cancel()))
+        settle_operation: Awaitable[Any] = (
+            execution.settle_provider_exit(cancelled=cancelled)
+            if execution is not None
+            else sleep(0)
+        )
+        settle_task = create_task(capture(settle_operation))
+        drain_task = create_task(
+            capture(
+                self._engine_agent.drain_pending_provider_cleanups(
+                    execution,
+                    abandon_unclaimed=True,
+                )
+            )
+        )
+        await sleep(0)
+        close_task = create_task(capture(response.aclose()))
+        results = await gather(
+            cancel_task,
+            close_task,
+            settle_task,
+            drain_task,
+        )
+        self._attach_cleanup_failures(
+            primary_failure,
+            [failure for result in results for failure in result],
+        )
+
+    async def _settle_stream_failure(
+        self,
+        primary_failure: BaseException,
+    ) -> None:
+        """Converge one provider exit while preserving its primary error."""
+        execution = self._execution
+        if (
+            execution is not None
+            and execution.status is AgentExecutionStatus.CANCELLED
+        ):
+            self._provider_cleanup_complete = (
+                self._provider_response_cleanup_is_complete()
+            )
+            return
+        if isinstance(primary_failure, KeyboardInterrupt):
+            try:
+                await self._converge_stream_cancellation()
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(
+                    primary_failure,
+                    [cleanup_failure],
+                )
+            return
+
+        cleanup_failures: list[BaseException] = []
+        try:
+            await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
+        except BaseException as cleanup_failure:
+            cleanup_failures.append(cleanup_failure)
+        self._provider_cleanup_complete = (
+            self._provider_response_cleanup_is_complete()
+        )
+        try:
+            await self._cancel_pending_interaction()
+        except BaseException as cleanup_failure:
+            cleanup_failures.append(cleanup_failure)
+        try:
+            self._discard_untrusted_response_tool_call_batch()
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_ERRORED),
+                data={
+                    "error_type": primary_failure.__class__.__name__,
+                    "message": str(primary_failure),
+                },
+            )
+        except BaseException as cleanup_failure:
+            cleanup_failures.append(cleanup_failure)
+        self._attach_cleanup_failures(primary_failure, cleanup_failures)
+
+    async def _consume_pending_tool_batch(
         self,
         task: Task[list[_ToolExecutionOutcome]],
     ) -> None:
         assert self._pending_tool_batch_task is task
         assert task.done()
         self._pending_tool_batch_task = None
-        outcomes = task.result()
+        try:
+            outcomes = task.result()
+        except CancelledError as exc:
+            try:
+                await self._finalize_execution(StreamItemKind.STREAM_CANCELLED)
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
+            raise
+        except CommandAbortException as exc:
+            try:
+                await self._finalize_execution(StreamItemKind.STREAM_CANCELLED)
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
+            if self._execution is None:
+                raise
+            return
+        except Exception as exc:
+            try:
+                await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
+            raise
         ordered = sorted(outcomes, key=lambda outcome: outcome.planned_index)
         for outcome in ordered:
             self._record_tool_outcome(outcome.result)
@@ -1669,42 +2598,70 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             text = output
 
         if self._tool_context is None:
-            self._tool_context = ToolCallContext(
-                input=self._input,
-                agent_id=self._agent_id,
-                participant_id=self._participant_id,
-                session_id=self._session_id,
-                calls=list(self._call_history),
-                cancellation_checker=self._cancellation_checker,
-            )
-
-        if not self._tool_manager:
-            self._response = response
-            return text
+            self._tool_context = self._new_tool_context(self._input)
 
         current_response = response
         delta = text
+        attached_answer_prefixes: list[str] = []
         while True:
+            structured_batch = bool(structured_calls)
+            calls = (
+                structured_calls
+                if structured_batch
+                else (
+                    self._capability_catalog.get_calls(delta)
+                    if self._capability_catalog
+                    else None
+                )
+            )
+            if (
+                not calls
+                and not self._staged_tool_batch_present
+                and self._task_input_call is None
+            ):
+                break
+            classified_calls = (
+                self._classify_complete_tool_call_batch(
+                    list(calls or []),
+                    text_originated=not structured_batch,
+                )
+                if self._task_input_call is None
+                else []
+            )
+            if self._task_input_call is not None:
+                execution = self._execution
+                if execution is None or execution.interaction_runtime is None:
+                    break
+                call = self._task_input_call
+                self._task_input_call = None
+                if delta:
+                    attached_answer_prefixes.append(delta)
+                if isinstance(
+                    execution.interaction_runtime,
+                    DurableInteractionRuntime,
+                ):
+                    await self._start_task_input(call)
+                    raise AssertionError(
+                        "durable task input must suspend the execution"
+                    )
+                current_response = await self._run_attached_task_input(call)
+                self._response = current_response
+                (
+                    new_text,
+                    structured_calls,
+                ) = await self._response_text_and_calls(current_response)
+                delta = new_text
+                continue
+            if not classified_calls:
+                break
             await self._trigger_derived_canonical_observability_event(
                 EventType.TOOL_DETECT,
                 StreamItemKind.STREAM_DIAGNOSTIC,
                 summary={"stage": "tool_detection"},
             )
 
-            calls = (
-                structured_calls
-                if structured_calls
-                else (
-                    self._tool_manager.get_calls(delta)
-                    if self._tool_manager
-                    else None
-                )
-            )
-            if not calls:
-                break
-
             results: list[ToolCallOutcome] = []
-            pending_calls = list(calls)
+            pending_calls = classified_calls
             while pending_calls:
                 batch, pending_calls = self._split_tool_call_batch(
                     pending_calls
@@ -1737,7 +2694,748 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             delta = new_text
 
         self._response = current_response
-        return delta
+        return "".join((*attached_answer_prefixes, delta))
+
+    async def _start_task_input(
+        self,
+        call: TaskInputCapabilityCall,
+    ) -> None:
+        """Start attached handling or stage a durable suspension."""
+        execution = self._execution
+        if execution is None or execution.interaction_runtime is None:
+            raise RuntimeError(
+                "task input requires an explicit interaction runtime"
+            )
+        assert self._pending_interaction_task is None
+        fingerprint = sha256(
+            repr((call.mode, call.reason, call.questions)).encode()
+        ).hexdigest()
+        assistant_text = self._current_response_answer_text()
+        assistant_message = Message(
+            role=MessageRole.ASSISTANT,
+            content=assistant_text or None,
+            tool_calls=[
+                MessageToolCall(
+                    id=str(call.call_id),
+                    name=call.provider_name,
+                    arguments=normalize_tool_arguments(call.arguments),
+                )
+            ],
+        )
+        await execution.begin_interaction(
+            fingerprint,
+            call,
+            assistant_message,
+        )
+        try:
+            self._pending_interaction_call = call
+            self._pending_interaction_assistant_text = assistant_text
+            self._pending_interaction_published = False
+            runtime = execution.interaction_runtime
+            if isinstance(runtime, DurableInteractionRuntime):
+                try:
+                    staging = self._durable_staging_context(call, execution)
+                    request_spec = InteractionBrokerRequest(
+                        actor=runtime.actor,
+                        origin=execution.origin,
+                        mode=call.mode,
+                        reason=call.reason,
+                        questions=call.questions,
+                    )
+                    durable = await runtime.stager(
+                        request_spec,
+                        execution=execution,
+                        response=self,
+                        stream_sequence=self._canonical_sequence,
+                        staging=staging,
+                    )
+                    self._validate_durable_staging(
+                        request_spec,
+                        durable,
+                        staging=staging,
+                    )
+                except BaseException as error:
+                    try:
+                        await self._response.aclose()
+                    except BaseException as cleanup_failure:
+                        self._attach_cleanup_failures(
+                            error,
+                            [cleanup_failure],
+                        )
+                    raise
+                await self._response.aclose()
+                self._response_drained = True
+                request = durable.command.request
+                required = InputRequiredResult(
+                    request_id=request.request_id,
+                    continuation_id=request.continuation_id,
+                    detached_resumption_available=True,
+                )
+                await execution.stage_durable_input_required(
+                    request,
+                    required,
+                )
+                self._active_interaction_request = request
+                self._input_required_result = required
+                terminal_index = len(self._canonical_items)
+                self._finish_canonical_stream(
+                    StreamItemKind.STREAM_INPUT_REQUIRED,
+                    correlation=self._interaction_correlation(request),
+                )
+                terminal_item = self._canonical_items[terminal_index]
+                assert (
+                    terminal_item.kind is StreamItemKind.STREAM_INPUT_REQUIRED
+                )
+                if self._event_manager is not None:
+                    await self._event_manager.trigger_stream_item(
+                        terminal_item
+                    )
+                self._pending_interaction_call = None
+                self._pending_interaction_assistant_text = ""
+                raise ExecutionInputRequiredError(
+                    required,
+                    request=request,
+                    durable=durable,
+                )
+            assert isinstance(runtime, AttachedInteractionRuntime)
+
+            async def attached_handler(
+                context: InputHandlerContext,
+            ) -> _InputHandlerOutcome:
+                await self._publish_interaction_wait(context.request)
+                return await runtime.handler(context)
+
+            broker_request = InteractionBrokerRequest(
+                actor=runtime.actor,
+                origin=execution.origin,
+                mode=call.mode,
+                reason=call.reason,
+                questions=call.questions,
+                handler=attached_handler,
+            )
+            broker = execution.interaction_broker
+            assert broker is not None
+            self._pending_interaction_task = create_task(
+                broker.request(broker_request),
+                name=f"agent-input-{call.call_id}",
+            )
+        except ExecutionInputRequiredError:
+            raise
+        except Exception:
+            self._pending_interaction_call = None
+            self._pending_interaction_assistant_text = ""
+            self._pending_interaction_published = False
+            if execution.status is AgentExecutionStatus.PREPARING_INPUT:
+                await execution.abandon_interaction()
+            raise
+
+    @staticmethod
+    def _validate_durable_staging(
+        request_spec: InteractionBrokerRequest,
+        durable: DurableInteractionSuspension,
+        *,
+        staging: DurableInteractionStagingContext,
+    ) -> None:
+        """Reject staging output that changes the reserved request."""
+        if type(durable) is not DurableInteractionSuspension:
+            raise TypeError(
+                "durable interaction stager returned an invalid suspension"
+            )
+        command = durable.command
+        request = command.request
+        if command.actor != request_spec.actor:
+            raise RuntimeError("durable interaction actor changed in staging")
+        expected = (
+            request_spec.origin,
+            request_spec.mode,
+            request_spec.reason,
+            request_spec.questions,
+            request_spec.continuation_ttl_seconds,
+            request_spec.advisory_wait_seconds,
+        )
+        actual = (
+            request.origin,
+            request.mode,
+            request.reason,
+            request.questions,
+            request.continuation_ttl_seconds,
+            request.advisory_wait_seconds,
+        )
+        if actual != expected or request.state is not RequestState.CREATED:
+            raise RuntimeError(
+                "durable interaction request changed in staging"
+            )
+        continuation = durable.continuation
+        if (
+            request.continuation_id != staging.continuation_id
+            or continuation.provider_snapshot != staging.provider_snapshot
+            or continuation.revision_binding != staging.revision_binding
+            or continuation.provider_call_correlation_id
+            != staging.provider_call_correlation_id
+            or continuation.provider_call_id
+            != staging.provider_snapshot.model_call_id
+        ):
+            raise RuntimeError(
+                "durable continuation changed provider replay state"
+            )
+
+    def _durable_staging_context(
+        self,
+        call: TaskInputCapabilityCall,
+        execution: AgentExecution,
+    ) -> DurableInteractionStagingContext:
+        """Export one provider-owned replay snapshot before source close."""
+        capability = self._capability_catalog
+        if capability is None:
+            raise RuntimeError("durable staging requires a capability catalog")
+        support = capability.support
+        binding = capability.revision_binding
+        registry = support.continuation_snapshot_codec_registry
+        codec = support.continuation_snapshot_codec
+        adapter = self._response.continuation_snapshot_adapter
+        if (
+            binding is None
+            or registry is None
+            or codec is None
+            or adapter is None
+        ):
+            raise RuntimeError(
+                "durable staging requires registered provider replay"
+            )
+        continuation_id = ContinuationId(f"continuation-{uuid4()}")
+        dispatch_id = derive_continuation_dispatch_id(continuation_id)
+        idempotency_key = derive_provider_idempotency_key(
+            continuation_id,
+            dispatch_id,
+        )
+        correlation_id = str(call.call_id)
+        snapshot = adapter.export_continuation_snapshot(
+            revision_binding=binding,
+            model_call_id=execution.origin.model_call_id,
+            provider_idempotency_key=idempotency_key,
+            provider_call_correlation_id=correlation_id,
+        )
+        adapter.validate_continuation_snapshot_call(
+            snapshot,
+            expected_binding=binding,
+            provider_call_correlation_id=correlation_id,
+            expected_provider_name=call.provider_name,
+            expected_arguments=call.arguments,
+        )
+        if snapshot.model_call_id != execution.origin.model_call_id:
+            raise RuntimeError(
+                "provider snapshot changed the execution model call"
+            )
+        return DurableInteractionStagingContext(
+            task_input_call=call,
+            continuation_id=continuation_id,
+            dispatch_id=dispatch_id,
+            revision_binding=binding,
+            codec_registry=registry,
+            codec=codec,
+            provider_snapshot=snapshot,
+            provider_idempotency_key=idempotency_key,
+            provider_call_correlation_id=correlation_id,
+        )
+
+    async def _run_attached_task_input(
+        self,
+        call: TaskInputCapabilityCall,
+    ) -> TextGenerationResponse:
+        """Await one attached interaction for a materialized response."""
+        execution = self._execution
+        assert execution is not None
+        assert isinstance(
+            execution.interaction_runtime,
+            AttachedInteractionRuntime,
+        )
+        try:
+            await self._start_task_input(call)
+            task = self._pending_interaction_task
+            assert task is not None
+            broker_wait: Awaitable[InteractionRequestResult] = (
+                shield(task)
+                if self._cancellation_checker is not None
+                else task
+            )
+            result = await self._await_with_session_cancellation(broker_wait)
+            response = await self._finish_task_input(
+                result,
+                raise_on_noncompletion=True,
+            )
+        except CancelledError as exc:
+            try:
+                await self._cancel_pending_interaction()
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
+            raise
+        assert response is not None
+        return response
+
+    async def _poll_pending_interaction(self) -> None:
+        """Expose lifecycle items while the attached handler remains open."""
+        task = self._pending_interaction_task
+        assert task is not None
+        if not task.done():
+            item_available = create_task(
+                self._canonical_item_available.wait(),
+                name="agent-input-stream-item",
+            )
+            cancellation = (
+                create_task(
+                    self._watch_session_cancellation(),
+                    name="agent-input-cancellation",
+                )
+                if self._cancellation_checker is not None
+                else None
+            )
+            waits: set[Task[Any]] = {task, item_available}
+            if cancellation is not None:
+                waits.add(cancellation)
+            try:
+                done, _ = await wait(waits, return_when=FIRST_COMPLETED)
+            except CancelledError as exc:
+                item_available.cancel()
+                if cancellation is not None:
+                    cancellation.cancel()
+                await gather(
+                    *(
+                        item
+                        for item in (item_available, cancellation)
+                        if item is not None
+                    ),
+                    return_exceptions=True,
+                )
+                try:
+                    await self._cancel_pending_interaction()
+                except BaseException as cleanup_failure:
+                    self._attach_cleanup_failures(exc, [cleanup_failure])
+                raise
+            if cancellation is not None and cancellation in done:
+                item_available.cancel()
+                await gather(item_available, return_exceptions=True)
+                try:
+                    cancellation.result()
+                except CancelledError as exc:
+                    primary_cancellation = exc
+                else:
+                    primary_cancellation = CancelledError()
+                try:
+                    await self._cancel_pending_interaction()
+                except BaseException as cleanup_failure:
+                    self._attach_cleanup_failures(
+                        primary_cancellation,
+                        [cleanup_failure],
+                    )
+                raise primary_cancellation
+            item_available.cancel()
+            if cancellation is not None:
+                cancellation.cancel()
+            await gather(
+                *(
+                    item
+                    for item in (item_available, cancellation)
+                    if item is not None
+                ),
+                return_exceptions=True,
+            )
+            if task not in done:
+                return
+        result = task.result()
+        response = await self._finish_task_input(
+            result,
+            raise_on_noncompletion=False,
+        )
+        if response is None:
+            return
+        self._response = response
+        self._response_iterator = aiter(response)
+        self._response_drained = False
+        self._begin_tool_call_lifecycle_response()
+
+    async def _finish_task_input(
+        self,
+        broker_result: InteractionRequestResult,
+        *,
+        raise_on_noncompletion: bool,
+    ) -> TextGenerationResponse | None:
+        """Apply exactly one authoritative broker delivery."""
+        task = self._pending_interaction_task
+        call = self._pending_interaction_call
+        assistant_text = self._pending_interaction_assistant_text
+        self._pending_interaction_task = None
+        self._pending_interaction_call = None
+        self._pending_interaction_assistant_text = ""
+        assert task is not None and call is not None
+        if not isinstance(
+            broker_result.create_result,
+            CreateInteractionApplied,
+        ):
+            execution = self._execution
+            assert execution is not None
+            abandon = getattr(execution, "abandon_interaction", None)
+            if callable(abandon):
+                await abandon()
+            self._pending_interaction_published = False
+            raise RuntimeError("interaction admission was rejected")
+        initial_request = broker_result.create_result.record.request
+        await self._publish_interaction_wait(initial_request)
+        delivery = broker_result.delivery
+        assert delivery is not None
+        request = delivery.record.request
+        self._active_interaction_request = request
+        if request.state is RequestState.PENDING:
+            required = InputRequiredResult(
+                request_id=request.request_id,
+                continuation_id=request.continuation_id,
+                detached_resumption_available=False,
+            )
+            execution = self._execution
+            assert execution is not None
+            await execution.mark_input_required(required)
+            correlation = self._interaction_correlation(request)
+            self._input_required_result = required
+            terminal_index = len(self._canonical_items)
+            self._finish_canonical_stream(
+                StreamItemKind.STREAM_INPUT_REQUIRED,
+                correlation=correlation,
+            )
+            terminal_item = self._canonical_items[terminal_index]
+            assert terminal_item.kind is StreamItemKind.STREAM_INPUT_REQUIRED
+            if self._event_manager is not None:
+                await self._event_manager.trigger_stream_item(terminal_item)
+            self._pending_interaction_published = False
+            if raise_on_noncompletion:
+                raise ExecutionInputRequiredError(
+                    required,
+                    request=request,
+                )
+            return None
+
+        await self._append_interaction_terminal(request)
+        outcome = project_resolution_to_model(
+            request,
+            containing_run_exists=True,
+        )
+        if isinstance(outcome, TerminateInputContinuation):
+            execution = self._execution
+            assert execution is not None
+            await execution.record_interaction_termination(request, outcome)
+            self._execution_terminated = True
+            self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
+            self._pending_interaction_published = False
+            if raise_on_noncompletion:
+                raise ExecutionTerminatedError(outcome)
+            return None
+        assert isinstance(outcome, ResumeInputContinuation)
+        try:
+            return await self._resume_after_task_input(
+                call,
+                request,
+                outcome.result,
+                assistant_text=assistant_text,
+            )
+        finally:
+            self._pending_interaction_published = False
+
+    async def _publish_interaction_wait(self, request: InputRequest) -> None:
+        """Publish authoritative identity before awaiting the real handler."""
+        if self._pending_interaction_published:
+            return
+        execution = self._execution
+        assert execution is not None
+        self._active_interaction_request = request
+        await execution.mark_interaction_pending(request)
+        self._pending_interaction_published = True
+        correlation = self._interaction_correlation(request)
+        for kind in (
+            StreamItemKind.INTERACTION_CREATED,
+            StreamItemKind.INTERACTION_PENDING,
+        ):
+            item = self._append_canonical_item(kind, correlation=correlation)
+            if self._event_manager is not None and item is not None:
+                await self._event_manager.trigger_stream_item(item)
+
+    async def _append_interaction_terminal(
+        self,
+        request: InputRequest,
+    ) -> None:
+        kinds = {
+            RequestState.ANSWERED: StreamItemKind.INTERACTION_ANSWERED,
+            RequestState.DECLINED: StreamItemKind.INTERACTION_DECLINED,
+            RequestState.CANCELLED: StreamItemKind.INTERACTION_CANCELLED,
+            RequestState.TIMED_OUT: StreamItemKind.INTERACTION_TIMED_OUT,
+            RequestState.UNAVAILABLE: StreamItemKind.INTERACTION_UNAVAILABLE,
+            RequestState.EXPIRED: StreamItemKind.INTERACTION_EXPIRED,
+            RequestState.SUPERSEDED: StreamItemKind.INTERACTION_SUPERSEDED,
+        }
+        kind = kinds.get(request.state)
+        if kind is None:
+            raise RuntimeError("broker returned a nonterminal interaction")
+        item = self._append_canonical_item(
+            kind,
+            correlation=self._interaction_correlation(request),
+        )
+        if self._event_manager is not None and item is not None:
+            await self._event_manager.trigger_stream_item(item)
+
+    async def _resume_after_task_input(
+        self,
+        call: TaskInputCapabilityCall,
+        request: InputRequest,
+        result: InputModelResult,
+        *,
+        assistant_text: str,
+    ) -> TextGenerationResponse:
+        """Append one correlated result and dispatch the next model turn."""
+        capability = self._capability_catalog
+        execution = self._execution
+        assert capability is not None and execution is not None
+        correlated = capability.project_result(call, result)
+        arguments = normalize_tool_arguments(call.arguments)
+        messages = (
+            Message(
+                role=MessageRole.ASSISTANT,
+                content=assistant_text or None,
+                tool_calls=[
+                    MessageToolCall(
+                        id=str(call.call_id),
+                        name=call.provider_name,
+                        arguments=arguments,
+                    )
+                ],
+            ),
+            correlated.tool_result_message(call),
+        )
+        committed = await execution.record_interaction_result(
+            request,
+            result,
+            messages,
+        )
+        if not committed:
+            raise RuntimeError("interaction continuation was already applied")
+        self._input = cast(Input, list(execution.messages))
+        self._tool_context = self._new_tool_context(self._input)
+        context = await self._make_child_context(self._input)
+        origin = context.execution_origin
+        assert origin is not None
+        continuation_id = str(origin.model_call_id)
+        continuation_item = self._append_canonical_model_continuation(
+            StreamItemKind.MODEL_CONTINUATION_STARTED,
+            continuation_id,
+        )
+        await self._trigger_canonical_observability_event(
+            EventType.TOOL_MODEL_RUN,
+            continuation_item,
+        )
+        try:
+            response = await self._await_with_session_cancellation(
+                self._engine_agent(context)
+            )
+        except CancelledError:
+            self._append_canonical_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+                continuation_id,
+            )
+            raise
+        except Exception as exc:
+            self._append_canonical_model_continuation(
+                StreamItemKind.MODEL_CONTINUATION_ERROR,
+                continuation_id,
+                data={
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+            await self._finalize_execution(StreamItemKind.STREAM_ERRORED)
+            self._finish_canonical_stream(
+                StreamItemKind.STREAM_ERRORED,
+                data={
+                    "error_type": exc.__class__.__name__,
+                    "message": str(exc),
+                },
+            )
+            raise
+        assert isinstance(response, TextGenerationResponse)
+        await self._install_continuation_response(
+            response,
+            continuation_id,
+            activate=False,
+        )
+        return response
+
+    def _interaction_correlation(
+        self,
+        request: InputRequest,
+    ) -> StreamItemCorrelation:
+        origin = request.origin
+        return StreamItemCorrelation(
+            request_id=request.request_id,
+            continuation_id=request.continuation_id,
+            task_id=(
+                str(origin.task_id) if origin.task_id is not None else None
+            ),
+            agent_id=origin.agent_id,
+            branch_id=origin.branch_id,
+            parent_branch_id=origin.parent_branch_id,
+        )
+
+    async def _cancel_pending_interaction(self) -> None:
+        """Cancel broker wait and containing branch exactly once."""
+        task = self._pending_interaction_task
+        cleanup_failures: list[BaseException] = []
+        execution = self._execution
+        if execution is None or execution.interaction_runtime is None:
+            if task is not None:
+                try:
+                    await self._cancel_task_with_deadline(
+                        task,
+                        "pending interaction",
+                    )
+                except BaseException as error:
+                    cleanup_failures.append(error)
+                if task.done() and self._pending_interaction_task is task:
+                    self._pending_interaction_task = None
+                    self._pending_interaction_call = None
+                    self._pending_interaction_assistant_text = ""
+                    self._pending_interaction_published = False
+            self._raise_cleanup_failures(cleanup_failures)
+            return
+        active_request = (
+            execution.pending_request or self._active_interaction_request
+        )
+        try:
+            cleanup_failures.extend(
+                await self._settle_execution_with_deadline(cancelled=True)
+            )
+        except BaseException as error:
+            cleanup_failures.append(error)
+        if active_request is not None:
+            try:
+                await self._append_interaction_cancellation_if_open(
+                    active_request
+                )
+            except BaseException as error:
+                cleanup_failures.append(error)
+        try:
+            self._finish_canonical_stream(
+                self._execution_terminal_kind(StreamItemKind.STREAM_CANCELLED)
+            )
+        except BaseException as error:
+            cleanup_failures.append(error)
+        try:
+            await self._finalize_interaction_cleanup(execution)
+        except BaseException as error:
+            cleanup_failures.append(error)
+        if task is not None and self._interaction_cleanup_complete:
+            try:
+                await self._cancel_task_with_deadline(
+                    task,
+                    "pending interaction",
+                )
+            except BaseException as error:
+                cleanup_failures.append(error)
+            if task.done() and self._pending_interaction_task is task:
+                self._pending_interaction_task = None
+                self._pending_interaction_call = None
+                self._pending_interaction_assistant_text = ""
+                self._pending_interaction_published = False
+        self._raise_cleanup_failures(cleanup_failures)
+
+    async def _finalize_interaction_cleanup(
+        self,
+        execution: AgentExecution,
+    ) -> None:
+        """Run or join one retryable branch-cleanup attempt."""
+        if self._interaction_cleanup_complete:
+            return
+        task = self._interaction_cleanup_task
+        if task is None:
+            task = create_task(self._run_interaction_cleanup(execution))
+            self._interaction_cleanup_task = task
+        try:
+            await self._await_cleanup_task_with_deadline(
+                task,
+                "interaction branch",
+            )
+        finally:
+            if task.done() and self._interaction_cleanup_task is task:
+                self._interaction_cleanup_task = None
+
+    async def _run_interaction_cleanup(
+        self,
+        execution: AgentExecution,
+    ) -> None:
+        """Terminalize one attached interaction scope and claim cleanup."""
+        runtime = execution.interaction_runtime
+        assert runtime is not None
+        if isinstance(runtime, DurableInteractionRuntime):
+            await execution.claim_cleanup()
+            self._interaction_cleanup_complete = True
+            return
+        assert isinstance(runtime, AttachedInteractionRuntime)
+        origin = execution.origin
+        broker = execution.interaction_broker
+        assert broker is not None
+        await broker.cancel_scope(
+            TerminalizeInteractionScopeCommand(
+                actor=runtime.actor,
+                scope=InteractionExecutionScope(
+                    run_id=origin.run_id,
+                    branch_id=origin.branch_id,
+                ),
+                provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+            )
+        )
+        await execution.claim_cleanup()
+        self._interaction_cleanup_complete = True
+
+    async def _append_interaction_cancellation_if_open(
+        self,
+        request: InputRequest,
+    ) -> None:
+        """Close one published canonical interaction before stream cancel."""
+        terminal_kinds = {
+            StreamItemKind.INTERACTION_ANSWERED,
+            StreamItemKind.INTERACTION_DECLINED,
+            StreamItemKind.INTERACTION_CANCELLED,
+            StreamItemKind.INTERACTION_TIMED_OUT,
+            StreamItemKind.INTERACTION_UNAVAILABLE,
+            StreamItemKind.INTERACTION_EXPIRED,
+            StreamItemKind.INTERACTION_SUPERSEDED,
+        }
+        request_id = request.request_id
+        if any(
+            item.kind in terminal_kinds
+            and item.correlation.request_id == request_id
+            for item in self._canonical_items
+        ):
+            return
+        created = any(
+            item.kind is StreamItemKind.INTERACTION_CREATED
+            and item.correlation.request_id == request_id
+            for item in self._canonical_items
+        )
+        if not created:
+            return
+        pending = any(
+            item.kind is StreamItemKind.INTERACTION_PENDING
+            and item.correlation.request_id == request_id
+            for item in self._canonical_items
+        )
+        if not pending:
+            pending_item = self._append_canonical_item(
+                StreamItemKind.INTERACTION_PENDING,
+                correlation=self._interaction_correlation(request),
+            )
+            if self._event_manager is not None and pending_item is not None:
+                await self._event_manager.trigger_stream_item(pending_item)
+        item = self._append_canonical_item(
+            StreamItemKind.INTERACTION_CANCELLED,
+            correlation=self._interaction_correlation(request),
+        )
+        if self._event_manager is not None and item is not None:
+            await self._event_manager.trigger_stream_item(item)
 
     async def _execute_tool_call_batch(
         self,
@@ -1890,7 +3588,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     raise CommandAbortException()
                 return _ToolExecutionOutcome(
                     call=call,
-                    context=self._tool_context or ToolCallContext(),
+                    context=self._tool_context
+                    or self._new_tool_context(self._input),
                     planned_index=planned_index,
                     result=diagnostic,
                 )
@@ -1903,13 +3602,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             started=start,
         )
 
-        context = ToolCallContext(
-            input=self._tool_context.input if self._tool_context else None,
-            agent_id=self._agent_id,
-            participant_id=self._participant_id,
-            session_id=self._session_id,
-            calls=list(self._call_history),
-            cancellation_checker=self._cancellation_checker,
+        context = self._new_tool_context(
+            self._tool_context.input if self._tool_context else None,
             stream_event=self._make_tool_stream_event_callback(call),
         )
 
@@ -2027,7 +3721,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             outcomes.append(
                 _ToolExecutionOutcome(
                     call=call,
-                    context=self._tool_context or ToolCallContext(),
+                    context=self._tool_context
+                    or self._new_tool_context(self._input),
                     planned_index=index,
                     result=diagnostic,
                 )
@@ -2106,18 +3801,339 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             },
         )
 
+    def _classify_completed_task_input_boundary(
+        self,
+        item: CanonicalStreamItem,
+    ) -> TaskInputCapabilityCall | None:
+        """Classify a complete reserved call without another provider read."""
+        execution = self._execution
+        capability = self._capability_catalog
+        if (
+            item.kind is not StreamItemKind.TOOL_CALL_DONE
+            or execution is None
+            or execution.interaction_runtime is None
+            or capability is None
+        ):
+            return None
+        calls: list[ToolCall] = []
+        while not self._calls.empty():
+            calls.append(self._calls.get())
+        current_id = item.correlation.tool_call_id
+        current = next(
+            (
+                call
+                for call in calls
+                if call.id is not None and str(call.id) == current_id
+            ),
+            None,
+        )
+        provider_family = (
+            self._canonical_tool_call_provider_families.get(current_id)
+            if current_id is not None
+            else None
+        )
+        try:
+            canonical_name = (
+                capability.canonical_name(
+                    current.name,
+                    provider_family=provider_family,
+                )
+                if current is not None
+                else None
+            )
+        except ModelCapabilityValidationError:
+            canonical_name = None
+        if canonical_name != RESERVED_INPUT_CAPABILITY_NAME:
+            for call in calls:
+                self._put_staging_item(self._calls, call, "tool call")
+            return None
+        self._classify_complete_tool_call_batch(calls)
+        return self._task_input_call
+
     def _drain_tool_call_batch(self) -> list[ToolCall]:
         calls: list[ToolCall] = []
         while not self._calls.empty():
-            call = self._calls.get()
-            if self._should_execute_staged_tool_call(call):
-                calls.append(call)
+            calls.append(self._calls.get())
+        if not calls and not self._staged_tool_batch_present:
+            return []
+        already_classified = bool(calls) and all(
+            id(call) in self._classified_tool_call_object_ids for call in calls
+        )
+        classified_calls = (
+            calls
+            if already_classified
+            else self._classify_complete_tool_call_batch(calls)
+        )
+        if not classified_calls:
+            return []
+        calls = [
+            call
+            for call in classified_calls
+            if self._should_execute_staged_tool_call(call)
+        ]
         if not calls:
             return []
         batch, remaining = self._split_tool_call_batch(calls)
+        for call in batch:
+            self._classified_tool_call_object_ids.discard(id(call))
         for call in remaining:
             self._put_staging_item(self._calls, call, "tool call")
         return batch
+
+    def _classify_complete_tool_call_batch(
+        self,
+        calls: list[ToolCall],
+        *,
+        text_originated: bool = False,
+    ) -> list[ToolCall] | None:
+        assert type(text_originated) is bool
+        capability = self._capability_catalog
+        if capability is None:
+            return list(calls)
+
+        if self._staged_tool_batch_invalid:
+            rejection = CapabilityBatchRejected(
+                code=(
+                    self._staged_tool_batch_rejection_code
+                    or CapabilityBatchRejectionCode.MALFORMED_CALL
+                ),
+                message="Batch contains an invalid capability call.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+
+        if not calls:
+            self._discard_staged_tool_call_batch()
+            return []
+
+        provider_families = {
+            provider_family
+            for call in calls
+            if call.id is not None
+            and (
+                provider_family := (
+                    self._canonical_tool_call_provider_families.get(
+                        str(call.id)
+                    )
+                )
+            )
+            is not None
+        }
+        if len(provider_families) > 1:
+            rejection = CapabilityBatchRejected(
+                code=CapabilityBatchRejectionCode.MALFORMED_CALL,
+                message="Batch contains conflicting provider families.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+        provider_family = next(iter(provider_families), None)
+        provider_calls: list[ProviderCapabilityCall] = []
+        try:
+            projection = capability.project(provider_family)
+            for call in calls:
+                provider_name = call.provider_name
+                if provider_name is None:
+                    try:
+                        provider_name = projection.provider_name(call.name)
+                    except ModelCapabilityValidationError:
+                        provider_name = call.name
+                parser_originated = text_originated or (
+                    call.id is not None
+                    and str(call.id) in self._text_parser_tool_call_ids
+                )
+                is_reserved = (
+                    call.name == RESERVED_INPUT_CAPABILITY_NAME
+                    or provider_name == RESERVED_INPUT_CAPABILITY_NAME
+                )
+                source_call_id = (
+                    self._provider_tool_call_ids_by_canonical_id.get(
+                        str(call.id)
+                    )
+                    if call.id is not None
+                    else None
+                )
+                provider_call_id = source_call_id or call.id
+                provider_calls.append(
+                    ProviderCapabilityCall(
+                        call_id=provider_call_id,
+                        provider_name=provider_name,
+                        arguments=(
+                            "{"
+                            if call.provider_arguments_malformed
+                            else call.arguments
+                        ),
+                        structured=not (parser_originated and is_reserved),
+                    )
+                )
+        except (AssertionError, ModelCapabilityValidationError):
+            rejection = CapabilityBatchRejected(
+                code=CapabilityBatchRejectionCode.MALFORMED_CALL,
+                message="Batch contains an invalid capability call.",
+            )
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                rejection,
+                call_count=len(calls),
+            )
+            return None
+
+        classification = capability.classify_batch(
+            provider_calls,
+            provider_family=provider_family,
+        )
+        if isinstance(classification, CapabilityBatchRejected):
+            self._discard_staged_tool_call_batch()
+            self._append_capability_batch_rejection(
+                classification,
+                call_count=len(calls),
+            )
+            return None
+        assert isinstance(classification, CapabilityBatchAccepted)
+        if classification.task_input is not None:
+            self._task_input_call = classification.task_input
+            self._discard_staged_tool_call_batch()
+            return []
+        domain_calls = self._canonical_domain_calls(
+            calls,
+            list(classification.domain_calls),
+        )
+        if self._tool_manager is None:
+            self._discard_staged_tool_call_batch()
+            raise RuntimeError(
+                "accepted domain capability calls require a tool registry"
+            )
+        self._publish_staged_domain_tool_calls(domain_calls)
+        self._classified_tool_call_object_ids.update(
+            id(call) for call in domain_calls
+        )
+        return domain_calls
+
+    def _canonical_domain_calls(
+        self,
+        staged_calls: list[ToolCall],
+        decoded_calls: list[ToolCall],
+    ) -> list[ToolCall]:
+        """Pair decoded domain calls with their response lifecycle IDs."""
+        assert len(staged_calls) == len(decoded_calls)
+        canonical_calls: list[ToolCall] = []
+        for staged_call, decoded_call in zip(
+            staged_calls, decoded_calls, strict=True
+        ):
+            if staged_call.id is None:
+                canonical_calls.append(decoded_call)
+                continue
+            canonical_id = str(staged_call.id)
+            if decoded_call.id is not None:
+                self._provider_tool_call_ids_by_canonical_id.setdefault(
+                    canonical_id,
+                    str(decoded_call.id),
+                )
+            canonical_calls.append(replace(decoded_call, id=canonical_id))
+        return canonical_calls
+
+    def _publish_staged_domain_tool_calls(
+        self,
+        calls: list[ToolCall],
+    ) -> None:
+        """Publish staged lifecycle frames after domain batch acceptance."""
+        accepted_ids = {str(call.id) for call in calls if call.id is not None}
+        calls_by_id = {
+            str(call.id): call for call in calls if call.id is not None
+        }
+        staged_items = [
+            item
+            for item in self._staged_tool_call_items
+            if item.correlation.tool_call_id in accepted_ids
+        ]
+        correlations = {
+            tool_call_id: state.correlation
+            for tool_call_id, state in (
+                self._canonical_tool_call_lifecycles.items()
+            )
+            if tool_call_id in accepted_ids
+        }
+        self._canonical_tool_call_lifecycles = {
+            tool_call_id: _CanonicalToolCallLifecycle(
+                correlation=correlation,
+                queued=True,
+            )
+            for tool_call_id, correlation in correlations.items()
+        }
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        for item in staged_items:
+            metadata = dict(item.metadata)
+            if item.kind is StreamItemKind.TOOL_CALL_READY:
+                tool_call_id = item.correlation.tool_call_id
+                assert tool_call_id is not None
+                metadata.update(
+                    self._tool_call_display_metadata(calls_by_id[tool_call_id])
+                )
+            self._append_canonical_item(
+                item.kind,
+                text_delta=item.text_delta,
+                data=item.data,
+                usage=item.usage,
+                correlation=item.correlation,
+                visibility=item.visibility,
+                metadata=metadata,
+                provider_family=item.provider_family,
+                provider_event_type=item.provider_event_type,
+            )
+
+    def _discard_staged_tool_call_batch(self) -> None:
+        """Discard private lifecycle state without exposing correlations."""
+        for tool_call_id in self._response_reserved_tool_call_ids:
+            if (
+                tool_call_id
+                not in self._canonical_tool_call_argument_delta_ids
+                and tool_call_id not in self._canonical_tool_call_ready_ids
+                and tool_call_id not in self._canonical_tool_call_done_ids
+            ):
+                self._canonical_tool_call_reserved_ids.discard(tool_call_id)
+        self._canonical_tool_call_lifecycles = {}
+        self._staged_tool_call_items = []
+        self._staged_tool_batch_invalid = False
+        self._staged_tool_batch_rejection_code = None
+        self._staged_tool_batch_present = False
+        self._canonical_tool_call_provider_families = {}
+        self._provider_tool_call_ids_by_canonical_id = {}
+        self._text_parser_tool_call_ids = set()
+        self._response_tool_call_id_aliases = {}
+        self._response_reserved_tool_call_ids = set()
+        self._classified_tool_call_object_ids = set()
+
+    def _discard_untrusted_response_tool_call_batch(self) -> None:
+        """Discard all effects derived from an abnormal model response."""
+        while not self._calls.empty():
+            self._calls.get()
+        self._task_input_call = None
+        self._discard_staged_tool_call_batch()
+
+    def _append_capability_batch_rejection(
+        self,
+        rejection: CapabilityBatchRejected,
+        *,
+        call_count: int,
+    ) -> None:
+        assert isinstance(rejection, CapabilityBatchRejected)
+        assert isinstance(call_count, int) and call_count >= 0
+        details: dict[str, Any] = {"call_count": call_count}
+        self._append_canonical_guard_diagnostic(
+            code=rejection.code.value,
+            message=rejection.message,
+            details=details,
+        )
 
     def _should_execute_staged_tool_call(self, call: ToolCall) -> bool:
         if call.id is None:
@@ -2182,12 +4198,8 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             while True:
                 try:
                     response_item = response_iterator.__anext__()
-                    item = (
-                        await self._await_with_session_cancellation(
-                            response_item
-                        )
-                        if self._active_model_continuation_id is not None
-                        else await response_item
+                    item = await self._await_with_session_cancellation(
+                        response_item
                     )
                 except StopAsyncIteration:
                     break
@@ -2205,6 +4217,19 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 )
                 if appended_item is None:
                     continue
+                if (
+                    self._classify_completed_task_input_boundary(
+                        canonical_item
+                    )
+                    is not None
+                ):
+                    execution = self._execution
+                    if execution is None or not isinstance(
+                        execution.interaction_runtime,
+                        DurableInteractionRuntime,
+                    ):
+                        await response.aclose()
+                    break
                 if (
                     appended_item.kind is StreamItemKind.ANSWER_DELTA
                     and appended_item.text_delta is not None
@@ -2224,8 +4249,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 StreamItemKind.MODEL_CONTINUATION_COMPLETED
             )
             return "".join(text_parts), streamed_calls
-        except CancelledError:
-            await self._cancel_active_model_continuation_response()
+        except CancelledError as exc:
+            try:
+                await self._cancel_active_model_continuation_response()
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(exc, [cleanup_failure])
             self._finish_active_model_continuation(
                 StreamItemKind.MODEL_CONTINUATION_CANCELLED
             )
@@ -2299,9 +4327,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         calls: list[ToolCall],
     ) -> None:
         while not self._calls.empty():
-            call = self._calls.get()
-            if self._should_execute_staged_tool_call(call):
-                calls.append(call)
+            calls.append(self._calls.get())
 
     async def _emit_token_generated_event(
         self,
@@ -2383,11 +4409,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         for result in results:
             tool_messages.extend(
                 self._tool_observation_messages(
-                    result,
+                    self._provider_facing_tool_outcome(result),
                     json_output=False,
                 )
             )
 
+        if self._execution is not None and tool_messages:
+            await self._execution.record_messages(tuple(tool_messages))
         if not self._should_continue_tool_cycle(tool_messages, results):
             return None
 
@@ -2407,17 +4435,13 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         messages.extend(tool_messages)
 
         self._input = cast(Input, messages)
-        self._tool_context = ToolCallContext(
-            input=self._input,
-            agent_id=self._agent_id,
-            participant_id=self._participant_id,
-            session_id=self._session_id,
-            calls=list(self._call_history),
-            cancellation_checker=self._cancellation_checker,
-        )
+        self._tool_context = self._new_tool_context(self._input)
 
-        context = self._make_child_context(messages)
-        continuation_id = str(uuid4())
+        context = await self._make_child_context(messages)
+        model_origin = context.execution_origin
+        continuation_id = str(
+            model_origin.model_call_id if model_origin is not None else uuid4()
+        )
         continuation_item = self._append_canonical_model_continuation(
             StreamItemKind.MODEL_CONTINUATION_STARTED,
             continuation_id,
@@ -2449,8 +4473,11 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             raise
         assert response
         assert isinstance(response, TextGenerationResponse)
-        self._model_responses.append(response)
-        self._set_active_model_continuation(continuation_id)
+        await self._install_continuation_response(
+            response,
+            continuation_id,
+            activate=False,
+        )
         return response
 
     async def _raise_if_cancelled(
@@ -2762,7 +4789,9 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     MessageToolCall(
                         id=str(model_outcome.call.id),
                         name=model_outcome.name,
-                        arguments=cast(Any, model_outcome.arguments),
+                        arguments=normalize_tool_arguments(
+                            model_outcome.arguments or {}
+                        ),
                     )
                 ],
             ),
@@ -2786,6 +4815,40 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 ),
             ),
         ]
+
+    def _provider_facing_tool_call(self, call: ToolCall) -> ToolCall:
+        """Restore the source provider ID for model continuation messages."""
+        if call.id is None:
+            return call
+        canonical_id = str(call.id)
+        provider_id = self._provider_tool_call_ids_by_canonical_id.get(
+            canonical_id
+        )
+        if provider_id is None or provider_id == canonical_id:
+            return call
+        return replace(call, id=provider_id)
+
+    def _provider_facing_tool_outcome(
+        self,
+        outcome: ToolCallOutcome,
+    ) -> ToolCallOutcome:
+        """Restore provider correlation while keeping public lifecycle IDs."""
+        if isinstance(outcome, ToolCallResult | ToolCallError):
+            provider_call = self._provider_facing_tool_call(outcome.call)
+            if provider_call is outcome.call:
+                return outcome
+            return replace(
+                outcome,
+                call=provider_call,
+            )
+        if outcome.call_id is None:
+            return outcome
+        provider_id = self._provider_tool_call_ids_by_canonical_id.get(
+            str(outcome.call_id)
+        )
+        if provider_id is None or provider_id == str(outcome.call_id):
+            return outcome
+        return replace(outcome, call_id=provider_id)
 
     @classmethod
     def _model_facing_outcome(
@@ -2871,7 +4934,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                     MessageToolCall(
                         id=str(call_id),
                         name=name,
-                        arguments=cast(Any, arguments),
+                        arguments=normalize_tool_arguments(arguments or {}),
                     )
                 ],
             ),
@@ -2922,16 +4985,28 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
         assert self._event_manager
         await self._event_manager.trigger(Event(type=EventType.STREAM_END))
 
-    def _make_child_context(self, messages: Input) -> ModelCallContext:
+    async def _make_child_context(
+        self,
+        messages: Input,
+        *,
+        advance_turn: bool = True,
+    ) -> ModelCallContext:
         parent_context = self._context
         root_parent = (
             parent_context.root_parent or parent_context
             if parent_context
             else None
         )
+        execution_origin = parent_context.execution_origin
+        if self._execution is not None:
+            if advance_turn:
+                execution_origin = await self._execution.advance_model_turn()
+            else:
+                execution_origin = self._execution.origin
         context = ModelCallContext(
             specification=self._operation.specification,
             input=messages,
+            capability=self._capability_catalog,
             engine_args=self._continuation_engine_args(),
             parent=parent_context,
             root_parent=root_parent,
@@ -2948,9 +5023,38 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
                 if parent_context
                 else self._session_id
             ),
+            execution=self._execution,
+            execution_origin=execution_origin,
+            interaction_broker=parent_context.interaction_broker,
         )
         self._context = context
         return context
+
+    def _new_tool_context(
+        self,
+        input: Input | None,
+        *,
+        stream_event: (
+            Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
+        ) = None,
+    ) -> ToolCallContext:
+        """Return one tool context bound to this exact execution branch."""
+        return ToolCallContext(
+            input=input,
+            agent_id=self._agent_id,
+            participant_id=self._participant_id,
+            session_id=self._session_id,
+            calls=list(self._call_history),
+            cancellation_checker=self._cancellation_checker,
+            stream_event=stream_event,
+            execution=self._execution,
+            execution_origin=(
+                self._execution.origin
+                if self._execution is not None
+                else self._context.execution_origin
+            ),
+            interaction_broker=self._context.interaction_broker,
+        )
 
     def _continuation_engine_args(self) -> dict[str, Any]:
         engine_args = dict(self._engine_args)
@@ -3074,35 +5178,127 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             )
         )
 
+    def _canonical_answer_text(self) -> str:
+        """Return the immutable public answer accumulated by this response."""
+        return "".join(
+            item.text_delta
+            for item in self._canonical_items
+            if item.kind is StreamItemKind.ANSWER_DELTA
+            and item.text_delta is not None
+        )
+
+    def _current_response_answer_text(self) -> str:
+        """Return answer text emitted by the active provider response."""
+        return "".join(
+            item.text_delta
+            for item in self._canonical_items[
+                self._response_answer_start_index :
+            ]
+            if item.kind is StreamItemKind.ANSWER_DELTA
+            and item.text_delta is not None
+        )
+
+    async def _finalize_execution(
+        self,
+        kind: StreamItemKind,
+        *,
+        output: str | None = None,
+    ) -> None:
+        """Apply one idempotent execution terminal with immutable output."""
+        execution = self._execution
+        if execution is None or self._execution_finalized:
+            return
+        if execution.status in {
+            AgentExecutionStatus.COMPLETED,
+            AgentExecutionStatus.CANCELLED,
+            AgentExecutionStatus.ERRORED,
+        }:
+            self._execution_finalized = True
+            return
+        if kind is StreamItemKind.STREAM_COMPLETED:
+            if output:
+                await execution.complete_with_response(
+                    output,
+                    messages=(
+                        Message(
+                            role=MessageRole.ASSISTANT,
+                            content=output,
+                        ),
+                    ),
+                )
+            else:
+                await execution.complete()
+        elif kind is StreamItemKind.STREAM_CANCELLED:
+            cleanup_failures = await self._settle_execution_with_deadline(
+                cancelled=True,
+            )
+            self._execution_finalized = execution.status in {
+                AgentExecutionStatus.COMPLETED,
+                AgentExecutionStatus.CANCELLED,
+                AgentExecutionStatus.ERRORED,
+            }
+            self._raise_cleanup_failures(list(cleanup_failures))
+            return
+        elif kind is StreamItemKind.STREAM_ERRORED:
+            cleanup_failures = await self._settle_execution_with_deadline(
+                cancelled=False,
+            )
+            self._execution_finalized = execution.status in {
+                AgentExecutionStatus.COMPLETED,
+                AgentExecutionStatus.CANCELLED,
+                AgentExecutionStatus.ERRORED,
+            }
+            self._raise_cleanup_failures(list(cleanup_failures))
+            return
+        else:
+            raise ValueError("unsupported execution terminal kind")
+        self._execution_finalized = execution.status in {
+            AgentExecutionStatus.COMPLETED,
+            AgentExecutionStatus.CANCELLED,
+            AgentExecutionStatus.ERRORED,
+        }
+
     def _finish_canonical_stream(
         self,
         kind: StreamItemKind,
         *,
         data: Any | None = None,
         usage: Any | None = None,
+        correlation: StreamItemCorrelation | None = None,
     ) -> None:
         outcomes = {
             StreamItemKind.STREAM_COMPLETED: StreamTerminalOutcome.COMPLETED,
             StreamItemKind.STREAM_ERRORED: StreamTerminalOutcome.ERRORED,
             StreamItemKind.STREAM_CANCELLED: StreamTerminalOutcome.CANCELLED,
+            StreamItemKind.STREAM_INPUT_REQUIRED: (
+                StreamTerminalOutcome.INPUT_REQUIRED
+            ),
         }
         outcome = outcomes[kind]
         if self._canonical_stream_terminal is not None:
             return
-        self._finish_active_model_continuation(
-            {
-                StreamItemKind.STREAM_COMPLETED: (
-                    StreamItemKind.MODEL_CONTINUATION_COMPLETED
-                ),
-                StreamItemKind.STREAM_ERRORED: (
-                    StreamItemKind.MODEL_CONTINUATION_ERROR
-                ),
-                StreamItemKind.STREAM_CANCELLED: (
-                    StreamItemKind.MODEL_CONTINUATION_CANCELLED
-                ),
-            }[kind],
-            data=data if kind is StreamItemKind.STREAM_ERRORED else None,
-        )
+        continuation_terminal = {
+            StreamItemKind.STREAM_COMPLETED: (
+                StreamItemKind.MODEL_CONTINUATION_COMPLETED
+            ),
+            StreamItemKind.STREAM_ERRORED: (
+                StreamItemKind.MODEL_CONTINUATION_ERROR
+            ),
+            StreamItemKind.STREAM_CANCELLED: (
+                StreamItemKind.MODEL_CONTINUATION_CANCELLED
+            ),
+        }.get(kind)
+        if continuation_terminal is None:
+            if self._active_model_continuation_id is not None:
+                raise StreamValidationError(
+                    "input-required stream cannot close an active model "
+                    "continuation"
+                )
+        else:
+            self._finish_active_model_continuation(
+                continuation_terminal,
+                data=data if kind is StreamItemKind.STREAM_ERRORED else None,
+            )
         self._finalize_incomplete_canonical_tool_calls()
         self._append_open_canonical_channel_done_items()
         terminal_usage: Any | None = None
@@ -3116,6 +5312,7 @@ class OrchestratorResponse(AsyncIterator[CanonicalStreamItem]):
             kind,
             data=data,
             usage=terminal_usage,
+            correlation=correlation,
             terminal_outcome=outcome,
         )
         self._canonical_stream_terminal = outcome

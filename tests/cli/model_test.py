@@ -57,12 +57,14 @@ from avalan.entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallParseOutcome,
     ToolCallToken,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.event.manager import EventManager
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.manager import ModelManager as RealModelManager
 from avalan.model.nlp.text.generation import TextGenerationModel
 from avalan.model.response.parsers.reasoning import ReasoningParser
@@ -2502,6 +2504,95 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         completed_projection.assert_called_once_with(3)
         self.assertEqual(presenter.terminal_sequences, [3])
         self.assertEqual(console.print.call_args_list[0], call("done", end=""))
+
+    async def test_token_generation_fails_closed_for_input_required(
+        self,
+    ) -> None:
+        class EmptyPresenter:
+            requires_completion_snapshot = True
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                if request.snapshot.answer_text:
+                    yield CliStreamAnswerTextChunk(
+                        text=request.snapshot.answer_text
+                    )
+
+        class EmptyTheme:
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> EmptyPresenter:
+                _ = logger, event_stats
+                return EmptyPresenter()
+
+        async def fake_stream(
+            *_args: object,
+            **_kwargs: object,
+        ) -> AsyncIterator[StreamConsumerProjection]:
+            yield StreamConsumerProjection(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_INPUT_REQUIRED,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(
+                    request_id="request-1",
+                    continuation_id="continuation-1",
+                    agent_id="agent-1",
+                    branch_id="branch-1",
+                ),
+                terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+            )
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+        with (
+            patch.object(
+                model_cmds,
+                "_stream_render_projections",
+                fake_stream,
+            ),
+            patch.object(
+                model_cmds,
+                "_stream_completed_projection",
+                wraps=model_cmds._stream_completed_projection,
+            ) as completed_projection,
+            self.assertRaisesRegex(
+                StreamValidationError,
+                "CLI input-required projection is unavailable",
+            ),
+        ):
+            await model_cmds.token_generation(
+                args=Namespace(skip_display_reasoning_time=False),
+                console=MagicMock(),
+                theme=EmptyTheme(),  # type: ignore[arg-type]
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),  # type: ignore[arg-type]
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                display_config=self._display_config(interactive=False),
+            )
+
+        completed_projection.assert_not_called()
 
     async def test_token_generation_retry_presentation_error_propagates(
         self,
@@ -14481,9 +14572,11 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
         agent.engine = engine
         operation = MagicMock()
         input_message = Message(role=MessageRole.USER, content="hi")
+        capability = ModelCapabilityCatalog.create()
         context = ModelCallContext(
             specification=operation.specification,
             input=input_message,
+            capability=capability,
             engine_args={},
         )
         orch_response = OrchestratorResponse(
@@ -14493,6 +14586,7 @@ class CliRenderFrameTestCase(IsolatedAsyncioTestCase):
             operation,
             {},
             context,
+            capability=capability,
         )
 
         orchestrator = SimpleNamespace(event_manager=None, input_token_count=1)
@@ -15119,12 +15213,15 @@ class CliModelMixedTokensTestCase(IsolatedAsyncioTestCase):
                 reasoning_settings=ReasoningSettings(),
                 logger=getLogger(),
             )
-            tm = MagicMock()
-            tm.is_potential_tool_call.return_value = True
-            tm.get_calls.return_value = None
+            capability = MagicMock(spec=ModelCapabilityCatalog)
+            capability.is_potential_tool_call.return_value = True
+            capability.parse_calls.return_value = ToolCallParseOutcome()
+            capability.stream_buffer_diagnostics.return_value = []
             base_parser = ToolCallParser()
-            tm.tool_call_status.side_effect = base_parser.tool_call_status
-            tp = ToolCallResponseParser(tm, None)
+            capability.tool_call_status.side_effect = (
+                base_parser.tool_call_status
+            )
+            tp = ToolCallResponseParser(capability, None)
             sequence = [
                 "X",
                 "<think>",

@@ -46,6 +46,9 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
         memory.permanent_message = None
 
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         model_manager = AsyncMock(spec=ModelManager)
@@ -74,6 +77,22 @@ class EngineAgentEventTestCase(IsolatedAsyncioTestCase):
         await agent(context)
 
         await agent.input_token_count()
+
+        task = model_manager.await_args.args[0]
+        self.assertIsNotNone(task.capability)
+        self.assertIs(task.context.capability, task.capability)
+        context_events = [
+            call.args[0]
+            for call in event_manager.trigger.await_args_list
+            if "context" in call.args[0].payload
+        ]
+        self.assertGreaterEqual(len(context_events), 2)
+        self.assertTrue(
+            all(
+                event.payload["context"] is task.context
+                for event in context_events
+            )
+        )
 
         called_types = [
             c.args[0].type for c in event_manager.trigger.await_args_list

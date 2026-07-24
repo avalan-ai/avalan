@@ -2956,6 +2956,69 @@ class TextGenerationResponseMoreTestCase(IsolatedAsyncioTestCase):
                 with self.assertRaisesRegex(RuntimeError, "provider failed"):
                     await partial_response.to_str()
 
+    async def test_to_str_preserves_input_required_as_non_success(
+        self,
+    ) -> None:
+        correlation = StreamItemCorrelation(
+            request_id="request-1",
+            continuation_id="continuation-1",
+            agent_id="agent-1",
+            branch_id="branch-1",
+        )
+        items = (
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=0,
+                kind=StreamItemKind.STREAM_STARTED,
+                channel=StreamChannel.CONTROL,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=1,
+                kind=StreamItemKind.INTERACTION_PENDING,
+                channel=StreamChannel.INTERACTION,
+                correlation=correlation,
+            ),
+            CanonicalStreamItem(
+                stream_session_id="response-stream",
+                run_id="response-run",
+                turn_id="response-turn",
+                sequence=2,
+                kind=StreamItemKind.STREAM_INPUT_REQUIRED,
+                channel=StreamChannel.CONTROL,
+                correlation=correlation,
+                terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
+            ),
+        )
+
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
+            for item in items:
+                yield item
+
+        settings = GenerationSettings()
+        response = TextGenerationResponse(
+            lambda **_: gen(),
+            logger=getLogger(),
+            use_async_generator=True,
+            generation_settings=settings,
+            settings=settings,
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "stream input_required"):
+            await response.to_str()
+        self.assertEqual(
+            await response.to_str(raise_terminal_exception=False),
+            "",
+        )
+        self.assertIs(
+            response._terminal_failure_outcome,
+            StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+
     async def test_async_iteration_finalizes_legacy_canonical_accumulator(
         self,
     ) -> None:

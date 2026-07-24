@@ -1,3 +1,8 @@
+from ..agent.execution import (
+    AttachedInteractionRuntime,
+    DurableInteractionRuntime,
+    InteractionRuntime,
+)
 from ..agent.orchestrator import Orchestrator
 from ..agent.orchestrator.orchestrators.default import DefaultOrchestrator
 from ..agent.orchestrator.orchestrators.json import JsonOrchestrator, Property
@@ -109,6 +114,7 @@ from importlib import import_module
 from logging import DEBUG, INFO, Logger
 from os import R_OK, access
 from os.path import exists
+from pathlib import Path
 from tomllib import loads as toml_loads
 from typing import TYPE_CHECKING, Any, Callable, Mapping, Protocol, cast
 from uuid import UUID, uuid4
@@ -513,6 +519,7 @@ class OrchestratorLoader:
             call_options_override: Mapping[str, Any] | None,
             tool_settings: ToolSettingsContext | None,
             event_manager_mode: EventManagerMode,
+            interaction_runtime: InteractionRuntime | None = None,
         ) -> Orchestrator:
             """Load an agent through a trusted runtime envelope."""
 
@@ -544,6 +551,17 @@ class OrchestratorLoader:
                 runtime_envelope_loader
             ), "runtime envelope loader must be trusted"
         self._runtime_envelope_loader = runtime_envelope_loader
+
+    def clone_for_stack(self, stack: AsyncExitStack) -> "OrchestratorLoader":
+        """Return an equivalent loader with isolated resource ownership."""
+        assert isinstance(stack, AsyncExitStack)
+        return OrchestratorLoader(
+            hub=self._hub,
+            logger=self._logger,
+            participant_id=self._participant_id,
+            stack=stack,
+            runtime_envelope_loader=self._runtime_envelope_loader,
+        )
 
     @staticmethod
     def _sentence_transformer_model_type() -> type[Any]:
@@ -1198,14 +1216,23 @@ class OrchestratorLoader:
         tool_settings: ToolSettingsContext | None = None,
         tool_name_policy: ToolNamePolicySettings | None = None,
         event_manager_mode: EventManagerMode = EventManagerMode.SDK,
+        interaction_runtime: InteractionRuntime | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
         assert isinstance(event_manager_mode, EventManagerMode)
+        if interaction_runtime is not None and not isinstance(
+            interaction_runtime,
+            AttachedInteractionRuntime | DurableInteractionRuntime,
+        ):
+            raise TypeError(
+                "interaction_runtime must be an interaction runtime or None"
+            )
 
         if not exists(path):
             raise FileNotFoundError(path)
         elif not access(path, R_OK):
             raise PermissionError(path)
+        definition_locator = Path(path).resolve(strict=True).as_uri()
 
         _l("Loading agent from %s", path, is_debug=False)
 
@@ -1569,14 +1596,25 @@ class OrchestratorLoader:
                 envelope_load_kwargs["call_options_override"] = (
                     call_options_override
                 )
-            return (
-                await (
-                    self._runtime_envelope_loader.load_agent_runtime_envelope(
-                        runtime_envelope_plan,
-                        **envelope_load_kwargs,
-                    )
+            if interaction_runtime is not None:
+                envelope_load_kwargs["interaction_runtime"] = (
+                    interaction_runtime
                 )
+            load_runtime_envelope = (
+                self._runtime_envelope_loader.load_agent_runtime_envelope
             )
+            agent = await load_runtime_envelope(
+                runtime_envelope_plan,
+                **envelope_load_kwargs,
+            )
+            bind_locator = getattr(
+                agent,
+                "bind_execution_definition_locator",
+                None,
+            )
+            if callable(bind_locator):
+                bind_locator(definition_locator)
+            return agent
 
         tool_format = None
         tool_format_str = tool_section.get("format")
@@ -1600,37 +1638,31 @@ class OrchestratorLoader:
 
         _l("Loaded agent from %s", path, is_debug=False)
 
+        from_settings_kwargs: dict[str, Any] = {
+            "tool_settings": tool_settings,
+            "tool_format": tool_format,
+            "tool_name_policy": tool_name_policy,
+        }
         if tool_recovery_formats:
-            if event_manager_mode is not EventManagerMode.SDK:
-                return await self.from_settings(
-                    settings,
-                    tool_settings=tool_settings,
-                    tool_format=tool_format,
-                    tool_name_policy=tool_name_policy,
-                    tool_recovery_formats=tool_recovery_formats,
-                    event_manager_mode=event_manager_mode,
-                )
-            return await self.from_settings(
-                settings,
-                tool_settings=tool_settings,
-                tool_format=tool_format,
-                tool_name_policy=tool_name_policy,
-                tool_recovery_formats=tool_recovery_formats,
+            from_settings_kwargs["tool_recovery_formats"] = (
+                tool_recovery_formats
             )
         if event_manager_mode is not EventManagerMode.SDK:
-            return await self.from_settings(
-                settings,
-                tool_settings=tool_settings,
-                tool_format=tool_format,
-                tool_name_policy=tool_name_policy,
-                event_manager_mode=event_manager_mode,
-            )
-        return await self.from_settings(
+            from_settings_kwargs["event_manager_mode"] = event_manager_mode
+        if interaction_runtime is not None:
+            from_settings_kwargs["interaction_runtime"] = interaction_runtime
+        agent = await self.from_settings(
             settings,
-            tool_settings=tool_settings,
-            tool_format=tool_format,
-            tool_name_policy=tool_name_policy,
+            **from_settings_kwargs,
         )
+        bind_locator = getattr(
+            agent,
+            "bind_execution_definition_locator",
+            None,
+        )
+        if callable(bind_locator):
+            bind_locator(definition_locator)
+        return agent
 
     @classmethod
     def _skills_config_from_tool_section(
@@ -1923,9 +1955,17 @@ class OrchestratorLoader:
         tool_name_policy: ToolNamePolicySettings | None = None,
         tool_recovery_formats: list[ToolCallRecoveryFormat] | None = None,
         event_manager_mode: EventManagerMode = EventManagerMode.SDK,
+        interaction_runtime: InteractionRuntime | None = None,
     ) -> Orchestrator:
         _l = self._log_wrapper(self._logger)
         assert isinstance(event_manager_mode, EventManagerMode)
+        if interaction_runtime is not None and not isinstance(
+            interaction_runtime,
+            AttachedInteractionRuntime | DurableInteractionRuntime,
+        ):
+            raise TypeError(
+                "interaction_runtime must be an interaction runtime or None"
+            )
 
         _l("Loading agent from settings", is_debug=False)
 
@@ -2161,6 +2201,7 @@ class OrchestratorLoader:
                 config={"json": settings.json_config},
                 agent_config=settings.agent_config,
                 call_options=settings.call_options,
+                interaction_runtime=interaction_runtime,
                 shell_input_file_settings=active_shell_settings,
                 template_vars=settings.template_vars,
             )
@@ -2203,6 +2244,7 @@ class OrchestratorLoader:
                 shell_input_file_settings=active_shell_settings,
                 call_options=settings.call_options,
                 template_vars=settings.template_vars,
+                interaction_runtime=interaction_runtime,
             )
 
         _l("Loaded agent from settings", is_debug=False)
@@ -2224,6 +2266,7 @@ class OrchestratorLoader:
         call_options: dict[str, Any] | None,
         template_vars: dict[str, Any] | None,
         shell_input_file_settings: ShellToolSettings | None = None,
+        interaction_runtime: InteractionRuntime | None = None,
     ) -> JsonOrchestrator:
         assert "json" in config, "No json section in configuration"
         if (
@@ -2278,6 +2321,7 @@ class OrchestratorLoader:
             shell_input_file_settings=shell_input_file_settings,
             call_options=call_options,
             template_vars=template_vars,
+            interaction_runtime=interaction_runtime,
         )
         return agent
 

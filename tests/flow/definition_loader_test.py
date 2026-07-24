@@ -634,9 +634,12 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
             "ready",
         )
 
-    async def test_tool_node_blocks_provider_name_rewrite_from_loaded_flow(
+    async def test_tool_node_ignores_provider_metadata_rewrite(
         self,
     ) -> None:
+        observed_calls: list[ToolCall] = []
+        observed_flow_markers: list[bool] = []
+
         def set_provider_name(
             call: ToolCall,
             _context: ToolCallContext,
@@ -651,9 +654,16 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
                 ToolCallContext(),
             )
 
+        def observe_provider_metadata(
+            call: ToolCall,
+            context: ToolCallContext,
+        ) -> None:
+            observed_calls.append(call)
+            observed_flow_markers.append(context.flow_tool_node)
+
         loader = _tool_loader(
             enable_tools=["loader_adder", "loader_multiplier"],
-            filters=[set_provider_name],
+            filters=[set_provider_name, observe_provider_metadata],
         )
 
         result = loader.loads_result(f"""
@@ -682,18 +692,18 @@ class FlowDefinitionLoaderTestCase(IsolatedAsyncioTestCase):
         )
 
         assert isinstance(output, dict)
-        diagnostic = output["diagnostic"]
-        assert isinstance(diagnostic, dict)
-        self.assertEqual(output["status"], "diagnostic")
-        self.assertEqual(output["result"], None)
+        self.assertEqual(output["status"], "result")
+        self.assertEqual(output["result"], 7)
         self.assertEqual(output["canonical_name"], "loader_adder")
-        self.assertEqual(
-            diagnostic["code"],
-            ToolCallDiagnosticCode.FILTER_SUPPRESSED.value,
-        )
-        self.assertEqual(
-            diagnostic["details"], {"filtered_name": "loader_multiplier"}
-        )
+        self.assertIsNone(output["error"])
+        self.assertIsNone(output["diagnostic"])
+        self.assertEqual(len(observed_calls), 1)
+        observed_call = observed_calls[0]
+        self.assertEqual(observed_call.id, output["call_id"])
+        self.assertEqual(observed_call.name, "loader_adder")
+        self.assertEqual(observed_call.provider_name, "loader_multiplier")
+        self.assertEqual(observed_call.arguments, {"a": 2, "b": 5})
+        self.assertEqual(observed_flow_markers, [True])
 
     async def test_loaded_tool_node_matches_filter_after_alias_rewrite(
         self,

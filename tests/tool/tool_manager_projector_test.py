@@ -11,6 +11,7 @@ from avalan.entities import (
     ToolFilterResultStatus,
     ToolManagerSettings,
 )
+from avalan.model import ModelCapabilityCatalog
 from avalan.tool import Tool, ToolSet
 from avalan.tool.display import ToolDisplayProjection
 from avalan.tool.manager import ToolManager
@@ -222,7 +223,7 @@ class ToolManagerProjectorTestCase(IsolatedAsyncioTestCase):
         assert isinstance(unknown, ToolCallDiagnostic)
         self.assertIs(unknown.code, ToolCallDiagnosticCode.UNKNOWN_TOOL)
 
-    async def test_provider_safe_schemas_exclude_projector_metadata(
+    async def test_model_schemas_exclude_projector_metadata(
         self,
     ) -> None:
         manager = ToolManager.create_instance(
@@ -231,12 +232,14 @@ class ToolManagerProjectorTestCase(IsolatedAsyncioTestCase):
             settings=ToolManagerSettings(),
         )
         descriptor = manager.describe_tool("projected_echo")
+        projection = ModelCapabilityCatalog.create(
+            manager.export_model_capability_seed()
+        ).project()
 
         assert descriptor is not None
         schemas = [
             descriptor.schema,
-            descriptor.provider_safe_schema,
-            *(manager.json_schemas() or []),
+            *projection.schemas,
         ]
         for schema in schemas:
             with self.subTest(schema=schema):

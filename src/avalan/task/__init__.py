@@ -136,12 +136,16 @@ from .event import SanitizedTaskUsageEvent as SanitizedTaskUsageEvent
 from .event import TaskEventCategory as TaskEventCategory
 from .event import TaskEventStore as TaskEventStore
 from .event import TaskEventValue as TaskEventValue
+from .event import TaskInteractionEventType as TaskInteractionEventType
 from .event import freeze_task_event_value as freeze_task_event_value
 from .event import sanitize_raw_task_event as sanitize_raw_task_event
 from .event import (
     sanitize_raw_task_event_closed as sanitize_raw_task_event_closed,
 )
 from .event import task_event_category as task_event_category
+from .event import (
+    task_interaction_event_payload as task_interaction_event_payload,
+)
 from .feature_gate import FeatureGateCategory as FeatureGateCategory
 from .feature_gate import FeatureGateCheckLocation as FeatureGateCheckLocation
 from .feature_gate import FeatureGateDiagnostic as FeatureGateDiagnostic
@@ -244,6 +248,15 @@ from .privacy import privacy_policy_store_fields as privacy_policy_store_fields
 from .privacy import (
     privacy_policy_with_defaults as privacy_policy_with_defaults,
 )
+from .queue import (
+    TaskDurableExpiredReentryCommit as TaskDurableExpiredReentryCommit,
+)
+from .queue import (
+    TaskDurableSuspensionCommit as TaskDurableSuspensionCommit,
+)
+from .queue import (
+    TaskDurableSuspensionCoordinator as TaskDurableSuspensionCoordinator,
+)
 from .queue import TaskQueue as TaskQueue
 from .queue import TaskQueueAbandonment as TaskQueueAbandonment
 from .queue import TaskQueueArtifact as TaskQueueArtifact
@@ -256,8 +269,10 @@ from .queue import TaskQueueHealth as TaskQueueHealth
 from .queue import TaskQueueItem as TaskQueueItem
 from .queue import TaskQueueItemState as TaskQueueItemState
 from .queue import TaskQueueNotFoundError as TaskQueueNotFoundError
+from .queue import TaskQueueReentry as TaskQueueReentry
 from .queue import TaskQueueRetry as TaskQueueRetry
 from .queue import TaskQueueSubmission as TaskQueueSubmission
+from .queue import TaskQueueSuspension as TaskQueueSuspension
 from .retention import TaskRetentionAction as TaskRetentionAction
 from .retention import TaskRetentionBatchSweep as TaskRetentionBatchSweep
 from .retention import TaskRetentionError as TaskRetentionError
@@ -286,23 +301,46 @@ from .sinks import (
 )
 from .sinks import PgsqlInspectionSink as PgsqlInspectionSink
 from .sinks import PrometheusObservabilitySink as PrometheusObservabilitySink
+from .state import (
+    TASK_ATTEMPT_SEGMENT_TERMINAL_STATES as TASK_ATTEMPT_SEGMENT_TERMINAL_STATES,  # noqa: E501
+)
 from .state import TASK_ATTEMPT_TERMINAL_STATES as TASK_ATTEMPT_TERMINAL_STATES
 from .state import TASK_RUN_TERMINAL_STATES as TASK_RUN_TERMINAL_STATES
+from .state import (
+    VALID_TASK_ATTEMPT_SEGMENT_TRANSITIONS as VALID_TASK_ATTEMPT_SEGMENT_TRANSITIONS,  # noqa: E501
+)
 from .state import (
     VALID_TASK_ATTEMPT_TRANSITIONS as VALID_TASK_ATTEMPT_TRANSITIONS,
 )
 from .state import VALID_TASK_RUN_TRANSITIONS as VALID_TASK_RUN_TRANSITIONS
+from .state import TaskAttemptSegmentState as TaskAttemptSegmentState
 from .state import TaskAttemptState as TaskAttemptState
 from .state import TaskRunState as TaskRunState
+from .state import (
+    is_terminal_attempt_segment_state as is_terminal_attempt_segment_state,
+)
 from .state import is_terminal_attempt_state as is_terminal_attempt_state
 from .state import is_terminal_run_state as is_terminal_run_state
+from .state import (
+    is_valid_attempt_segment_transition as is_valid_attempt_segment_transition,
+)
 from .state import is_valid_attempt_transition as is_valid_attempt_transition
 from .state import is_valid_run_transition as is_valid_run_transition
+from .state import (
+    valid_attempt_segment_transitions as valid_attempt_segment_transitions,
+)
 from .state import valid_attempt_transitions as valid_attempt_transitions
 from .state import valid_run_transitions as valid_run_transitions
+from .state import (
+    validate_attempt_segment_transition as validate_attempt_segment_transition,
+)
 from .state import validate_attempt_transition as validate_attempt_transition
 from .state import validate_run_transition as validate_run_transition
 from .store import TaskAttempt as TaskAttempt
+from .store import TaskAttemptSegment as TaskAttemptSegment
+from .store import (
+    TaskAttemptSegmentTransition as TaskAttemptSegmentTransition,
+)
 from .store import TaskAttemptTransition as TaskAttemptTransition
 from .store import TaskClaim as TaskClaim
 from .store import TaskDefinitionRecord as TaskDefinitionRecord
@@ -322,15 +360,28 @@ from .store import empty_snapshot_metadata as empty_snapshot_metadata
 from .store import freeze_snapshot_metadata as freeze_snapshot_metadata
 from .store import freeze_snapshot_value as freeze_snapshot_value
 from .store import (
+    validate_attempt_segment_transition_request as validate_attempt_segment_transition_request,  # noqa: E501
+)
+from .store import (
     validate_attempt_transition_request as validate_attempt_transition_request,
 )
 from .store import (
     validate_run_transition_request as validate_run_transition_request,
 )
 from .target import CallableTaskTargetRunner as CallableTaskTargetRunner
+from .target import TaskTargetCompleted as TaskTargetCompleted
+from .target import TaskTargetOutcome as TaskTargetOutcome
+from .target import TaskTargetOutcomeKind as TaskTargetOutcomeKind
 from .target import TaskTargetRunner as TaskTargetRunner
 from .target import TaskTargetRunnerRegistry as TaskTargetRunnerRegistry
+from .target import TaskTargetSuspended as TaskTargetSuspended
 from .target import TaskValidationContext as TaskValidationContext
+from .target import (
+    completed_task_target_outcome as completed_task_target_outcome,
+)
+from .target import (
+    suspended_task_target_outcome as suspended_task_target_outcome,
+)
 from .text_strategy import RetrievalSelector as RetrievalSelector
 from .text_strategy import TextChunk as TextChunk
 from .text_strategy import TextStrategyKind as TextStrategyKind

@@ -11,6 +11,7 @@ from ..model import (
     TokenizerAlreadyLoadedException,
     TokenizerNotSupportedException,
 )
+from ..model.capability import ProviderCapabilitySupport
 from ..model.vendor import TextGenerationVendor
 
 import asyncio
@@ -228,6 +229,17 @@ class Engine(ABC):
         settings: EngineSettings | None = None,
         logger: Logger = getLogger(__name__),
     ):
+        self._loaded_model = False
+        self._loaded_tokenizer = False
+        self._tokenizer = None
+        self._model = None
+        self._config = None
+        self._tokenizer_config = None
+        self._parameter_types = None
+        self._parameter_count = None
+        if "_exit_stack" not in self.__dict__:
+            self._exit_stack = AsyncExitStack()
+        self._pending_exit_task = None
         self._logger = logger
         self._model_id = model_id
         self._settings = settings if settings else EngineSettings()
@@ -271,6 +283,11 @@ class Engine(ABC):
     @property
     def uses_tokenizer(self) -> bool:
         return False
+
+    @property
+    def provider_capability_support(self) -> ProviderCapabilitySupport:
+        """Return provider capabilities proven by this engine adapter."""
+        return ProviderCapabilitySupport()
 
     @property
     def config(

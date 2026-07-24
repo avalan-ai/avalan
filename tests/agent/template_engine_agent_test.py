@@ -16,6 +16,7 @@ from avalan.event.manager import EventManager
 from avalan.memory.manager import MemoryManager
 from avalan.model import TextGenerationResponse
 from avalan.model.call import ModelCallContext
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.manager import ModelManager
 from avalan.tool.manager import ToolManager
 
@@ -269,6 +270,9 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
         memory.has_permanent_message = False
         memory.has_recent_message = False
         tool = MagicMock(spec=ToolManager)
+        tool.export_model_capability_seed.return_value = (
+            ToolManager.create_instance().export_model_capability_seed()
+        )
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         model = MagicMock()
@@ -314,7 +318,14 @@ class TemplateEngineAgentCallTestCase(IsolatedAsyncioTestCase):
         result = await agent(context)
 
         agent._run.assert_awaited_once()
-        self.assertIs(agent._run.await_args.args[0], context)
+        run_context = agent._run.await_args.args[0]
+        self.assertIsNot(run_context, context)
+        self.assertIsNone(context.capability)
+        self.assertIsInstance(
+            run_context.capability,
+            ModelCapabilityCatalog,
+        )
+        tool.export_model_capability_seed.assert_called_once_with()
         self.assertEqual(result, "out")
         self.assertEqual(
             agent._run.await_args.kwargs["system_prompt"],

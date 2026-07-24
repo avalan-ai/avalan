@@ -1,5 +1,10 @@
 from unittest import TestCase
 
+from avalan.model import (
+    DomainCapabilitySeed,
+    ModelCapabilityCatalog,
+    ModelCapabilityDescriptor,
+)
 from avalan.model.vendor import TextGenerationVendor
 
 
@@ -55,3 +60,30 @@ class VendorEncodeDecodeTestCase(TestCase):
         )
         with self.assertRaises(AssertionError):
             TextGenerationVendor.canonical_tool_name("avl_notbase64")
+
+    def test_canonical_tool_name_uses_capability_projection(self) -> None:
+        capability = ModelCapabilityCatalog.create(
+            DomainCapabilitySeed(
+                descriptors=(
+                    ModelCapabilityDescriptor(
+                        canonical_name="pkg.tool",
+                        description="Invoke the tool.",
+                        parameter_schema={"type": "object"},
+                    ),
+                )
+            )
+        )
+        provider_name = TextGenerationVendor.provider_tool_name(
+            "pkg.tool",
+            capability=capability,
+            provider_family="openai",
+        )
+
+        self.assertEqual(
+            TextGenerationVendor.canonical_tool_name(
+                provider_name,
+                capability=capability,
+                provider_family="openai",
+            ),
+            "pkg.tool",
+        )

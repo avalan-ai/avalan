@@ -3,10 +3,12 @@ import importlib
 import sys
 import types
 from base64 import b64encode
-from contextlib import AsyncExitStack
+from collections.abc import Iterator
+from contextlib import AsyncExitStack, contextmanager
 from dataclasses import dataclass
 from json import loads
 from types import SimpleNamespace
+from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -32,11 +34,13 @@ from avalan.entities import (
     ToolNamePolicySettings,
     TransformerEngineSettings,
 )
+from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamReasoningRepresentation,
     StreamVisibility,
+    TextGenerationNonStreamResult,
     accumulate_canonical_stream_items,
 )
 from avalan.task.usage import (
@@ -45,6 +49,48 @@ from avalan.task.usage import (
 )
 from avalan.tool import ToolSet
 from avalan.tool.manager import ToolManager
+
+_ANTHROPIC_VENDOR_MODULE_NAME = "avalan.model.nlp.text.vendor.anthropic"
+_PRELOADED_ANTHROPIC_VENDOR_MODULE = importlib.import_module(
+    _ANTHROPIC_VENDOR_MODULE_NAME
+)
+
+
+def _module_registry() -> dict[str, object]:
+    return cast(dict[str, object], sys.modules)
+
+
+@contextmanager
+def _isolated_anthropic_vendor_module(
+    stub: types.ModuleType,
+    types_mod: types.ModuleType,
+) -> Iterator[types.ModuleType]:
+    parent = importlib.import_module("avalan.model.nlp.text.vendor")
+    modules = _module_registry()
+    missing = object()
+    previous_module = modules.pop(_ANTHROPIC_VENDOR_MODULE_NAME, missing)
+    previous_attribute = getattr(parent, "anthropic", missing)
+    sdk_modules = {"anthropic": stub, "anthropic.types": types_mod}
+    previous_sdk_modules = {
+        name: modules.get(name, missing) for name in sdk_modules
+    }
+    modules.update(sdk_modules)
+    try:
+        yield importlib.import_module(_ANTHROPIC_VENDOR_MODULE_NAME)
+    finally:
+        modules.pop(_ANTHROPIC_VENDOR_MODULE_NAME, None)
+        if previous_module is not missing:
+            modules[_ANTHROPIC_VENDOR_MODULE_NAME] = previous_module
+        if previous_attribute is missing:
+            if hasattr(parent, "anthropic"):
+                delattr(parent, "anthropic")
+        else:
+            setattr(parent, "anthropic", previous_attribute)
+        for name, previous_sdk_module in previous_sdk_modules.items():
+            if previous_sdk_module is missing:
+                modules.pop(name, None)
+            else:
+                modules[name] = previous_sdk_module
 
 
 class AsyncIter:
@@ -70,8 +116,8 @@ class PolicyAdder:
         return a + b
 
 
-def _sanitized_policy_manager() -> ToolManager:
-    return ToolManager.create_instance(
+def _sanitized_policy_catalog() -> ModelCapabilityCatalog:
+    manager = ToolManager.create_instance(
         enable_tools=["math.adder"],
         available_toolsets=[ToolSet(namespace="math", tools=[PolicyAdder()])],
         settings=ToolManagerSettings(
@@ -80,10 +126,13 @@ def _sanitized_policy_manager() -> ToolManager:
             )
         ),
     )
+    return ModelCapabilityCatalog.create(
+        manager.export_model_capability_seed()
+    )
 
 
 @pytest.fixture(scope="module")
-def anthropic_mod():
+def anthropic_mod() -> Iterator[tuple[types.ModuleType, types.ModuleType]]:
     class APIStatusError(Exception):
         def __init__(self, message, *, response=None, body=None):
             super().__init__(message)
@@ -109,13 +158,69 @@ def anthropic_mod():
     types_mod.RawContentBlockDeltaEvent = DeltaEvent
     types_mod.RawMessageStopEvent = StopEvent
     stub.types = types_mod
-    patcher = patch.dict(
-        sys.modules, {"anthropic": stub, "anthropic.types": types_mod}
+    with _isolated_anthropic_vendor_module(stub, types_mod) as mod:
+        yield mod, stub
+
+
+def test_fixture_isolates_preloaded_sdk_identities(anthropic_mod) -> None:
+    mod, stub = anthropic_mod
+
+    assert mod is not _PRELOADED_ANTHROPIC_VENDOR_MODULE
+    assert mod.APIStatusError is stub.APIStatusError
+    assert mod.AsyncAnthropic is stub.AsyncAnthropic
+    assert (
+        mod.RawContentBlockDeltaEvent is stub.types.RawContentBlockDeltaEvent
     )
-    patcher.start()
-    mod = importlib.import_module("avalan.model.nlp.text.vendor.anthropic")
-    yield mod, stub
-    patcher.stop()
+    assert mod.RawMessageStopEvent is stub.types.RawMessageStopEvent
+
+    parent = importlib.import_module("avalan.model.nlp.text.vendor")
+    modules = _module_registry()
+    missing = object()
+    names = (
+        _ANTHROPIC_VENDOR_MODULE_NAME,
+        "anthropic",
+        "anthropic.types",
+    )
+    previous_modules = {name: modules.get(name, missing) for name in names}
+    previous_attribute = getattr(parent, "anthropic", missing)
+    try:
+        for previous_state in (missing, None):
+            for name in names:
+                if previous_state is missing:
+                    modules.pop(name, None)
+                else:
+                    modules[name] = previous_state
+            if previous_state is missing:
+                if hasattr(parent, "anthropic"):
+                    delattr(parent, "anthropic")
+            else:
+                setattr(parent, "anthropic", previous_state)
+            with _isolated_anthropic_vendor_module(
+                stub, cast(types.ModuleType, stub.types)
+            ) as isolated:
+                assert isolated is not mod
+                assert isolated.APIStatusError is stub.APIStatusError
+                assert isolated.AsyncAnthropic is stub.AsyncAnthropic
+            if previous_state is missing:
+                assert all(name not in modules for name in names)
+                assert not hasattr(parent, "anthropic")
+            else:
+                assert all(
+                    name in modules and modules[name] is previous_state
+                    for name in names
+                )
+                assert getattr(parent, "anthropic") is previous_state
+    finally:
+        for name, previous_module in previous_modules.items():
+            if previous_module is missing:
+                modules.pop(name, None)
+            else:
+                modules[name] = previous_module
+        if previous_attribute is missing:
+            if hasattr(parent, "anthropic"):
+                delattr(parent, "anthropic")
+        else:
+            setattr(parent, "anthropic", previous_attribute)
 
 
 def test_stream_variants(anthropic_mod):
@@ -482,13 +587,16 @@ def test_canonical_stream_uses_tool_name_policy(anthropic_mod):
             index=0,
         )
         yield mod.RawContentBlockDeltaEvent(
-            SimpleNamespace(partial_json='{"a":1}')
+            SimpleNamespace(partial_json='{"a":1,"b":2}')
         )
         yield SimpleNamespace(type="content_block_stop", index=0)
         yield SimpleNamespace(type="message_stop")
 
     async def collect():
-        stream = mod.AnthropicStream(agen(), tool=_sanitized_policy_manager())
+        stream = mod.AnthropicStream(
+            agen(),
+            capability=_sanitized_policy_catalog(),
+        )
         return [item async for item in stream]
 
     items = asyncio.run(collect())
@@ -498,8 +606,57 @@ def test_canonical_stream_uses_tool_name_policy(anthropic_mod):
     )
     assert ready.data == {"name": "math.adder"}
     assert accumulate_canonical_stream_items(items).tool_call_arguments == {
-        "call-1": '{"a":1}'
+        "call-1": '{"a":1,"b":2}'
     }
+
+
+def test_canonical_stream_preserves_malformed_native_tool_name(anthropic_mod):
+    mod, _ = anthropic_mod
+    stop_frame = {"type": "content_block_stop", "index": 0}
+    frames = [
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {
+                "type": "tool_use",
+                "id": "call-native",
+                "name": "avl_!",
+            },
+        },
+        stop_frame,
+        {"type": "message_stop"},
+    ]
+
+    async def collect():
+        stream = mod.AnthropicStream(AsyncIter(frames))
+        return [
+            item
+            async for item in stream.canonical_stream(
+                stream_session_id="anthropic-native",
+                run_id="run-native",
+                turn_id="turn-native",
+            )
+        ]
+
+    items = asyncio.run(collect())
+
+    assert [item.kind for item in items] == [
+        StreamItemKind.STREAM_STARTED,
+        StreamItemKind.TOOL_CALL_READY,
+        StreamItemKind.TOOL_CALL_DONE,
+        StreamItemKind.STREAM_COMPLETED,
+        StreamItemKind.STREAM_CLOSED,
+    ]
+    ready, done = items[1:3]
+    assert ready.data == {"name": "avl_!"}
+    assert ready.correlation.tool_call_id == "call-native"
+    assert done.correlation.tool_call_id == "call-native"
+    assert ready.provider_payload == stop_frame
+    assert done.provider_payload == stop_frame
+    assert ready.provider_event_type == "content_block_stop"
+    assert done.provider_event_type == "content_block_stop"
+    assert items[0].metadata["capabilities"]["backend"] == "hosted"
+    assert {item.provider_family for item in items} == {"anthropic"}
 
 
 def test_canonical_stream_preserves_anthropic_model_dump_payloads(
@@ -727,8 +884,8 @@ def test_canonical_stream_anthropic_mapping_edge_cases(anthropic_mod):
         == ()
     )
 
-    assert stream._mark_tool_ready("call-1", "lookup", None)
-    assert stream._mark_tool_ready("call-1", "lookup", None) == ()
+    assert stream._mark_tool_ready("call-1", "lookup", "", None)
+    assert stream._mark_tool_ready("call-1", "lookup", "", None) == ()
 
     invalid_events = [
         SimpleNamespace(type=1),
@@ -868,7 +1025,7 @@ def test_client_call_and_model(anthropic_mod):
         with patch.object(
             mod.AnthropicClient, "_tool_schemas", return_value=[{"n": 1}]
         ) as ts:
-            result = await client("m", [], tool=MagicMock())
+            result = await client("m", [], capability=MagicMock())
         return result, ts
 
     result, ts = asyncio.run(invoke())
@@ -893,9 +1050,9 @@ def test_client_call_and_model(anthropic_mod):
     assert loaded is ClientMock.return_value
 
 
-def test_client_stream_passes_tool_manager_to_stream(anthropic_mod):
+def test_client_stream_passes_capability_catalog_to_stream(anthropic_mod):
     mod, stub = anthropic_mod
-    manager = _sanitized_policy_manager()
+    capability = _sanitized_policy_catalog()
     stub.AsyncAnthropic.return_value.messages.stream = MagicMock(
         return_value=object()
     )
@@ -906,13 +1063,52 @@ def test_client_stream_passes_tool_manager_to_stream(anthropic_mod):
 
     async def invoke():
         with patch.object(mod, "AnthropicStream") as StreamMock:
-            result = await client("m", [], tool=manager)
+            result = await client("m", [], capability=capability)
         return result, StreamMock
 
     result, stream_mock = asyncio.run(invoke())
 
     assert result is stream_mock.return_value
-    assert stream_mock.call_args.kwargs["tool"] is manager
+    assert stream_mock.call_args.kwargs["capability"] is capability
+
+
+def test_client_projects_explicit_tool_choice(anthropic_mod):
+    mod, stub = anthropic_mod
+    capability = MagicMock(spec=ModelCapabilityCatalog)
+    projection = capability.project.return_value
+    projection.tool_choice.return_value = "math_adder"
+    stub.AsyncAnthropic.return_value.messages.create = AsyncMock(
+        return_value={"content": []}
+    )
+    client = mod.AnthropicClient(
+        "tok",
+        "url",
+        exit_stack=AsyncMock(spec=AsyncExitStack),
+    )
+    client._template_messages = MagicMock(return_value=[])
+
+    async def invoke():
+        with patch.object(
+            mod.AnthropicClient,
+            "_tool_schemas",
+            return_value=[{"name": "math_adder"}],
+        ):
+            return await client(
+                "m",
+                [],
+                settings=GenerationSettings(tool_choice="math.adder"),
+                capability=capability,
+                use_async_generator=False,
+            )
+
+    asyncio.run(invoke())
+
+    kwargs = stub.AsyncAnthropic.return_value.messages.create.await_args.kwargs
+    assert kwargs["tool_choice"] == {
+        "type": "tool",
+        "name": "math_adder",
+    }
+    projection.tool_choice.assert_called_once_with("math.adder")
 
 
 def test_provider_instructions_are_rejected_before_api_call(anthropic_mod):
@@ -1002,25 +1198,25 @@ def test_client_non_stream_tool_messages(anthropic_mod):
         return_value=response
     )
 
-    with patch.object(
-        mod.TextGenerationVendor,
-        "build_tool_call_text",
-        return_value="<tool_call />",
-    ) as build_token:
-        stream = asyncio.run(
-            client(
-                "model",
-                messages,
-                use_async_generator=False,
-            )
+    stream = asyncio.run(
+        client(
+            "model",
+            messages,
+            use_async_generator=False,
         )
+    )
 
-    from avalan.model.stream import TextGenerationSingleStream
-
-    assert isinstance(stream, TextGenerationSingleStream)
-    assert stream.content == "hello<tool_call />"
+    assert isinstance(stream, TextGenerationNonStreamResult)
+    assert stream.content == "hello"
     assert stream.usage.input_tokens == 2
-    build_token.assert_called_once_with("call1", "pkg__tool", {"a": 1})
+    events = stream.events
+    ready = next(
+        event
+        for event in events
+        if event.kind is StreamItemKind.TOOL_CALL_READY
+    )
+    assert ready.correlation.tool_call_id == "call1"
+    assert ready.data == {"name": "pkg__tool"}
 
     create_mock = stub.AsyncAnthropic.return_value.messages.create
     create_mock.assert_awaited_once()
@@ -1095,7 +1291,7 @@ def test_template_messages_and_exclude_roles(anthropic_mod):
     ]
     policy_templated = client._template_messages(
         policy_messages,
-        tool=_sanitized_policy_manager(),
+        capability=_sanitized_policy_catalog(),
     )
     assert policy_templated[1]["content"][0]["name"] == "math_adder"
 
@@ -1489,25 +1685,28 @@ def test_image_source_and_files_api_variants(anthropic_mod):
 def test_tool_schemas_variants(anthropic_mod):
     mod, _ = anthropic_mod
 
-    class DummyTool:
-        def __init__(self, schemas):
-            self._schemas = schemas
-
-        def json_schemas(self):
-            return self._schemas
+    def capability(schemas):
+        catalog = MagicMock(spec=ModelCapabilityCatalog)
+        catalog.project.return_value.schemas = tuple(schemas or ())
+        return catalog
 
     schemas = [
         {
             "type": "function",
             "function": {
-                "name": "pkg.tool",
+                "name": "avl_cGtnLnRvb2w",
                 "description": "d",
                 "parameters": {"type": "object", "properties": {}},
             },
         },
         {"type": "noop"},
+        {"type": "function", "function": "invalid"},
+        {
+            "type": "function",
+            "function": {"name": "invalid", "parameters": "invalid"},
+        },
     ]
-    out = mod.AnthropicClient._tool_schemas(DummyTool(schemas))
+    out = mod.AnthropicClient._tool_schemas(capability(schemas))
     assert out == [
         {
             "name": "avl_cGtnLnRvb2w",
@@ -1519,10 +1718,10 @@ def test_tool_schemas_variants(anthropic_mod):
             },
         }
     ]
-    assert mod.AnthropicClient._tool_schemas(DummyTool([])) is None
-    assert mod.AnthropicClient._tool_schemas(DummyTool(None)) is None
+    assert mod.AnthropicClient._tool_schemas(capability([])) is None
+    assert mod.AnthropicClient._tool_schemas(capability(None)) is None
 
-    policy_out = mod.AnthropicClient._tool_schemas(_sanitized_policy_manager())
+    policy_out = mod.AnthropicClient._tool_schemas(_sanitized_policy_catalog())
     assert policy_out is not None
     assert policy_out[0]["name"] == "math_adder"
 
@@ -1548,7 +1747,12 @@ def test_non_stream_response_content_from_dict(anthropic_mod):
         text = mod.AnthropicClient._non_stream_response_content(response)
 
     assert text == "alpha<tool>"
-    build.assert_called_once_with("call-id", "pkg.tool", {"foo": "bar"})
+    build.assert_called_once_with(
+        "call-id",
+        "pkg.tool",
+        '{"foo":"bar"}',
+        tool_name_is_canonical=True,
+    )
 
     policy_response = {
         "content": [
@@ -1562,10 +1766,28 @@ def test_non_stream_response_content_from_dict(anthropic_mod):
     }
     policy_text = mod.AnthropicClient._non_stream_response_content(
         policy_response,
-        tool=_sanitized_policy_manager(),
+        capability=_sanitized_policy_catalog(),
     )
 
     assert '"name": "math.adder"' in policy_text
+
+    with pytest.raises(
+        ValueError,
+        match="provider tool call name must be a non-empty string",
+    ):
+        mod.AnthropicClient._non_stream_response_content(
+            {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call-id",
+                        "name": None,
+                        "input": {},
+                    }
+                ]
+            },
+            capability=_sanitized_policy_catalog(),
+        )
 
 
 def test_translate_api_error_for_retired_model(anthropic_mod):

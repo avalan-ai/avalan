@@ -5,6 +5,7 @@ from ....agent import (
     Role,
     Specification,
 )
+from ....agent.execution import InteractionRuntime
 from ....agent.orchestrator import Orchestrator
 from ....entities import (
     EngineSettings,
@@ -49,6 +50,7 @@ class DefaultOrchestrator(Orchestrator):
         call_options: dict[str, Any] | None = None,
         template_vars: dict[str, Any] | None = None,
         id: UUID | None = None,
+        interaction_runtime: InteractionRuntime | None = None,
     ) -> None:
         if system is not None or developer is not None:
             specification = Specification(
@@ -90,6 +92,7 @@ class DefaultOrchestrator(Orchestrator):
             ),
             call_options=call_options,
             id=id,
+            interaction_runtime=interaction_runtime,
             name=name,
             shell_input_file_settings=shell_input_file_settings,
             user=user,

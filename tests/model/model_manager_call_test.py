@@ -146,7 +146,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                         "manual_sampling": False,
                         "pick": 0,
                         "skip_special_tokens": False,
-                        "tool": None,
+                        "capability": None,
                     },
                 ),
             ),
@@ -487,7 +487,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     engine_uri=self.engine_uri,
                     model=model,
                     operation=operation,
-                    tool=None,
+                    capability=None,
                     context=ModelCallContext(
                         specification=Specification(role=None, goal=None),
                         input=operation.input,
@@ -512,7 +512,7 @@ class ModelManagerCallModalitiesTestCase(unittest.IsolatedAsyncioTestCase):
                     engine_uri=self.engine_uri,
                     model=model,
                     operation=operation,
-                    tool=None,
+                    capability=None,
                     context=ModelCallContext(
                         specification=Specification(role=None, goal=None),
                         input=None,

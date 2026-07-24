@@ -925,6 +925,7 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                 self._event_manager = EventManager(
                     mode=EventManagerMode.SERVER
                 )
+                self._pending_response: object | None = None
                 self.sync_count = 0
 
             async def __call__(self, messages, settings=None):  # type: ignore[no-untyped-def]
@@ -934,14 +935,21 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
                         Event(type=EventType.START)
                     )
 
-                return TextGenerationResponse(
+                response = TextGenerationResponse(
                     lambda: _canonical_answer_gen("bounded"),
                     logger=getLogger(),
                     use_async_generator=True,
                     provider_family="transformers",
                 )
+                self._pending_response = response
+                return response
 
-            async def sync_messages(self) -> None:  # type: ignore[override]
+            async def sync_messages(  # type: ignore[override]
+                self,
+                response: object,
+            ) -> None:
+                assert response is self._pending_response
+                self._pending_response = None
                 self.sync_count += 1
 
         logger = AsyncMock(spec=Logger)
@@ -2190,6 +2198,15 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
     def test_chat_terminal_event_preserves_non_completed_outcomes(
         self,
     ) -> None:
+        self.assertEqual(
+            set(StreamTerminalOutcome),
+            {
+                StreamTerminalOutcome.COMPLETED,
+                StreamTerminalOutcome.ERRORED,
+                StreamTerminalOutcome.CANCELLED,
+                StreamTerminalOutcome.INPUT_REQUIRED,
+            },
+        )
         self.assertIsNone(
             self.chat._chat_terminal_event(
                 "response-id",
@@ -2232,6 +2249,16 @@ class ChatRouterUnitTest(IsolatedAsyncioTestCase):
             loads(failed.split("data: ")[1])["type"],
             "chat.completion.failed",
         )
+        with self.assertRaisesRegex(
+            StreamValidationError,
+            "Chat input-required projection is unavailable",
+        ):
+            self.chat._chat_terminal_event(
+                "response-id",
+                1,
+                "model-id",
+                StreamTerminalOutcome.INPUT_REQUIRED,
+            )
 
     def test_chat_terminal_event_preserves_error_data(self) -> None:
         item = CanonicalStreamItem(

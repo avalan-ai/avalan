@@ -1117,6 +1117,9 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         cancelled = protocol_stream_terminal_snapshot(
             StreamTerminalOutcome.CANCELLED
         )
+        input_required = protocol_stream_terminal_snapshot(
+            StreamTerminalOutcome.INPUT_REQUIRED
+        )
         missing = protocol_stream_terminal_snapshot(None)
 
         self.assertIs(completed.outcome, StreamTerminalOutcome.COMPLETED)
@@ -1124,6 +1127,14 @@ class RouterStreamingTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(completed.sequence)
         self.assertIs(cancelled.outcome, StreamTerminalOutcome.CANCELLED)
         self.assertFalse(cancelled.succeeded)
+        self.assertIs(
+            input_required.outcome,
+            StreamTerminalOutcome.INPUT_REQUIRED,
+        )
+        self.assertFalse(input_required.succeeded)
+        self.assertFalse(
+            stream_terminal_succeeded(StreamTerminalOutcome.INPUT_REQUIRED)
+        )
         self.assertIsNone(missing.outcome)
         self.assertTrue(missing.succeeded)
 

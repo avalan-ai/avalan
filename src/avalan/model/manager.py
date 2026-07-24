@@ -329,11 +329,16 @@ class ModelManager:
             )
 
         handler = ModalityRegistry.get(modality)
+        capability = (
+            model_task.capability
+            if modality == Modality.TEXT_GENERATION
+            else None
+        )
         result = await handler(
             model_task.engine_uri,
             model_task.model,
             model_task.operation,
-            model_task.tool,
+            capability,
         )
 
         end = perf_counter()
