@@ -67,18 +67,27 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     manifest = _manifest()
     history = manifest.activation_history()
 
-    assert manifest.current_phase == 6
+    assert manifest.current_phase == 7
     assert len(manifest.nodes) == 944
-    assert len(manifest.active_nodes(6)) == 814
-    assert len(manifest.planned_nodes()) == 130
-    assert tuple(map(len, history)) == (23, 79, 86, 99, 352, 788, 814)
+    assert len(manifest.active_nodes(7)) == 830
+    assert len(manifest.planned_nodes()) == 114
+    assert tuple(map(len, history)) == (
+        23,
+        79,
+        86,
+        99,
+        352,
+        788,
+        814,
+        830,
+    )
     assert all(
         set(history[phase]).issubset(history[phase + 1])
         for phase in range(manifest.current_phase)
     )
     assert all(
         node.active_from_phase <= manifest.current_phase
-        for node in manifest.active_nodes(6)
+        for node in manifest.active_nodes(7)
     )
     assert all(
         node.active_from_phase > manifest.current_phase
@@ -90,7 +99,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         for requirement_id in node.requirement_ids
     }
     for requirement_id in requirement_ids:
-        active, remaining = manifest.requirement_slice(requirement_id, 6)
+        active, remaining = manifest.requirement_slice(requirement_id, 7)
         expected = {
             node.node_id
             for node in manifest.nodes
@@ -98,6 +107,24 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         }
         assert set(active).isdisjoint(remaining)
         assert set(active) | set(remaining) == expected
+    assert {node.node_id for node in manifest.current_phase_nodes()} == {
+        "tests/cli/agent_interaction_test.py::AgentRunInteractionInjectionTestCase::test_agent_run_passes_opened_runtime_per_call_and_reads_once",
+        "tests/cli/agent_interaction_test.py::CliInteractionRuntimeTestCase::test_missing_control_terminal_disables_attached_runtime",
+        "tests/cli/agent_interaction_test.py::CliInteractionRuntimeTestCase::test_runtime_owns_channel_and_pauses_only_active_display",
+        "tests/cli/display_reducer_test.py::DisplayReducerTestCase::test_input_required_is_terminal_but_not_completed_outcome",
+        "tests/cli/interaction_channel_test.py::CliInteractionChannelTestCase::test_cancelled_reader_preserves_bytes_for_next_prompt",
+        "tests/cli/interaction_channel_test.py::CliInteractionChannelTestCase::test_terminal_disappearance_returns_eof_without_hanging",
+        "tests/cli/interaction_cli_pty_e2e_test.py::test_decline_input_cancel_run_cancel_and_disappearance_are_distinct",
+        "tests/cli/interaction_cli_pty_e2e_test.py::test_piped_prompt_and_pty_clarification_complete_one_run",
+        "tests/cli/interaction_cli_pty_e2e_test.py::test_real_orchestrator_engine_agent_resumes_same_run",
+        "tests/cli/interaction_cli_pty_e2e_test.py::test_real_orchestrator_run_cancel_owns_containing_run_cleanup",
+        "tests/cli/interaction_cli_pty_e2e_test.py::test_semantic_text_multiline_and_multiple_other_rows",
+        "tests/cli/interaction_renderer_test.py::CliInteractionRendererHelperTestCase::test_source_has_no_stdout_or_sync_event_loop_entrypoint",
+        "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_bundle_help_feedback_and_safe_control_output",
+        "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_channel_lifetime_remains_with_its_owner",
+        "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_controls_work_inside_multiline_and_other_prompts",
+        "tests/interaction/interaction_broker_test.py::test_handler_cancel_is_canonical_cancel_not_handler_loss",
+    }
 
 
 def test_failure_matrix_is_complete() -> None:
@@ -180,7 +207,7 @@ def test_baseline_evidence_is_complete() -> None:
 
     assert (
         evidence["authoritative_gate"]["command"]
-        == "make test-pgsql-exact no-install INPUT_PHASE=6"
+        == "make test-pgsql-exact no-install INPUT_PHASE=7"
     )
     assert evidence["authoritative_gate"]["fresh_report_required"] is True
     assert evidence["invariants"] == {

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 6,
+  "current_phase": 7,
   "categories": [
     "unit",
     "integration",
@@ -5734,123 +5734,123 @@
     {
       "id": "behavior-052",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-052"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_052"
+      "node_id": "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_bundle_help_feedback_and_safe_control_output"
     },
     {
       "id": "behavior-053",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-053"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_053"
+      "node_id": "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_controls_work_inside_multiline_and_other_prompts"
     },
     {
       "id": "behavior-054",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-054"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_054"
+      "node_id": "tests/cli/interaction_channel_test.py::CliInteractionChannelTestCase::test_cancelled_reader_preserves_bytes_for_next_prompt"
     },
     {
       "id": "behavior-055",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-055"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_055"
+      "node_id": "tests/cli/agent_interaction_test.py::CliInteractionRuntimeTestCase::test_runtime_owns_channel_and_pauses_only_active_display"
     },
     {
       "id": "behavior-056",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-047",
         "INPUT-N-056"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_056"
+      "node_id": "tests/cli/agent_interaction_test.py::CliInteractionRuntimeTestCase::test_missing_control_terminal_disables_attached_runtime"
     },
     {
       "id": "behavior-057",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-057"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_057"
+      "node_id": "tests/cli/interaction_channel_test.py::CliInteractionChannelTestCase::test_terminal_disappearance_returns_eof_without_hanging"
     },
     {
       "id": "behavior-058",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-058"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_058"
+      "node_id": "tests/cli/interaction_renderer_test.py::CliInteractionRendererHelperTestCase::test_source_has_no_stdout_or_sync_event_loop_entrypoint"
     },
     {
       "id": "behavior-059",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-059"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_059"
+      "node_id": "tests/cli/interaction_renderer_test.py::CliInteractionRendererTestCase::test_channel_lifetime_remains_with_its_owner"
     },
     {
       "id": "behavior-060",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-060"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_060"
+      "node_id": "tests/cli/display_reducer_test.py::DisplayReducerTestCase::test_input_required_is_terminal_but_not_completed_outcome"
     },
     {
       "id": "behavior-061",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-061"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_061"
+      "node_id": "tests/cli/agent_interaction_test.py::AgentRunInteractionInjectionTestCase::test_agent_run_passes_opened_runtime_per_call_and_reads_once"
     },
     {
       "id": "behavior-062",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-062"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_062"
+      "node_id": "tests/interaction/interaction_broker_test.py::test_handler_cancel_is_canonical_cancel_not_handler_loss"
     },
     {
       "id": "behavior-063",
       "category": "unit",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-N-063"
       ],
-      "node_id": "tests/input/cli_contract_test.py::test_requirement_input_n_063"
+      "node_id": "tests/cli/interaction_cli_pty_e2e_test.py::test_real_orchestrator_run_cancel_owns_containing_run_cleanup"
     },
     {
       "id": "behavior-064",
@@ -6230,32 +6230,32 @@
     {
       "id": "scenario-26-1",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-26.1"
       ],
-      "node_id": "tests/input/public_interaction_e2e_test.py::test_attached_cli_clarification"
+      "node_id": "tests/cli/interaction_cli_pty_e2e_test.py::test_real_orchestrator_engine_agent_resumes_same_run"
     },
     {
       "id": "scenario-26-2",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-26.2"
       ],
-      "node_id": "tests/input/public_interaction_e2e_test.py::test_text_and_multiple_selection"
+      "node_id": "tests/cli/interaction_cli_pty_e2e_test.py::test_semantic_text_multiline_and_multiple_other_rows"
     },
     {
       "id": "scenario-26-3",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-26.3"
       ],
-      "node_id": "tests/input/public_interaction_e2e_test.py::test_piped_prompt_with_tty"
+      "node_id": "tests/cli/interaction_cli_pty_e2e_test.py::test_piped_prompt_and_pty_clarification_complete_one_run"
     },
     {
       "id": "scenario-26-4",
@@ -6280,12 +6280,12 @@
     {
       "id": "scenario-26-6",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "INPUT-26.6"
       ],
-      "node_id": "tests/input/public_interaction_e2e_test.py::test_decline_cancel_and_steering"
+      "node_id": "tests/cli/interaction_cli_pty_e2e_test.py::test_decline_input_cancel_run_cancel_and_disappearance_are_distinct"
     },
     {
       "id": "scenario-26-7",
@@ -6341,7 +6341,7 @@
       "id": "failure-input-f-01-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6411,7 +6411,7 @@
       "id": "failure-input-f-02-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6421,7 +6421,7 @@
       "id": "failure-input-f-03-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6431,7 +6431,7 @@
       "id": "failure-input-f-04-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6501,7 +6501,7 @@
       "id": "failure-input-f-05-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6571,7 +6571,7 @@
       "id": "failure-input-f-06-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6641,7 +6641,7 @@
       "id": "failure-input-f-07-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6711,7 +6711,7 @@
       "id": "failure-input-f-08-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6781,7 +6781,7 @@
       "id": "failure-input-f-09-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6851,7 +6851,7 @@
       "id": "failure-input-f-10-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6921,7 +6921,7 @@
       "id": "failure-input-f-11-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6991,7 +6991,7 @@
       "id": "failure-input-f-12-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7071,7 +7071,7 @@
       "id": "failure-input-f-13-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7151,7 +7151,7 @@
       "id": "failure-input-f-14-cli",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7161,7 +7161,7 @@
       "id": "failure-input-f-14-sdk",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],

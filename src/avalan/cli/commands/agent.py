@@ -1,3 +1,4 @@
+from ...agent.execution import InteractionRuntime
 from ...agent.loader import OrchestratorLoader
 from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
@@ -6,6 +7,13 @@ from ...agent.orchestrator.response.orchestrator_response import (
 from ...cli import get_input, has_input
 from ...cli.commands.model import token_generation
 from ...cli.display import cli_stream_display_config
+from ...cli.interaction_channel import CliInteractionChannel
+from ...cli.interaction_renderer import (
+    CliInteractionCommandDisposition,
+    CliInteractionRenderer,
+    CliRunCancellationCommand,
+    CliSteeringCommand,
+)
 from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.theme import Theme
 from ...container import (
@@ -55,6 +63,13 @@ from ...sandbox import (
     SandboxAsyncBackend,
     SeatbeltSandboxBackend,
 )
+from ...sdk import (
+    AttachedInputContext,
+    AttachedInputOutcome,
+    InputPrincipal,
+    _unwrap_interaction_runtime,
+    create_attached_input_runtime,
+)
 from ...server import agents_server
 from ...server.entities import (
     ServerOutputRedactionChannel,
@@ -88,6 +103,8 @@ from ...tool.shell import ShellGitToolSettings, ShellToolSettings
 from ...tool_cycles import MaximumToolCycles
 
 from argparse import Namespace
+from asyncio import Event
+from asyncio.exceptions import CancelledError
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import fields, replace
@@ -2099,6 +2116,65 @@ async def _agent_run_input(
     return await input_files(input_string, file_paths)
 
 
+async def _cli_interaction_runtime(
+    stack: AsyncExitStack,
+    tty_path: str,
+    coordinator_container: dict[str, CliStreamCoordinator | None],
+    run_cancellation: Event,
+    *,
+    participant_id: object,
+    session_id: object | None,
+) -> InteractionRuntime | None:
+    """Create one attached CLI runtime only for a usable control terminal."""
+    channel = CliInteractionChannel.open(tty_path)
+    if channel is None:
+        return None
+    channel = await stack.enter_async_context(channel)
+    run_cancellation_pending = False
+
+    async def handle_command(
+        command: CliRunCancellationCommand | CliSteeringCommand,
+    ) -> CliInteractionCommandDisposition:
+        nonlocal run_cancellation_pending
+        if isinstance(command, CliRunCancellationCommand):
+            run_cancellation_pending = True
+            return CliInteractionCommandDisposition.ACCEPTED
+        assert isinstance(command, CliSteeringCommand)
+        return CliInteractionCommandDisposition.UNAVAILABLE
+
+    renderer = CliInteractionRenderer(
+        channel,
+        command_handler=handle_command,
+    )
+
+    async def handle_input(
+        context: AttachedInputContext,
+    ) -> AttachedInputOutcome:
+        nonlocal run_cancellation_pending
+        coordinator = coordinator_container["coordinator"]
+        if coordinator is None:
+            outcome = await renderer(context)
+        else:
+            async with coordinator.paused():
+                outcome = await renderer(context)
+        if run_cancellation_pending:
+            run_cancellation_pending = False
+            run_cancellation.set()
+        return outcome
+
+    public_runtime = await create_attached_input_runtime(
+        handle_input,
+        principal=InputPrincipal(
+            participant_id=str(participant_id),
+            session_id=str(session_id) if session_id is not None else None,
+        ),
+    )
+    public_runtime = await stack.enter_async_context(public_runtime)
+    runtime = _unwrap_interaction_runtime(public_runtime)
+    assert runtime is not None
+    return runtime
+
+
 def _uses_ds4_backend(orchestrator: Orchestrator) -> bool:
     """Return whether the active orchestrator engine uses DS4."""
     engine_agent = orchestrator.engine_agent
@@ -2513,6 +2589,15 @@ async def agent_run(
             ):
                 orchestrator = await _init_orchestrator()
 
+        run_cancellation = Event()
+        interaction_runtime = await _cli_interaction_runtime(
+            stack,
+            tty_path,
+            coordinator_container,
+            run_cancellation,
+            participant_id=participant_id,
+            session_id=session_id,
+        )
         watch_spec = bool(specs_path and args.conversation and args.watch)
         if watch_spec:
             specs_mtime = getmtime(specs_path)
@@ -2559,11 +2644,19 @@ async def agent_run(
                 input_string, current_input_file_paths
             )
             assert agent_input is not None
-            output = await orchestrator(
-                agent_input,
-                use_async_generator=use_async_generator,
-                tool_confirm=_confirm_call if args.tools_confirm else None,
-            )
+            if interaction_runtime is None:
+                output = await orchestrator(
+                    agent_input,
+                    use_async_generator=use_async_generator,
+                    tool_confirm=_confirm_call if args.tools_confirm else None,
+                )
+            else:
+                output = await orchestrator(
+                    agent_input,
+                    use_async_generator=use_async_generator,
+                    tool_confirm=_confirm_call if args.tools_confirm else None,
+                    interaction_runtime=interaction_runtime,
+                )
             structured_response = _agent_structured_response_requested(
                 orchestrator
             )
@@ -2579,6 +2672,13 @@ async def agent_run(
                 console.print(_i["agent_output"] + " ", end="")
 
             assert isinstance(output, OrchestratorResponse)
+            if interaction_runtime is not None:
+
+                async def check_run_cancellation() -> None:
+                    if run_cancellation.is_set():
+                        raise CancelledError()
+
+                output.set_cancellation_checker(check_run_cancellation)
             assert orchestrator.engine is not None
             text_output = cast(TextGenerationResponse, output)
             text_engine = cast(TextGenerationModel, orchestrator.engine)

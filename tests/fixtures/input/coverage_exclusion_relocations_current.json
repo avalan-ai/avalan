@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "f7f852a69ce9a36e08f08bb7da6dd941ea7b7099d645d8cc66c5168873d5aab6",
+  "current_snapshot_sha256": "8a1e54c5f82f3b62e9421719dbd8ca3a8f2469d648da113e11bba85383057512",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "8d8cd48e495dc0ac22a349b79ecc26d81fdfd32b042defdd9988ceed4d762752"
   },
   "report_lines": {
-    "added": 829,
-    "removed": 220,
-    "sha256": "6d5c94916ab8b2822892a3b9f9ec1ce0790dc8174181b4533bd58ef581667f97"
+    "added": 856,
+    "removed": 237,
+    "sha256": "a1d0863298f4ac07e067e4f2fee7e16f152f19743340ecddc6aa5a5dfe06b1bd"
   },
   "review": {
     "reviewed_by": "structured-input acceptance cleanup",
     "rationale": "The direct baseline-to-current digest replaces repeated cumulative phase snapshots while retaining exact derived exclusion deltas."
   },
-  "ledger_sha256": "025faadad9a269cd700332efa3040f01417d32572684370e9bda5196b12b71a4"
+  "ledger_sha256": "7e31d03158f7bb4cf69d0ef1fa305793239987dca06f6ee9cc3a9df7c8f5816a"
 }

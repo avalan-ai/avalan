@@ -1,6 +1,7 @@
 """Exercise compact structured-input acceptance verification."""
 
 from copy import deepcopy
+from dataclasses import replace
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from os import utime
@@ -272,7 +273,7 @@ def test_current_runtime_manifest_inventory_fails_closed(
     """Reject planned/current drift directly from node phase metadata."""
     payload = _read("acceptance_manifest.json")
     current = next(
-        node for node in payload["nodes"] if node["active_from_phase"] == 6
+        node for node in payload["nodes"] if node["active_from_phase"] == 7
     )
     current["lifecycle"] = "planned"
     path = tmp_path / "manifest.json"
@@ -309,7 +310,7 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         _VERIFIER,
         "_parse_args",
         lambda: _VERIFIER.Namespace(
-            through_phase=6,
+            through_phase=7,
             manifest=_FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
             runtime_only=True,
@@ -323,8 +324,14 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         for node in executed
         for requirement_id in node.requirement_ids
     }
-    assert {"INPUT-26.4", "INPUT-26.5"} <= requirements
-    assert all(node.active_from_phase == 6 for node in executed)
+    assert {
+        "INPUT-26.1",
+        "INPUT-26.2",
+        "INPUT-26.3",
+        "INPUT-26.6",
+    } == {value for value in requirements if value.startswith("INPUT-26.")}
+    assert len(executed) == 16
+    assert all(node.active_from_phase == 7 for node in executed)
     assert f"nodes={len(executed)}" in capsys.readouterr().out
 
 
@@ -424,7 +431,41 @@ def test_current_phase_requires_real_postgresql_harness(
         _VERIFIER.verify_acceptance(
             _FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
-            through_phase=6,
+            through_phase=7,
+        )
+
+
+def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
+    """Allow one type-neutral phase and reject wider or typed phase drift."""
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    type_manifest = _VERIFIER.load_type_manifest(
+        _FIXTURES / "type_contract_manifest.json"
+    )
+
+    _VERIFIER._validate_type_contract_phase(manifest, type_manifest)
+
+    obligation = replace(
+        type_manifest.fixtures[0],
+        active_from_phase=manifest.current_phase,
+    )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="acceptance-only phase without new type obligations",
+    ):
+        _VERIFIER._validate_type_contract_phase(
+            manifest,
+            replace(
+                type_manifest,
+                fixtures=(*type_manifest.fixtures, obligation),
+            ),
+        )
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="acceptance-only phase without new type obligations",
+    ):
+        _VERIFIER._validate_type_contract_phase(
+            manifest,
+            replace(type_manifest, current_phase=5),
         )
 
 
