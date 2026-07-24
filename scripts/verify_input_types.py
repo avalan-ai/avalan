@@ -282,10 +282,7 @@ def verify_input_types(
         "acceptance_manifest.json"
     )
     acceptance_phase = _acceptance_current_phase(acceptance_path)
-    if acceptance_phase != manifest.current_phase:
-        raise TypeContractVerificationError(
-            "type and acceptance manifests must implement the same phase"
-        )
+    _validate_acceptance_phase(manifest, acceptance_phase)
     if through_phase < 0 or through_phase > manifest.current_phase:
         raise TypeContractVerificationError(
             "through-phase must be implemented by the current manifest"
@@ -357,6 +354,24 @@ def verify_input_types(
                 f"observed={observed}\n{output}"
             )
     return manifest
+
+
+def _validate_acceptance_phase(
+    manifest: TypeContractManifest,
+    acceptance_phase: int,
+) -> None:
+    """Allow one acceptance-only phase with no new type obligations."""
+    if acceptance_phase == manifest.current_phase:
+        return
+    has_new_obligation = any(
+        fixture.active_from_phase == acceptance_phase
+        for fixture in manifest.fixtures
+    )
+    if acceptance_phase != manifest.current_phase + 1 or has_new_obligation:
+        raise TypeContractVerificationError(
+            "type and acceptance phases may differ only for one "
+            "acceptance-only phase without new type obligations"
+        )
 
 
 def _type_fixture(raw: object, current_phase: int) -> TypeFixture:

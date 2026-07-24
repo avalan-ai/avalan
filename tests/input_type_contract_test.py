@@ -1,6 +1,7 @@
 """Exercise strict structured-input type-contract verification."""
 
 from copy import deepcopy
+from dataclasses import replace
 from hashlib import sha256
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
@@ -33,6 +34,33 @@ def _load_verifier() -> ModuleType:
 
 
 _VERIFIER = _load_verifier()
+
+
+def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
+    """Allow one type-neutral phase and reject wider or typed phase drift."""
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "type_contract_manifest.json"
+    )
+
+    _VERIFIER._validate_acceptance_phase(manifest, 7)
+
+    obligation = replace(manifest.fixtures[0], active_from_phase=7)
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="acceptance-only phase without new type obligations",
+    ):
+        _VERIFIER._validate_acceptance_phase(
+            replace(
+                manifest,
+                fixtures=(*manifest.fixtures, obligation),
+            ),
+            7,
+        )
+    with pytest.raises(
+        _VERIFIER.TypeContractVerificationError,
+        match="acceptance-only phase without new type obligations",
+    ):
+        _VERIFIER._validate_acceptance_phase(manifest, 8)
 
 
 def _read_manifest() -> dict[str, Any]:

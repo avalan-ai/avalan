@@ -19,6 +19,7 @@ from xml.etree.ElementTree import parse as parse_xml
 
 from input_contract_json import StrictJsonError, strict_json_path
 from verify_input_types import (
+    TypeContractManifest,
     TypeContractVerificationError,
 )
 from verify_input_types import (
@@ -33,7 +34,7 @@ from verify_src_coverage import (
 _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
-_CURRENT_PHASE = 6
+_CURRENT_PHASE = 7
 _CATEGORIES = frozenset(
     (
         "unit",
@@ -518,10 +519,7 @@ def _validate_contract_fixtures(
         )
     except TypeContractVerificationError as exc:
         raise AcceptanceVerificationError(str(exc)) from exc
-    if type_manifest.current_phase != manifest.current_phase:
-        raise AcceptanceVerificationError(
-            "type and acceptance manifests must implement the same phase"
-        )
+    _validate_type_contract_phase(manifest, type_manifest)
     if not root.is_dir():
         raise AcceptanceVerificationError("repository root does not exist")
 
@@ -810,7 +808,7 @@ def _validate_evidence(path: Path, manifest: AcceptanceManifest) -> None:
         )
     gate = _mapping(payload.get("authoritative_gate"), "authoritative gate")
     expected_gate = {
-        "command": "make test-pgsql-exact no-install INPUT_PHASE=6",
+        "command": "make test-pgsql-exact no-install INPUT_PHASE=7",
         "database_dsn_env": "AVALAN_TASK_TEST_POSTGRESQL_DSN",
         "coverage_report": "coverage.json",
         "coverage_scope": "src/",
@@ -854,6 +852,27 @@ def _validate_fresh_coverage(root: Path) -> None:
         verify_src_coverage(report, repo_root=root)
     except (CoverageVerificationError, StrictJsonError) as exc:
         raise AcceptanceVerificationError(str(exc)) from exc
+
+
+def _validate_type_contract_phase(
+    manifest: AcceptanceManifest,
+    type_manifest: TypeContractManifest,
+) -> None:
+    """Allow one acceptance-only phase with no new type obligations."""
+    if type_manifest.current_phase == manifest.current_phase:
+        return
+    has_new_obligation = any(
+        fixture.active_from_phase == manifest.current_phase
+        for fixture in type_manifest.fixtures
+    )
+    if (
+        manifest.current_phase != type_manifest.current_phase + 1
+        or has_new_obligation
+    ):
+        raise AcceptanceVerificationError(
+            "type and acceptance phases may differ only for one "
+            "acceptance-only phase without new type obligations"
+        )
 
 
 def _verify_nodes(

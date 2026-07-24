@@ -26,6 +26,7 @@ from .error import (
     InteractionStoreClosedError,
 )
 from .handler import (
+    InputDisconnectReason,
     InputHandlerContext,
     InputHandlerDetached,
     InputHandlerDisconnected,
@@ -1619,6 +1620,12 @@ class AsyncInteractionBroker:
                     else await self._latest_record(actor, correlation)
                 )
                 return latest, attempts
+            if (
+                isinstance(outcome, InputHandlerDisconnected)
+                and outcome.reason is InputDisconnectReason.HANDLER_CANCELLED
+            ):
+                latest = await self._apply_handler_cancellation(actor, latest)
+                return latest, attempts
             if isinstance(
                 outcome,
                 (InputHandlerDetached, InputHandlerDisconnected),
@@ -1672,6 +1679,29 @@ class AsyncInteractionBroker:
                 "attached handler returned an unsupported outcome",
             )
         return outcome
+
+    async def _apply_handler_cancellation(
+        self,
+        actor: InteractionActor,
+        record: InteractionRecord,
+    ) -> InteractionRecord:
+        latest = await self._latest_record(actor, record.correlation)
+        if _is_terminal_record(latest):
+            await self._settle_record(latest)
+            return latest
+        result = await self._store.cancel(
+            CancelInteractionCommand(
+                actor=actor,
+                correlation=latest.correlation,
+                provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                expected_state_revision=latest.request.state_revision,
+            )
+        )
+        await self._settle_store_result(result)
+        result_record = _single_result_record(result)
+        if result_record is not None:
+            return result_record
+        return await self._latest_record(actor, latest.correlation)
 
     async def _apply_handler_loss(
         self,

@@ -573,7 +573,7 @@
         "cli-task-enqueue-worker-piped-with-tty",
         "cli-task-enqueue-worker-sessionless"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=cli.unavailable.v1",
       "status_or_exit": "exit=69",
@@ -714,7 +714,7 @@
         "cli-task-direct-piped-with-tty",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->answered",
       "public_result": "envelope=cli.completed.v1",
       "status_or_exit": "exit=0",
@@ -736,7 +736,7 @@
         "cli-task-enqueue-worker-attached-tty",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=cli.cancelled.v1",
       "status_or_exit": "exit=130",
@@ -831,7 +831,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=cli.validation_error.v1",
       "status_or_exit": "interaction_state=pending",
@@ -845,7 +845,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -1055,7 +1055,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=cli.validation_error.v1",
       "status_or_exit": "interaction_state=pending",
@@ -1069,7 +1069,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -1279,7 +1279,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=cli.validation_error.v1",
       "status_or_exit": "interaction_state=pending",
@@ -1293,7 +1293,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=task.observation_pending.v1",
       "status_or_exit": "exit=0",
@@ -1503,7 +1503,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=cli.resolution_accepted.v1",
       "status_or_exit": "exit=0",
@@ -1517,7 +1517,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=task.observation_answered.v1",
       "status_or_exit": "exit=0",
@@ -1727,7 +1727,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=cli.already_resolved.v1",
       "status_or_exit": "exit=73",
@@ -1741,7 +1741,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=task.observation_answered.v1",
       "status_or_exit": "exit=0",
@@ -1951,7 +1951,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=cli.expired.v1",
       "status_or_exit": "exit=74",
@@ -1965,7 +1965,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=task.observation_expired.v1",
       "status_or_exit": "exit=0",
@@ -2176,7 +2176,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=cli.cancelled.v1",
       "status_or_exit": "exit=130",
@@ -2190,7 +2190,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=task.observation_cancelled.v1",
       "status_or_exit": "exit=0",
@@ -2446,7 +2446,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=cli.superseded.v1",
       "status_or_exit": "exit=75",
@@ -2460,7 +2460,7 @@
         "cli-task-events",
         "cli-task-inspect"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=task.observation_superseded.v1",
       "status_or_exit": "exit=0",
@@ -2648,7 +2648,7 @@
         "cli-task-direct-fully-headless-durable",
         "cli-task-enqueue-worker-fully-headless-durable"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=cli.input_required.v1",
       "status_or_exit": "exit=75",
@@ -2855,7 +2855,7 @@
         "cli-task-enqueue-worker-fully-headless-durable",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=cli.timed_out.v1",
       "status_or_exit": "exit=0",
@@ -2999,7 +2999,7 @@
         "cli-task-enqueue-worker-attached-tty",
         "cli-task-enqueue-worker-piped-with-tty"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->answered",
       "public_result": "envelope=cli.completed.v1",
       "status_or_exit": "exit=0",
@@ -3012,7 +3012,7 @@
       "surface_ids": [
         "sdk-attached"
       ],
-      "active_from_phase": 7,
+      "active_from_phase": 12,
       "expected_transition": "pending->answered",
       "public_result": "envelope=sdk.completed.v1",
       "status_or_exit": "result=CompletedResult",
@@ -3111,5 +3111,5 @@
       "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
     }
   ],
-  "matrix_sha256": "4e6a414cf7a1f8400c48e29d373a2a90de33e9cdf3d3bc0e7d334a7223b01788"
+  "matrix_sha256": "ac54c4a83110b537e0b742affac6e767a65057441e61a325b20a979c2b544de4"
 }

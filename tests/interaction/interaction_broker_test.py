@@ -52,6 +52,7 @@ from avalan.interaction import (
     InputRequestId,
     InputResumer,
     InputResumptionNotification,
+    InputTransitionError,
     InputValidationError,
     InteractionActor,
     InteractionAuthorizationDecision,
@@ -655,6 +656,24 @@ class _RejectDetachStore(_StoreProxy):
                 command,
                 expected_store_revision=InteractionStoreRevision(0),
             )
+        )
+
+
+class _RejectCancellationStore(_StoreProxy):
+    """Reject one cancellation without mutating the authoritative record."""
+
+    async def cancel(
+        self,
+        command: CancelInteractionCommand,
+    ) -> CancelInteractionRejected:
+        """Return one content-safe cancellation rejection."""
+        return CancelInteractionRejected(
+            command=command,
+            error=InputTransitionError(
+                code=InputErrorCode.STALE_REVISION,
+                path="request.state_revision",
+                message="state revision changed",
+            ),
         )
 
 
@@ -1827,6 +1846,107 @@ def test_handler_loss_matrix_never_fabricates_decline(
                 )
         finally:
             await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_handler_cancel_is_canonical_cancel_not_handler_loss() -> None:
+    """Persist explicit current-input cancellation as a cancelled request."""
+
+    async def exercise() -> None:
+        observer = _Observer()
+        harness = await _harness(observer=observer)
+        try:
+            result = await harness.broker.request(
+                _request(
+                    _LossHandler(
+                        InputHandlerDisconnected(
+                            reason=InputDisconnectReason.HANDLER_CANCELLED
+                        )
+                    )
+                )
+            )
+            assert result.delivery is not None
+            record = result.delivery.record
+            assert record.request.state is RequestState.CANCELLED
+            assert record.request.resolution is not None
+            assert (
+                record.request.resolution.status is ResolutionStatus.CANCELLED
+            )
+            await _wait_until(
+                lambda: any(
+                    event.kind is InteractionObserverEventKind.TERMINAL
+                    for event in observer.events
+                )
+            )
+            assert not any(
+                event.kind is InteractionObserverEventKind.HANDLER_LOST
+                for event in observer.events
+            )
+            assert any(
+                event.kind is InteractionObserverEventKind.TERMINAL
+                and event.status is ResolutionStatus.CANCELLED
+                for event in observer.events
+            )
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_handler_cancel_reconciles_terminal_and_rejected_store_races() -> None:
+    """Return the authoritative record for both cancellation race outcomes."""
+
+    async def detached_record(harness: _Harness) -> InteractionRecord:
+        result = await harness.broker.request(
+            _request(
+                _LossHandler(InputHandlerDetached()),
+                resumer=_Resumer(),
+            )
+        )
+        assert result.delivery is not None
+        return result.delivery.record
+
+    async def exercise() -> None:
+        terminal_harness = await _harness()
+        rejected_harness = await _harness()
+        try:
+            stale_terminal = await detached_record(terminal_harness)
+            applied = await terminal_harness.store.cancel(
+                CancelInteractionCommand(
+                    actor=_actor(),
+                    correlation=stale_terminal.correlation,
+                    provenance=AnswerProvenance.HUMAN,
+                    expected_state_revision=(
+                        stale_terminal.request.state_revision
+                    ),
+                )
+            )
+            assert isinstance(applied, CancelInteractionApplied)
+            terminal = (
+                await terminal_harness.broker._apply_handler_cancellation(
+                    _actor(),
+                    stale_terminal,
+                )
+            )
+            assert terminal.request.state is RequestState.CANCELLED
+
+            pending = await detached_record(rejected_harness)
+            rejected_harness.broker._store = cast(
+                InteractionStore,
+                _RejectCancellationStore(rejected_harness.store),
+            )
+            unchanged = (
+                await rejected_harness.broker._apply_handler_cancellation(
+                    _actor(),
+                    pending,
+                )
+            )
+            assert unchanged.request.state is RequestState.PENDING
+            assert unchanged.store_revision == pending.store_revision
+        finally:
+            await terminal_harness.broker.aclose()
+            await rejected_harness.broker.aclose()
 
     run(exercise())
 
