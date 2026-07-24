@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 7,
+  "current_phase": 8,
   "categories": [
     "unit",
     "integration",
@@ -5929,42 +5929,42 @@
     {
       "id": "behavior-071",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 8,
       "requirement_ids": [
         "INPUT-N-071"
       ],
-      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_071"
+      "node_id": "tests/server/input_interaction_test.py::test_server_input_lifecycle_events"
     },
     {
       "id": "behavior-072",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 8,
       "requirement_ids": [
         "INPUT-N-072"
       ],
-      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_072"
+      "node_id": "tests/server/input_interaction_test.py::test_server_input_authenticated_resolution"
     },
     {
       "id": "behavior-073",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 8,
       "requirement_ids": [
         "INPUT-N-073"
       ],
-      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_073"
+      "node_id": "tests/server/input_interaction_test.py::test_server_input_extension_envelopes"
     },
     {
       "id": "behavior-074",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 8,
       "requirement_ids": [
         "INPUT-N-074"
       ],
-      "node_id": "tests/input/server_contract_test.py::test_requirement_input_n_074"
+      "node_id": "tests/server/input_interaction_test.py::test_server_input_readable_fallback"
     },
     {
       "id": "behavior-075",
@@ -6361,7 +6361,7 @@
       "id": "failure-input-f-01-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6451,7 +6451,7 @@
       "id": "failure-input-f-04-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6521,7 +6521,7 @@
       "id": "failure-input-f-05-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6591,7 +6591,7 @@
       "id": "failure-input-f-06-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6661,7 +6661,7 @@
       "id": "failure-input-f-07-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6731,7 +6731,7 @@
       "id": "failure-input-f-08-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6801,7 +6801,7 @@
       "id": "failure-input-f-09-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6871,7 +6871,7 @@
       "id": "failure-input-f-10-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6941,7 +6941,7 @@
       "id": "failure-input-f-11-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7011,7 +7011,7 @@
       "id": "failure-input-f-12-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7091,7 +7091,7 @@
       "id": "failure-input-f-13-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7171,7 +7171,7 @@
       "id": "failure-input-f-14-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7201,7 +7201,7 @@
       "id": "failure-input-f-15-server",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],

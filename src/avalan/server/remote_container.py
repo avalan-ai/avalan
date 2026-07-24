@@ -15,6 +15,7 @@ from fastapi import HTTPException, Request
 _OPENAI_COMPATIBLE_REQUEST_FIELDS = frozenset(
     {
         "frequency_penalty",
+        "extensions",
         "input",
         "instructions",
         "logit_bias",

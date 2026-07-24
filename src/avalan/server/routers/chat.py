@@ -1,4 +1,7 @@
 from ...agent.orchestrator import Orchestrator
+from ...agent.orchestrator.response.orchestrator_response import (
+    OrchestratorResponse,
+)
 from ...entities import (
     MessageRole,
 )
@@ -23,6 +26,18 @@ from ...server.entities import (
 )
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
+from ..interaction import (
+    ServerInteractionHandling,
+    ServerInteractionHTTPError,
+    ServerInteractionRun,
+    ServerInteractionSurface,
+    _error_response,
+    detached_segment,
+    extension_sse_message,
+    interaction_response_headers,
+    prepare_openai_interaction_run,
+    task_input_extension_from_request,
+)
 from ..remote_container import validate_remote_container_profile_selection
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
@@ -39,11 +54,13 @@ from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from json import dumps
 from logging import Logger
+from typing import cast
 
 from fastapi import APIRouter, Depends, Request
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 _JSON_SEPARATORS = (",", ":")
+_NO_HTTP_REQUEST = cast(Request, None)
 _CHAT_COMPLETION_CHUNK_SUFFIX = "}}]}"
 _CHAT_COMPLETION_FINAL_CHUNK_SUFFIX = (
     '"choices":[{"index":0,"delta":{},"finish_reason":"stop"}]}'
@@ -125,11 +142,22 @@ async def create_chat_completion(
     output_redaction_settings: ServerOutputRedactionSettings = Depends(
         _server_output_redaction_settings
     ),
-) -> ChatCompletionResponse | StreamingResponse:
+    http_request: Request = _NO_HTTP_REQUEST,
+) -> ChatCompletionResponse | JSONResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
     model_id = resolve_model_id(orchestrator, request.model)
+    interaction_run = None
+    if isinstance(http_request, Request):
+        try:
+            interaction_run = await prepare_openai_interaction_run(
+                http_request,
+                task_input_extension_from_request(request),
+                surface=ServerInteractionSurface.CHAT,
+            )
+        except ServerInteractionHTTPError as error:
+            return _error_response(error)
 
     logger.info(
         "Processing chat completion request for orchestrator %s",
@@ -139,9 +167,19 @@ async def create_chat_completion(
         "Processing chat completion request with messages %r", request
     )
 
-    response, response_id, timestamp = await orchestrate(
-        request, logger, orchestrator
-    )
+    if interaction_run is None:
+        response, response_id, timestamp = await orchestrate(
+            request,
+            logger,
+            orchestrator,
+        )
+    else:
+        response, response_id, timestamp = await orchestrate(
+            request,
+            logger,
+            orchestrator,
+            interaction_runtime=interaction_run.runtime,
+        )
     output_redaction_settings = coerce_server_output_redaction_settings(
         output_redaction_settings
     )
@@ -170,7 +208,23 @@ async def create_chat_completion(
                 ),
                 close_source_on_generator_exit=False,
             )
+            segment = (
+                detached_segment(
+                    iterator=iterator,
+                    response=response,
+                    orchestrator=orchestrator,
+                    protocol=ServerInteractionSurface.CHAT,
+                    response_id=response_id,
+                    created=timestamp,
+                    model_id=model_id,
+                    output_redaction_settings=output_redaction_settings,
+                    choice_count=request.n or 1,
+                )
+                if interaction_run is not None
+                else None
+            )
             cancelled = False
+            retained = False
             final_usage: object | None = None
             terminal: StreamConsumerProjection | None = None
             answer_redactor = ModelVisibleServerProtocolTextRedactor(
@@ -181,7 +235,11 @@ async def create_chat_completion(
             try:
                 while True:
                     try:
-                        token = await anext(iterator)
+                        token = (
+                            await segment.next_projection()
+                            if segment is not None
+                            else await anext(iterator)
+                        )
                     except StopAsyncIteration:
                         break
 
@@ -189,6 +247,24 @@ async def create_chat_completion(
                         final_usage = token.usage
                     if token.is_stream_terminal:
                         terminal = token
+                    if interaction_run is not None:
+                        for event in await interaction_run.extension_events(
+                            token
+                        ):
+                            yield extension_sse_message(event)
+                        if (
+                            interaction_run.handling
+                            is ServerInteractionHandling.DETACHED
+                            and token.kind
+                            is StreamItemKind.INTERACTION_PENDING
+                        ):
+                            assert segment is not None
+                            await interaction_run.install_segment(segment)
+                            yield extension_sse_message(
+                                await interaction_run.input_required_event()
+                            )
+                            retained = True
+                            return
                     projected_texts = _stream_text_fragments(
                         token,
                         answer_redactor,
@@ -232,13 +308,20 @@ async def create_chat_completion(
                     await orchestrator.sync_messages(response)
             except CancelledError:
                 cancelled = True
+                if interaction_run is not None and segment is not None:
+                    try:
+                        await interaction_run.install_segment(segment)
+                    except RuntimeError:
+                        pass
+                    retained = True
                 raise
             finally:
-                await cleanup_stream_sources(
-                    response,
-                    iterator,
-                    cancelled=cancelled,
-                )
+                if not retained:
+                    await cleanup_stream_sources(
+                        response,
+                        iterator,
+                        cancelled=cancelled,
+                    )
 
         logger.debug(
             "Generating event-stream stream for response %s", response_id
@@ -247,7 +330,22 @@ async def create_chat_completion(
         return StreamingResponse(
             generate_chunks(),
             media_type="text/event-stream",
-            headers=sse_headers(),
+            headers={
+                **sse_headers(),
+                **interaction_response_headers(interaction_run),
+            },
+        )
+
+    if interaction_run is not None:
+        return await _interaction_chat_response(
+            request=request,
+            interaction_run=interaction_run,
+            response=response,
+            response_id=response_id,
+            timestamp=timestamp,
+            model_id=model_id,
+            orchestrator=orchestrator,
+            output_redaction_settings=output_redaction_settings,
         )
 
     # Non streaming
@@ -282,6 +380,117 @@ async def create_chat_completion(
     await orchestrator.sync_messages(response)
 
     return final_response
+
+
+async def _interaction_chat_response(
+    *,
+    request: ChatCompletionRequest,
+    interaction_run: ServerInteractionRun,
+    response: OrchestratorResponse,
+    response_id: str,
+    timestamp: int,
+    model_id: str,
+    orchestrator: Orchestrator,
+    output_redaction_settings: ServerOutputRedactionSettings,
+) -> JSONResponse:
+    """Return an interaction envelope or a completed Chat response."""
+    iterator = stream_consumer_iterator(
+        response,
+        stream_session_id="chat-non-stream",
+        run_id=str(response_id),
+        turn_id="chat-non-stream-turn",
+        unsupported_message=(
+            "unsupported stream item for Chat non-stream projection"
+        ),
+        close_source_on_generator_exit=False,
+    )
+    segment = detached_segment(
+        iterator=iterator,
+        response=response,
+        orchestrator=orchestrator,
+        protocol=ServerInteractionSurface.CHAT,
+        response_id=response_id,
+        created=timestamp,
+        model_id=model_id,
+        output_redaction_settings=output_redaction_settings,
+        choice_count=request.n or 1,
+    )
+    redactor = ModelVisibleServerProtocolTextRedactor(
+        output_redaction_settings,
+        protocol="openai",
+        channel="answer",
+    )
+    answer_parts: list[str] = []
+    terminal: StreamConsumerProjection | None = None
+    retained = False
+    cancelled = False
+    try:
+        while True:
+            try:
+                projection = await segment.next_projection()
+            except StopAsyncIteration:
+                break
+            if projection.is_stream_terminal:
+                terminal = projection
+            if (
+                interaction_run.handling is ServerInteractionHandling.DETACHED
+                and projection.kind is StreamItemKind.INTERACTION_PENDING
+            ):
+                await interaction_run.install_segment(segment)
+                retained = True
+                return JSONResponse(
+                    await interaction_run.input_required_envelope(),
+                    status_code=202,
+                    headers=interaction_response_headers(interaction_run),
+                )
+            if projection.kind is StreamItemKind.ANSWER_DELTA:
+                answer_parts.extend(redactor.push(projection.text_delta or ""))
+        answer_parts.extend(redactor.flush())
+        if terminal is None:
+            raise StreamValidationError("stream missing terminal outcome")
+        terminal_snapshot = protocol_stream_terminal_snapshot(terminal)
+        if not terminal_snapshot.succeeded:
+            raise StreamValidationError(
+                "detached Chat request ended without completion"
+            )
+        text = "".join(answer_parts)
+        body = ChatCompletionResponse(
+            id=response_id,
+            created=timestamp,
+            model=model_id,
+            choices=[
+                ChatCompletionChoice(
+                    index=index,
+                    message=ChatMessage(
+                        role=MessageRole.ASSISTANT,
+                        content=text,
+                    ),
+                    finish_reason="stop",
+                )
+                for index in range(request.n or 1)
+            ],
+            usage=ChatCompletionUsage(),
+        )
+        await orchestrator.sync_messages(response)
+        return JSONResponse(
+            body.model_dump(mode="json"),
+            headers=interaction_response_headers(interaction_run),
+        )
+    except CancelledError:
+        cancelled = True
+        try:
+            await interaction_run.install_segment(segment)
+        except RuntimeError:
+            pass
+        retained = True
+        raise
+    finally:
+        if not retained:
+            await cleanup_stream_sources(
+                response,
+                iterator,
+                cancelled=cancelled,
+            )
 
 
 def _chat_terminal_event(

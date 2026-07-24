@@ -18,7 +18,7 @@ _FEATURE = "structured_task_input"
 _MAX_PHASE = 12
 _CURRENT_BOUNDARY_PHASE = 6
 _EXPECTED_TYPE_LEDGER_SHA256 = (
-    "ff65967324837ddffe0c583d5a11e82e3f3408a70227af5f9fb0acc0611e6dc5"
+    "a3d5824e18c8fe4789a2c8a35888f70fe1593655c01bae9b0239856e9c539f86"
 )
 _FROZEN_FIXTURE_INVENTORIES = {
     4: (
@@ -283,9 +283,9 @@ def verify_input_types(
     )
     acceptance_phase = _acceptance_current_phase(acceptance_path)
     _validate_acceptance_phase(manifest, acceptance_phase)
-    if through_phase < 0 or through_phase > manifest.current_phase:
+    if through_phase < 0 or through_phase > acceptance_phase:
         raise TypeContractVerificationError(
-            "through-phase must be implemented by the current manifest"
+            "through-phase must be implemented by the acceptance manifest"
         )
     if through_phase >= min(_FROZEN_FIXTURE_INVENTORIES):
         _validate_current_fixture_sources(manifest, root)

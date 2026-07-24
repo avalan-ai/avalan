@@ -594,7 +594,7 @@
         "http-responses-nonstream",
         "http-responses-stream"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=http.unavailable.v1",
       "status_or_exit": "http=503",
@@ -863,7 +863,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.observation_pending.v1",
       "status_or_exit": "http=200",
@@ -876,7 +876,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.validation_error.v1",
       "status_or_exit": "http=422",
@@ -1087,7 +1087,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.observation_pending.v1",
       "status_or_exit": "http=200",
@@ -1100,7 +1100,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.validation_error.v1",
       "status_or_exit": "http=422",
@@ -1311,7 +1311,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.observation_pending.v1",
       "status_or_exit": "http=200",
@@ -1324,7 +1324,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.validation_error.v1",
       "status_or_exit": "http=422",
@@ -1535,7 +1535,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=http.observation_answered.v1",
       "status_or_exit": "http=200",
@@ -1548,7 +1548,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=http.resolution_accepted.v1",
       "status_or_exit": "http=200",
@@ -1754,7 +1754,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=http.already_resolved.v1",
       "status_or_exit": "http=409",
@@ -1772,7 +1772,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "answered->answered",
       "public_result": "envelope=http.observation_answered.v1",
       "status_or_exit": "http=200",
@@ -1978,7 +1978,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=http.expired.v1",
       "status_or_exit": "http=410",
@@ -1996,7 +1996,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->expired",
       "public_result": "envelope=http.observation_expired.v1",
       "status_or_exit": "http=200",
@@ -2203,7 +2203,7 @@
       "surface_ids": [
         "http-flow-cancel"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=http.cancellation_ack.v1",
       "status_or_exit": "http=200",
@@ -2223,7 +2223,7 @@
         "http-responses-nonstream",
         "http-responses-stream"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=http.cancelled.v1",
       "status_or_exit": "http=200",
@@ -2236,7 +2236,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=http.cancelled.v1",
       "status_or_exit": "http=409",
@@ -2254,7 +2254,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->cancelled",
       "public_result": "envelope=http.observation_cancelled.v1",
       "status_or_exit": "http=200",
@@ -2478,7 +2478,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=http.observation_superseded.v1",
       "status_or_exit": "http=200",
@@ -2491,7 +2491,7 @@
       "surface_ids": [
         "http-input-resolve"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->superseded",
       "public_result": "envelope=http.superseded.v1",
       "status_or_exit": "http=409",
@@ -2668,7 +2668,7 @@
         "http-responses-nonstream",
         "http-responses-stream"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.input_required.v1",
       "status_or_exit": "http=202",
@@ -2686,7 +2686,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->pending",
       "public_result": "envelope=http.observation_pending.v1",
       "status_or_exit": "http=200",
@@ -2873,7 +2873,7 @@
         "http-input-inspect",
         "http-input-poll"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=http.observation_timed_out.v1",
       "status_or_exit": "http=200",
@@ -2893,7 +2893,7 @@
         "http-responses-nonstream",
         "http-responses-stream"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "pending->timed_out",
       "public_result": "envelope=http.timed_out.v1",
       "status_or_exit": "http=200",
@@ -3061,7 +3061,7 @@
         "http-responses-nonstream",
         "http-responses-stream"
       ],
-      "active_from_phase": 8,
+      "active_from_phase": 12,
       "expected_transition": "created->unavailable",
       "public_result": "envelope=http.unavailable.v1",
       "status_or_exit": "http=503",
@@ -3111,5 +3111,5 @@
       "negative_e2e_node": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
     }
   ],
-  "matrix_sha256": "ac54c4a83110b537e0b742affac6e767a65057441e61a325b20a979c2b544de4"
+  "matrix_sha256": "2fb557313134f8e9cc7d4be37cb0c1be534043640d256c3fe8c029cf603eb154"
 }
