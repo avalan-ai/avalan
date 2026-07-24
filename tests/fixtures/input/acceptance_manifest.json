@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 8,
+  "current_phase": 9,
   "categories": [
     "unit",
     "integration",
@@ -6069,7 +6069,7 @@
     {
       "id": "behavior-085",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-N-085"
@@ -6079,7 +6079,7 @@
     {
       "id": "behavior-086",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-N-086"
@@ -6089,7 +6089,7 @@
     {
       "id": "behavior-087",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-N-087"
@@ -6099,7 +6099,7 @@
     {
       "id": "behavior-088",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-N-088"
@@ -6109,7 +6109,7 @@
     {
       "id": "behavior-089",
       "category": "integration",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-N-089"
@@ -6320,7 +6320,7 @@
     {
       "id": "scenario-26-10",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 9,
       "requirement_ids": [
         "INPUT-26.10"
@@ -6391,7 +6391,7 @@
       "id": "failure-input-f-01-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6401,7 +6401,7 @@
       "id": "failure-input-f-01-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6481,7 +6481,7 @@
       "id": "failure-input-f-04-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6491,7 +6491,7 @@
       "id": "failure-input-f-04-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6551,7 +6551,7 @@
       "id": "failure-input-f-05-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6561,7 +6561,7 @@
       "id": "failure-input-f-05-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6621,7 +6621,7 @@
       "id": "failure-input-f-06-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6631,7 +6631,7 @@
       "id": "failure-input-f-06-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6691,7 +6691,7 @@
       "id": "failure-input-f-07-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6701,7 +6701,7 @@
       "id": "failure-input-f-07-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6761,7 +6761,7 @@
       "id": "failure-input-f-08-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6771,7 +6771,7 @@
       "id": "failure-input-f-08-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6831,7 +6831,7 @@
       "id": "failure-input-f-09-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6841,7 +6841,7 @@
       "id": "failure-input-f-09-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6901,7 +6901,7 @@
       "id": "failure-input-f-10-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6911,7 +6911,7 @@
       "id": "failure-input-f-10-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6971,7 +6971,7 @@
       "id": "failure-input-f-11-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -6981,7 +6981,7 @@
       "id": "failure-input-f-11-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7051,7 +7051,7 @@
       "id": "failure-input-f-12-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7061,7 +7061,7 @@
       "id": "failure-input-f-12-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7131,7 +7131,7 @@
       "id": "failure-input-f-13-flow",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],
@@ -7141,7 +7141,7 @@
       "id": "failure-input-f-13-nested_agent",
       "category": "public_e2e",
       "lifecycle": "planned",
-      "active_from_phase": 9,
+      "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
       ],

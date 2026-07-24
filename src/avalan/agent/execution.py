@@ -13,6 +13,7 @@ from ..interaction.broker import (
     InteractionBrokerRequest,
     InteractionBrokerResult,
     InteractionRequestResult,
+    _bind_attached_admission_lease,
 )
 from ..interaction.codec import encode_input_model_result
 from ..interaction.continuation import (
@@ -48,6 +49,7 @@ from ..interaction.entities import (
     TerminateInputContinuation,
     TurnId,
 )
+from ..interaction.error import InputValidationError
 from ..interaction.handler import _InputHandler
 from ..interaction.policy import InteractionActor
 from ..interaction.state import project_resolution_to_model
@@ -64,9 +66,21 @@ from ..interaction.store import (
     ScopeCancellationApplied,
     ScopeCancellationRejected,
     ScopeCancellationReplayed,
+    ScopeSupersessionApplied,
+    ScopeSupersessionRejected,
+    ScopeSupersessionReplayed,
+    SupersedeInteractionScopeCommand,
     TerminalizeInteractionScopeCommand,
+    _AttachedInteractionLineage,
+    _bind_attached_scope_root_claim,
+    _bind_attached_supersede_scope_root_claim,
+    _new_attached_interaction_lineage,
 )
-from ..interaction.validation import MAX_STATE_REVISION, validate_opaque_id
+from ..interaction.validation import (
+    MAX_STATE_REVISION,
+    validate_opaque_id,
+    validate_presentation_text,
+)
 from ..model.capability import (
     ContinuationSnapshotCodecRegistry,
     CorrelatedCapabilityResult,
@@ -1050,6 +1064,13 @@ class BranchInteractionBroker(Protocol):
         """Cancel only the bound execution branch."""
         ...
 
+    async def supersede(
+        self,
+        command: SupersedeInteractionScopeCommand,
+    ) -> InteractionBrokerResult:
+        """Supersede only the bound execution branch."""
+        ...
+
 
 @final
 class UuidExecutionIdFactory:
@@ -1092,9 +1113,26 @@ class AttachedInteractionRuntime:
         default_factory=UuidExecutionIdFactory,
         repr=False,
     )
+    run_id: RunId | None = None
     task_id: TaskId | None = None
     branch_id: BranchId | None = None
     parent_branch_id: BranchId | None = None
+    context_label: str | None = None
+    _lineage: _AttachedInteractionLineage | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
+    _lineages: dict[
+        tuple[RunId, BranchId],
+        _AttachedInteractionLineage,
+    ] = field(
+        init=False,
+        default_factory=dict,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         if not isinstance(self.actor, InteractionActor):
@@ -1106,6 +1144,12 @@ class AttachedInteractionRuntime:
         )
         _assert_async_callable(self.handler, "attached_runtime.handler")
         _assert_execution_id_factory(self.id_factory, "attached_runtime")
+        if self.run_id is not None:
+            object.__setattr__(
+                self,
+                "run_id",
+                RunId(validate_opaque_id(self.run_id, "run_id")),
+            )
         if self.task_id is not None:
             object.__setattr__(
                 self,
@@ -1128,6 +1172,7 @@ class AttachedInteractionRuntime:
             raise ExecutionCorrelationError(
                 "parent branch must differ from the active branch"
             )
+        _validate_runtime_context_label(self)
 
 
 class DurableInteractionStager(Protocol):
@@ -1285,6 +1330,7 @@ class DurableInteractionRuntime:
     task_id: TaskId | None = None
     branch_id: BranchId | None = None
     parent_branch_id: BranchId | None = None
+    context_label: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.actor, InteractionActor):
@@ -1319,6 +1365,7 @@ class DurableInteractionRuntime:
             raise ExecutionCorrelationError(
                 "parent branch must differ from the active branch"
             )
+        _validate_runtime_context_label(self)
 
 
 InteractionRuntime: TypeAlias = (
@@ -1326,9 +1373,156 @@ InteractionRuntime: TypeAlias = (
 )
 
 
+async def create_child_interaction_runtime(
+    runtime: InteractionRuntime,
+    *,
+    parent_origin: ExecutionOrigin | None = None,
+    context_label: str,
+) -> InteractionRuntime:
+    """Derive one child runtime without changing host ownership."""
+    if not isinstance(
+        runtime,
+        AttachedInteractionRuntime | DurableInteractionRuntime,
+    ):
+        raise TypeError("runtime must be an interaction runtime")
+    if parent_origin is not None and not isinstance(
+        parent_origin,
+        ExecutionOrigin,
+    ):
+        raise TypeError("parent_origin must be an execution origin or None")
+    parent_run_id = (
+        parent_origin.run_id if parent_origin is not None else runtime.run_id
+    )
+    parent_task_id = (
+        parent_origin.task_id if parent_origin is not None else runtime.task_id
+    )
+    parent_branch_id = (
+        parent_origin.branch_id
+        if parent_origin is not None
+        else runtime.branch_id
+    )
+    if parent_run_id is None or parent_branch_id is None:
+        raise ExecutionCorrelationError(
+            "child interaction requires a containing branch"
+        )
+    if (
+        parent_origin is not None
+        and runtime.actor.principal != parent_origin.principal
+    ):
+        raise ExecutionCorrelationError(
+            "child interaction owner does not match its parent"
+        )
+    if runtime.run_id is not None and runtime.run_id != parent_run_id:
+        raise ExecutionCorrelationError(
+            "child interaction run does not match its parent"
+        )
+    if runtime.branch_id is not None and runtime.branch_id != parent_branch_id:
+        raise ExecutionCorrelationError(
+            "child interaction branch does not match its parent"
+        )
+    if runtime.task_id is not None and runtime.task_id != parent_task_id:
+        raise ExecutionCorrelationError(
+            "child interaction task does not match its parent"
+        )
+    label = validate_presentation_text(
+        context_label,
+        "context_label",
+        minimum=1,
+        maximum=80,
+        maximum_bytes=320,
+    )
+    if isinstance(runtime, AttachedInteractionRuntime):
+        lineage = (
+            runtime._lineage
+            if runtime.branch_id == parent_branch_id
+            else runtime._lineages.get((parent_run_id, parent_branch_id))
+        )
+        if lineage is None:
+            raise ExecutionCorrelationError(
+                "child interaction parent lacks attached lineage ownership"
+            )
+        try:
+            branch_id = await lineage.mint_child(
+                run_id=parent_run_id,
+                principal=runtime.actor.principal,
+                parent_branch_id=parent_branch_id,
+                id_factory=runtime.id_factory,
+            )
+        except InputValidationError as error:
+            raise ExecutionCorrelationError(error.safe_message) from error
+        child = AttachedInteractionRuntime(
+            broker=runtime.broker,
+            actor=runtime.actor,
+            handler=runtime.handler,
+            id_factory=runtime.id_factory,
+            run_id=parent_run_id,
+            task_id=parent_task_id,
+            branch_id=branch_id,
+            parent_branch_id=parent_branch_id,
+            context_label=label,
+        )
+        object.__setattr__(child, "_lineage", lineage)
+        object.__setattr__(child, "_lineages", runtime._lineages)
+        return child
+    branch_id = await runtime.id_factory.new_branch_id()
+    return DurableInteractionRuntime(
+        actor=runtime.actor,
+        stager=runtime.stager,
+        id_factory=runtime.id_factory,
+        run_id=parent_run_id,
+        task_id=parent_task_id,
+        branch_id=branch_id,
+        parent_branch_id=parent_branch_id,
+        context_label=label,
+    )
+
+
+async def ensure_interaction_runtime_branch(
+    runtime: InteractionRuntime,
+) -> InteractionRuntime:
+    """Return a containing runtime with one stable root branch."""
+    if not isinstance(
+        runtime,
+        AttachedInteractionRuntime | DurableInteractionRuntime,
+    ):
+        raise TypeError("runtime must be an interaction runtime")
+    if runtime.run_id is None:
+        raise ExecutionCorrelationError(
+            "containing interaction runtime requires a run"
+        )
+    if runtime.branch_id is not None:
+        return runtime
+    if runtime.parent_branch_id is not None:
+        raise ExecutionCorrelationError(
+            "unbound interaction runtime cannot claim a parent branch"
+        )
+    if isinstance(runtime, DurableInteractionRuntime):
+        return replace(
+            runtime,
+            branch_id=await runtime.id_factory.new_branch_id(),
+        )
+    lineage = runtime._lineage
+    if lineage is None:
+        lineage = _new_attached_interaction_lineage()
+        object.__setattr__(runtime, "_lineage", lineage)
+    try:
+        branch_id = await lineage.mint_root(
+            run_id=runtime.run_id,
+            principal=runtime.actor.principal,
+            id_factory=runtime.id_factory,
+        )
+    except InputValidationError as error:
+        raise ExecutionCorrelationError(error.safe_message) from error
+    bound = replace(runtime, branch_id=branch_id)
+    runtime._lineages[(runtime.run_id, branch_id)] = lineage
+    object.__setattr__(bound, "_lineage", lineage)
+    object.__setattr__(bound, "_lineages", runtime._lineages)
+    return bound
+
+
 @final
 class ExecutionBranchInteractionBroker:
-    """Constrain broker admission and cancellation to one live branch."""
+    """Constrain broker admission and lifecycle changes to one live branch."""
 
     def __init__(
         self,
@@ -1336,10 +1530,12 @@ class ExecutionBranchInteractionBroker:
         broker: InteractionBroker,
         actor: InteractionActor,
         current_origin: Callable[[], ExecutionOrigin],
+        lineage: _AttachedInteractionLineage | None = None,
     ) -> None:
         self._broker = broker
         self._actor = actor
         self._current_origin = current_origin
+        self._lineage = lineage
         self._registration_lock = Lock()
         self._registered_branches: set[tuple[RunId, BranchId]] = set()
 
@@ -1357,7 +1553,27 @@ class ExecutionBranchInteractionBroker:
                 "interaction request does not match the active branch"
             )
         await self._ensure_branch_registered(origin)
-        result = await self._broker.request(request)
+        lineage = self._lineage
+        if lineage is None:
+            result = await self._broker.request(request)
+            _validate_broker_request_result(request, result)
+            return result
+        try:
+            admission = await lineage.begin_admission(
+                run_id=origin.run_id,
+                principal=origin.principal,
+                branch_id=origin.branch_id,
+            )
+            store_request = _bind_attached_admission_lease(
+                request,
+                admission,
+            )
+        except InputValidationError as error:
+            raise ExecutionCorrelationError(error.safe_message) from error
+        try:
+            result = await self._broker.request(store_request)
+        finally:
+            await admission.close()
         _validate_broker_request_result(request, result)
         return result
 
@@ -1371,8 +1587,28 @@ class ExecutionBranchInteractionBroker:
         origin = self._current_origin()
         self._validate_actor(command.actor)
         self._validate_scope(command.scope, origin)
+        lineage = self._lineage
+        if command.scope.include_descendants and lineage is None:
+            raise ExecutionCorrelationError(
+                "interaction branch lacks attached lineage ownership"
+            )
         await self._ensure_branch_registered(origin)
-        result = await self._broker.cancel_scope(command)
+        store_command = command
+        if command.scope.include_descendants:
+            assert lineage is not None
+            try:
+                claim = await lineage.claim(
+                    run_id=origin.run_id,
+                    principal=origin.principal,
+                    branch_id=origin.branch_id,
+                )
+                store_command = _bind_attached_scope_root_claim(
+                    command,
+                    claim,
+                )
+            except InputValidationError as error:
+                raise ExecutionCorrelationError(error.safe_message) from error
+        result = await self._broker.cancel_scope(store_command)
         if not isinstance(result, InteractionBrokerResult):
             raise ExecutionCorrelationError(
                 "interaction cancellation returned invalid state"
@@ -1395,6 +1631,59 @@ class ExecutionBranchInteractionBroker:
             )
         return result
 
+    async def supersede(
+        self,
+        command: SupersedeInteractionScopeCommand,
+    ) -> InteractionBrokerResult:
+        """Supersede only an exact scope rooted at the active branch."""
+        if type(command) is not SupersedeInteractionScopeCommand:
+            raise TypeError("command must supersede an interaction scope")
+        origin = self._current_origin()
+        self._validate_actor(command.actor)
+        self._validate_scope(command.scope, origin)
+        await self._ensure_branch_registered(origin)
+        store_command = command
+        if command.scope.include_descendants:
+            lineage = self._lineage
+            if lineage is None:
+                raise ExecutionCorrelationError(
+                    "interaction branch lacks attached lineage ownership"
+                )
+            try:
+                claim = await lineage.claim(
+                    run_id=origin.run_id,
+                    principal=origin.principal,
+                    branch_id=origin.branch_id,
+                )
+                store_command = _bind_attached_supersede_scope_root_claim(
+                    command,
+                    claim,
+                )
+            except InputValidationError as error:
+                raise ExecutionCorrelationError(error.safe_message) from error
+        result = await self._broker.supersede(store_command)
+        if not isinstance(result, InteractionBrokerResult):
+            raise ExecutionCorrelationError(
+                "interaction supersession returned invalid state"
+            )
+        store_result = result.store_result
+        if isinstance(store_result, ScopeSupersessionRejected):
+            raise ExecutionCorrelationError(
+                "interaction branch supersession was rejected"
+            )
+        if not isinstance(
+            store_result,
+            (ScopeSupersessionApplied, ScopeSupersessionReplayed),
+        ):
+            raise ExecutionCorrelationError(
+                "interaction supersession returned unrelated state"
+            )
+        if store_result.command != command:
+            raise ExecutionCorrelationError(
+                "interaction supersession returned mismatched state"
+            )
+        return result
+
     def _validate_actor(self, actor: InteractionActor) -> None:
         if actor != self._actor or actor.principal != self._actor.principal:
             raise ExecutionCorrelationError(
@@ -1409,7 +1698,6 @@ class ExecutionBranchInteractionBroker:
         if (
             scope.run_id != origin.run_id
             or scope.branch_id != origin.branch_id
-            or scope.include_descendants
         ):
             raise ExecutionCorrelationError(
                 "interaction scope does not match the active branch"
@@ -1429,56 +1717,84 @@ class ExecutionBranchInteractionBroker:
         self,
         origin: ExecutionOrigin,
     ) -> None:
-        parent_branch_id = origin.parent_branch_id
-        if parent_branch_id is None:
+        lineage = self._lineage
+        ancestry: tuple[tuple[BranchId, BranchId], ...]
+        if lineage is None:
+            ancestry = (
+                ()
+                if origin.parent_branch_id is None
+                else ((origin.branch_id, origin.parent_branch_id),)
+            )
+        else:
+            try:
+                ancestry = await lineage.ancestry(
+                    run_id=origin.run_id,
+                    principal=origin.principal,
+                    branch_id=origin.branch_id,
+                )
+            except InputValidationError as error:
+                raise ExecutionCorrelationError(error.safe_message) from error
+            expected_parent = ancestry[-1][1] if ancestry else None
+            if origin.parent_branch_id != expected_parent:
+                raise ExecutionCorrelationError(
+                    "interaction branch differs from attached lineage ancestry"
+                )
+        if not ancestry:
             return
-        key = (origin.run_id, origin.branch_id)
         async with self._registration_lock:
-            if key in self._registered_branches:
-                return
             register_branch = getattr(self._broker, "register_branch", None)
             if register_branch is None or not callable(register_branch):
                 raise ExecutionCorrelationError(
                     "interaction broker cannot register child branches"
                 )
-            registration = InteractionBranchRegistration(
-                run_id=origin.run_id,
-                branch_id=origin.branch_id,
-                parent_branch_id=parent_branch_id,
-                principal=origin.principal,
-            )
-            command = RegisterInteractionBranchCommand(
-                actor=self._actor,
-                registration=registration,
-            )
-            result = await register_branch(command)
-            if not isinstance(result, InteractionBrokerResult):
-                raise ExecutionCorrelationError(
-                    "interaction branch registration returned invalid state"
+            for branch_id, parent_branch_id in ancestry:
+                key = (origin.run_id, branch_id)
+                if key in self._registered_branches:
+                    continue
+                registration = InteractionBranchRegistration(
+                    run_id=origin.run_id,
+                    branch_id=branch_id,
+                    parent_branch_id=parent_branch_id,
+                    principal=origin.principal,
                 )
-            store_result = result.store_result
-            if isinstance(store_result, InteractionBranchRegistrationRejected):
-                raise ExecutionCorrelationError(
-                    "interaction branch registration was rejected"
+                command = RegisterInteractionBranchCommand(
+                    actor=self._actor,
+                    registration=registration,
                 )
-            if not isinstance(
-                store_result,
-                (
-                    InteractionBranchRegistrationApplied,
-                    InteractionBranchRegistrationReplayed,
-                ),
-            ):
-                raise ExecutionCorrelationError(
-                    "interaction branch registration returned unrelated state"
-                )
-            if (
-                store_result.command != command
-                or store_result.record.registration != registration
-            ):
-                raise ExecutionCorrelationError(
-                    "interaction branch registration returned mismatched state"
-                )
-            self._registered_branches.add(key)
+                result = await register_branch(command)
+                if not isinstance(result, InteractionBrokerResult):
+                    raise ExecutionCorrelationError(
+                        "interaction branch registration returned invalid "
+                        "state"
+                    )
+                store_result = result.store_result
+                if isinstance(
+                    store_result,
+                    InteractionBranchRegistrationRejected,
+                ):
+                    raise ExecutionCorrelationError(
+                        "interaction branch registration was rejected"
+                    )
+                if not isinstance(
+                    store_result,
+                    (
+                        InteractionBranchRegistrationApplied,
+                        InteractionBranchRegistrationReplayed,
+                    ),
+                ):
+                    raise ExecutionCorrelationError(
+                        "interaction branch registration returned unrelated "
+                        "state"
+                    )
+                if (
+                    store_result.command != command
+                    or store_result.record.registration != registration
+                ):
+                    raise ExecutionCorrelationError(
+                        "interaction branch registration returned mismatched "
+                        "state"
+                    )
+                self._registered_branches.add(key)
 
 
 @final
@@ -1530,6 +1846,7 @@ class AgentExecution:
                 broker=interaction_runtime.broker,
                 actor=interaction_runtime.actor,
                 current_origin=lambda: self.origin,
+                lineage=interaction_runtime._lineage,
             )
             if isinstance(interaction_runtime, AttachedInteractionRuntime)
             else None
@@ -2524,22 +2841,40 @@ async def create_agent_execution(
         or UuidExecutionIdFactory()
     )
     _assert_execution_id_factory(factory, "execution")
-    branch_id = (
-        interaction_runtime.branch_id
+    run_id = (
+        interaction_runtime.run_id
         if interaction_runtime is not None
-        and interaction_runtime.branch_id is not None
-        else await factory.new_branch_id()
+        and interaction_runtime.run_id is not None
+        else await factory.new_run_id()
     )
-    origin = ExecutionOrigin(
-        run_id=(
-            interaction_runtime.run_id
-            if isinstance(
-                interaction_runtime,
-                DurableInteractionRuntime,
+    if (
+        isinstance(interaction_runtime, AttachedInteractionRuntime)
+        and interaction_runtime.branch_id is None
+    ):
+        if interaction_runtime.parent_branch_id is not None:
+            raise ExecutionCorrelationError(
+                "unbound interaction runtime cannot claim a parent branch"
             )
-            and interaction_runtime.run_id is not None
-            else await factory.new_run_id()
-        ),
+        lineage = _new_attached_interaction_lineage()
+        try:
+            branch_id = await lineage.mint_root(
+                run_id=run_id,
+                principal=interaction_runtime.actor.principal,
+                id_factory=factory,
+            )
+        except InputValidationError as error:
+            raise ExecutionCorrelationError(error.safe_message) from error
+        interaction_runtime._lineages[(run_id, branch_id)] = lineage
+        object.__setattr__(interaction_runtime, "_lineage", lineage)
+    else:
+        branch_id = (
+            interaction_runtime.branch_id
+            if interaction_runtime is not None
+            and interaction_runtime.branch_id is not None
+            else await factory.new_branch_id()
+        )
+    origin = ExecutionOrigin(
+        run_id=run_id,
         turn_id=await factory.new_turn_id(),
         task_id=(
             interaction_runtime.task_id
@@ -3185,13 +3520,13 @@ def _validate_runtime_origin(
         raise ExecutionCorrelationError(
             "interaction runtime and execution need one identity factory"
         )
-    if (
-        isinstance(runtime, DurableInteractionRuntime)
-        and runtime.run_id is not None
-        and runtime.run_id != origin.run_id
-    ):
+    if runtime.run_id is not None and runtime.run_id != origin.run_id:
         raise ExecutionCorrelationError(
-            "durable run does not match execution origin"
+            (
+                "durable run does not match execution origin"
+                if isinstance(runtime, DurableInteractionRuntime)
+                else "attached run does not match execution origin"
+            )
         )
     if runtime.task_id is not None and runtime.task_id != origin.task_id:
         raise ExecutionCorrelationError(
@@ -3205,6 +3540,22 @@ def _validate_runtime_origin(
         raise ExecutionCorrelationError(
             "interaction parent branch does not match execution origin"
         )
+
+
+def _validate_runtime_context_label(runtime: InteractionRuntime) -> None:
+    if runtime.context_label is None:
+        return
+    object.__setattr__(
+        runtime,
+        "context_label",
+        validate_presentation_text(
+            runtime.context_label,
+            "context_label",
+            minimum=1,
+            maximum=80,
+            maximum_bytes=320,
+        ),
+    )
 
 
 def _assert_execution_id_factory(value: object, path: str) -> None:

@@ -1311,6 +1311,7 @@ class InputRequest:
     reason: str
     questions: tuple[InputQuestion, ...]
     created_at: datetime
+    context_label: str | None = None
     continuation_ttl_seconds: int = 86_400
     advisory_wait_seconds: int | None = None
     advisory_deadline: datetime | None = None
@@ -1358,6 +1359,18 @@ class InputRequest:
                 maximum_bytes=2_000,
             ),
         )
+        if self.context_label is not None:
+            object.__setattr__(
+                self,
+                "context_label",
+                validate_presentation_text(
+                    self.context_label,
+                    "context_label",
+                    minimum=1,
+                    maximum=80,
+                    maximum_bytes=320,
+                ),
+            )
         if not isinstance(self.questions, tuple):
             raise InputValidationError(
                 InputErrorCode.INVALID_TYPE,
@@ -1462,6 +1475,7 @@ def create_input_request(
     origin: ExecutionOrigin,
     mode: RequirementMode,
     reason: str,
+    context_label: str | None = None,
     questions: tuple[InputQuestion, ...],
     created_at: datetime,
     continuation_ttl_seconds: int = 86_400,
@@ -1474,6 +1488,7 @@ def create_input_request(
         origin=origin,
         mode=mode,
         reason=reason,
+        context_label=context_label,
         questions=questions,
         created_at=created_at,
         continuation_ttl_seconds=continuation_ttl_seconds,
@@ -2200,6 +2215,8 @@ def _request_content(request: InputRequest) -> tuple[str, ...]:
         "reason": request.reason,
         "questions": questions,
     }
+    if request.context_label is not None:
+        payload["context_label"] = request.context_label
     return (
         dumps(
             payload,

@@ -95,6 +95,7 @@ from .interaction.store import (
     ScopedInteractionLookup,
 )
 from .interaction.stores.memory import MemoryInteractionStoreFactory
+from .interaction.validation import validate_presentation_text
 
 from asyncio import get_running_loop, sleep
 from base64 import urlsafe_b64decode, urlsafe_b64encode
@@ -203,6 +204,7 @@ class InputRequestView:
     created_at: datetime
     state: RequestState
     state_revision: StateRevision
+    context_label: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.mode, RequirementMode):
@@ -216,6 +218,18 @@ class InputRequestView:
                 InputErrorCode.INVALID_TYPE,
                 "request.reason",
                 "value must be a string",
+            )
+        if self.context_label is not None:
+            object.__setattr__(
+                self,
+                "context_label",
+                validate_presentation_text(
+                    self.context_label,
+                    "request.context_label",
+                    minimum=1,
+                    maximum=80,
+                    maximum_bytes=320,
+                ),
             )
         if not isinstance(self.questions, tuple) or not all(
             _is_input_question_variant(question) for question in self.questions
@@ -1551,6 +1565,7 @@ def _request_view(request: InputRequest) -> InputRequestView:
         created_at=request.created_at,
         state=request.state,
         state_revision=request.state_revision,
+        context_label=request.context_label,
     )
 
 

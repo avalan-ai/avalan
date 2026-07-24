@@ -34,7 +34,7 @@ from verify_src_coverage import (
 _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
-_CURRENT_PHASE = 8
+_CURRENT_PHASE = 9
 _CATEGORIES = frozenset(
     (
         "unit",
@@ -808,7 +808,7 @@ def _validate_evidence(path: Path, manifest: AcceptanceManifest) -> None:
         )
     gate = _mapping(payload.get("authoritative_gate"), "authoritative gate")
     expected_gate = {
-        "command": "make test-pgsql-exact no-install INPUT_PHASE=8",
+        "command": "make test-pgsql-exact no-install INPUT_PHASE=9",
         "database_dsn_env": "AVALAN_TASK_TEST_POSTGRESQL_DSN",
         "coverage_report": "coverage.json",
         "coverage_scope": "src/",

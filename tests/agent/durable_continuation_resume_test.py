@@ -3489,6 +3489,9 @@ async def test_task_resume_admission_validation_and_proxy_contract() -> None:
         previous_segment=segment,
         agent_admission=agent_admission,
     )
+    assert admission.request_id == segment.request_id
+    assert admission.continuation_id == segment.continuation_id
+    assert admission.checkpoint_id == segment.checkpoint_id
 
     validation_cases = (
         {"record": object()},

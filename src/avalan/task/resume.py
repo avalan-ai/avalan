@@ -151,6 +151,23 @@ class TaskDurableResumeAdmission:
                 "task suspension does not match the claimed continuation",
             )
 
+    @property
+    def request_id(self) -> str:
+        """Return the broker-validated request identifier."""
+        return str(self.record.continuation.request_id)
+
+    @property
+    def continuation_id(self) -> str:
+        """Return the broker-validated continuation identifier."""
+        return str(self.record.continuation.continuation_id)
+
+    @property
+    def checkpoint_id(self) -> str:
+        """Return the broker-validated checkpoint identifier."""
+        checkpoint_id = self.record.checkpoint_id
+        assert checkpoint_id is not None
+        return checkpoint_id
+
     async def dispatch(self) -> object:
         """Resume the fresh runtime without invoking initial task input."""
         return await self.agent_admission.dispatch()

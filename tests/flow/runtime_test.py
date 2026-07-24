@@ -78,6 +78,9 @@ from avalan.flow import (
     tool_flow_node_registry,
 )
 from avalan.flow.runtime import (
+    FlowPauseReason,
+    FlowTaskInputPause,
+    FlowTaskInputResume,
     _append_condition_event_draft,
     _append_join_event_draft,
     _append_node_event_draft,
@@ -515,6 +518,79 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             failing_error.exception.code,
             "flow.execution.subflow_failed",
         )
+
+    async def test_subflow_propagates_one_live_task_input_pause(self) -> None:
+        runner = FlowNodeRegistryRunner()
+        subflow = self._plan(
+            entry_node="echo",
+            outputs={"answer": "echo.value"},
+            nodes=(self._node("echo"),),
+        )
+        node = FlowNodePlan(
+            name="child",
+            type="subflow",
+            kind=FlowNodeKind.SUBFLOW,
+            metadata={
+                "subflow": {
+                    "plan": subflow,
+                    "output_mapping": {"value": "answer"},
+                }
+            },
+        )
+        live = FlowTaskInputPause(
+            request_id="request-live",
+            continuation_id="continuation-live",
+            checkpoint_id="checkpoint-live",
+            outcome=object(),
+        )
+        unavailable = replace(live, outcome=None)
+        other = FlowTaskInputPause(
+            request_id="request-other",
+            continuation_id="continuation-other",
+            checkpoint_id="checkpoint-other",
+            outcome=object(),
+        )
+        trace = FlowExecutionTrace.from_plan(subflow)
+        results = iter(
+            (
+                FlowPlanExecutionResult(
+                    trace=trace,
+                    task_input_pauses={"one": live, "two": other},
+                ),
+                FlowPlanExecutionResult(
+                    trace=trace,
+                    task_input_pauses={"one": unavailable},
+                ),
+                FlowPlanExecutionResult(
+                    trace=trace,
+                    task_input_pauses={"one": live},
+                ),
+            )
+        )
+
+        async def execute_result(*_: object, **__: object) -> object:
+            return next(results)
+
+        with patch.object(
+            flow_runtime_module,
+            "execute_flow_plan",
+            execute_result,
+        ):
+            with self.assertRaises(FlowNodeExecutionError) as ambiguous:
+                await runner(node, {})
+            with self.assertRaises(FlowNodeExecutionError) as missing_payload:
+                await runner(node, {})
+            propagated = await runner(node, {})
+
+        self.assertEqual(
+            ambiguous.exception.code,
+            "flow.execution.subflow_input_ambiguous",
+        )
+        self.assertEqual(
+            missing_payload.exception.code,
+            "flow.execution.subflow_input_unavailable",
+        )
+        self.assertIs(propagated, live)
 
     async def test_execute_flow_plan_uses_declared_entry_and_outputs(
         self,
@@ -3680,6 +3756,168 @@ class FlowPlanExecutionTestCase(IsolatedAsyncioTestCase):
             self._edge_states(result),
             {0: FlowEdgeState.TAKEN},
         )
+
+    async def test_task_input_pause_is_distinct_exact_and_never_retried(
+        self,
+    ) -> None:
+        calls: list[str] = []
+        pause = FlowTaskInputPause(
+            request_id="request-child",
+            continuation_id="continuation-child",
+            checkpoint_id="checkpoint-child",
+            outcome=object(),
+        )
+
+        def runner(node: FlowNodePlan, _: Mapping[str, object]) -> object:
+            calls.append(node.name)
+            return pause if node.name == "worker" else node.name
+
+        plan = self._plan(
+            entry_node="worker",
+            outputs={"answer": "finish.value"},
+            nodes=(
+                self._node(
+                    "worker",
+                    retry=FlowRetryPlan(
+                        max_attempts=3,
+                        retryable_categories=("transient",),
+                    ),
+                ),
+                self._node("finish"),
+            ),
+            edges=(
+                FlowEdgePlan(
+                    index=0,
+                    source="worker",
+                    target="finish",
+                    kind=FlowEdgeKind.SUCCESS,
+                ),
+            ),
+        )
+
+        suspended = await execute_flow_plan(plan, runner)
+
+        self.assertTrue(suspended.ok, suspended.public_diagnostics)
+        self.assertEqual(calls, ["worker"])
+        self.assertEqual(suspended.pause_tokens, {})
+        self.assertIs(
+            suspended.task_input_pauses["worker"].reason,
+            FlowPauseReason.TASK_INPUT,
+        )
+        self.assertEqual(
+            self._node_states(suspended),
+            {
+                "worker": FlowNodeState.PAUSED,
+                "finish": FlowNodeState.PENDING,
+            },
+        )
+        self.assertEqual(self._node_attempts(suspended)["worker"], 1)
+
+        calls.clear()
+        resumed = await execute_flow_plan(
+            plan,
+            runner,
+            resume_trace=suspended.trace,
+            resume_task_inputs={
+                "worker": FlowTaskInputResume(
+                    request_id=pause.request_id,
+                    continuation_id=pause.continuation_id,
+                    checkpoint_id=pause.checkpoint_id,
+                    output="resolved",
+                )
+            },
+        )
+
+        self.assertTrue(resumed.ok, resumed.public_diagnostics)
+        self.assertEqual(calls, ["finish"])
+        self.assertEqual(resumed.outputs, {"answer": "finish"})
+        self.assertEqual(resumed.task_input_pauses, {})
+        self.assertEqual(self._node_attempts(resumed)["worker"], 1)
+
+        calls.clear()
+        mismatched = await execute_flow_plan(
+            plan,
+            runner,
+            resume_trace=suspended.trace,
+            resume_task_inputs={
+                "worker": FlowTaskInputResume(
+                    request_id=pause.request_id,
+                    continuation_id="continuation-other",
+                    checkpoint_id=pause.checkpoint_id,
+                    output="forged",
+                )
+            },
+        )
+        self.assertFalse(mismatched.ok)
+        self.assertEqual(calls, [])
+        self.assertIn(
+            "flow.execution.invalid_task_input_resume",
+            [diagnostic.code for diagnostic in mismatched.diagnostics],
+        )
+
+    async def test_loop_preserves_task_input_pause_without_iteration(
+        self,
+    ) -> None:
+        pause = FlowTaskInputPause(
+            request_id="request-loop",
+            continuation_id="continuation-loop",
+            checkpoint_id="checkpoint-loop",
+            outcome=object(),
+        )
+        calls = 0
+
+        def runner(_: FlowNodePlan, __: Mapping[str, object]) -> object:
+            nonlocal calls
+            calls += 1
+            return pause
+
+        result = await execute_flow_plan(self._loop_plan(), runner)
+
+        self.assertEqual(calls, 1)
+        self.assertIs(result.task_input_pauses["repair"], pause)
+        self.assertEqual(
+            self._node_states(result)["repair"],
+            FlowNodeState.PAUSED,
+        )
+        self.assertEqual(self._node_attempts(result)["repair"], 1)
+
+    def test_task_input_pause_metadata_filters_malformed_entries(self) -> None:
+        pause = FlowTaskInputPause(
+            request_id="request-valid",
+            continuation_id="continuation-valid",
+            checkpoint_id="checkpoint-valid",
+            outcome=object(),
+        )
+        plan = self._plan(
+            entry_node="valid",
+            outputs={"answer": "valid.value"},
+            nodes=(self._node("valid"),),
+        )
+        trace = replace(
+            FlowExecutionTrace.from_plan(plan),
+            metadata={
+                "task_input_pauses": {
+                    "wrong-reason": {
+                        **dict(pause.as_metadata()),
+                        "reason": "approval",
+                    },
+                    "wrong-reference": {
+                        **dict(pause.as_metadata()),
+                        "checkpoint_id": "",
+                    },
+                    "valid": pause.as_metadata(),
+                }
+            },
+        )
+
+        pauses = flow_runtime_module.flow_task_input_pauses(trace)
+
+        self.assertEqual(tuple(pauses), ("valid",))
+        self.assertEqual(
+            dict(pauses["valid"].as_metadata()),
+            dict(pause.as_metadata()),
+        )
+        self.assertIsNone(pauses["valid"].outcome)
 
     async def test_execute_flow_plan_pauses_human_review_without_runner(
         self,

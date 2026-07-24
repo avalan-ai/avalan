@@ -1,3 +1,9 @@
+from ...agent.execution import (
+    DurableInteractionRuntime,
+    InteractionRuntime,
+    create_child_interaction_runtime,
+    ensure_interaction_runtime_branch,
+)
 from ...event import Event, EventObservabilityPayload, EventType
 from ...flow.definition import (
     FlowDefinition,
@@ -38,8 +44,12 @@ from ...flow.registry import (
 )
 from ...flow.runtime import (
     FlowStreamListener,
+    FlowTaskInputPause,
+    FlowTaskInputResume,
     execute_flow_plan,
     flow_node_registry_runner,
+    flow_task_input_pauses,
+    flow_trace_with_task_input_pauses,
 )
 from ...flow.selector import (
     FlowSelector,
@@ -63,7 +73,11 @@ from ...flow.validator import validate_flow_definition
 from ...model.stream import CanonicalStreamItem, stream_observability_payload
 from ...skill import merge_skill_settings
 from ..artifact import TaskArtifactRef, TaskArtifactRetention
-from ..context import TaskInputFile, TaskTargetContext
+from ..context import (
+    TaskDurableResumeHandle,
+    TaskInputFile,
+    TaskTargetContext,
+)
 from ..converters import (
     FileConverter,
     TaskFileConversionDependencyError,
@@ -93,6 +107,7 @@ from ..privacy import (
 from ..skills import task_skill_settings_allow
 from ..store import TaskExecutionContext, TaskStoreNotFoundError
 from ..target import (
+    TaskDurableResumeTargetRunner,
     TaskDurableSuspensionTargetRunner,
     TaskTargetCompleted,
     TaskTargetOutcome,
@@ -119,7 +134,7 @@ from inspect import isawaitable
 from pathlib import Path, PurePosixPath, PureWindowsPath
 from time import perf_counter
 from types import MappingProxyType
-from typing import Any, cast
+from typing import Any, Protocol, cast, runtime_checkable
 
 FlowResolver = Callable[[TaskTargetContext], Flow | Awaitable[Flow]]
 StrictFlowResolver = Callable[
@@ -162,6 +177,7 @@ _UNAVAILABLE_PRIVACY_MARKERS = frozenset(
 )
 _NO_STRICT_RESUME = object()
 _FLOW_REVIEW_AUDIT_METADATA_KEY = "human_review_audit"
+_FLOW_TASK_INPUT_METADATA_KEY = "task_input_pauses"
 _INVALID_RESUME_DIAGNOSTIC_CODES = frozenset(
     {
         "flow.execution.invalid_resume_decision",
@@ -169,10 +185,39 @@ _INVALID_RESUME_DIAGNOSTIC_CODES = frozenset(
         "flow.execution.invalid_resume_payload",
         "flow.execution.invalid_resume_schema",
         "flow.execution.invalid_resume_state",
+        "flow.execution.invalid_task_input_resume",
         "flow.execution.unknown_resume_decision",
         "flow.execution.unknown_resume_node",
     }
 )
+
+
+@runtime_checkable
+class _NestedAgentDurableRunner(
+    TaskDurableResumeTargetRunner,
+    TaskDurableSuspensionTargetRunner,
+    Protocol,
+):
+    async def interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> InteractionRuntime | None:
+        """Return the interaction runtime for one task execution."""
+
+
+@runtime_checkable
+class _CorrelatedDurableResumeHandle(Protocol):
+    @property
+    def request_id(self) -> str:
+        """Return the broker-validated request identifier."""
+
+    @property
+    def continuation_id(self) -> str:
+        """Return the broker-validated continuation identifier."""
+
+    @property
+    def checkpoint_id(self) -> str:
+        """Return the broker-validated checkpoint identifier."""
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -226,6 +271,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         if (
             definition.execution.type is TaskTargetType.FLOW
             and self._nested_agent_supports_durable_suspension()
+            and not self.supports_durable_suspension(TaskTargetType.FLOW)
         ):
             issues.append(_durable_flow_suspension_issue())
         if (
@@ -324,7 +370,11 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         assert isinstance(context, TaskTargetContext)
         if context.definition.execution.type != TaskTargetType.FLOW:
             raise TaskValidationError((_unknown_target_issue(),))
-        if self._nested_agent_supports_durable_suspension():
+        if (
+            self._strict_resolver is None
+            and self._nested_agent_supports_durable_suspension()
+            and not self.supports_durable_suspension(TaskTargetType.FLOW)
+        ):
             raise TaskValidationError((_durable_flow_suspension_issue(),))
         if self._strict_resolver is not None:
             return await self._run_strict(context)
@@ -418,6 +468,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
     ) -> TaskTargetOutcome:
         await context.check_cancelled()
         plan = await self._strict_plan(context)
+        interaction_runtime = await self._strict_interaction_runtime(context)
         await context.check_cancelled()
         if self._flow_state_store is None and _strict_plan_has_human_review(
             plan
@@ -456,6 +507,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                         task_flow_node_registry(
                             context,
                             agent_runner=self._agent_runner,
+                            interaction_runtime=interaction_runtime,
                             execution_roots=self._execution_roots,
                             tool_resolver=self._tool_resolver,
                         )
@@ -467,7 +519,9 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     ),
                     cancellation_checker=context.check_cancelled,
                     event_listener=_task_flow_stream_listener(context),
-                    concurrency_limit=self._concurrency_limit,
+                    concurrency_limit=self._strict_concurrency_limit(
+                        interaction_runtime
+                    ),
                     resume_trace=(
                         record.trace
                         if record
@@ -486,13 +540,12 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     raise TaskValidationError(
                         _flow_diagnostics_to_issues(result.diagnostics)
                     )
-                suspended = _find_task_target_suspension(
+                if _find_task_target_suspension(
                     (
                         result.outputs,
                         result.node_outputs,
                     )
-                )
-                if suspended is not None:
+                ):
                     raise TaskValidationError(
                         (_durable_flow_suspension_issue(),)
                     )
@@ -504,8 +557,22 @@ class FlowTaskTargetRunner(TaskTargetRunner):
                     node_outputs=result.node_outputs,
                     diagnostics=result.diagnostics,
                     pause_tokens=result.pause_tokens,
+                    task_input_pauses=result.task_input_pauses,
                     resume_decisions=resume_decisions,
                 )
+                if result.task_input_pauses:
+                    suspended = _single_flow_task_input_suspension(
+                        result.task_input_pauses
+                    )
+                    finished = perf_counter()
+                    await _emit_flow_event(
+                        context,
+                        EventType.FLOW_MANAGER_CALL_AFTER,
+                        status="suspended",
+                        started=started,
+                        finished=finished,
+                    )
+                    return suspended
                 if result.pause_tokens:
                     raise TaskValidationError(
                         (_flow_paused_issue(result.pause_tokens),)
@@ -540,11 +607,274 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         )
         return completed_task_target_outcome(output)
 
+    async def resume(
+        self,
+        context: TaskTargetContext,
+        durable_resume: TaskDurableResumeHandle,
+    ) -> TaskTargetOutcome:
+        """Resume the exact nested agent node from durable flow state."""
+        assert isinstance(context, TaskTargetContext)
+        if context.durable_resume is not durable_resume:
+            raise TaskValidationError(
+                (_invalid_flow_task_input_resume_issue(),)
+            )
+        if not self.supports_durable_resume(TaskTargetType.FLOW):
+            raise TaskValidationError((_durable_flow_suspension_issue(),))
+        plan = await self._strict_plan(context)
+        record = await self._strict_flow_record(context, plan)
+        if record is None:
+            raise TaskValidationError(
+                (_invalid_flow_task_input_resume_issue(),)
+            )
+        node_name, pause = _strict_record_task_input_pause(record)
+        if (
+            not isinstance(durable_resume, _CorrelatedDurableResumeHandle)
+            or durable_resume.request_id != pause.request_id
+            or durable_resume.continuation_id != pause.continuation_id
+            or durable_resume.checkpoint_id != pause.checkpoint_id
+        ):
+            raise TaskValidationError(
+                (_invalid_flow_task_input_resume_issue(),)
+            )
+        node = plan.node_map.get(node_name)
+        runner = self._agent_runner
+        if (
+            node is None
+            or node.kind is not FlowNodeKind.AGENT
+            or node.ref is None
+            or not isinstance(runner, _NestedAgentDurableRunner)
+        ):
+            raise TaskValidationError(
+                (_invalid_flow_task_input_resume_issue(),)
+            )
+        task_input = _task_input_value(context)
+        input_issues = validate_task_input(
+            context.definition,
+            task_input,
+        )
+        if input_issues:
+            raise TaskValidationError(input_issues)
+        started = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_BEFORE,
+            status="started",
+            started=started,
+        )
+        try:
+            await context.check_cancelled()
+            node_definition = FlowNodeDefinition(
+                name=node.name,
+                type=node.type,
+                ref=node.ref,
+                config=node.config,
+            )
+            outcome = task_target_outcome(
+                await runner.resume(
+                    TaskTargetContext(
+                        definition=_agent_node_task_definition(
+                            context.definition,
+                            node_definition,
+                        ),
+                        execution=context.execution,
+                        metadata=context.metadata,
+                        cancellation_checker=context.cancellation_checker,
+                        event_listener=_flow_node_event_listener(
+                            node_name,
+                            context.event_listener,
+                        ),
+                        usage_observer=_flow_node_usage_observer(
+                            node_name,
+                            context.usage_observer,
+                        ),
+                        artifact_store=context.artifact_store,
+                        task_store=context.task_store,
+                        durable_resume=durable_resume,
+                        file_converters=context.file_converters,
+                    ),
+                    durable_resume,
+                )
+            )
+            if type(outcome) is TaskTargetSuspended:
+                next_pause = _flow_task_input_pause(outcome)
+                trace = flow_trace_with_task_input_pauses(
+                    record.trace,
+                    {node_name: next_pause},
+                )
+                await self._record_strict_flow_state(
+                    context,
+                    plan=plan,
+                    trace=trace,
+                    outputs={},
+                    node_outputs=_strict_record_node_outputs(record),
+                    task_input_pauses={node_name: next_pause},
+                )
+                finished = perf_counter()
+                await _emit_flow_event(
+                    context,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                    status="suspended",
+                    started=started,
+                    finished=finished,
+                )
+                return outcome
+            assert type(outcome) is TaskTargetCompleted
+            interaction_runtime = await self._strict_interaction_runtime(
+                context
+            )
+            result = await execute_flow_plan(
+                plan,
+                flow_node_registry_runner(
+                    task_flow_node_registry(
+                        context,
+                        agent_runner=self._agent_runner,
+                        interaction_runtime=interaction_runtime,
+                        execution_roots=self._execution_roots,
+                        tool_resolver=self._tool_resolver,
+                    )
+                ),
+                inputs=_strict_flow_input_binding(
+                    plan,
+                    task_input,
+                    files=context.files,
+                ),
+                cancellation_checker=context.check_cancelled,
+                event_listener=_task_flow_stream_listener(context),
+                concurrency_limit=self._strict_concurrency_limit(
+                    interaction_runtime
+                ),
+                resume_trace=record.trace,
+                resume_node_outputs=_strict_resume_node_outputs(plan, record),
+                resume_task_inputs={
+                    node_name: FlowTaskInputResume(
+                        request_id=pause.request_id,
+                        continuation_id=pause.continuation_id,
+                        checkpoint_id=pause.checkpoint_id,
+                        output=outcome.output,
+                    )
+                },
+            )
+            if _has_invalid_resume_diagnostics(result.diagnostics):
+                raise TaskValidationError(
+                    _flow_diagnostics_to_issues(result.diagnostics)
+                )
+            await self._record_strict_flow_state(
+                context,
+                plan=plan,
+                trace=result.trace,
+                outputs=result.outputs,
+                node_outputs=result.node_outputs,
+                diagnostics=result.diagnostics,
+                pause_tokens=result.pause_tokens,
+                task_input_pauses=result.task_input_pauses,
+            )
+            if result.task_input_pauses:
+                suspended = _single_flow_task_input_suspension(
+                    result.task_input_pauses
+                )
+                finished = perf_counter()
+                await _emit_flow_event(
+                    context,
+                    EventType.FLOW_MANAGER_CALL_AFTER,
+                    status="suspended",
+                    started=started,
+                    finished=finished,
+                )
+                return suspended
+            if result.pause_tokens:
+                raise TaskValidationError(
+                    (_flow_paused_issue(result.pause_tokens),)
+                )
+            if not result.ok:
+                raise TaskValidationError(
+                    _flow_diagnostics_to_issues(result.diagnostics)
+                )
+            output = _strict_task_output(plan, result.outputs)
+            output_issues = validate_task_output(
+                context.definition,
+                output,
+            )
+            if output_issues:
+                raise TaskValidationError(output_issues)
+        except BaseException:
+            finished = perf_counter()
+            await _emit_flow_event(
+                context,
+                EventType.FLOW_MANAGER_CALL_AFTER,
+                status="failed",
+                started=started,
+                finished=finished,
+            )
+            raise
+        finished = perf_counter()
+        await _emit_flow_event(
+            context,
+            EventType.FLOW_MANAGER_CALL_AFTER,
+            status="succeeded",
+            started=started,
+            finished=finished,
+        )
+        return completed_task_target_outcome(output)
+
     def _nested_agent_supports_durable_suspension(self) -> bool:
         runner = self._agent_runner
         return isinstance(
             runner, TaskDurableSuspensionTargetRunner
         ) and runner.supports_durable_suspension(TaskTargetType.AGENT)
+
+    async def _strict_interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> InteractionRuntime | None:
+        if context.interaction_runtime is not None:
+            runtime = await ensure_interaction_runtime_branch(
+                context.interaction_runtime
+            )
+        elif not self._nested_agent_supports_durable_suspension():
+            return None
+        else:
+            runner = self._agent_runner
+            if not isinstance(runner, _NestedAgentDurableRunner):
+                raise TaskValidationError((_durable_flow_suspension_issue(),))
+            runtime = await runner.interaction_runtime(context)
+            if runtime is None:
+                raise TaskValidationError((_durable_flow_suspension_issue(),))
+            runtime = await ensure_interaction_runtime_branch(runtime)
+        if isinstance(
+            runtime, DurableInteractionRuntime
+        ) and not self.supports_durable_suspension(TaskTargetType.FLOW):
+            raise TaskValidationError((_durable_flow_suspension_issue(),))
+        return runtime
+
+    def _strict_concurrency_limit(
+        self,
+        runtime: InteractionRuntime | None,
+    ) -> int:
+        if isinstance(runtime, DurableInteractionRuntime):
+            return 1
+        return self._concurrency_limit
+
+    def supports_durable_suspension(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        """Return whether strict flow state can retain nested suspension."""
+        runner = self._agent_runner
+        return (
+            target_type is TaskTargetType.FLOW
+            and self._strict_resolver is not None
+            and self._flow_state_store is not None
+            and isinstance(runner, _NestedAgentDurableRunner)
+            and runner.supports_durable_suspension(TaskTargetType.AGENT)
+            and runner.supports_durable_resume(TaskTargetType.AGENT)
+        )
+
+    def supports_durable_resume(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        """Return whether strict flow state supports exact-node resume."""
+        return self.supports_durable_suspension(target_type)
 
     async def _strict_plan(
         self,
@@ -629,6 +959,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         node_outputs: Mapping[str, Mapping[str, object]],
         diagnostics: tuple[FlowDiagnostic, ...] = (),
         pause_tokens: Mapping[str, str] | None = None,
+        task_input_pauses: Mapping[str, FlowTaskInputPause] | None = None,
         resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
     ) -> None:
         if self._flow_state_store is None:
@@ -644,6 +975,7 @@ class FlowTaskTargetRunner(TaskTargetRunner):
             record=current,
             trace=trace,
             pause_tokens=pause_tokens,
+            task_input_pauses=task_input_pauses,
             resume_decisions=resume_decisions,
         )
         update = FlowExecutionUpdate(
@@ -751,6 +1083,7 @@ def task_flow_node_registry(
     context: TaskTargetContext,
     *,
     agent_runner: TaskTargetRunner | None = None,
+    interaction_runtime: InteractionRuntime | None = None,
     execution_roots: Iterable[str | Path] = (),
     tool_resolver: FlowToolResolver | None = None,
 ) -> FlowNodeRegistry:
@@ -807,6 +1140,7 @@ def task_flow_node_registry(
             _agent_node_factory(
                 context,
                 agent_runner=agent_runner,
+                interaction_runtime=interaction_runtime,
                 execution_roots=execution_roots,
             ),
             metadata=FlowNodeMetadata(
@@ -1626,10 +1960,43 @@ def _find_task_target_suspension(
     return None
 
 
+def _flow_task_input_pause(
+    outcome: TaskTargetSuspended,
+) -> FlowTaskInputPause:
+    if outcome.durable is None or outcome.checkpoint_id is None:
+        raise TaskValidationError((_durable_flow_suspension_issue(),))
+    return FlowTaskInputPause(
+        request_id=str(outcome.input_required.request_id),
+        continuation_id=str(outcome.input_required.continuation_id),
+        checkpoint_id=outcome.checkpoint_id,
+        outcome=outcome,
+    )
+
+
+def _single_flow_task_input_suspension(
+    pauses: Mapping[str, FlowTaskInputPause],
+) -> TaskTargetSuspended:
+    if len(pauses) != 1:
+        raise TaskValidationError((_durable_flow_suspension_issue(),))
+    pause = next(iter(pauses.values()))
+    if type(pause.outcome) is not TaskTargetSuspended:
+        raise TaskValidationError((_durable_flow_suspension_issue(),))
+    return pause.outcome
+
+
+def _flow_agent_context_label(
+    context: TaskTargetContext,
+    node: FlowNodeDefinition,
+) -> str:
+    label = f"{context.definition.task.name} / {node.name}"
+    return label[:80]
+
+
 def _agent_node_factory(
     context: TaskTargetContext,
     *,
     agent_runner: TaskTargetRunner,
+    interaction_runtime: InteractionRuntime | None = None,
     execution_roots: Iterable[str | Path],
 ) -> FlowNodeFactory:
     roots = tuple(Path(root) for root in execution_roots)
@@ -1676,6 +2043,17 @@ def _agent_node_factory(
                         ),
                         artifact_store=context.artifact_store,
                         task_store=context.task_store,
+                        interaction_runtime=(
+                            await create_child_interaction_runtime(
+                                interaction_runtime,
+                                context_label=_flow_agent_context_label(
+                                    context,
+                                    definition,
+                                ),
+                            )
+                            if interaction_runtime is not None
+                            else None
+                        ),
                         file_converters=context.file_converters,
                     )
                 )
@@ -1683,7 +2061,7 @@ def _agent_node_factory(
             if type(outcome) is TaskTargetCompleted:
                 return outcome.output
             assert type(outcome) is TaskTargetSuspended
-            return outcome
+            return _flow_task_input_pause(outcome)
 
         return Node(definition.name, func=run)
 
@@ -2191,6 +2569,16 @@ def _flow_paused_issue(
     )
 
 
+def _invalid_flow_task_input_resume_issue() -> TaskValidationIssue:
+    return TaskValidationIssue(
+        code="flow.execution.invalid_task_input_resume",
+        path="execution.run_id",
+        message="Flow task-input continuation does not match paused state.",
+        hint="Resume the broker-validated request for the exact paused node.",
+        category=TaskValidationCategory.DEPENDENCY,
+    )
+
+
 def _invalid_flow_resume_decisions_issue() -> TaskValidationIssue:
     return TaskValidationIssue(
         code="flow.execution.invalid_resume_payload",
@@ -2276,6 +2664,24 @@ def _strict_resumed_output(
     return _strict_task_output(plan, record.selected_outputs)
 
 
+def _strict_record_task_input_pause(
+    record: FlowExecutionRecord,
+) -> tuple[str, FlowTaskInputPause]:
+    pauses = flow_task_input_pauses(record.trace)
+    metadata = record.metadata.get(_FLOW_TASK_INPUT_METADATA_KEY)
+    if len(pauses) != 1 or not isinstance(metadata, Mapping):
+        raise TaskValidationError((_invalid_flow_task_input_resume_issue(),))
+    node_name, pause = next(iter(pauses.items()))
+    persisted = metadata.get(node_name)
+    if (
+        len(metadata) != 1
+        or not isinstance(persisted, Mapping)
+        or dict(persisted) != dict(pause.as_metadata())
+    ):
+        raise TaskValidationError((_invalid_flow_task_input_resume_issue(),))
+    return node_name, pause
+
+
 def _strict_resume_node_outputs(
     plan: FlowExecutionPlan,
     record: FlowExecutionRecord | None,
@@ -2350,6 +2756,7 @@ def _strict_flow_record_metadata(
     record: FlowExecutionRecord | None = None,
     trace: FlowExecutionTrace | None = None,
     pause_tokens: Mapping[str, str] | None = None,
+    task_input_pauses: Mapping[str, FlowTaskInputPause] | None = None,
     resume_decisions: Mapping[str, Mapping[str, object]] | None = None,
 ) -> Mapping[str, object]:
     assert isinstance(plan, FlowExecutionPlan)
@@ -2369,6 +2776,11 @@ def _strict_flow_record_metadata(
     )
     if review_audit:
         metadata[_FLOW_REVIEW_AUDIT_METADATA_KEY] = review_audit
+    if task_input_pauses:
+        metadata[_FLOW_TASK_INPUT_METADATA_KEY] = {
+            node_name: pause.as_metadata()
+            for node_name, pause in task_input_pauses.items()
+        }
     return metadata
 
 

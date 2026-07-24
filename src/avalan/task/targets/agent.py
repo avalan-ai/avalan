@@ -278,6 +278,11 @@ class AgentTaskTargetRunner(TaskTargetRunner):
             ),
         )
         interaction_runtime = await self._interaction_runtime(context)
+        durable_interaction_runtime = (
+            interaction_runtime
+            if isinstance(interaction_runtime, DurableInteractionRuntime)
+            else None
+        )
         async with orchestrator:
             async with _agent_event_listener(orchestrator, context):
                 await context.check_cancelled()
@@ -306,7 +311,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                 except ExecutionInputRequiredError as error:
                     return _suspended_agent_target_outcome(
                         error,
-                        interaction_runtime=interaction_runtime,
+                        interaction_runtime=durable_interaction_runtime,
                     )
                 _attach_cancellation_checker(response, context.check_cancelled)
                 try:
@@ -318,7 +323,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
                     except ExecutionInputRequiredError as error:
                         return _suspended_agent_target_outcome(
                             error,
-                            interaction_runtime=interaction_runtime,
+                            interaction_runtime=durable_interaction_runtime,
                         )
                 finally:
                     await context.observe_usage(response)
@@ -370,27 +375,41 @@ class AgentTaskTargetRunner(TaskTargetRunner):
     async def _interaction_runtime(
         self,
         context: TaskTargetContext,
-    ) -> DurableInteractionRuntime | None:
-        factory = self._durable_interaction_runtime_factory
-        if factory is None:
-            return None
-        runtime = factory(context)
-        if isawaitable(runtime):
-            runtime = await runtime
-        if type(runtime) is not DurableInteractionRuntime:
-            raise TypeError(
-                "durable interaction runtime factory returned invalid state"
-            )
+    ) -> InteractionRuntime | None:
+        """Return explicit nested handling or a fresh durable runtime."""
+        return await self.interaction_runtime(context)
+
+    async def interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> InteractionRuntime | None:
+        """Return explicit nested handling or a fresh durable runtime."""
+        runtime = context.interaction_runtime
+        if runtime is None:
+            factory = self._durable_interaction_runtime_factory
+            if factory is None:
+                return None
+            factory_runtime = factory(context)
+            if isawaitable(factory_runtime):
+                created_runtime = await factory_runtime
+            else:
+                created_runtime = factory_runtime
+            if type(created_runtime) is not DurableInteractionRuntime:
+                raise TypeError(
+                    "durable interaction runtime factory returned "
+                    "invalid state"
+                )
+            runtime = created_runtime
         expected_run_id = RunId(context.execution.run_id)
         if runtime.run_id != expected_run_id:
             raise ExecutionCorrelationError(
-                "durable interaction runtime must bind the task run"
+                "interaction runtime must bind the task run"
             )
         if runtime.task_id is not None and runtime.task_id != TaskId(
             context.execution.run_id
         ):
             raise ExecutionCorrelationError(
-                "durable interaction task identity must bind the task run"
+                "interaction task identity must bind the task run"
             )
         return runtime
 

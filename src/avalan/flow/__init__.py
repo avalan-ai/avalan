@@ -211,6 +211,7 @@ from .registry import flow_input_binding as flow_input_binding
 from .registry import tool_flow_node_registry as tool_flow_node_registry
 from .runtime import FlowNodeExecutionError as FlowNodeExecutionError
 from .runtime import FlowNodeRegistryRunner as FlowNodeRegistryRunner
+from .runtime import FlowPauseReason as FlowPauseReason
 from .runtime import FlowPlanExecutionResult as FlowPlanExecutionResult
 from .runtime import FlowPlanNodeRunner as FlowPlanNodeRunner
 from .runtime import FlowRuntimeContext as FlowRuntimeContext
@@ -218,6 +219,8 @@ from .runtime import (
     FlowRuntimeEvaluationError as FlowRuntimeEvaluationError,
 )
 from .runtime import FlowStreamListener as FlowStreamListener
+from .runtime import FlowTaskInputPause as FlowTaskInputPause
+from .runtime import FlowTaskInputResume as FlowTaskInputResume
 from .runtime import (
     evaluate_flow_condition_plan as evaluate_flow_condition_plan,
 )
@@ -226,6 +229,10 @@ from .runtime import evaluate_flow_node_mappings as evaluate_flow_node_mappings
 from .runtime import evaluate_flow_selector as evaluate_flow_selector
 from .runtime import execute_flow_plan as execute_flow_plan
 from .runtime import flow_node_registry_runner as flow_node_registry_runner
+from .runtime import flow_task_input_pauses as flow_task_input_pauses
+from .runtime import (
+    flow_trace_with_task_input_pauses as flow_trace_with_task_input_pauses,
+)
 from .selector import FLOW_SELECTOR_MISSING as FLOW_SELECTOR_MISSING
 from .selector import FlowSelector as FlowSelector
 from .selector import FlowSelectorError as FlowSelectorError

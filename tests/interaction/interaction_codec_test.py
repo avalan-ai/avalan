@@ -1411,3 +1411,29 @@ def test_continuation_snapshot_rejects_drift_secrets_and_invalid_json() -> (
     )
     with pytest.raises(InputSnapshotError):
         encode_continuation_snapshot(oversized)
+
+
+def test_request_context_label_round_trips_without_changing_default_wire() -> (
+    None
+):
+    """Preserve safe origin context while keeping the absent form omitted."""
+    unlabeled = _request()
+    labeled = create_input_request(
+        request_id=InputRequestId("request-context"),
+        continuation_id=ContinuationId("continuation-context"),
+        origin=_origin(),
+        mode=RequirementMode.REQUIRED,
+        reason="A typed response is required.",
+        context_label="Planner agent / approval",
+        questions=_questions()[:1],
+        created_at=_NOW,
+    )
+
+    assert "context_label" not in encode_input_request(unlabeled)
+    encoded = encode_input_request(labeled)
+    assert encoded["context_label"] == "Planner agent / approval"
+    assert decode_input_request(encoded) == labeled
+
+    encoded["context_label"] = "planner\nforged"
+    with pytest.raises(InputValidationError):
+        decode_input_request(encoded)

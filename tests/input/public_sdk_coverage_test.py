@@ -344,6 +344,10 @@ def test_public_value_objects_reject_each_invalid_member() -> None:
             lambda: replace(view, reason=cast(Any, object())),
         ),
         (
+            "request.context_label",
+            lambda: replace(view, context_label=cast(Any, object())),
+        ),
+        (
             "request.questions",
             lambda: replace(view, questions=cast(Any, (object(),))),
         ),

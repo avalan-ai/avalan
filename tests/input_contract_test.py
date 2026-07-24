@@ -67,10 +67,10 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     manifest = _manifest()
     history = manifest.activation_history()
 
-    assert manifest.current_phase == 8
+    assert manifest.current_phase == 9
     assert len(manifest.nodes) == 944
-    assert len(manifest.active_nodes(8)) == 834
-    assert len(manifest.planned_nodes()) == 110
+    assert len(manifest.active_nodes(9)) == 840
+    assert len(manifest.planned_nodes()) == 104
     assert tuple(map(len, history)) == (
         23,
         79,
@@ -81,6 +81,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         814,
         830,
         834,
+        840,
     )
     assert all(
         set(history[phase]).issubset(history[phase + 1])
@@ -88,7 +89,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     )
     assert all(
         node.active_from_phase <= manifest.current_phase
-        for node in manifest.active_nodes(8)
+        for node in manifest.active_nodes(9)
     )
     assert all(
         node.active_from_phase > manifest.current_phase
@@ -100,7 +101,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         for requirement_id in node.requirement_ids
     }
     for requirement_id in requirement_ids:
-        active, remaining = manifest.requirement_slice(requirement_id, 8)
+        active, remaining = manifest.requirement_slice(requirement_id, 9)
         expected = {
             node.node_id
             for node in manifest.nodes
@@ -109,10 +110,12 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         assert set(active).isdisjoint(remaining)
         assert set(active) | set(remaining) == expected
     assert {node.node_id for node in manifest.current_phase_nodes()} == {
-        "tests/server/input_interaction_test.py::test_server_input_authenticated_resolution",
-        "tests/server/input_interaction_test.py::test_server_input_extension_envelopes",
-        "tests/server/input_interaction_test.py::test_server_input_lifecycle_events",
-        "tests/server/input_interaction_test.py::test_server_input_readable_fallback",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_085",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_086",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_087",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_088",
+        "tests/input/orchestration_contract_test.py::test_requirement_input_n_089",
+        "tests/input/public_interaction_e2e_test.py::test_multi_agent_origin",
     }
 
 
@@ -196,7 +199,7 @@ def test_baseline_evidence_is_complete() -> None:
 
     assert (
         evidence["authoritative_gate"]["command"]
-        == "make test-pgsql-exact no-install INPUT_PHASE=8"
+        == "make test-pgsql-exact no-install INPUT_PHASE=9"
     )
     assert evidence["authoritative_gate"]["fresh_report_required"] is True
     assert evidence["invariants"] == {

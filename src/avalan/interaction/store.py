@@ -90,6 +90,7 @@ from .validation import (
     validate_state_revision,
 )
 
+from asyncio import Event, Lock
 from collections.abc import Mapping
 from dataclasses import dataclass, field, fields, is_dataclass, replace
 from datetime import datetime, timedelta
@@ -100,6 +101,434 @@ from re import compile as compile_pattern
 from typing import Literal, Protocol, TypeAlias, final
 
 _SHA256_PATTERN = compile_pattern(r"^[0-9a-f]{64}$")
+_ATTACHED_INTERACTION_ADMISSION_LEASE_TOKEN = object()
+_ATTACHED_INTERACTION_LINEAGE_TOKEN = object()
+_ATTACHED_SCOPE_ROOT_CLAIM_TOKEN = object()
+
+
+class _AttachedInteractionBranchIdFactory(Protocol):
+    """Mint opaque branch identifiers for one attached lineage."""
+
+    async def new_branch_id(self) -> BranchId:
+        """Return a new execution-branch identifier."""
+        ...
+
+
+@final
+@dataclass(frozen=True, slots=True, init=False, eq=False)
+class _AttachedInteractionScopeRootClaim:
+    """Seal one exact process-local attached branch ownership claim."""
+
+    run_id: RunId
+    principal: PrincipalScope
+    branch_id: BranchId
+    members: frozenset[BranchId]
+    parent_edges: frozenset[tuple[BranchId, BranchId]]
+    _lineage: "_AttachedInteractionLineage" = field(repr=False)
+    _authority: object = field(repr=False)
+
+    def __init__(
+        self,
+        *,
+        lineage: "_AttachedInteractionLineage",
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+        members: frozenset[BranchId],
+        parent_edges: frozenset[tuple[BranchId, BranchId]],
+        _token: object,
+    ) -> None:
+        if _token is not _ATTACHED_SCOPE_ROOT_CLAIM_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "attached_scope_root_claim",
+                "attached scope-root claims are runtime-internal",
+            )
+        object.__setattr__(self, "run_id", run_id)
+        object.__setattr__(self, "principal", principal)
+        object.__setattr__(self, "branch_id", branch_id)
+        object.__setattr__(self, "members", members)
+        object.__setattr__(self, "parent_edges", parent_edges)
+        object.__setattr__(self, "_lineage", lineage)
+        object.__setattr__(self, "_authority", lineage._capability)
+
+
+@final
+class _AttachedInteractionAdmissionLease:
+    """Serialize one attached request admission against subtree sealing."""
+
+    __slots__ = (
+        "_authority",
+        "_closed",
+        "_lineage",
+        "_ready",
+        "branch_id",
+        "principal",
+        "run_id",
+    )
+
+    def __init__(
+        self,
+        *,
+        lineage: "_AttachedInteractionLineage",
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+        _token: object,
+    ) -> None:
+        if _token is not _ATTACHED_INTERACTION_ADMISSION_LEASE_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "attached_admission",
+                "attached admission leases are runtime-internal",
+            )
+        self.run_id = run_id
+        self.principal = principal
+        self.branch_id = branch_id
+        self._lineage = lineage
+        self._authority = lineage._capability
+        self._ready = Event()
+        self._closed = False
+
+    async def mark_admitted(self) -> None:
+        """Signal that the authoritative create decision has completed."""
+        await self._lineage._mark_admission_ready(self)
+
+    async def close(self) -> None:
+        """Release this admission and unblock a waiting subtree claim."""
+        await self._lineage._close_admission(self)
+
+    async def wait_ready(self) -> None:
+        """Wait until admission is decided or abandoned."""
+        await self._ready.wait()
+
+
+@final
+class _AttachedInteractionLineage:
+    """Own append-only branch membership for one attached runtime tree."""
+
+    __slots__ = (
+        "_capability",
+        "_admissions",
+        "_lock",
+        "_parents",
+        "_principal",
+        "_root_branch_id",
+        "_run_id",
+        "_sealed_members",
+        "_token",
+    )
+
+    def __init__(self, *, _token: object) -> None:
+        if _token is not _ATTACHED_INTERACTION_LINEAGE_TOKEN:
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "attached_lineage",
+                "attached lineages are runtime-internal",
+            )
+        self._token = _token
+        self._capability = object()
+        self._lock = Lock()
+        self._run_id: RunId | None = None
+        self._principal: PrincipalScope | None = None
+        self._root_branch_id: BranchId | None = None
+        self._parents: dict[BranchId, BranchId | None] = {}
+        self._sealed_members: set[BranchId] = set()
+        self._admissions: set[_AttachedInteractionAdmissionLease] = set()
+
+    async def mint_root(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        id_factory: _AttachedInteractionBranchIdFactory,
+    ) -> BranchId:
+        """Mint or return the sole root bound to this lineage."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            if self._run_id is not None:
+                self._require_identity(run_id, principal)
+                assert self._root_branch_id is not None
+                return self._root_branch_id
+            branch_id = await _mint_attached_branch_id(id_factory)
+            self._run_id = run_id
+            self._principal = principal
+            self._root_branch_id = branch_id
+            self._parents[branch_id] = None
+            return branch_id
+
+    async def mint_child(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        parent_branch_id: BranchId,
+        id_factory: _AttachedInteractionBranchIdFactory,
+    ) -> BranchId:
+        """Mint one child only below an existing lineage member."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            self._require_identity(run_id, principal)
+            if parent_branch_id not in self._parents:
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "attached_lineage.parent_branch_id",
+                    "parent branch is not owned by the attached lineage",
+                )
+            if parent_branch_id in self._sealed_members:
+                raise InputValidationError(
+                    InputErrorCode.ILLEGAL_TRANSITION,
+                    "attached_lineage.parent_branch_id",
+                    "parent branch belongs to a sealed attached subtree",
+                )
+            branch_id = await _mint_attached_branch_id(id_factory)
+            if branch_id in self._parents:
+                raise InputValidationError(
+                    InputErrorCode.DUPLICATE,
+                    "attached_lineage.branch_id",
+                    "attached branch identifier is already registered",
+                )
+            self._parents[branch_id] = parent_branch_id
+            return branch_id
+
+    async def claim(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+    ) -> _AttachedInteractionScopeRootClaim:
+        """Seal and claim one exact attached subtree."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            self._require_identity(run_id, principal)
+            if branch_id not in self._parents:
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "attached_lineage.branch_id",
+                    "branch is not owned by the attached lineage",
+                )
+            members = self._descendants(branch_id)
+            parent_edges = frozenset(
+                (member, parent)
+                for member in members
+                if (parent := self._parents[member]) is not None
+            )
+            self._sealed_members.update(members)
+            admissions = tuple(
+                lease
+                for lease in self._admissions
+                if lease.branch_id in members
+            )
+            claim = _AttachedInteractionScopeRootClaim(
+                lineage=self,
+                run_id=run_id,
+                principal=principal,
+                branch_id=branch_id,
+                members=members,
+                parent_edges=parent_edges,
+                _token=_ATTACHED_SCOPE_ROOT_CLAIM_TOKEN,
+            )
+        for admission in admissions:
+            await admission.wait_ready()
+        return claim
+
+    async def begin_admission(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+    ) -> _AttachedInteractionAdmissionLease:
+        """Acquire one request admission below an unsealed branch."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            self._require_identity(run_id, principal)
+            if branch_id not in self._parents:
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "attached_lineage.branch_id",
+                    "branch is not owned by the attached lineage",
+                )
+            if branch_id in self._sealed_members:
+                raise InputValidationError(
+                    InputErrorCode.ILLEGAL_TRANSITION,
+                    "attached_lineage.branch_id",
+                    "branch belongs to a sealed attached subtree",
+                )
+            lease = _AttachedInteractionAdmissionLease(
+                lineage=self,
+                run_id=run_id,
+                principal=principal,
+                branch_id=branch_id,
+                _token=_ATTACHED_INTERACTION_ADMISSION_LEASE_TOKEN,
+            )
+            self._admissions.add(lease)
+            return lease
+
+    async def ancestry(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+    ) -> tuple[tuple[BranchId, BranchId], ...]:
+        """Return root-to-leaf edges for one owned branch."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            self._require_identity(run_id, principal)
+            if branch_id not in self._parents:
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "attached_lineage.branch_id",
+                    "branch is not owned by the attached lineage",
+                )
+            edges: list[tuple[BranchId, BranchId]] = []
+            current = branch_id
+            while (parent := self._parents[current]) is not None:
+                edges.append((current, parent))
+                current = parent
+            return tuple(reversed(edges))
+
+    async def contains(
+        self,
+        *,
+        run_id: RunId,
+        principal: PrincipalScope,
+        branch_id: BranchId,
+    ) -> bool:
+        """Return whether this lineage owns one exact branch."""
+        _validate_attached_lineage_identity(run_id, principal)
+        async with self._lock:
+            return (
+                self._run_id == run_id
+                and self._principal == principal
+                and branch_id in self._parents
+            )
+
+    def validates(
+        self,
+        claim: _AttachedInteractionScopeRootClaim,
+    ) -> bool:
+        """Return whether one sealed claim still names a lineage member."""
+        return (
+            self._token is _ATTACHED_INTERACTION_LINEAGE_TOKEN
+            and claim._lineage is self
+            and claim._authority is self._capability
+            and self._run_id == claim.run_id
+            and self._principal == claim.principal
+            and claim.branch_id in self._parents
+            and claim.members == self._descendants(claim.branch_id)
+            and claim.parent_edges
+            == frozenset(
+                (member, parent)
+                for member in claim.members
+                if (parent := self._parents[member]) is not None
+            )
+            and claim.members <= self._sealed_members
+        )
+
+    async def _mark_admission_ready(
+        self,
+        lease: _AttachedInteractionAdmissionLease,
+    ) -> None:
+        """Mark one active admission as authoritatively decided."""
+        async with self._lock:
+            self._require_admission(lease)
+            lease._ready.set()
+
+    async def _close_admission(
+        self,
+        lease: _AttachedInteractionAdmissionLease,
+    ) -> None:
+        """Release one admission lease idempotently."""
+        async with self._lock:
+            if lease._closed:
+                return
+            self._require_admission(lease)
+            lease._closed = True
+            self._admissions.remove(lease)
+            lease._ready.set()
+
+    def _require_admission(
+        self,
+        lease: _AttachedInteractionAdmissionLease,
+    ) -> None:
+        if (
+            type(lease) is not _AttachedInteractionAdmissionLease
+            or lease._lineage is not self
+            or lease._authority is not self._capability
+            or lease not in self._admissions
+            or lease.run_id != self._run_id
+            or lease.principal != self._principal
+            or lease.branch_id not in self._parents
+        ):
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "attached_admission",
+                "attached admission lease authority is invalid",
+            )
+
+    def _descendants(self, branch_id: BranchId) -> frozenset[BranchId]:
+        descendants = {branch_id}
+        changed = True
+        while changed:
+            changed = False
+            for member, parent in self._parents.items():
+                if parent in descendants and member not in descendants:
+                    descendants.add(member)
+                    changed = True
+        return frozenset(descendants)
+
+    def _require_identity(
+        self,
+        run_id: RunId,
+        principal: PrincipalScope,
+    ) -> None:
+        if self._run_id != run_id or self._principal != principal:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "attached_lineage",
+                "attached lineage identity does not match the runtime",
+            )
+
+
+def _new_attached_interaction_lineage() -> _AttachedInteractionLineage:
+    """Create one empty lineage that cannot claim caller-supplied branches."""
+    return _AttachedInteractionLineage(
+        _token=_ATTACHED_INTERACTION_LINEAGE_TOKEN
+    )
+
+
+async def _mint_attached_branch_id(
+    id_factory: _AttachedInteractionBranchIdFactory,
+) -> BranchId:
+    method = getattr(id_factory, "new_branch_id", None)
+    if not callable(method):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "attached_lineage.id_factory",
+            "attached lineage requires a branch identifier factory",
+        )
+    return BranchId(
+        validate_opaque_id(
+            await method(),
+            "attached_lineage.branch_id",
+        )
+    )
+
+
+def _validate_attached_lineage_identity(
+    run_id: object,
+    principal: object,
+) -> None:
+    validate_opaque_id(run_id, "attached_lineage.run_id")
+    if not isinstance(principal, PrincipalScope):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "attached_lineage.principal",
+            "value must be a principal scope",
+        )
 
 
 class InteractionPresentationState(StrEnum):
@@ -1690,6 +2119,12 @@ class TerminalizeInteractionScopeCommand:
         init=False,
         default=CancellationScope.CONTAINING_RUN,
     )
+    _attached_root_claim: _AttachedInteractionScopeRootClaim | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
+    )
 
     def __post_init__(self) -> None:
         _validate_actor(self.actor)
@@ -1713,6 +2148,68 @@ class TerminalizeInteractionScopeCommand:
         )
 
 
+def _bind_attached_scope_root_claim(
+    command: TerminalizeInteractionScopeCommand,
+    claim: _AttachedInteractionScopeRootClaim,
+) -> TerminalizeInteractionScopeCommand:
+    """Bind a sealed attached-lineage claim to one semantic command copy."""
+    if type(command) is not TerminalizeInteractionScopeCommand:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "command",
+            "value must be a containing-run cancellation command",
+        )
+    _validate_attached_scope_root_claim(command, claim)
+    bound = replace(command)
+    object.__setattr__(bound, "_attached_root_claim", claim)
+    return bound
+
+
+def _validate_attached_scope_root_claim(
+    command: TerminalizeInteractionScopeCommand,
+    claim: _AttachedInteractionScopeRootClaim | None = None,
+) -> _AttachedInteractionScopeRootClaim | None:
+    """Validate one exact process-local root claim without deriving owners."""
+    candidate = command._attached_root_claim if claim is None else claim
+    return _validate_attached_scope_root_claim_binding(
+        scope=command.scope,
+        principal=command.actor.principal,
+        candidate=candidate,
+    )
+
+
+def _validate_attached_scope_root_claim_binding(
+    *,
+    scope: InteractionExecutionScope,
+    principal: PrincipalScope,
+    candidate: _AttachedInteractionScopeRootClaim | None,
+) -> _AttachedInteractionScopeRootClaim | None:
+    """Validate one exact claim against a scope-mutation identity."""
+    if candidate is None:
+        return None
+    exact_type = type(candidate) is _AttachedInteractionScopeRootClaim
+    valid_authority = exact_type and candidate._lineage.validates(candidate)
+    if not exact_type or not valid_authority:
+        raise InputValidationError(
+            InputErrorCode.FORBIDDEN,
+            "attached_scope_root_claim",
+            "attached scope-root claim authority is invalid",
+        )
+    if (
+        not scope.include_descendants
+        or scope.branch_id is None
+        or candidate.run_id != scope.run_id
+        or candidate.principal != principal
+        or candidate.branch_id != scope.branch_id
+    ):
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "attached_scope_root_claim",
+            "attached scope-root claim does not match the command",
+        )
+    return candidate
+
+
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class SupersedeInteractionScopeCommand:
@@ -1724,6 +2221,12 @@ class SupersedeInteractionScopeCommand:
     status: Literal[ResolutionStatus.SUPERSEDED] = field(
         init=False,
         default=ResolutionStatus.SUPERSEDED,
+    )
+    _attached_root_claim: _AttachedInteractionScopeRootClaim | None = field(
+        init=False,
+        default=None,
+        repr=False,
+        compare=False,
     )
 
     def __post_init__(self) -> None:
@@ -1746,6 +2249,36 @@ class SupersedeInteractionScopeCommand:
             self.scope,
             self.actor.principal,
         )
+
+
+def _bind_attached_supersede_scope_root_claim(
+    command: SupersedeInteractionScopeCommand,
+    claim: _AttachedInteractionScopeRootClaim,
+) -> SupersedeInteractionScopeCommand:
+    """Bind a sealed attached-lineage claim to one supersession copy."""
+    if type(command) is not SupersedeInteractionScopeCommand:
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "command",
+            "value must be an execution-scope supersession command",
+        )
+    _validate_attached_supersede_scope_root_claim(command, claim)
+    bound = replace(command)
+    object.__setattr__(bound, "_attached_root_claim", claim)
+    return bound
+
+
+def _validate_attached_supersede_scope_root_claim(
+    command: SupersedeInteractionScopeCommand,
+    claim: _AttachedInteractionScopeRootClaim | None = None,
+) -> _AttachedInteractionScopeRootClaim | None:
+    """Validate a supersession's exact process-local root claim."""
+    candidate = command._attached_root_claim if claim is None else claim
+    return _validate_attached_scope_root_claim_binding(
+        scope=command.scope,
+        principal=command.actor.principal,
+        candidate=candidate,
+    )
 
 
 @final
@@ -2613,6 +3146,9 @@ class _InteractionScopeTransaction:
     store_generation: InteractionStoreGeneration = field(repr=False)
     snapshot_digest: str = field(repr=False)
     selected_records: tuple[InteractionRecord, ...] = field(repr=False)
+    _attached_root_claim: _AttachedInteractionScopeRootClaim | None = field(
+        repr=False
+    )
     _backing_capability: object = field(repr=False)
 
     def __init__(
@@ -2624,6 +3160,7 @@ class _InteractionScopeTransaction:
         store_generation: InteractionStoreGeneration,
         snapshot_digest: str,
         selected_records: tuple[InteractionRecord, ...],
+        attached_root_claim: _AttachedInteractionScopeRootClaim | None = None,
         backing: _InteractionStoreBacking,
         _token: object,
     ) -> None:
@@ -2639,6 +3176,11 @@ class _InteractionScopeTransaction:
         object.__setattr__(self, "store_generation", store_generation)
         object.__setattr__(self, "snapshot_digest", snapshot_digest)
         object.__setattr__(self, "selected_records", selected_records)
+        object.__setattr__(
+            self,
+            "_attached_root_claim",
+            attached_root_claim,
+        )
         object.__setattr__(
             self,
             "_backing_capability",
@@ -4232,11 +4774,17 @@ def _begin_scope_transaction(
             "command",
             "value must be a scope mutation command",
         )
+    attached_root_claim = (
+        _validate_attached_scope_root_claim(command)
+        if isinstance(command, TerminalizeInteractionScopeCommand)
+        else _validate_attached_supersede_scope_root_claim(command)
+    )
     selected = _select_scope_records(
         snapshot.records,
         command.scope,
         snapshot.branch_records,
         command.actor.principal,
+        attached_root_claim,
     )
     _validate_scope_ownership_presence(
         snapshot,
@@ -4256,6 +4804,7 @@ def _begin_scope_transaction(
         command.scope,
         command.actor.principal,
         selected,
+        attached_root_claim,
     )
     return _InteractionScopeTransaction(
         command=command,
@@ -4269,6 +4818,7 @@ def _begin_scope_transaction(
             snapshot.scope_ownership_attestation,
         ),
         selected_records=selected,
+        attached_root_claim=attached_root_claim,
         backing=backing,
         _token=_SCOPE_SELECTION_TOKEN,
     )
@@ -5888,6 +6438,7 @@ def _select_scope_records(
     scope: InteractionExecutionScope,
     branch_records: tuple[InteractionBranchRecord, ...],
     principal: PrincipalScope,
+    attached_root_claim: _AttachedInteractionScopeRootClaim | None = None,
 ) -> tuple[InteractionRecord, ...]:
     if not isinstance(scope, InteractionExecutionScope):
         raise InputValidationError(
@@ -5895,10 +6446,14 @@ def _select_scope_records(
             "scope",
             "value must be an interaction execution scope",
         )
-    descendants = _scope_descendant_branches(
-        scope,
-        branch_records,
-        principal,
+    descendants = (
+        attached_root_claim.members
+        if attached_root_claim is not None
+        else _scope_descendant_branches(
+            scope,
+            branch_records,
+            principal,
+        )
     )
     selected: list[InteractionRecord] = []
     for record in snapshot_records:
@@ -6067,7 +6622,17 @@ def _validate_scope_ownership(
     scope: InteractionExecutionScope,
     principal: PrincipalScope,
     selected_records: tuple[InteractionRecord, ...],
+    attached_root_claim: _AttachedInteractionScopeRootClaim | None = None,
 ) -> None:
+    if attached_root_claim is not None:
+        _validate_claimed_scope_ownership(
+            branch_records,
+            scope,
+            principal,
+            selected_records,
+            attached_root_claim,
+        )
+        return
     owners: set[tuple[RunId, PrincipalScope, BranchId]] = set()
     registrations: dict[
         tuple[RunId, PrincipalScope, BranchId],
@@ -6131,6 +6696,97 @@ def _validate_scope_ownership(
                 )
 
 
+def _validate_claimed_scope_ownership(
+    branch_records: tuple[InteractionBranchRecord, ...],
+    scope: InteractionExecutionScope,
+    principal: PrincipalScope,
+    selected_records: tuple[InteractionRecord, ...],
+    claim: _AttachedInteractionScopeRootClaim,
+) -> None:
+    """Validate selected records against one exact attached closure."""
+    if (
+        claim.run_id != scope.run_id
+        or claim.principal != principal
+        or claim.branch_id != scope.branch_id
+    ):
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "attached_scope_root_claim",
+            "attached claim identity differs from the selected scope",
+        )
+    parent_by_branch = dict(claim.parent_edges)
+    registrations = {
+        registration.branch_id: registration
+        for branch_record in branch_records
+        if (registration := branch_record.registration).run_id == claim.run_id
+        and registration.principal == claim.principal
+        and registration.branch_id in claim.members
+    }
+    for branch_id, registration in registrations.items():
+        expected_parent = parent_by_branch.get(branch_id)
+        if (
+            expected_parent is None
+            or registration.parent_branch_id != expected_parent
+        ):
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "branch_records",
+                "registered ancestry differs from the attached closure",
+            )
+    for record in selected_records:
+        origin = record.request.origin
+        if (
+            origin.run_id != claim.run_id
+            or origin.principal != claim.principal
+            or origin.branch_id not in claim.members
+        ):
+            raise InputValidationError(
+                InputErrorCode.FORBIDDEN,
+                "selected_records",
+                "selected record is outside the attached closure",
+            )
+        expected_parent = parent_by_branch.get(origin.branch_id)
+        if origin.parent_branch_id != expected_parent:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "selected_records",
+                "request ancestry differs from the attached closure",
+            )
+        current = origin.branch_id
+        while current != claim.branch_id:
+            expected_parent = parent_by_branch.get(current)
+            current_registration = registrations.get(current)
+            if (
+                expected_parent is None
+                or current_registration is None
+                or current_registration.parent_branch_id != expected_parent
+            ):
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "branch_records",
+                    "selected ancestry lacks its claimed branch edge",
+                )
+            if expected_parent not in claim.members:
+                raise InputValidationError(
+                    InputErrorCode.CORRELATION_MISMATCH,
+                    "attached_scope_root_claim",
+                    "attached closure does not contain selected ancestry",
+                )
+            current = expected_parent
+        claimed_parent = parent_by_branch.get(claim.branch_id)
+        if claimed_parent is not None:
+            root_registration = registrations.get(claim.branch_id)
+            if (
+                root_registration is None
+                or root_registration.parent_branch_id != claimed_parent
+            ):
+                raise InputValidationError(
+                    InputErrorCode.FORBIDDEN,
+                    "branch_records",
+                    "selected subtree root lacks its claimed branch edge",
+                )
+
+
 def _validate_scope_transaction_commit(
     transaction: object,
     command: InteractionScopeMutationCommand,
@@ -6155,6 +6811,17 @@ def _validate_scope_transaction_commit(
             InputErrorCode.CORRELATION_MISMATCH,
             "transaction.command",
             "scope transaction does not match the exact command",
+        )
+    attached_root_claim = (
+        _validate_attached_scope_root_claim(command)
+        if isinstance(command, TerminalizeInteractionScopeCommand)
+        else _validate_attached_supersede_scope_root_claim(command)
+    )
+    if transaction._attached_root_claim is not attached_root_claim:
+        raise InputValidationError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "transaction.command",
+            "scope transaction claim does not match the exact command",
         )
     snapshot = _snapshot_interaction_store_backing(backing)
     if transaction.store_generation != snapshot.store_generation:
@@ -6185,6 +6852,7 @@ def _validate_scope_transaction_commit(
         command.scope,
         snapshot.branch_records,
         command.actor.principal,
+        attached_root_claim,
     )
     _validate_scope_ownership_presence(
         snapshot,
@@ -6199,6 +6867,7 @@ def _validate_scope_transaction_commit(
         command.scope,
         command.actor.principal,
         expected,
+        attached_root_claim,
     )
     if (
         transaction.scope != command.scope

@@ -1444,3 +1444,33 @@ def test_interaction_snapshot_and_continuation_values_validate_types() -> None:
             continuation_id=request.continuation_id,
             detached_resumption_available=cast(bool, 1),
         )
+
+
+def test_request_context_label_is_optional_bounded_and_single_line() -> None:
+    """Validate the optional safe nested-origin presentation label."""
+    default_request = _request()
+    labeled_request = create_input_request(
+        request_id=InputRequestId("request-context"),
+        continuation_id=ContinuationId("continuation-context"),
+        origin=_origin(),
+        mode=RequirementMode.REQUIRED,
+        reason="A decision is required.",
+        context_label="Research agent / source selection",
+        questions=(_question(),),
+        created_at=_NOW,
+    )
+
+    assert default_request.context_label is None
+    assert labeled_request.context_label == "Research agent / source selection"
+    for label in ("", " \t", "child\nforged prompt", "x" * 81):
+        with pytest.raises(InputValidationError):
+            create_input_request(
+                request_id=InputRequestId("request-invalid-context"),
+                continuation_id=ContinuationId("continuation-invalid-context"),
+                origin=_origin(),
+                mode=RequirementMode.REQUIRED,
+                reason="A decision is required.",
+                context_label=label,
+                questions=(_question(),),
+                created_at=_NOW,
+            )

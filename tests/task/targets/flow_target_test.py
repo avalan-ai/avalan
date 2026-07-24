@@ -3,6 +3,7 @@ from asyncio import CancelledError, sleep, wait_for
 from asyncio import run as asyncio_run
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
+from datetime import UTC, datetime, timedelta
 from inspect import getsource, isawaitable
 from pathlib import Path
 from sys import path as sys_path
@@ -22,6 +23,12 @@ from store_contract_test import (  # type: ignore[import-not-found]
     SequenceIds,
 )
 
+from avalan.agent.execution import (
+    AgentExecution,
+    AttachedInteractionRuntime,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+)
 from avalan.cli.commands import task as task_cmds
 from avalan.entities import (
     Message,
@@ -73,7 +80,9 @@ from avalan.flow import (
     FlowOutputType,
     FlowRetryBackoffStrategy,
     FlowRetryPlan,
+    FlowRouteMatchPolicy,
     FlowSourceSpan,
+    FlowTaskInputPause,
     FlowTimeoutPlan,
     InMemoryFlowStateStore,
     PgsqlFlowStateStore,
@@ -86,9 +95,37 @@ from avalan.flow.loader import FlowDefinitionLoader
 from avalan.flow.node import Node
 from avalan.flow.registry import FlowNodeConfigurationError
 from avalan.interaction import (
+    AgentId,
+    BranchId,
+    CapabilityRevision,
+    ConfirmationQuestion,
+    ContinuationFencingToken,
     ContinuationId,
+    ContinuationRevisionBinding,
+    ContinuationStoreRevision,
+    CreateInteractionCommand,
+    DurableInteractionSuspension,
+    ExecutionDefinitionRef,
+    ExecutionOrigin,
     InputRequestId,
     InputRequiredResult,
+    InteractionActor,
+    InteractionBrokerRequest,
+    ModelCallId,
+    ModelConfigRevision,
+    ModelId,
+    PortableContinuation,
+    PrincipalScope,
+    ProviderConfigRevision,
+    ProviderFamilyName,
+    QuestionId,
+    RequirementMode,
+    RunId,
+    StateRevision,
+    StreamSessionId,
+    TaskId,
+    TurnId,
+    create_input_request,
 )
 from avalan.model.stream import (
     CanonicalStreamItem,
@@ -410,6 +447,275 @@ class CapturingTaskTargetRunner:
         target_type: TaskTargetType,
     ) -> bool:
         return self.durable_suspension and target_type is TaskTargetType.AGENT
+
+
+_NESTED_INPUT_NOW = datetime(2026, 7, 24, 12, 0, tzinfo=UTC)
+
+
+async def _unused_nested_stager(
+    request: InteractionBrokerRequest,
+    *,
+    execution: AgentExecution,
+    response: object,
+    stream_sequence: int,
+    staging: DurableInteractionStagingContext,
+) -> DurableInteractionSuspension:
+    del request, execution, response, stream_sequence, staging
+    raise AssertionError("nested test runner owns the scripted suspension")
+
+
+class _NestedAttachedBroker:
+    async def request(self, *_args: object, **_kwargs: object) -> object:
+        raise AssertionError("completed nested agent must not request input")
+
+    async def cancel_scope(
+        self,
+        *_args: object,
+        **_kwargs: object,
+    ) -> object:
+        raise AssertionError("completed nested agent must not cancel input")
+
+
+async def _unused_nested_handler(_context: object) -> object:
+    raise AssertionError("completed nested agent must not invoke the handler")
+
+
+def _nested_origin(suffix: str) -> ExecutionOrigin:
+    definition = ExecutionDefinitionRef(
+        agent_definition_locator=f"agent://nested-{suffix}",
+        agent_definition_revision="agent-r1",
+        operation_id="nested-operation",
+        operation_index=0,
+        model_config_reference="model-r1",
+        tool_revision="tools-r1",
+        capability_revision="capability-r1",
+    )
+    return ExecutionOrigin(
+        run_id=RunId("run-1"),
+        turn_id=TurnId(f"turn-{suffix}"),
+        task_id=TaskId("run-1"),
+        agent_id=AgentId(f"agent-{suffix}"),
+        branch_id=BranchId(f"branch-{suffix}"),
+        model_call_id=ModelCallId(f"call-{suffix}"),
+        stream_session_id=StreamSessionId(f"stream-{suffix}"),
+        definition=definition,
+        principal=PrincipalScope(),
+    )
+
+
+def _nested_suspension(suffix: str) -> TaskTargetSuspended:
+    origin = _nested_origin(suffix)
+    request = create_input_request(
+        request_id=InputRequestId(f"request-{suffix}"),
+        continuation_id=ContinuationId(f"continuation-{suffix}"),
+        origin=origin,
+        mode=RequirementMode.REQUIRED,
+        reason="Confirm the nested result.",
+        questions=(
+            ConfirmationQuestion(
+                question_id=QuestionId("confirm"),
+                prompt="Continue?",
+                required=True,
+            ),
+        ),
+        created_at=_NESTED_INPUT_NOW,
+    )
+    revision = ContinuationRevisionBinding(
+        provider_family=ProviderFamilyName("provider"),
+        model_id=ModelId("model"),
+        provider_config_revision=ProviderConfigRevision("provider-r1"),
+        model_config_revision=ModelConfigRevision("model-r1"),
+        capability_revision=CapabilityRevision("capability-r1"),
+    )
+    durable = DurableInteractionSuspension(
+        command=CreateInteractionCommand(
+            actor=InteractionActor(principal=origin.principal),
+            request=request,
+        ),
+        continuation=PortableContinuation(
+            continuation_id=request.continuation_id,
+            request_id=request.request_id,
+            origin=origin,
+            provider_call_id=origin.model_call_id,
+            provider_call_correlation_id=str(origin.model_call_id),
+            definition=origin.definition,
+            operation_cursor=0,
+            generation_settings={},
+            transcript=(),
+            observations=(),
+            revision_binding=revision,
+            interaction_count=1,
+            tool_loop_count=0,
+            stream_sequence=0,
+            state_revision=StateRevision(0),
+            store_revision=ContinuationStoreRevision(0),
+            created_at=_NESTED_INPUT_NOW,
+            updated_at=_NESTED_INPUT_NOW,
+            expires_at=_NESTED_INPUT_NOW + timedelta(days=1),
+            fencing_token=ContinuationFencingToken(0),
+        ),
+    )
+    return suspended_task_target_outcome(
+        InputRequiredResult(
+            request_id=request.request_id,
+            continuation_id=request.continuation_id,
+            detached_resumption_available=True,
+        ),
+        checkpoint_id=f"checkpoint-{suffix}",
+        durable=durable,
+    )
+
+
+class _FlowResumeHandle:
+    _CALLABLE_ATTRIBUTES = frozenset(
+        {
+            "close",
+            "complete_output",
+            "completion_command_for_output",
+            "completion_command_for_settlement",
+            "completion_command_for_suspension",
+            "dispatch",
+            "interrupt_dispatch",
+            "register_event_listener",
+            "rejection_command_for_settlement",
+            "release",
+            "release_if_pre_dispatch",
+            "wait_dispatch_settled",
+        }
+    )
+
+    def __init__(self, suspension: TaskTargetSuspended) -> None:
+        self.request_id = str(suspension.input_required.request_id)
+        self.continuation_id = str(suspension.input_required.continuation_id)
+        assert suspension.checkpoint_id is not None
+        self.checkpoint_id = suspension.checkpoint_id
+
+    def __getattr__(self, name: str) -> Callable[..., None]:
+        if name not in self._CALLABLE_ATTRIBUTES:
+            raise AttributeError(name)
+        return self._unused
+
+    @staticmethod
+    def _unused(*args: object, **kwargs: object) -> None:
+        del args, kwargs
+
+
+class _NestedInputAgentRunner:
+    def __init__(
+        self,
+        *,
+        runtime: AttachedInteractionRuntime | DurableInteractionRuntime,
+        initial: TaskTargetOutcome,
+        resumed: list[TaskTargetOutcome] | None = None,
+        durable: bool,
+    ) -> None:
+        self.runtime = runtime
+        self.initial = initial
+        self.resumed = resumed or []
+        self.durable = durable
+        self.contexts: list[TaskTargetContext] = []
+        self.resume_contexts: list[TaskTargetContext] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        del definition, context
+        return ()
+
+    async def interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> AttachedInteractionRuntime | DurableInteractionRuntime:
+        return context.interaction_runtime or self.runtime
+
+    async def run(self, context: TaskTargetContext) -> TaskTargetOutcome:
+        self.contexts.append(context)
+        return self.initial
+
+    async def resume(
+        self,
+        context: TaskTargetContext,
+        durable_resume: object,
+    ) -> TaskTargetOutcome:
+        assert context.durable_resume is durable_resume
+        self.resume_contexts.append(context)
+        if not self.resumed:
+            raise AssertionError("nested resume outcome queue exhausted")
+        return self.resumed.pop(0)
+
+    def supports_durable_suspension(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        return self.durable and target_type is TaskTargetType.AGENT
+
+    def supports_durable_resume(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        return self.durable and target_type is TaskTargetType.AGENT
+
+
+class _ParallelNestedInputAgentRunner:
+    def __init__(
+        self,
+        *,
+        runtime: DurableInteractionRuntime,
+        initial: Mapping[str, TaskTargetOutcome],
+        resumed: Mapping[str, TaskTargetOutcome],
+    ) -> None:
+        self.runtime = runtime
+        self.initial = dict(initial)
+        self.resumed = dict(resumed)
+        self.contexts: list[TaskTargetContext] = []
+        self.resume_contexts: list[TaskTargetContext] = []
+        self.run_refs: list[str] = []
+        self.resume_refs: list[str] = []
+
+    async def validate_definition(
+        self,
+        definition: TaskDefinition,
+        context: TaskValidationContext,
+    ) -> tuple[TaskValidationIssue, ...]:
+        del definition, context
+        return ()
+
+    async def interaction_runtime(
+        self,
+        context: TaskTargetContext,
+    ) -> AttachedInteractionRuntime | DurableInteractionRuntime:
+        return context.interaction_runtime or self.runtime
+
+    async def run(self, context: TaskTargetContext) -> TaskTargetOutcome:
+        ref = context.definition.execution.ref
+        self.contexts.append(context)
+        self.run_refs.append(ref)
+        return self.initial[ref]
+
+    async def resume(
+        self,
+        context: TaskTargetContext,
+        durable_resume: object,
+    ) -> TaskTargetOutcome:
+        assert context.durable_resume is durable_resume
+        ref = context.definition.execution.ref
+        self.resume_contexts.append(context)
+        self.resume_refs.append(ref)
+        return self.resumed[ref]
+
+    def supports_durable_suspension(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        return target_type is TaskTargetType.AGENT
+
+    def supports_durable_resume(
+        self,
+        target_type: TaskTargetType,
+    ) -> bool:
+        return target_type is TaskTargetType.AGENT
 
 
 class FailingArtifactStore:
@@ -1476,6 +1782,34 @@ def load(path):
 
 
 class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
+    async def test_run_rejects_legacy_flow_task_input_suspension(self) -> None:
+        suspension = _nested_suspension("legacy-flow")
+        flow = Flow()
+        flow.add_node(Node("start"))
+
+        async def execute_with_suspension(
+            *args: object,
+            **kwargs: object,
+        ) -> TaskTargetSuspended:
+            del args, kwargs
+            return suspension
+
+        runner = FlowTaskTargetRunner(flow_resolver=lambda _: flow)
+        with (
+            patch.object(
+                flow,
+                "execute_async",
+                execute_with_suspension,
+            ),
+            self.assertRaises(TaskValidationError) as error,
+        ):
+            await runner.run(self._context(input_value="private"))
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "execution.unsupported_flow",
+        )
+
     async def test_run_rejects_strict_result_with_nested_suspension(
         self,
     ) -> None:
@@ -1543,6 +1877,754 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(resolution_contexts, [])
         self.assertEqual(agent_runner.contexts, [])
+        self.assertFalse(
+            runner.supports_durable_suspension(TaskTargetType.FLOW)
+        )
+        self.assertFalse(runner.supports_durable_resume(TaskTargetType.FLOW))
+
+    async def test_strict_flow_attached_runtime_bypasses_durable_state(
+        self,
+    ) -> None:
+        root = AttachedInteractionRuntime(
+            broker=cast(Any, _NestedAttachedBroker()),
+            actor=InteractionActor(principal=PrincipalScope()),
+            handler=cast(Any, _unused_nested_handler),
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _NestedInputAgentRunner(
+            runtime=root,
+            initial=completed_task_target_outcome("attached result"),
+            durable=True,
+        )
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            agent_runner=cast(Any, agent_runner),
+        )
+        context = replace(
+            self._context(
+                input_value="safe",
+                task_store=InMemoryTaskStore(),
+            ),
+            interaction_runtime=root,
+        )
+
+        result = await runner.run(context)
+
+        self.assertEqual(
+            result,
+            completed_task_target_outcome("attached result"),
+        )
+        self.assertFalse(
+            runner.supports_durable_suspension(TaskTargetType.FLOW)
+        )
+        self.assertEqual(len(agent_runner.contexts), 1)
+        child = agent_runner.contexts[0].interaction_runtime
+        assert isinstance(child, AttachedInteractionRuntime)
+        self.assertEqual(child.run_id, root.run_id)
+        self.assertEqual(child.task_id, root.task_id)
+        self.assertIsNotNone(child.branch_id)
+        self.assertIsNotNone(child.parent_branch_id)
+        self.assertNotEqual(child.branch_id, child.parent_branch_id)
+        self.assertEqual(child.context_label, "flow-task / child")
+
+    async def test_strict_flow_serializes_parallel_durable_input(
+        self,
+    ) -> None:
+        first = _nested_suspension("parallel-first")
+        second = _nested_suspension("parallel-second")
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _ParallelNestedInputAgentRunner(
+            runtime=runtime,
+            initial={
+                "agents/safe.toml": completed_task_target_outcome(
+                    "safe result"
+                ),
+                "agents/first.toml": first,
+                "agents/second.toml": second,
+            },
+            resumed={
+                "agents/first.toml": completed_task_target_outcome(
+                    "first result"
+                ),
+                "agents/second.toml": completed_task_target_outcome(
+                    "second result"
+                ),
+            },
+        )
+        flow_store = InMemoryFlowStateStore()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: (
+                _strict_parallel_nested_agent_definition()
+            ),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+            concurrency_limit=2,
+        )
+        context = self._context(
+            input_value="safe",
+            task_store=InMemoryTaskStore(),
+        )
+
+        first_result = await runner.run(context)
+        first_record = await flow_store.get_flow_execution("run-1")
+
+        self.assertIs(first_result, first)
+        self.assertEqual(
+            agent_runner.run_refs,
+            ["agents/safe.toml", "agents/first.toml"],
+        )
+        self.assertEqual(
+            {node.node: node.state for node in first_record.trace.nodes},
+            {
+                "start": FlowNodeState.SUCCEEDED,
+                "safe": FlowNodeState.SUCCEEDED,
+                "first": FlowNodeState.PAUSED,
+                "second": FlowNodeState.PENDING,
+                "finish": FlowNodeState.PENDING,
+            },
+        )
+        self.assertEqual(
+            dict(first_record.node_outputs),
+            {
+                "start": {"value": "safe"},
+                "safe": {"result": "safe result"},
+            },
+        )
+        first_pauses = cast(
+            Mapping[str, object],
+            first_record.metadata["task_input_pauses"],
+        )
+        self.assertEqual(tuple(first_pauses), ("first",))
+        child_runtimes = [
+            item.interaction_runtime for item in agent_runner.contexts
+        ]
+        self.assertTrue(
+            all(
+                isinstance(item, DurableInteractionRuntime)
+                for item in child_runtimes
+            )
+        )
+        child_branches = {
+            cast(DurableInteractionRuntime, item).branch_id
+            for item in child_runtimes
+        }
+        parent_branches = {
+            cast(DurableInteractionRuntime, item).parent_branch_id
+            for item in child_runtimes
+        }
+        self.assertEqual(len(child_branches), 2)
+        self.assertEqual(len(parent_branches), 1)
+
+        first_handle = _FlowResumeHandle(first)
+        second_result = await runner.resume(
+            replace(
+                context,
+                durable_resume=cast(Any, first_handle),
+            ),
+            cast(Any, first_handle),
+        )
+        second_record = await flow_store.get_flow_execution("run-1")
+
+        self.assertIs(second_result, second)
+        self.assertEqual(
+            agent_runner.run_refs,
+            [
+                "agents/safe.toml",
+                "agents/first.toml",
+                "agents/second.toml",
+            ],
+        )
+        self.assertEqual(
+            agent_runner.resume_refs,
+            ["agents/first.toml"],
+        )
+        self.assertEqual(
+            {node.node: node.state for node in second_record.trace.nodes},
+            {
+                "start": FlowNodeState.SUCCEEDED,
+                "safe": FlowNodeState.SUCCEEDED,
+                "first": FlowNodeState.SUCCEEDED,
+                "second": FlowNodeState.PAUSED,
+                "finish": FlowNodeState.PENDING,
+            },
+        )
+        second_pauses = cast(
+            Mapping[str, object],
+            second_record.metadata["task_input_pauses"],
+        )
+        self.assertEqual(tuple(second_pauses), ("second",))
+
+        second_handle = _FlowResumeHandle(second)
+        completed = await runner.resume(
+            replace(
+                context,
+                durable_resume=cast(Any, second_handle),
+            ),
+            cast(Any, second_handle),
+        )
+        final_record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(
+            completed,
+            completed_task_target_outcome("safe result"),
+        )
+        self.assertEqual(
+            agent_runner.run_refs,
+            [
+                "agents/safe.toml",
+                "agents/first.toml",
+                "agents/second.toml",
+            ],
+        )
+        self.assertEqual(
+            agent_runner.resume_refs,
+            ["agents/first.toml", "agents/second.toml"],
+        )
+        self.assertNotIn("task_input_pauses", final_record.metadata)
+        self.assertEqual(
+            {node.node: node.attempts for node in final_record.trace.nodes},
+            {
+                "start": 1,
+                "safe": 1,
+                "first": 1,
+                "second": 1,
+                "finish": 1,
+            },
+        )
+
+    async def test_strict_flow_reconstructs_and_resumes_exact_agent_node(
+        self,
+    ) -> None:
+        suspension = _nested_suspension("first")
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _NestedInputAgentRunner(
+            runtime=runtime,
+            initial=suspension,
+            resumed=[completed_task_target_outcome("resumed answer")],
+            durable=True,
+        )
+        flow_store = InMemoryFlowStateStore()
+        initial_runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+        )
+        context = self._context(
+            input_value="safe",
+            task_store=InMemoryTaskStore(),
+        )
+
+        first = await initial_runner.run(context)
+        self.assertIs(first, suspension)
+        paused = await flow_store.get_flow_execution("run-1")
+        self.assertEqual(paused.trace.nodes[0].state, FlowNodeState.PAUSED)
+        self.assertEqual(paused.trace.nodes[0].attempts, 1)
+
+        handle = _FlowResumeHandle(suspension)
+        reconstructed = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+        )
+        resumed = await reconstructed.resume(
+            replace(context, durable_resume=cast(Any, handle)),
+            cast(Any, handle),
+        )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(
+            resumed,
+            completed_task_target_outcome("resumed answer"),
+        )
+        self.assertEqual(len(agent_runner.contexts), 1)
+        self.assertEqual(len(agent_runner.resume_contexts), 1)
+        self.assertEqual(
+            {node.node: node.state for node in record.trace.nodes},
+            {
+                "child": FlowNodeState.SUCCEEDED,
+                "finish": FlowNodeState.SUCCEEDED,
+            },
+        )
+        self.assertEqual(record.trace.nodes[0].attempts, 1)
+        self.assertEqual(
+            dict(record.selected_outputs),
+            {"answer": "resumed answer"},
+        )
+        self.assertNotIn("task_input_pauses", record.metadata)
+
+    async def test_strict_flow_repeat_suspension_never_retries_agent_node(
+        self,
+    ) -> None:
+        first = _nested_suspension("repeat-one")
+        second = _nested_suspension("repeat-two")
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _NestedInputAgentRunner(
+            runtime=runtime,
+            initial=first,
+            resumed=[second],
+            durable=True,
+        )
+        flow_store = InMemoryFlowStateStore()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+        )
+        context = self._context(
+            input_value="safe",
+            task_store=InMemoryTaskStore(),
+        )
+        self.assertIs(await runner.run(context), first)
+
+        handle = _FlowResumeHandle(first)
+        repeated = await runner.resume(
+            replace(context, durable_resume=cast(Any, handle)),
+            cast(Any, handle),
+        )
+        record = await flow_store.get_flow_execution("run-1")
+        pause = cast(
+            Mapping[str, object],
+            cast(
+                Mapping[str, object],
+                record.metadata["task_input_pauses"],
+            )["child"],
+        )
+
+        self.assertIs(repeated, second)
+        self.assertEqual(len(agent_runner.contexts), 1)
+        self.assertEqual(len(agent_runner.resume_contexts), 1)
+        self.assertEqual(record.trace.nodes[0].state, FlowNodeState.PAUSED)
+        self.assertEqual(record.trace.nodes[0].attempts, 1)
+        self.assertEqual(pause["request_id"], "request-repeat-two")
+        self.assertEqual(
+            pause["continuation_id"],
+            "continuation-repeat-two",
+        )
+        self.assertEqual(pause["checkpoint_id"], "checkpoint-repeat-two")
+
+    async def test_strict_flow_rejects_mismatched_resume_refs_fail_closed(
+        self,
+    ) -> None:
+        suspension = _nested_suspension("mismatch")
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _NestedInputAgentRunner(
+            runtime=runtime,
+            initial=suspension,
+            resumed=[completed_task_target_outcome("must not resume")],
+            durable=True,
+        )
+        flow_store = InMemoryFlowStateStore()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+        )
+        context = self._context(
+            input_value="safe",
+            task_store=InMemoryTaskStore(),
+        )
+        await runner.run(context)
+        handle = _FlowResumeHandle(suspension)
+        handle.continuation_id = "continuation-forged"
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.resume(
+                replace(context, durable_resume=cast(Any, handle)),
+                cast(Any, handle),
+            )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(
+            error.exception.issues[0].code,
+            "flow.execution.invalid_task_input_resume",
+        )
+        self.assertEqual(agent_runner.resume_contexts, [])
+        self.assertEqual(record.trace.nodes[0].state, FlowNodeState.PAUSED)
+        self.assertEqual(record.trace.nodes[0].attempts, 1)
+
+    async def test_strict_flow_resume_rejects_invalid_entry_boundaries(
+        self,
+    ) -> None:
+        (
+            suspension,
+            _,
+            _,
+            supported,
+            context,
+        ) = self._durable_nested_resume_setup(
+            suffix="boundaries",
+            resumed=[completed_task_target_outcome("unused")],
+        )
+        handle = _FlowResumeHandle(suspension)
+        other_handle = _FlowResumeHandle(_nested_suspension("other"))
+
+        with self.assertRaises(TaskValidationError) as context_error:
+            await supported.resume(
+                replace(
+                    context,
+                    durable_resume=cast(Any, other_handle),
+                ),
+                cast(Any, handle),
+            )
+        unsupported = FlowTaskTargetRunner()
+        with self.assertRaises(TaskValidationError) as capability_error:
+            await unsupported.resume(
+                replace(context, durable_resume=cast(Any, handle)),
+                cast(Any, handle),
+            )
+        with self.assertRaises(TaskValidationError) as state_error:
+            await supported.resume(
+                replace(context, durable_resume=cast(Any, handle)),
+                cast(Any, handle),
+            )
+
+        self.assertEqual(
+            context_error.exception.issues[0].code,
+            "flow.execution.invalid_task_input_resume",
+        )
+        self.assertEqual(
+            capability_error.exception.issues[0].code,
+            "execution.unsupported_flow",
+        )
+        self.assertEqual(
+            state_error.exception.issues[0].code,
+            "flow.execution.invalid_task_input_resume",
+        )
+
+    async def test_strict_flow_resume_rejects_unknown_persisted_node(
+        self,
+    ) -> None:
+        (
+            suspension,
+            agent_runner,
+            flow_store,
+            runner,
+            context,
+        ) = self._durable_nested_resume_setup(
+            suffix="unknown-node",
+            resumed=[completed_task_target_outcome("must not resume")],
+        )
+        await runner.run(context)
+        record = await flow_store.get_flow_execution("run-1")
+        pause = flow_target_module._flow_task_input_pause(suspension)
+
+        with self.assertRaises(TaskValidationError) as missing_metadata:
+            flow_target_module._strict_record_task_input_pause(
+                replace(record, metadata={})
+            )
+        with self.assertRaises(TaskValidationError) as mismatched_metadata:
+            flow_target_module._strict_record_task_input_pause(
+                replace(
+                    record,
+                    metadata={
+                        "task_input_pauses": {
+                            "child": {
+                                **dict(pause.as_metadata()),
+                                "checkpoint_id": "checkpoint-forged",
+                            }
+                        }
+                    },
+                )
+            )
+
+        unknown_trace = flow_target_module.flow_trace_with_task_input_pauses(
+            record.trace,
+            {"missing": pause},
+        )
+        unknown_record = replace(
+            record,
+            trace=unknown_trace,
+            metadata={
+                "task_input_pauses": {
+                    "missing": pause.as_metadata(),
+                }
+            },
+        )
+        handle = _FlowResumeHandle(suspension)
+        with (
+            patch.object(
+                runner,
+                "_strict_flow_record",
+                return_value=unknown_record,
+            ),
+            self.assertRaises(TaskValidationError) as node_error,
+        ):
+            await runner.resume(
+                replace(context, durable_resume=cast(Any, handle)),
+                cast(Any, handle),
+            )
+
+        for error in (
+            missing_metadata,
+            mismatched_metadata,
+            node_error,
+        ):
+            self.assertEqual(
+                error.exception.issues[0].code,
+                "flow.execution.invalid_task_input_resume",
+            )
+        self.assertEqual(agent_runner.resume_contexts, [])
+
+    async def test_strict_flow_resume_revalidates_task_input(self) -> None:
+        (
+            suspension,
+            agent_runner,
+            flow_store,
+            runner,
+            context,
+        ) = self._durable_nested_resume_setup(
+            suffix="invalid-input",
+            resumed=[completed_task_target_outcome("unused")],
+        )
+        await runner.run(context)
+        handle = _FlowResumeHandle(suspension)
+        events: list[Event] = []
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.resume(
+                replace(
+                    context,
+                    input_value={"not": "a string"},
+                    durable_resume=cast(Any, handle),
+                    event_listener=events.append,
+                ),
+                cast(Any, handle),
+            )
+        record = await flow_store.get_flow_execution("run-1")
+
+        self.assertEqual(agent_runner.resume_contexts, [])
+        self.assertEqual(events, [])
+        self.assertEqual(record.trace.nodes[0].state, FlowNodeState.PAUSED)
+        self.assertEqual(error.exception.issues[0].path, "input")
+
+    async def test_strict_flow_resume_rejects_runtime_resume_failures(
+        self,
+    ) -> None:
+        (
+            suspension,
+            _,
+            _,
+            runner,
+            context,
+        ) = self._durable_nested_resume_setup(
+            suffix="runtime-failures",
+            resumed=[
+                completed_task_target_outcome("first"),
+                completed_task_target_outcome("second"),
+                completed_task_target_outcome("third"),
+            ],
+        )
+        await runner.run(context)
+        handle = _FlowResumeHandle(suspension)
+        resume_context = replace(
+            context,
+            durable_resume=cast(Any, handle),
+        )
+        invalid_resume = FlowDiagnostic(
+            code="flow.execution.invalid_task_input_resume",
+            category=FlowDiagnosticCategory.TASK_DURABILITY,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Invalid nested resume.",
+            path="nodes.child.task_input",
+        )
+        failed = FlowDiagnostic(
+            code="flow.execution.node_failed",
+            category=FlowDiagnosticCategory.TASK_DURABILITY,
+            severity=FlowDiagnosticSeverity.ERROR,
+            message="Nested flow failed.",
+            path="nodes.finish",
+        )
+        results = iter(
+            (
+                SimpleNamespace(diagnostics=(invalid_resume,)),
+                SimpleNamespace(
+                    diagnostics=(),
+                    trace=FlowExecutionTrace(
+                        nodes=(FlowNodeTrace(node="child"),)
+                    ),
+                    outputs={},
+                    node_outputs={},
+                    pause_tokens={"review": "token"},
+                    task_input_pauses={},
+                    ok=True,
+                ),
+                SimpleNamespace(
+                    diagnostics=(failed,),
+                    trace=FlowExecutionTrace(
+                        nodes=(FlowNodeTrace(node="child"),)
+                    ),
+                    outputs={},
+                    node_outputs={},
+                    pause_tokens={},
+                    task_input_pauses={},
+                    ok=False,
+                ),
+            )
+        )
+
+        async def execute_result(*_: object, **__: object) -> object:
+            return next(results)
+
+        async def ignore_state(*_: object, **__: object) -> None:
+            return None
+
+        errors: list[TaskValidationError] = []
+        with (
+            patch.object(
+                flow_target_module,
+                "execute_flow_plan",
+                execute_result,
+            ),
+            patch.object(
+                runner,
+                "_record_strict_flow_state",
+                ignore_state,
+            ),
+        ):
+            for _ in range(3):
+                with self.assertRaises(TaskValidationError) as error:
+                    await runner.resume(
+                        resume_context,
+                        cast(Any, handle),
+                    )
+                errors.append(error.exception)
+
+        self.assertEqual(
+            [error.issues[0].code for error in errors],
+            [
+                "flow.execution.invalid_task_input_resume",
+                "flow.execution.paused",
+                "flow.execution.node_failed",
+            ],
+        )
+
+    async def test_strict_flow_resume_revalidates_completed_output(
+        self,
+    ) -> None:
+        (
+            suspension,
+            agent_runner,
+            _,
+            runner,
+            context,
+        ) = self._durable_nested_resume_setup(
+            suffix="invalid-output",
+            resumed=[completed_task_target_outcome(42)],
+        )
+        await runner.run(context)
+        handle = _FlowResumeHandle(suspension)
+
+        with self.assertRaises(TaskValidationError) as error:
+            await runner.resume(
+                replace(context, durable_resume=cast(Any, handle)),
+                cast(Any, handle),
+            )
+
+        self.assertEqual(len(agent_runner.resume_contexts), 1)
+        self.assertEqual(error.exception.issues[0].path, "output")
+
+    async def test_strict_interaction_runtime_fails_closed(self) -> None:
+        context = self._context(input_value="safe")
+        missing_protocol = FlowTaskTargetRunner(
+            agent_runner=CapturingTaskTargetRunner(durable_suspension=True)
+        )
+        with self.assertRaises(TaskValidationError) as protocol_error:
+            await missing_protocol._strict_interaction_runtime(context)
+
+        missing_runtime_agent = _NestedInputAgentRunner(
+            runtime=cast(Any, None),
+            initial=completed_task_target_outcome("unused"),
+            durable=True,
+        )
+        missing_runtime = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=InMemoryFlowStateStore(),
+            agent_runner=cast(Any, missing_runtime_agent),
+        )
+        with self.assertRaises(TaskValidationError) as runtime_error:
+            await missing_runtime._strict_interaction_runtime(context)
+
+        durable_runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        unsupported_runtime = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            agent_runner=cast(
+                Any,
+                _NestedInputAgentRunner(
+                    runtime=durable_runtime,
+                    initial=completed_task_target_outcome("unused"),
+                    durable=True,
+                ),
+            ),
+        )
+        with self.assertRaises(TaskValidationError) as durability_error:
+            await unsupported_runtime._strict_interaction_runtime(context)
+
+        for error in (
+            protocol_error,
+            runtime_error,
+            durability_error,
+        ):
+            self.assertEqual(
+                error.exception.issues[0].code,
+                "execution.unsupported_flow",
+            )
+
+    def test_task_input_pause_helpers_reject_unresumable_state(self) -> None:
+        suspension = _nested_suspension("helper")
+        live = FlowTaskInputPause(
+            request_id="request-helper",
+            continuation_id="continuation-helper",
+            checkpoint_id="checkpoint-helper",
+            outcome=suspension,
+        )
+        unavailable = replace(live, outcome=None)
+
+        with self.assertRaises(TaskValidationError) as ambiguous:
+            flow_target_module._single_flow_task_input_suspension(
+                {
+                    "one": live,
+                    "two": live,
+                }
+            )
+        with self.assertRaises(TaskValidationError) as missing_outcome:
+            flow_target_module._single_flow_task_input_suspension(
+                {"one": unavailable}
+            )
+
+        self.assertEqual(
+            ambiguous.exception.issues[0].code,
+            "execution.unsupported_flow",
+        )
+        self.assertEqual(
+            missing_outcome.exception.issues[0].code,
+            "execution.unsupported_flow",
+        )
 
     async def test_run_rejects_unadvertised_nested_suspension_as_failure(
         self,
@@ -6147,6 +7229,43 @@ class FlowTaskTargetRunnerExecutionTest(IsolatedAsyncioTestCase):
         )
         return context, file, task_store
 
+    def _durable_nested_resume_setup(
+        self,
+        *,
+        suffix: str,
+        resumed: list[TaskTargetOutcome],
+    ) -> tuple[
+        TaskTargetSuspended,
+        _NestedInputAgentRunner,
+        InMemoryFlowStateStore,
+        FlowTaskTargetRunner,
+        TaskTargetContext,
+    ]:
+        suspension = _nested_suspension(suffix)
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=PrincipalScope()),
+            stager=_unused_nested_stager,
+            run_id=RunId("run-1"),
+            task_id=TaskId("run-1"),
+        )
+        agent_runner = _NestedInputAgentRunner(
+            runtime=runtime,
+            initial=suspension,
+            resumed=resumed,
+            durable=True,
+        )
+        flow_store = InMemoryFlowStateStore()
+        runner = FlowTaskTargetRunner(
+            strict_resolver=lambda _: _strict_nested_agent_definition(),
+            flow_state_store=flow_store,
+            agent_runner=cast(Any, agent_runner),
+        )
+        context = self._context(
+            input_value="safe",
+            task_store=InMemoryTaskStore(),
+        )
+        return suspension, agent_runner, flow_store, runner, context
+
     def _context(
         self,
         *,
@@ -7748,6 +8867,118 @@ def _strict_two_step_definition() -> FlowDefinition:
             FlowEdgeDefinition(
                 source="start",
                 target="answer",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_nested_agent_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="task-nested-agent",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="child"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "finish.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="child",
+                type="agent",
+                ref="agents/child.toml",
+                mappings=(
+                    FlowInputMapping(
+                        target="input",
+                        source="input.prompt",
+                    ),
+                ),
+            ),
+            FlowNodeDefinition(
+                name="finish",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(
+                        target="value",
+                        source="child.result",
+                    ),
+                ),
+            ),
+        ),
+        edges=(
+            FlowEdgeDefinition(
+                source="child",
+                target="finish",
+                kind=FlowEdgeKind.SUCCESS,
+            ),
+        ),
+    )
+
+
+def _strict_parallel_nested_agent_definition() -> FlowDefinition:
+    return FlowDefinition(
+        name="task-parallel-nested-agent",
+        version="1",
+        inputs=(
+            FlowInputDefinition(name="prompt", type=FlowInputType.STRING),
+        ),
+        outputs=(
+            FlowOutputDefinition(name="answer", type=FlowOutputType.TEXT),
+        ),
+        entry_behavior=FlowEntryBehavior(node="start"),
+        output_behavior=FlowOutputBehavior(outputs={"answer": "finish.value"}),
+        nodes=(
+            FlowNodeDefinition(
+                name="start",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(
+                        target="value",
+                        source="input.prompt",
+                    ),
+                ),
+            ),
+            *(
+                FlowNodeDefinition(
+                    name=name,
+                    type="agent",
+                    ref=f"agents/{name}.toml",
+                    mappings=(
+                        FlowInputMapping(
+                            target="input",
+                            source="start.value",
+                        ),
+                    ),
+                )
+                for name in ("safe", "first", "second")
+            ),
+            FlowNodeDefinition(
+                name="finish",
+                type="pass-through",
+                mappings=(
+                    FlowInputMapping(
+                        target="value",
+                        source="safe.result",
+                    ),
+                ),
+            ),
+        ),
+        edges=(
+            *(
+                FlowEdgeDefinition(
+                    source="start",
+                    target=name,
+                    kind=FlowEdgeKind.SUCCESS,
+                    routing_policy=FlowRouteMatchPolicy.ALL_MATCHING,
+                )
+                for name in ("safe", "first", "second")
+            ),
+            FlowEdgeDefinition(
+                source="safe",
+                target="finish",
                 kind=FlowEdgeKind.SUCCESS,
             ),
         ),

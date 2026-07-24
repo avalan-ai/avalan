@@ -44,7 +44,9 @@ from avalan.interaction.entities import (
     ContinuationId,
     InputRequestId,
     InputRequiredResult,
+    InteractionStoreRevision,
     PrincipalScope,
+    RunId,
     TaskId,
     UserId,
     create_input_request,
@@ -62,6 +64,9 @@ from avalan.interaction.state import (
 )
 from avalan.interaction.store import (
     _SCOPE_RESULT_TOKEN,
+    InteractionBranchRecord,
+    InteractionBranchRegistrationApplied,
+    RegisterInteractionBranchCommand,
     ScopeCancellationReplayed,
     TerminalizeInteractionScopeCommand,
 )
@@ -502,6 +507,54 @@ class _FlakyWaitingBroker:
                 _token=_SCOPE_RESULT_TOKEN,
             )
         )
+
+
+class _BranchTreeBroker(_FlakyWaitingBroker):
+    """Record subtree cancellation while retaining adjacent branches."""
+
+    def __init__(self) -> None:
+        super().__init__(cleanup_failures=0)
+        self.parents = {
+            "root": None,
+            "child": "root",
+            "grandchild": "child",
+            "sibling": "root",
+        }
+        self.states = {branch: "open" for branch in self.parents}
+
+    async def register_branch(
+        self,
+        command: RegisterInteractionBranchCommand,
+    ) -> InteractionBrokerResult:
+        return InteractionBrokerResult(
+            store_result=InteractionBranchRegistrationApplied(
+                command=command,
+                record=InteractionBranchRecord(
+                    registration=command.registration,
+                    store_revision=InteractionStoreRevision(1),
+                ),
+            )
+        )
+
+    async def cancel_scope(
+        self,
+        command: TerminalizeInteractionScopeCommand,
+    ) -> InteractionBrokerResult:
+        selected = {str(command.scope.branch_id)}
+        if command.scope.include_descendants:
+            while True:
+                descendants = {
+                    branch
+                    for branch, parent in self.parents.items()
+                    if parent in selected
+                }
+                expanded = selected | descendants
+                if expanded == selected:
+                    break
+                selected = expanded
+        for branch in selected:
+            self.states[branch] = "cancelled"
+        return await super().cancel_scope(command)
 
 
 class _CapabilitySource(AsyncIterator[CanonicalStreamItem]):
@@ -1263,6 +1316,59 @@ class OrchestratorCleanupOwnershipTest(IsolatedAsyncioTestCase):
                 await gather(consumer, return_exceptions=True)
             if not harness.exited:
                 await harness.close()
+
+    async def test_prebound_exact_cleanup_preserves_adjacent_branches(
+        self,
+    ) -> None:
+        source = _CleanupSource()
+        broker = _BranchTreeBroker()
+        harness = _Harness(
+            _ModelManager(lambda _call: _cleanup_response(source))
+        )
+        runtime = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, broker),
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("tree-user"))
+            ),
+            handler=cast(InputHandler, _WaitingHandler()),
+            run_id=RunId("tree-run"),
+            task_id=TaskId("tree-task"),
+            branch_id=BranchId("child"),
+            parent_branch_id=BranchId("root"),
+        )
+        response = await harness.orchestrator(
+            "nested cleanup",
+            interaction_runtime=runtime,
+        )
+        execution = response.execution
+        assert execution is not None
+
+        try:
+            self.assertTrue(await execution.cancel())
+            await gather(
+                response._finalize_interaction_cleanup(execution),
+                response._finalize_interaction_cleanup(execution),
+                response._finalize_interaction_cleanup(execution),
+            )
+
+            self.assertEqual(broker.cancel_scope_attempts, 1)
+            self.assertEqual(len(broker.cancel_scope_commands), 1)
+            command = broker.cancel_scope_commands[0]
+            self.assertEqual(command.scope.branch_id, "child")
+            self.assertFalse(command.scope.include_descendants)
+            self.assertEqual(
+                broker.states,
+                {
+                    "root": "open",
+                    "child": "cancelled",
+                    "grandchild": "open",
+                    "sibling": "open",
+                },
+            )
+            self.assertTrue(execution.snapshot.cleanup_started)
+        finally:
+            await response.aclose()
+            await harness.close()
 
     async def test_unowned_close_retry_retains_owner_until_public_sync(
         self,
