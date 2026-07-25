@@ -19,6 +19,11 @@ from ....entities import (
 )
 from ....event import Event, EventObservabilityPayload, EventType
 from ....event.manager import EventManager
+from ....interaction.a2a_continuation import (
+    A2AInputRequiredError,
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
+)
 from ....interaction.broker import (
     InteractionBrokerRequest,
     InteractionRequestResult,
@@ -99,6 +104,7 @@ from ....tool_cycles import (
     MaximumToolCycles,
     validate_maximum_tool_cycles,
 )
+from ....types import JsonValue
 from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
 from ...engine import EngineAgent
@@ -135,7 +141,15 @@ from inspect import Signature, isawaitable, signature
 from json import JSONDecodeError, dumps, loads
 from queue import Full, Queue
 from time import perf_counter
-from typing import Any, AsyncIterator, Awaitable, Callable, TypeVar, cast
+from typing import (
+    Any,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    NoReturn,
+    TypeVar,
+    cast,
+)
 from uuid import UUID, uuid4
 
 _ToolConfirmationAction = Awaitable[str | bool | None] | str | bool | None
@@ -2733,70 +2747,17 @@ class OrchestratorResponse(
             self._pending_interaction_published = False
             runtime = execution.interaction_runtime
             if isinstance(runtime, DurableInteractionRuntime):
-                try:
-                    staging = self._durable_staging_context(call, execution)
-                    request_spec = InteractionBrokerRequest(
+                await self._stage_durable_interaction(
+                    InteractionBrokerRequest(
                         actor=runtime.actor,
                         origin=execution.origin,
                         mode=call.mode,
                         reason=call.reason,
                         questions=call.questions,
                         context_label=runtime.context_label,
-                    )
-                    durable = await runtime.stager(
-                        request_spec,
-                        execution=execution,
-                        response=self,
-                        stream_sequence=self._canonical_sequence,
-                        staging=staging,
-                    )
-                    self._validate_durable_staging(
-                        request_spec,
-                        durable,
-                        staging=staging,
-                    )
-                except BaseException as error:
-                    try:
-                        await self._response.aclose()
-                    except BaseException as cleanup_failure:
-                        self._attach_cleanup_failures(
-                            error,
-                            [cleanup_failure],
-                        )
-                    raise
-                await self._response.aclose()
-                self._response_drained = True
-                request = durable.command.request
-                required = InputRequiredResult(
-                    request_id=request.request_id,
-                    continuation_id=request.continuation_id,
-                    detached_resumption_available=True,
-                )
-                await execution.stage_durable_input_required(
-                    request,
-                    required,
-                )
-                self._active_interaction_request = request
-                self._input_required_result = required
-                terminal_index = len(self._canonical_items)
-                self._finish_canonical_stream(
-                    StreamItemKind.STREAM_INPUT_REQUIRED,
-                    correlation=self._interaction_correlation(request),
-                )
-                terminal_item = self._canonical_items[terminal_index]
-                assert (
-                    terminal_item.kind is StreamItemKind.STREAM_INPUT_REQUIRED
-                )
-                if self._event_manager is not None:
-                    await self._event_manager.trigger_stream_item(
-                        terminal_item
-                    )
-                self._pending_interaction_call = None
-                self._pending_interaction_assistant_text = ""
-                raise ExecutionInputRequiredError(
-                    required,
-                    request=request,
-                    durable=durable,
+                    ),
+                    call,
+                    execution,
                 )
             assert isinstance(runtime, AttachedInteractionRuntime)
 
@@ -2830,6 +2791,70 @@ class OrchestratorResponse(
             if execution.status is AgentExecutionStatus.PREPARING_INPUT:
                 await execution.abandon_interaction()
             raise
+
+    async def _stage_durable_interaction(
+        self,
+        request_spec: InteractionBrokerRequest,
+        call: TaskInputCapabilityCall | A2AToolContinuationCheckpoint,
+        execution: AgentExecution,
+        *,
+        tool_input: bool = False,
+    ) -> NoReturn:
+        """Stage and expose one durable interaction suspension."""
+        runtime = execution.interaction_runtime
+        assert isinstance(runtime, DurableInteractionRuntime)
+        try:
+            staging = self._durable_staging_context(call, execution)
+            durable = await runtime.stager(
+                request_spec,
+                execution=execution,
+                response=self,
+                stream_sequence=self._canonical_sequence,
+                staging=staging,
+            )
+            self._validate_durable_staging(
+                request_spec,
+                durable,
+                staging=staging,
+            )
+        except BaseException as error:
+            try:
+                await self._response.aclose()
+            except BaseException as cleanup_failure:
+                self._attach_cleanup_failures(error, [cleanup_failure])
+            raise
+        await self._response.aclose()
+        self._response_drained = True
+        request = durable.command.request
+        required = InputRequiredResult(
+            request_id=request.request_id,
+            continuation_id=request.continuation_id,
+            detached_resumption_available=True,
+        )
+        await execution.stage_durable_input_required(
+            request,
+            required,
+            tool_input=tool_input,
+        )
+        if not tool_input:
+            self._pending_interaction_call = None
+            self._pending_interaction_assistant_text = ""
+        self._active_interaction_request = request
+        self._input_required_result = required
+        terminal_index = len(self._canonical_items)
+        self._finish_canonical_stream(
+            StreamItemKind.STREAM_INPUT_REQUIRED,
+            correlation=self._interaction_correlation(request),
+        )
+        terminal_item = self._canonical_items[terminal_index]
+        assert terminal_item.kind is StreamItemKind.STREAM_INPUT_REQUIRED
+        if self._event_manager is not None:
+            await self._event_manager.trigger_stream_item(terminal_item)
+        raise ExecutionInputRequiredError(
+            required,
+            request=request,
+            durable=durable,
+        )
 
     @staticmethod
     def _validate_durable_staging(
@@ -2883,7 +2908,7 @@ class OrchestratorResponse(
 
     def _durable_staging_context(
         self,
-        call: TaskInputCapabilityCall,
+        call: TaskInputCapabilityCall | A2AToolContinuationCheckpoint,
         execution: AgentExecution,
     ) -> DurableInteractionStagingContext:
         """Export one provider-owned replay snapshot before source close."""
@@ -2910,7 +2935,15 @@ class OrchestratorResponse(
             continuation_id,
             dispatch_id,
         )
+        checkpoint = (
+            call if isinstance(call, A2AToolContinuationCheckpoint) else None
+        )
+        task_input_call = (
+            call if isinstance(call, TaskInputCapabilityCall) else None
+        )
         correlation_id = str(call.call_id)
+        provider_name = call.provider_name
+        arguments = call.arguments
         snapshot = adapter.export_continuation_snapshot(
             revision_binding=binding,
             model_call_id=execution.origin.model_call_id,
@@ -2921,15 +2954,16 @@ class OrchestratorResponse(
             snapshot,
             expected_binding=binding,
             provider_call_correlation_id=correlation_id,
-            expected_provider_name=call.provider_name,
-            expected_arguments=call.arguments,
+            expected_provider_name=provider_name,
+            expected_arguments=arguments,
         )
         if snapshot.model_call_id != execution.origin.model_call_id:
             raise RuntimeError(
                 "provider snapshot changed the execution model call"
             )
         return DurableInteractionStagingContext(
-            task_input_call=call,
+            task_input_call=task_input_call,
+            a2a_checkpoint=checkpoint,
             continuation_id=continuation_id,
             dispatch_id=dispatch_id,
             revision_binding=binding,
@@ -3458,6 +3492,7 @@ class OrchestratorResponse(
                     abort_on_reject=abort_on_reject,
                     emit_ready=emit_ready,
                     planned_index=0,
+                    allow_durable_input=True,
                 )
             ]
 
@@ -3480,6 +3515,7 @@ class OrchestratorResponse(
                     emit_ready=emit_ready,
                     planned_index=index,
                     finish_stream_on_error=False,
+                    allow_durable_input=False,
                 )
             )
             tasks.append(task)
@@ -3560,6 +3596,7 @@ class OrchestratorResponse(
         emit_ready: bool,
         planned_index: int,
         finish_stream_on_error: bool = True,
+        allow_durable_input: bool = False,
     ) -> _ToolExecutionOutcome:
         if emit_ready:
             self._append_canonical_tool_call_ready(call)
@@ -3608,6 +3645,7 @@ class OrchestratorResponse(
         context = self._new_tool_context(
             self._tool_context.input if self._tool_context else None,
             stream_event=self._make_tool_stream_event_callback(call),
+            durable_a2a_input=allow_durable_input,
         )
 
         try:
@@ -3624,6 +3662,13 @@ class OrchestratorResponse(
             if finish_stream_on_error:
                 self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
+        except ExecutionInputRequiredError:
+            raise
+        except A2AInputRequiredError as required:
+            await self._stage_durable_a2a_input(
+                call,
+                required.continuation,
+            )
         except Exception as exc:
             self._append_canonical_tool_execution_error(call, exc)
             if finish_stream_on_error:
@@ -5033,6 +5078,50 @@ class OrchestratorResponse(
         self._context = context
         return context
 
+    async def _stage_durable_a2a_input(
+        self,
+        call: ToolCall,
+        remote: A2ARemoteInputContinuation,
+    ) -> NoReturn:
+        """Stage one A2A tool checkpoint through the durable coordinator."""
+        execution = self._execution
+        if execution is None:
+            raise RuntimeError("durable A2A input requires an execution")
+        runtime = execution.interaction_runtime
+        if not isinstance(runtime, DurableInteractionRuntime):
+            raise RuntimeError("durable A2A input route is unavailable")
+        provider_call = self._provider_facing_tool_call(call)
+        provider_name = provider_call.provider_name or provider_call.name
+        arguments = normalize_tool_arguments(provider_call.arguments or {})
+        checkpoint = A2AToolContinuationCheckpoint(
+            call_id=str(provider_call.id),
+            canonical_name=provider_call.name,
+            provider_name=provider_name,
+            provider_name_encoded=provider_call.provider_name_encoded,
+            arguments=cast(Mapping[str, JsonValue], arguments),
+            remote=remote,
+            interaction_fingerprint_counts=(
+                execution.snapshot.interaction_fingerprint_counts
+            ),
+        )
+        request_spec = InteractionBrokerRequest(
+            actor=runtime.actor,
+            origin=execution.origin,
+            mode=checkpoint.mode,
+            reason=remote.request_text,
+            questions=remote.request.questions,
+            context_label=(
+                f"A2A {arguments['name']} · task {remote.task_id}"[:80]
+            ),
+            continuation_ttl_seconds=remote.ttl_seconds,
+        )
+        await self._stage_durable_interaction(
+            request_spec,
+            checkpoint,
+            execution,
+            tool_input=True,
+        )
+
     def _new_tool_context(
         self,
         input: Input | None,
@@ -5040,6 +5129,7 @@ class OrchestratorResponse(
         stream_event: (
             Callable[[ToolExecutionStreamEvent], Awaitable[None]] | None
         ) = None,
+        durable_a2a_input: bool = False,
     ) -> ToolCallContext:
         """Return one tool context bound to this exact execution branch."""
         return ToolCallContext(
@@ -5057,6 +5147,7 @@ class OrchestratorResponse(
                 else self._context.execution_origin
             ),
             interaction_broker=self._context.interaction_broker,
+            durable_a2a_input=durable_a2a_input,
         )
 
     def _continuation_engine_args(self) -> dict[str, Any]:

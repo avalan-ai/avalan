@@ -1383,6 +1383,7 @@ class ToolCallContext:
     execution: "AgentExecution | None" = None
     execution_origin: "ExecutionOrigin | None" = None
     interaction_broker: "BranchInteractionBroker | None" = None
+    durable_a2a_input: bool = False
 
     def __post_init__(self) -> None:
         if self.skills_registry is not None:
@@ -1390,6 +1391,7 @@ class ToolCallContext:
                 self.skills_registry,
                 SkillRegistryProtocol,
             ), "skills_registry must be a skill registry"
+        assert isinstance(self.durable_a2a_input, bool)
 
 
 @final

@@ -1,14 +1,33 @@
 """Reconstruct durable agent continuations from trusted definitions."""
 
-from ..entities import Message, MessageRole
+from ..entities import (
+    Message,
+    MessageRole,
+    MessageToolCall,
+    PreparedToolCall,
+    ToolCall,
+    ToolCallContext,
+    ToolCallError,
+    ToolCallResult,
+    normalize_tool_arguments,
+)
 from ..event.manager import EventManager, Listener
+from ..interaction.a2a_continuation import (
+    A2AInputRequiredError,
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
+    project_a2a_remote_resolution,
+)
+from ..interaction.broker import InteractionBrokerRequest
 from ..interaction.continuation import (
+    PortableContinuation,
     ResolvedContinuationRuntime,
 )
 from ..interaction.entities import (
     ContinuationRevisionBinding,
     ExecutionDefinitionRef,
     InputRequiredResult,
+    RequirementMode,
     create_input_request,
 )
 from ..interaction.error import (
@@ -17,7 +36,12 @@ from ..interaction.error import (
 )
 from ..interaction.policy import InteractionActor
 from ..memory.permanent.codec import decode_message_data
-from ..model.capability import ModelCapabilityCatalog
+from ..model.capability import (
+    ModelCapabilityCatalog,
+    TaskInputCapabilityAdvertisement,
+    TaskInputCapabilityCall,
+)
+from ..tool.a2a import A2ACallTool
 from ..tool.context import ToolSettingsContext
 from ..types import JsonValue
 from . import continuation_stager as continuation_stager_module
@@ -32,6 +56,7 @@ from .execution import (
     AgentExecution,
     DurableInteractionRuntime,
     ExecutionCorrelationError,
+    ExecutionInputRequiredError,
     UuidExecutionIdFactory,
 )
 from .execution import (
@@ -46,9 +71,12 @@ from .orchestrator.response.orchestrator_response import (
 from asyncio import Lock, Task, create_task, shield
 from collections.abc import Mapping, Sequence
 from contextlib import AsyncExitStack
+from dataclasses import replace
+from hashlib import sha256
 from pathlib import Path
 from typing import NoReturn, cast, final
 from urllib.parse import unquote, urlsplit
+from uuid import UUID
 
 
 @final
@@ -199,7 +227,8 @@ class TrustedAgentContinuationExecutor:
                 "resume command targets a different continuation runtime"
             )
         continuation = command.continuation
-        transcript = _decode_transcript(continuation.transcript)
+        if command.a2a_checkpoint is not None:
+            return await self._resume_a2a_tool_continuation(command)
         (
             active_fingerprint,
             fingerprint_counts,
@@ -216,6 +245,10 @@ class TrustedAgentContinuationExecutor:
                 "continuation.observations",
                 "active interaction is absent from its counts",
             )
+        task_input_call = command.task_input_call
+        correlated_result = command.correlated_result
+        assert type(task_input_call) is TaskInputCapabilityCall
+        assert correlated_result is not None
         staged_request = create_input_request(
             request_id=command.request.request_id,
             continuation_id=command.request.continuation_id,
@@ -229,36 +262,18 @@ class TrustedAgentContinuationExecutor:
             ),
             advisory_wait_seconds=command.request.advisory_wait_seconds,
         )
-        id_factory = UuidExecutionIdFactory()
-        origin = continuation.origin
-        runtime = DurableInteractionRuntime(
-            actor=InteractionActor(principal=origin.principal),
-            stager=self._stager,
-            id_factory=id_factory,
-            run_id=origin.run_id,
-            task_id=origin.task_id,
-            branch_id=origin.branch_id,
-            parent_branch_id=origin.parent_branch_id,
-        )
-        execution = AgentExecution(
-            origin=origin,
-            id_factory=id_factory,
-            initial_messages=transcript,
-            synced_message_prefix=len(transcript),
-            interaction_runtime=runtime,
-        )
+        execution = self._reconstruct_execution(continuation)
         for fingerprint, count in sorted(fingerprint_counts.items()):
-            prior_count = count - int(fingerprint == active_fingerprint)
-            for _ in range(prior_count):
+            for _ in range(count - int(fingerprint == active_fingerprint)):
                 await execution.begin_interaction(
                     fingerprint,
-                    command.task_input_call,
+                    task_input_call,
                     assistant_message,
                 )
                 await execution.abandon_interaction()
         await execution.begin_interaction(
             active_fingerprint,
-            command.task_input_call,
+            task_input_call,
             assistant_message,
         )
         required = InputRequiredResult(
@@ -275,15 +290,263 @@ class TrustedAgentContinuationExecutor:
             command.model_result,
             (
                 assistant_message,
-                command.correlated_result.tool_result_message(
-                    command.task_input_call
-                ),
+                correlated_result.tool_result_message(task_input_call),
             ),
         )
         if not committed:
             raise ExecutionCorrelationError(
                 "durable interaction result was already committed"
             )
+        return await self._continue_model(command, execution)
+
+    async def _resume_a2a_tool_continuation(
+        self,
+        command: AgentContinuationResumeCommand,
+    ) -> OrchestratorResponse:
+        """Continue one fenced A2A tool call before resuming its model."""
+        continuation = command.continuation
+        checkpoint = command.a2a_checkpoint
+        assert type(checkpoint) is A2AToolContinuationCheckpoint
+        interaction_counts = checkpoint.interaction_fingerprint_counts
+        if (
+            sum(count for _, count in interaction_counts)
+            != continuation.interaction_count
+        ):
+            _invalid(
+                "continuation.observations",
+                "A2A interaction counts do not match the checkpoint",
+            )
+        execution = self._reconstruct_execution(continuation)
+        runtime = execution.interaction_runtime
+        assert isinstance(runtime, DurableInteractionRuntime)
+        replay_call = TaskInputCapabilityCall(
+            call_id=checkpoint.call_id,
+            provider_name=checkpoint.provider_name,
+            arguments=checkpoint.arguments,
+            mode=checkpoint.mode,
+            reason=" ".join(checkpoint.remote.request_text.split())[:500],
+            questions=checkpoint.remote.request.questions,
+            advertisement=TaskInputCapabilityAdvertisement.DURABLE,
+        )
+        replay_assistant = Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=[
+                MessageToolCall(
+                    id=checkpoint.call_id,
+                    name=checkpoint.provider_name,
+                    arguments=normalize_tool_arguments(checkpoint.arguments),
+                )
+            ],
+        )
+        remote_skill = cast(str, checkpoint.arguments["name"])
+        for fingerprint, count in interaction_counts:
+            for _ in range(count):
+                await execution.begin_interaction(
+                    fingerprint,
+                    replay_call,
+                    replay_assistant,
+                )
+                await execution.abandon_interaction()
+
+        async def restage(
+            remote: A2ARemoteInputContinuation,
+        ) -> NoReturn:
+            request = InteractionBrokerRequest(
+                actor=runtime.actor,
+                origin=execution.origin,
+                mode=(
+                    RequirementMode.REQUIRED
+                    if remote.request.required
+                    else RequirementMode.ADVISORY
+                ),
+                reason=remote.request_text,
+                questions=remote.request.questions,
+                context_label=(
+                    f"A2A {remote_skill} · task {remote.task_id}"[:80]
+                ),
+                continuation_ttl_seconds=remote.ttl_seconds,
+            )
+            fingerprint = sha256(
+                repr(
+                    (
+                        request.mode,
+                        request.reason,
+                        request.questions,
+                    )
+                ).encode()
+            ).hexdigest()
+            await execution.begin_interaction(
+                fingerprint,
+                replay_call,
+                replay_assistant,
+            )
+            try:
+                successor = await self._stager.stage_a2a_successor(
+                    request,
+                    execution=execution,
+                    previous=continuation,
+                    checkpoint=replace(checkpoint, remote=remote),
+                )
+                staged = successor.command.request
+                required = InputRequiredResult(
+                    request_id=staged.request_id,
+                    continuation_id=staged.continuation_id,
+                    detached_resumption_available=True,
+                )
+                await execution.stage_durable_input_required(
+                    staged,
+                    required,
+                )
+            except BaseException:
+                await execution.abandon_interaction()
+                raise
+            raise ExecutionInputRequiredError(
+                required,
+                request=staged,
+                durable=successor,
+            )
+
+        resolution = project_a2a_remote_resolution(
+            command.request,
+            checkpoint.remote,
+        )
+        call = _a2a_tool_call(checkpoint)
+        if resolution is None:
+            result_kind = command.model_result.kind.value
+            outcome: ToolCallResult | ToolCallError = ToolCallError(
+                id=checkpoint.call_id,
+                call=call,
+                name=call.name,
+                arguments=call.arguments,
+                provider_name=call.provider_name,
+                provider_name_encoded=call.provider_name_encoded,
+                error={
+                    "type": "A2AInputUnavailable",
+                    "resolution": result_kind,
+                },
+                message=(
+                    "Downstream A2A input was "
+                    f"{result_kind.replace('_', ' ')}."
+                ),
+            )
+        else:
+            prepared = await self._prepare_a2a_tool(
+                execution,
+                checkpoint,
+                allow_durable_input=True,
+            )
+            try:
+                payload = await cast(
+                    A2ACallTool,
+                    prepared.callable,
+                ).resume_input(
+                    checkpoint,
+                    resolution,
+                    context=prepared.context,
+                )
+            except A2AInputRequiredError as required:
+                await restage(required.continuation)
+            outcome = ToolCallResult(
+                id=checkpoint.call_id,
+                call=prepared.call,
+                name=prepared.call.name,
+                arguments=prepared.call.arguments,
+                provider_name=prepared.call.provider_name,
+                provider_name_encoded=prepared.call.provider_name_encoded,
+                result=payload,
+            )
+        messages = OrchestratorResponse._tool_observation_messages(
+            outcome,
+            call=call,
+            json_output=True,
+        )
+        await execution.record_messages(tuple(messages))
+        return await self._continue_model(command, execution)
+
+    async def cancel_a2a_continuation(
+        self,
+        continuation: PortableContinuation,
+        checkpoint: A2AToolContinuationCheckpoint,
+    ) -> None:
+        """Cancel one trusted checkpointed downstream A2A task."""
+        if type(continuation) is not PortableContinuation:
+            raise TypeError("continuation must be a portable continuation")
+        if type(checkpoint) is not A2AToolContinuationCheckpoint:
+            raise TypeError("checkpoint must be an A2A tool checkpoint")
+        execution = self._reconstruct_execution(continuation)
+        prepared = await self._prepare_a2a_tool(execution, checkpoint)
+        dispatch = continuation.dispatch
+        if dispatch is None:
+            raise ExecutionCorrelationError(
+                "A2A cancellation lacks a persisted operation fence"
+            )
+        await cast(A2ACallTool, prepared.callable).cancel_input(
+            checkpoint,
+            operation_id=str(dispatch.dispatch_id),
+            context=prepared.context,
+        )
+
+    async def _prepare_a2a_tool(
+        self,
+        execution: AgentExecution,
+        checkpoint: A2AToolContinuationCheckpoint,
+        *,
+        allow_durable_input: bool = False,
+    ) -> PreparedToolCall:
+        """Resolve the exact trusted A2A tool from a reconstructed runtime."""
+        call = _a2a_tool_call(checkpoint)
+        context = ToolCallContext(
+            agent_id=cast(UUID, execution.origin.agent_id),
+            input=list(execution.messages),
+            calls=[],
+            execution=execution,
+            execution_origin=execution.origin,
+            durable_a2a_input=allow_durable_input,
+        )
+        prepared = await self._orchestrator.tool.prepare_call(call, context)
+        if (
+            not isinstance(prepared, PreparedToolCall)
+            or not isinstance(prepared.callable, A2ACallTool)
+            or prepared.call != call
+        ):
+            raise InputValidationError(
+                InputErrorCode.UNAVAILABLE,
+                "resume.a2a_tool",
+                "fresh runtime does not expose the exact A2A tool call",
+            )
+        return prepared
+
+    def _reconstruct_execution(
+        self,
+        continuation: PortableContinuation,
+    ) -> AgentExecution:
+        """Restore one run-scoped execution shell."""
+        origin = continuation.origin
+        transcript = _decode_transcript(continuation.transcript)
+        id_factory = UuidExecutionIdFactory()
+        return AgentExecution(
+            origin=origin,
+            id_factory=id_factory,
+            initial_messages=transcript,
+            synced_message_prefix=len(transcript),
+            interaction_runtime=DurableInteractionRuntime(
+                actor=InteractionActor(principal=origin.principal),
+                stager=self._stager,
+                id_factory=id_factory,
+                run_id=origin.run_id,
+                task_id=origin.task_id,
+                branch_id=origin.branch_id,
+                parent_branch_id=origin.parent_branch_id,
+            ),
+        )
+
+    async def _continue_model(
+        self,
+        command: AgentContinuationResumeCommand,
+        execution: AgentExecution,
+    ) -> OrchestratorResponse:
+        """Resume the original provider turn after one tool result."""
+        continuation = command.continuation
         return await self._orchestrator.resume_agent_execution(
             execution,
             operation_index=continuation.operation_cursor,
@@ -455,6 +718,16 @@ class TrustedAgentContinuationRuntimeLoader:
                 "execution definition is outside approved roots",
             )
         return path
+
+
+def _a2a_tool_call(checkpoint: A2AToolContinuationCheckpoint) -> ToolCall:
+    return ToolCall(
+        id=checkpoint.call_id,
+        name=checkpoint.canonical_name,
+        arguments=normalize_tool_arguments(checkpoint.arguments),
+        provider_name=checkpoint.provider_name,
+        provider_name_encoded=checkpoint.provider_name_encoded,
+    )
 
 
 def _decode_transcript(

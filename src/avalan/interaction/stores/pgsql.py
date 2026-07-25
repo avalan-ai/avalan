@@ -38,6 +38,7 @@ from ...task.store import (
     freeze_snapshot_metadata,
     freeze_snapshot_value,
 )
+from ..a2a_continuation import decode_a2a_tool_continuation_observation
 from ..codec import decode_input_request, encode_input_request
 from ..continuation import (
     ContinuationClaim,
@@ -5620,6 +5621,39 @@ class PgsqlDurableTaskCoordinator:
         previous: PortableContinuation,
         successor: PortableContinuation,
     ) -> None:
+        previous_a2a = decode_a2a_tool_continuation_observation(
+            previous.observations
+        )
+        successor_a2a = decode_a2a_tool_continuation_observation(
+            successor.observations
+        )
+        same_a2a_call = (
+            previous_a2a is not None
+            and successor_a2a is not None
+            and previous_a2a.call_id
+            == successor_a2a.call_id
+            == previous.provider_call_correlation_id
+            == successor.provider_call_correlation_id
+            and previous_a2a.canonical_name == successor_a2a.canonical_name
+            and previous_a2a.provider_name == successor_a2a.provider_name
+            and previous_a2a.provider_name_encoded
+            == successor_a2a.provider_name_encoded
+            and previous_a2a.arguments == successor_a2a.arguments
+            and previous_a2a.remote.task_id == successor_a2a.remote.task_id
+            and previous_a2a.remote.context_id
+            == successor_a2a.remote.context_id
+            and previous_a2a.remote.request.request_id
+            != successor_a2a.remote.request.request_id
+            and previous_a2a.remote.prior_message_id
+            != successor_a2a.remote.prior_message_id
+            and successor_a2a.remote.input_cycle_count
+            == previous_a2a.remote.input_cycle_count + 1
+            and sum(
+                count
+                for _, count in successor_a2a.interaction_fingerprint_counts
+            )
+            == successor.interaction_count
+        )
         pristine = (
             successor.claim.state is ContinuationClaimState.UNCLAIMED
             and successor.claim.owner_id is None
@@ -5636,8 +5670,11 @@ class PgsqlDurableTaskCoordinator:
             or successor.revision_binding != previous.revision_binding
             or successor.request_id == previous.request_id
             or successor.continuation_id == previous.continuation_id
-            or successor.provider_call_correlation_id
-            == previous.provider_call_correlation_id
+            or (
+                successor.provider_call_correlation_id
+                == previous.provider_call_correlation_id
+                and not same_a2a_call
+            )
             or successor.operation_cursor < previous.operation_cursor
             or successor.interaction_count != previous.interaction_count + 1
             or successor.tool_loop_count < previous.tool_loop_count

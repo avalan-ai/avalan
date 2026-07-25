@@ -1559,6 +1559,7 @@ class OrchestratorLoader:
                 skills_settings = skills_merge.settings
 
         tool_settings = ToolSettingsContext(
+            a2a=tool_settings.a2a if tool_settings else None,
             browser=browser_settings,
             database=database_settings,
             graph=graph_settings,
@@ -2042,6 +2043,7 @@ class OrchestratorLoader:
             _l("Loading tool manager for agent %s", settings.agent_id)
 
         browser_settings = tool_settings.browser if tool_settings else None
+        a2a_settings = tool_settings.a2a if tool_settings else None
         database_settings = tool_settings.database if tool_settings else None
         graph_settings = tool_settings.graph if tool_settings else None
         skills_settings = tool_settings.skills if tool_settings else None
@@ -2074,7 +2076,10 @@ class OrchestratorLoader:
             MemoryToolSet(memory, namespace="memory"),
         ]
         if should_append_a2a_toolset(enabled_tools):
-            available_toolsets.insert(1, A2AToolSet(namespace="a2a"))
+            available_toolsets.insert(
+                1,
+                A2AToolSet(namespace="a2a", settings=a2a_settings),
+            )
         if should_append_mcp_toolset(enabled_tools):
             available_toolsets.insert(1, McpToolSet(namespace="mcp"))
         if HAS_GRAPH_DEPENDENCIES:

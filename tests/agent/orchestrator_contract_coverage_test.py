@@ -263,6 +263,23 @@ class OrchestratorResumeContractCoverageTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         orchestrator = _orchestrator()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "correlated result",
+        ):
+            await orchestrator.resume_agent_execution(
+                cast(
+                    AgentExecution,
+                    SimpleNamespace(
+                        status=AgentExecutionStatus.INPUT_REQUIRED
+                    ),
+                ),
+                operation_index=0,
+                capability=cast(Any, object()),
+                generation_settings={},
+                initial_tool_cycle_count=0,
+            )
+
         incapable = SimpleNamespace(
             revision_binding=None,
             task_input_advertisement=(

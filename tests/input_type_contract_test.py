@@ -41,26 +41,36 @@ def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
     manifest = _VERIFIER.load_manifest(
         _FIXTURES / "type_contract_manifest.json"
     )
+    acceptance_phase = manifest.current_phase
+    lagged_manifest = replace(
+        manifest,
+        current_phase=acceptance_phase - 1,
+    )
 
-    _VERIFIER._validate_acceptance_phase(manifest, 10)
+    _VERIFIER._validate_acceptance_phase(lagged_manifest, acceptance_phase)
 
-    obligation = replace(manifest.fixtures[0], active_from_phase=10)
+    obligation = replace(
+        manifest.fixtures[0],
+        active_from_phase=acceptance_phase,
+    )
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
         match="acceptance-only phase without new type obligations",
     ):
         _VERIFIER._validate_acceptance_phase(
             replace(
-                manifest,
-                fixtures=(*manifest.fixtures, obligation),
+                lagged_manifest,
+                fixtures=(*lagged_manifest.fixtures, obligation),
             ),
-            10,
+            acceptance_phase,
         )
     with pytest.raises(
         _VERIFIER.TypeContractVerificationError,
         match="acceptance-only phase without new type obligations",
     ):
-        _VERIFIER._validate_acceptance_phase(manifest, 11)
+        _VERIFIER._validate_acceptance_phase(
+            lagged_manifest, acceptance_phase + 1
+        )
 
 
 def _read_manifest() -> dict[str, Any]:
@@ -226,6 +236,8 @@ def test_type_contract_manifest_and_runner_are_strict(
 ) -> None:
     """Run active mypy evidence and reject diagnostic or ledger drift."""
     manifest = _read_manifest()
+    current_phase = manifest["current_phase"]
+    assert isinstance(current_phase, int)
     monkeypatch.setattr(
         _VERIFIER, "_EXPECTED_TYPE_LEDGER_SHA256", _ledger_digest(manifest)
     )
@@ -233,10 +245,10 @@ def test_type_contract_manifest_and_runner_are_strict(
     loaded = _VERIFIER.verify_input_types(
         real_path,
         repo_root=_ROOT,
-        through_phase=10,
+        through_phase=current_phase,
         acceptance_manifest_path=_FIXTURES / "acceptance_manifest.json",
     )
-    assert loaded.current_phase == 9
+    assert loaded.current_phase == current_phase
     active_fixture_ids = [
         fixture.id
         for fixture in loaded.fixtures
