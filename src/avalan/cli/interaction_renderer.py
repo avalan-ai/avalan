@@ -34,21 +34,8 @@ from .interaction_channel import CliInteractionChannelProtocol
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol, TypeAlias, final
-from unicodedata import bidirectional, category
+from unicodedata import category
 
-_BIDI_CONTROL_CLASSES = frozenset(
-    {
-        "FSI",
-        "LRE",
-        "LRI",
-        "LRO",
-        "PDF",
-        "PDI",
-        "RLE",
-        "RLI",
-        "RLO",
-    }
-)
 _CONTROL_HELP = (
     ":decline decline this request; :cancel cancel only this input; "
     ":cancel-run cancel the containing run; :steer TEXT send steering; "
@@ -129,28 +116,8 @@ class CliInteractionCommandHandler(Protocol):
 
 
 _EarlyOutcome: TypeAlias = InputDeclineSubmission | AttachedInputDisconnected
-
-
-@final
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _SkipQuestion:
-    """Represent an intentionally omitted optional answer."""
-
-
-_SKIP_QUESTION = _SkipQuestion()
-
-
-@final
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _ShowHelp:
-    """Request another help rendering without consuming an answer."""
-
-
-_SHOW_HELP = _ShowHelp()
-_QuestionResult: TypeAlias = InputAnswer | _SkipQuestion | _EarlyOutcome
-_LineResult: TypeAlias = (
-    str | _ShowHelp | _EarlyOutcome | CliInteractionCommand
-)
+_QuestionResult: TypeAlias = InputAnswer | _EarlyOutcome | None
+_LineResult: TypeAlias = str | _EarlyOutcome | CliInteractionCommand | None
 
 
 @final
@@ -213,7 +180,7 @@ class CliInteractionRenderer:
                 ),
             ):
                 return result
-            if result is _SKIP_QUESTION:
+            if result is None:
                 continue
             assert isinstance(result, InputAnswer)
             answers.append(result)
@@ -278,7 +245,7 @@ class CliInteractionRenderer:
                 if question.default_value is not None:
                     value = question.default_value
                 elif not question.required:
-                    return _SKIP_QUESTION
+                    return None
                 else:
                     await self._invalid("Enter yes or no.")
                     continue
@@ -309,7 +276,7 @@ class CliInteractionRenderer:
                 if question.default_value is not None:
                     line = question.default_value
                 elif not question.required:
-                    return _SKIP_QUESTION
+                    return None
             minimum = max(
                 question.constraints.minimum_length,
                 int(question.required),
@@ -360,7 +327,7 @@ class CliInteractionRenderer:
                 if question.default_value is not None:
                     value = question.default_value
                 elif not question.required:
-                    return _SKIP_QUESTION
+                    return None
             minimum = max(
                 question.constraints.minimum_length,
                 int(question.required),
@@ -404,7 +371,7 @@ class CliInteractionRenderer:
                         value=SelectedChoice(value=question.default_value),
                     )
                 if not question.required:
-                    return _SKIP_QUESTION
+                    return None
                 await self._invalid("Select one option.")
                 continue
             selection = _selection_at(question.choices, value)
@@ -453,7 +420,7 @@ class CliInteractionRenderer:
                         values=values,
                     )
                 if not question.required:
-                    return _SKIP_QUESTION
+                    return None
                 await self._invalid("Select at least one option.")
                 continue
 
@@ -510,14 +477,11 @@ class CliInteractionRenderer:
                 if not isinstance(other, str):
                     return other
                 selections.append(FreeFormOther(text=other))
-            try:
-                return MultipleSelectionAnswer(
-                    question_id=question.question_id,
-                    provenance=AnswerProvenance.HUMAN,
-                    values=tuple(selections),
-                )
-            except InputValidationError as exc:
-                await self._invalid(exc.safe_message)
+            return MultipleSelectionAnswer(
+                question_id=question.question_id,
+                provenance=AnswerProvenance.HUMAN,
+                values=tuple(selections),
+            )
 
     async def _render_choices(
         self,
@@ -583,7 +547,7 @@ class CliInteractionRenderer:
                     )
                 )
             control = _parse_control(line)
-            if isinstance(control, _ShowHelp):
+            if control is None:
                 help_text = (
                     "No additional question help is available."
                     if question.help_text is None
@@ -646,7 +610,7 @@ def _parse_control(line: str) -> _LineResult:
     normalized = line.strip()
     folded = normalized.casefold()
     if folded in {"?", ":help"}:
-        return _SHOW_HELP
+        return None
     if folded == ":decline":
         return InputDeclineSubmission(provenance=AnswerProvenance.HUMAN)
     if folded in {":cancel", ":cancel-input"}:
@@ -654,7 +618,7 @@ def _parse_control(line: str) -> _LineResult:
     if folded == ":cancel-run":
         return CliRunCancellationCommand()
     if folded == ":steer":
-        return _SHOW_HELP
+        return None
     if folded.startswith(":steer "):
         steering = normalized[len(":steer ") :].strip()
         return CliSteeringCommand(text=steering)
@@ -711,10 +675,7 @@ def _literal_text(text: str) -> str:
             rendered.append("\\r")
         elif character == "\t":
             rendered.append("\\t")
-        elif (
-            category(character) in {"Cc", "Cf", "Cs"}
-            or bidirectional(character) in _BIDI_CONTROL_CLASSES
-        ):
+        elif category(character) in {"Cc", "Cf", "Cs"}:
             rendered.append(
                 f"\\u{codepoint:04x}"
                 if codepoint <= 0xFFFF
