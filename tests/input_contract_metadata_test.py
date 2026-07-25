@@ -88,6 +88,9 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     workflow = (_ROOT / ".github" / "workflows" / "test.yml").read_text(
         encoding="utf-8"
     )
+    coverage_workflow = (
+        _ROOT / ".github" / "workflows" / "code-coverage.yml"
+    ).read_text(encoding="utf-8")
     expected_scripts = (
         "scripts/input_contract_json.py",
         "scripts/run_input_contract_gate.py",
@@ -121,12 +124,7 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     )
     assert "make lint" in workflow
     assert "make typecheck-input-contract INPUT_PHASE=5" in workflow
-    assert "make test-pgsql-exact no-install INPUT_PHASE=5" in workflow
-    assert (
-        "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
-        in workflow
-    )
-    assert "make test-pgsql no-install coverage-report" in workflow
-    assert "make test no-install coverage-report" in workflow
+    assert "run: make test no-install" in workflow
+    assert "run: make test coverage" in coverage_workflow
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow
