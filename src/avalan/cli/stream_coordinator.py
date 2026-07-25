@@ -113,7 +113,7 @@ class _TailOverflowRenderable(Group):
         self._show_all = False
 
     def __str__(self) -> str:
-        return _stderr_renderable_key(self.renderable)
+        return _stderr_renderable_text(self.renderable)
 
     def show_all(self) -> None:
         """Disable tail cropping for the final live render."""
@@ -459,26 +459,28 @@ class CliStreamCoordinator:
         return self._live
 
     def _render_stderr_frame(self, frame: CliStreamRenderableFrame) -> None:
+        key = _stderr_renderable_key(frame.renderable)
         if frame.stderr_append:
-            has_content = (
-                bool(frame.renderable)
-                if isinstance(frame.renderable, str)
-                else bool(_stderr_renderable_key(frame.renderable))
-            )
+            has_content = key is None or bool(key)
             if has_content:
                 self._ensure_diagnostic_console().print(
                     frame.renderable,
                     end="",
                 )
             return
-        key = _stderr_renderable_key(frame.renderable)
-        if not key:
+        if key == "":
             self._stderr_role_renderables.pop(frame.role, None)
             return
-        if self._stderr_role_renderables.get(frame.role) == key:
+        if (
+            key is not None
+            and self._stderr_role_renderables.get(frame.role) == key
+        ):
             return
 
-        self._stderr_role_renderables[frame.role] = key
+        if key is None:
+            self._stderr_role_renderables.pop(frame.role, None)
+        else:
+            self._stderr_role_renderables[frame.role] = key
         self._ensure_diagnostic_console().print(frame.renderable)
 
     def _ensure_diagnostic_console(self) -> Console:
@@ -609,16 +611,23 @@ def _default_live_factory(
     )
 
 
-def _stderr_renderable_key(renderable: RenderableType) -> str:
+def _stderr_renderable_key(renderable: RenderableType) -> str | None:
     if isinstance(renderable, Group):
-        return "\n".join(
-            key
-            for key in (
-                _stderr_renderable_key(child)
-                for child in renderable.renderables
-            )
-            if key
+        keys = tuple(
+            _stderr_renderable_key(child) for child in renderable.renderables
         )
+        if any(key is None for key in keys):
+            return None
+        return "\n".join(key for key in keys if key)
     if isinstance(renderable, Spinner):
         return str(renderable.text or "")
-    return str(renderable)
+    if isinstance(renderable, Text):
+        return renderable.plain
+    if isinstance(renderable, str):
+        return renderable
+    return None
+
+
+def _stderr_renderable_text(renderable: RenderableType) -> str:
+    key = _stderr_renderable_key(renderable)
+    return str(renderable) if key is None else key

@@ -9,7 +9,9 @@ from unittest.mock import MagicMock, call, patch
 from uuid import uuid4
 
 from rich.console import Console, Group
+from rich.panel import Panel
 from rich.spinner import Spinner
+from rich.text import Text
 
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.stream_coordinator import (
@@ -449,7 +451,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 CliStreamRenderableFrame(
                     renderable=Group(
                         Spinner("dots", text="tool calc running"),
-                        "tool calc completed",
+                        Text("tool calc completed"),
                     ),
                     role="tools",
                 )
@@ -458,13 +460,54 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 CliStreamRenderableFrame(
                     renderable=Group(
                         Spinner("dots", text="tool calc running"),
-                        "tool calc completed",
+                        Text("tool calc completed"),
                     ),
                     role="tools",
                 )
             )
 
         diagnostic_console.print.assert_called_once()
+        console.print.assert_not_called()
+
+    async def test_stderr_diagnostics_never_deduplicate_opaque_renderables(
+        self,
+    ) -> None:
+        console = MagicMock()
+        diagnostic_console = MagicMock()
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(
+                display_reasoning=True,
+                interactive=False,
+            ),
+            diagnostic_console=diagnostic_console,
+            live_factory=MagicMock(),
+        )
+        first = Panel("first summary")
+        second = Panel("second summary")
+
+        with patch.object(Panel, "__str__", return_value="same identity"):
+            wrapped = Group(first)
+            self.assertEqual(
+                str(_TailOverflowRenderable(wrapped)),
+                str(wrapped),
+            )
+            async with coordinator:
+                await coordinator.handle_item(
+                    CliStreamRenderableFrame(
+                        renderable=first,
+                        role="reasoning",
+                    )
+                )
+                await coordinator.handle_item(
+                    CliStreamRenderableFrame(
+                        renderable=second,
+                        role="reasoning",
+                    )
+                )
+
+        diagnostic_console.print.assert_has_calls([call(first), call(second)])
+        self.assertEqual(diagnostic_console.print.call_count, 2)
         console.print.assert_not_called()
 
     async def test_stderr_reasoning_append_preserves_repeated_suffixes(
