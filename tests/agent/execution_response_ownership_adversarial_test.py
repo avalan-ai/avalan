@@ -1010,6 +1010,8 @@ class ResponseOwnershipAdversarialTest(IsolatedAsyncioTestCase):
         fast_response = _ImmediateCleanupResponse()
         slow_execution = await _new_execution()
         fast_execution = await _new_execution()
+        await slow_execution.fail()
+        await fast_execution.fail()
         slow_owner = harness.agent._retain_provider_cleanup(
             slow_response,
             slow_execution,
