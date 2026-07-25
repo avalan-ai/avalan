@@ -414,6 +414,30 @@ def test_vendor_module_isolation_restores_exact_states(
                 setattr(parent, attribute, previous)
 
 
+def test_litellm_module_falls_back_when_sdk_is_unavailable() -> None:
+    module = importlib.import_module(_LITELLM_VENDOR_MODULE_NAME)
+    original_import_module = importlib.import_module
+
+    def guarded_import_module(
+        name: str,
+        package: str | None = None,
+    ) -> types.ModuleType:
+        if name == "litellm":
+            raise ImportError(name)
+        return original_import_module(name, package)
+
+    try:
+        with patch.object(
+            importlib,
+            "import_module",
+            side_effect=guarded_import_module,
+        ):
+            reloaded = importlib.reload(module)
+        assert isinstance(reloaded.litellm, reloaded._UnavailableLiteLLM)
+    finally:
+        importlib.reload(module)
+
+
 class AnthropicTestCase(IsolatedAsyncioTestCase):
     def setUp(self):
         sdk_modules, self.stub = _anthropic_sdk_modules()
@@ -1527,6 +1551,14 @@ class LiteLLMTestCase(IsolatedAsyncioTestCase):
 
     def tearDown(self):
         self.isolation.__exit__(None, None, None)
+
+    async def test_missing_dependency_fails_cleanly(self):
+        unavailable = self.mod._UnavailableLiteLLM()
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "optional litellm dependency",
+        ):
+            await unavailable.acompletion(model="m")
 
     async def test_call_and_model(self):
         client = self.mod.LiteLLMClient(api_key="k", base_url="b")

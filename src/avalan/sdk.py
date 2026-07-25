@@ -803,7 +803,7 @@ T_co = TypeVar("T_co", covariant=True)
 class AgentRunCompleted(Generic[T_co]):
     """Return one successfully completed agent value."""
 
-    value: T_co
+    value: T_co  # type: ignore[misc, unused-ignore]
     kind: Literal[AgentRunResultKind.COMPLETED] = AgentRunResultKind.COMPLETED
     channel: Literal["typed"] = "typed"
 
