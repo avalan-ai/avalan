@@ -60,10 +60,6 @@ class CliInteractionChannelProtocol(Protocol):
         """Write text to the interactive control terminal."""
         ...
 
-    async def aclose(self) -> None:
-        """Close the interactive control terminal."""
-        ...
-
 
 class CliInteractionChannel:
     """Own one cancellable asynchronous CLI control-terminal channel."""

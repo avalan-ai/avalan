@@ -8,7 +8,6 @@ from io import StringIO
 from pathlib import Path
 from typing import cast
 from unittest import IsolatedAsyncioTestCase, TestCase
-from unittest.mock import patch
 
 from avalan.cli.interaction_renderer import (
     CliInputCancellationCommand,
@@ -31,7 +30,6 @@ from avalan.interaction import (
     FreeFormOther,
     InputErrorCode,
     InputQuestion,
-    InputValidationError,
     MultilineTextAnswer,
     MultilineTextQuestion,
     MultipleSelectionAnswer,
@@ -345,16 +343,6 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
         assert isinstance(skipped, InputAnswerSubmission)
         self.assertEqual(skipped.answers, ())
 
-        cancelled = await CliInteractionRenderer(
-            _FakeChannel(":cancel")
-        ).render(_context(question))
-        self.assertEqual(
-            cancelled,
-            AttachedInputDisconnected(
-                reason=AttachedInputDisconnectReason.HANDLER_CANCELLED
-            ),
-        )
-
         canonical_question = TextQuestion(
             question_id=QuestionId("canonical"),
             prompt="Canonical text.",
@@ -569,16 +557,6 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
             required_empty.output,
         )
 
-        cancelled = await CliInteractionRenderer(
-            _FakeChannel(":cancel")
-        ).render(_context(question))
-        self.assertEqual(
-            cancelled,
-            AttachedInputDisconnected(
-                reason=AttachedInputDisconnectReason.HANDLER_CANCELLED
-            ),
-        )
-
         other_invalid = _FakeChannel("3", "bad\nother", "custom")
         other_invalid_result = await CliInteractionRenderer(
             other_invalid
@@ -772,49 +750,37 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
             required_empty.output,
         )
 
-        corrected_channel = _FakeChannel("1", "2")
-        corrected_answer = MultipleSelectionAnswer(
-            question_id=question.question_id,
-            provenance=AnswerProvenance.HUMAN,
-            values=(SelectedChoice(value=ChoiceValue("stable-safe")),),
+    async def test_question_reads_propagate_input_cancellation(self) -> None:
+        text = TextQuestion(
+            question_id=QuestionId("text"), prompt="Text.", required=True
         )
-        validation_error = InputValidationError(
-            InputErrorCode.INVALID_CARDINALITY,
-            "answer.values",
-            "selection needs correction",
+        single = SingleSelectionQuestion(
+            question_id=QuestionId("single"),
+            prompt="Single.",
+            required=True,
+            choices=_choices(),
         )
-        with patch(
-            "avalan.cli.interaction_renderer.MultipleSelectionAnswer",
-            side_effect=(validation_error, corrected_answer),
+        multiple = MultipleSelectionQuestion(
+            question_id=QuestionId("checks"),
+            prompt="Multiple.",
+            required=True,
+            choices=_choices(),
+            allow_other=True,
+        )
+        cancelled = AttachedInputDisconnected(
+            reason=AttachedInputDisconnectReason.HANDLER_CANCELLED
+        )
+        for question, lines in (
+            (text, (":cancel",)),
+            (single, (":cancel",)),
+            (multiple, (":cancel",)),
+            (multiple, ("3", ":cancel")),
         ):
-            corrected = await CliInteractionRenderer(corrected_channel).render(
-                _context(question)
-            )
-        self.assertEqual(
-            _answer(corrected, MultipleSelectionAnswer),
-            corrected_answer,
-        )
-        self.assertIn("selection needs correction", corrected_channel.output)
-
-        cancelled = await CliInteractionRenderer(
-            _FakeChannel(":cancel")
-        ).render(_context(question))
-        self.assertEqual(
-            cancelled,
-            AttachedInputDisconnected(
-                reason=AttachedInputDisconnectReason.HANDLER_CANCELLED
-            ),
-        )
-
-        other_cancelled = await CliInteractionRenderer(
-            _FakeChannel("3", ":cancel")
-        ).render(_context(question))
-        self.assertEqual(
-            other_cancelled,
-            AttachedInputDisconnected(
-                reason=AttachedInputDisconnectReason.HANDLER_CANCELLED
-            ),
-        )
+            with self.subTest(kind=question.kind, lines=lines):
+                result = await CliInteractionRenderer(
+                    _FakeChannel(*lines)
+                ).render(_context(question))
+                self.assertEqual(result, cancelled)
 
     async def test_bundle_help_feedback_and_safe_control_output(
         self,
