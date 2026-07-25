@@ -67,7 +67,7 @@ from avalan.model.capability import ProviderCapabilitySupport
 from avalan.model.hubs.huggingface import HuggingfaceHub
 from avalan.tool import ToolSet
 from avalan.tool.browser import BrowserToolSettings
-from avalan.tool.context import ToolSettingsContext
+from avalan.tool.context import A2AToolSettings, ToolSettingsContext
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.graph_settings import GraphToolSettings
 from avalan.tool.manager import ToolManager
@@ -5924,6 +5924,13 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
                 self.assertEqual(kwargs["enable_tools"], expected_enable)
 
     async def test_a2a_toolset_is_registered_for_a2a_selections(self):
+        http_client = object()
+        tool_settings = ToolSettingsContext(
+            a2a=A2AToolSettings(
+                client_params={"httpx_client": http_client},
+                call_params={"state": {"authorization": "trusted"}},
+            )
+        )
         cases = (
             (["a2a"], ["a2a"]),
             (["a2a.*"], ["a2a.*"]),
@@ -5933,11 +5940,26 @@ class LoaderFromSettingsTestCase(IsolatedAsyncioTestCase):
         for tools, expected_enable in cases:
             with self.subTest(tools=tools):
                 kwargs = await _from_settings_tool_manager_kwargs(
-                    _orchestrator_settings(tools=tools)
+                    _orchestrator_settings(tools=tools),
+                    tool_settings=tool_settings,
                 )
 
                 self.assertEqual(_a2a_namespaces(kwargs), ["a2a"])
                 self.assertEqual(kwargs["enable_tools"], expected_enable)
+                a2a_toolset = next(
+                    toolset
+                    for toolset in kwargs["available_toolsets"]
+                    if toolset.namespace == "a2a"
+                )
+                a2a_tool = cast(Any, a2a_toolset.tools[0])
+                self.assertIs(
+                    a2a_tool._client_params["httpx_client"],  # noqa: SLF001
+                    http_client,
+                )
+                self.assertEqual(  # noqa: SLF001
+                    a2a_tool._call_params["state"],
+                    {"authorization": "trusted"},
+                )
 
     async def test_cli_shell_settings_preserve_default_toolsets(self):
         kwargs = await _from_settings_tool_manager_kwargs(

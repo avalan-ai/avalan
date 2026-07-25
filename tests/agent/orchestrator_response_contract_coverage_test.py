@@ -13,6 +13,7 @@ from avalan.agent.execution import (
     AgentExecution,
     AgentExecutionStatus,
     DurableInteractionRuntime,
+    ExecutionInputRequiredError,
 )
 from avalan.agent.orchestrator.response import orchestrator_response
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -22,15 +23,25 @@ from avalan.entities import (
     EngineUri,
     Message,
     MessageRole,
+    ToolCall,
     TransformerEngineSettings,
 )
 from avalan.event.manager import EventManager
 from avalan.interaction import (
+    ContinuationId,
     DurableInteractionSuspension,
+    InputRequestId,
+    InputRequiredResult,
     InteractionActor,
     PrincipalScope,
     RequestState,
     UserId,
+)
+from avalan.interaction.a2a import A2AInputRequestMetadata
+from avalan.interaction.a2a_continuation import (
+    A2AInputRequiredError,
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
 )
 from avalan.model.call import ModelCallContext
 from avalan.model.capability import TaskInputCapabilityCall
@@ -105,6 +116,24 @@ def _task_input_call() -> TaskInputCapabilityCall:
     call.reason = "Need a decision."
     call.questions = ("Continue?",)
     return cast(TaskInputCapabilityCall, call)
+
+
+def _a2a_remote() -> A2ARemoteInputContinuation:
+    """Return one correlated remote A2A input request."""
+    return A2ARemoteInputContinuation(
+        request=A2AInputRequestMetadata(
+            request_id=InputRequestId("remote-request"),
+            required=True,
+            questions=(),
+        ),
+        request_text="Need one decision.",
+        task_id="remote-task",
+        context_id="remote-context",
+        prior_message_id="remote-message",
+        prior_content=(),
+        ttl_seconds=300,
+        input_cycle_count=1,
+    )
 
 
 def _durable_suspension(
@@ -236,6 +265,113 @@ class OrchestratorResponseContractCoverageTest(TestCase):
 
 class OrchestratorResponseAsyncContractCoverageTest(IsolatedAsyncioTestCase):
     """Exercise asynchronous task-input and cleanup contract guards."""
+
+    async def test_tool_input_control_flow_and_a2a_staging(self) -> None:
+        call = ToolCall(
+            id="a2a-call",
+            name="a2a.call",
+            arguments={
+                "uri": "https://peer.example/a2a",
+                "name": "remote.skill",
+                "arguments": {},
+            },
+        )
+        control = ExecutionInputRequiredError(
+            InputRequiredResult(
+                request_id=InputRequestId("local-request"),
+                continuation_id=ContinuationId("local-continuation"),
+                detached_resumption_available=True,
+            )
+        )
+        response = _response()
+        with (
+            patch.object(
+                response,
+                "_execute_tool_call",
+                AsyncMock(side_effect=control),
+            ),
+            self.assertRaises(ExecutionInputRequiredError) as raised,
+        ):
+            await response._execute_tool_call_with_lifecycle(
+                call,
+                confirm=False,
+                abort_on_reject=False,
+                emit_ready=False,
+                planned_index=0,
+            )
+        self.assertIs(raised.exception, control)
+
+        remote = _a2a_remote()
+        response = _response()
+        stage = AsyncMock(side_effect=control)
+        with (
+            patch.object(
+                response,
+                "_execute_tool_call",
+                AsyncMock(side_effect=A2AInputRequiredError(remote)),
+            ),
+            patch.object(response, "_stage_durable_a2a_input", stage),
+            self.assertRaises(ExecutionInputRequiredError) as raised,
+        ):
+            await response._execute_tool_call_with_lifecycle(
+                call,
+                confirm=False,
+                abort_on_reject=False,
+                emit_ready=False,
+                planned_index=0,
+                allow_durable_input=True,
+            )
+        self.assertIs(raised.exception, control)
+        stage.assert_awaited_once_with(call, remote)
+
+    async def test_a2a_staging_guards_and_maps_provider_call(self) -> None:
+        response = _response()
+        call = ToolCall(
+            id="a2a-call",
+            name="a2a.call",
+            arguments={
+                "uri": "https://peer.example/a2a",
+                "name": "remote.skill",
+                "arguments": {},
+            },
+        )
+        remote = _a2a_remote()
+        with self.assertRaisesRegex(RuntimeError, "requires an execution"):
+            await response._stage_durable_a2a_input(call, remote)
+
+        cast(Any, response)._execution = SimpleNamespace(
+            interaction_runtime=object()
+        )
+        with self.assertRaisesRegex(RuntimeError, "route is unavailable"):
+            await response._stage_durable_a2a_input(call, remote)
+
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("coverage-user"))
+            ),
+            stager=AsyncMock(),
+        )
+        execution = SimpleNamespace(
+            interaction_runtime=runtime,
+            origin=object(),
+            snapshot=SimpleNamespace(
+                interaction_fingerprint_counts=(("remote", 1),)
+            ),
+        )
+        cast(Any, response)._execution = execution
+        staged = AsyncMock()
+        with (
+            patch.object(
+                orchestrator_response,
+                "InteractionBrokerRequest",
+            ),
+            patch.object(response, "_stage_durable_interaction", staged),
+        ):
+            await response._stage_durable_a2a_input(call, remote)
+        staged.assert_awaited_once()
+        checkpoint = staged.await_args.args[1]
+        self.assertIsInstance(checkpoint, A2AToolContinuationCheckpoint)
+        self.assertTrue(staged.await_args.kwargs["tool_input"])
 
     async def test_durable_task_input_must_suspend_execution(self) -> None:
         response = _response()

@@ -1,5 +1,47 @@
+from ...agent.execution import AttachedInteractionRuntime
 from ...agent.orchestrator import Orchestrator
 from ...entities import MessageRole
+from ...interaction.a2a import (
+    A2A_INPUT_EXTENSION_DESCRIPTION,
+    A2A_INPUT_EXTENSION_PARAMS,
+    A2A_INPUT_EXTENSION_URI,
+    a2a_input_request_text,
+    decode_a2a_input_resolution_metadata,
+    encode_a2a_input_request_metadata,
+    encode_a2a_input_resolution_metadata,
+)
+from ...interaction.broker import InteractionBrokerResult
+from ...interaction.entities import (
+    AnswerProvenance,
+    CancelledResolution,
+    InputCandidateResolution,
+    InputRequest,
+    RequestState,
+    ResolutionIdempotencyKey,
+    ResolutionStatus,
+    StateRevision,
+    TaskId,
+)
+from ...interaction.error import InputContractError, InputErrorCode
+from ...interaction.handler import InputHandlerContext, InputHandlerOutcome
+from ...interaction.policy import (
+    InteractionActor,
+    InteractionAuthorizationDecision,
+    InteractionOperation,
+    InteractionRequestAuthorizationTarget,
+)
+from ...interaction.store import (
+    CancelInteractionApplied,
+    CancelInteractionCommand,
+    InteractionCorrelation,
+    InteractionRecord,
+    InteractionStoreReplayed,
+    InteractionTerminalMetadata,
+    ResolveInteractionApplied,
+    ResolveInteractionCommand,
+    ResolveInteractionRejected,
+    ScopedInteractionLookup,
+)
 from ...model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -33,6 +75,7 @@ from ..entities import (
     sanitize_server_protocol_value,
     server_output_redaction_settings_from_state,
 )
+from ..interaction import ServerInteractionService
 from ..routers import orchestrate, resolve_model_id
 from ..routers.streaming import (
     ProtocolReasoningIdentity,
@@ -44,18 +87,27 @@ from ..routers.streaming import (
     stream_terminal_succeeded,
 )
 
-from asyncio import CancelledError
+from asyncio import (
+    CancelledError,
+    Event,
+    Lock,
+    Task,
+    create_task,
+)
 from base64 import b64decode, b64encode
 from binascii import Error as BinasciiError
 from collections import deque
 from collections.abc import AsyncIterable, AsyncIterator, Mapping, Sequence
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from hashlib import sha256
 from importlib import import_module
 from json import dumps, loads
 from logging import Logger
 from typing import Any, cast
 from urllib.parse import urljoin
+from uuid import uuid4
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import JSONResponse
@@ -109,6 +161,18 @@ _A2A_TOOL_RESOURCE_CATEGORIES = frozenset(
         "stdout",
     }
 )
+_A2A_HTTP_REQUEST_STATE_KEY = "avalan.a2a.http_request"
+_A2A_RESOLUTION_STATE_KEY = "avalan.a2a.input_resolution"
+_A2A_REFRESH_STATE_KEY = "avalan.a2a.input_refresh"
+_A2A_ERROR_HTTP_STATUSES = {
+    "avalan.input.authentication_required": 401,
+    "avalan.input.unavailable": 503,
+    "avalan.input.already_resolved": 409,
+    "avalan.input.expired": 410,
+    "avalan.input.superseded": 409,
+    "avalan.input.unauthorized": 403,
+}
+_A2A_ERROR_TYPES: dict[tuple[int, int], type[Exception]] = {}
 
 
 @dataclass(kw_only=True, slots=True)
@@ -123,12 +187,176 @@ class _A2AReasoningArtifactState:
     suppressed: bool = False
 
 
+@dataclass(slots=True)
+class _A2APendingInput:
+    task_id: str
+    context_id: str
+    actor: InteractionActor
+    request: InputRequest
+    response: Any
+    iterator: AsyncIterator[StreamConsumerProjection]
+    translator: "A2AResponseTranslator"
+    orchestrator: Orchestrator
+    activated: bool
+    handler: "_A2AInputHandler"
+    updater: Any
+    continuation_claimed: bool = False
+    accepted_resolution: object | None = None
+    auto_resume_task: Task[None] | None = field(default=None, repr=False)
+    seen_message_ids: set[str] = field(default_factory=set)
+    seen_transport_ids: set[str] = field(default_factory=set)
+    lock: Lock = field(default_factory=Lock, repr=False)
+
+
+class _A2AInputHandler:
+    def __init__(self) -> None:
+        self._registered: dict[str, Event] = {}
+        self._requests: dict[str, InputRequest] = {}
+        self._settled: dict[str, Event] = {}
+
+    async def __call__(
+        self,
+        context: InputHandlerContext,
+    ) -> InputHandlerOutcome:
+        request_id = str(context.request.request_id)
+        registered = self._registered.setdefault(request_id, Event())
+        settled = Event()
+        self._requests[request_id] = context.request
+        self._settled[request_id] = settled
+        registered.set()
+        try:
+            await Event().wait()
+        except CancelledError:
+            settled.set()
+            raise
+        raise AssertionError("an A2A input wait cannot finish without state")
+
+    async def request(self, request_id: str) -> InputRequest:
+        """Return the request registered for one exact stream correlation."""
+        registered = self._registered.setdefault(request_id, Event())
+        await registered.wait()
+        request = self._requests.get(request_id)
+        if request is None:
+            raise RuntimeError(
+                "A2A input handler did not register its request"
+            )
+        return request
+
+    def settlement_event(self, request_id: str) -> Event:
+        """Return the settlement signal for one registered request."""
+        event = self._settled.get(request_id)
+        if event is None:
+            raise RuntimeError(
+                "A2A input handler did not register its request"
+            )
+        return event
+
+
+class _A2AServerCallContextBuilder:
+    def __init__(self, delegate: Any) -> None:
+        self._delegate = delegate
+
+    def build(self, request: Any) -> Any:
+        context = self._delegate.build(request)
+        context.state[_A2A_HTTP_REQUEST_STATE_KEY] = request
+        return context
+
+
+class _A2ARequestContextBuilder:
+    def __init__(self, task_store: Any) -> None:
+        self._task_store = task_store
+
+    async def build(
+        self,
+        context: Any,
+        params: Any = None,
+        task_id: str | None = None,
+        context_id: str | None = None,
+        task: Any = None,
+    ) -> Any:
+        stored = (
+            await self._task_store.get(task_id, context)
+            if task_id is not None
+            else task
+        )
+        if stored is not None:
+            if context_id is not None and context_id != stored.context_id:
+                raise _a2a_invalid_params("bad context id")
+            context_id = cast(str, stored.context_id)
+        context_module = import_module("a2a.server.agent_execution.context")
+        return context_module.RequestContext(
+            call_context=context,
+            request=params,
+            task_id=task_id,
+            context_id=context_id,
+            task=stored,
+        )
+
+
+class _A2ARequestHandler:
+    def __init__(
+        self, delegate: Any, executor: "AvalanA2AAgentExecutor"
+    ) -> None:
+        self._delegate = delegate
+        self._executor = executor
+
+    def __getattr__(self, name: str) -> Any:
+        return getattr(self._delegate, name)
+
+    async def on_cancel_task(self, params: Any, context: Any) -> Any:
+        result = await self._delegate.on_cancel_task(params, context)
+        self._executor.deactivate_result(context, result)
+        return result
+
+    async def on_get_task(self, params: Any, context: Any) -> Any:
+        result = await self._delegate.on_get_task(params, context)
+        self._executor.deactivate_result(context, result)
+        return result
+
+    async def on_message_send(self, params: Any, context: Any) -> Any:
+        replay = await self._executor.prepare_follow_up(params, context)
+        if replay is not None:
+            return replay
+        result = await self._delegate.on_message_send(params, context)
+        self._executor.deactivate_result(context, result)
+        return result
+
+    async def on_message_send_stream(
+        self,
+        params: Any,
+        context: Any,
+    ) -> AsyncIterator[Any]:
+        replay = await self._executor.prepare_follow_up(params, context)
+        if replay is not None:
+            yield replay
+            return
+        async for event in self._delegate.on_message_send_stream(
+            params,
+            context,
+        ):
+            self._executor.deactivate_result(context, event)
+            yield event
+
+    async def on_subscribe_to_task(
+        self,
+        params: Any,
+        context: Any,
+    ) -> AsyncIterator[Any]:
+        async for event in self._delegate.on_subscribe_to_task(
+            params,
+            context,
+        ):
+            self._executor.deactivate_result(context, event)
+            yield event
+
+
 def install_a2a_routes(
     app: FastAPI,
     *,
     prefix: str,
     name: str,
     description: str | None,
+    input_extension_required: bool = False,
 ) -> None:
     """Install A2A SDK v1 routes on ``app``."""
     try:
@@ -136,6 +364,7 @@ def install_a2a_routes(
         a2a_pb2 = import_module("a2a.types.a2a_pb2")
         constants = import_module("a2a.utils.constants")
         route_module = import_module("a2a.server.routes.fastapi_routes")
+        route_common_module = import_module("a2a.server.routes.common")
         jsonrpc_routes_module = import_module(
             "a2a.server.routes.jsonrpc_routes"
         )
@@ -160,28 +389,50 @@ def install_a2a_routes(
         interface_url=prefix,
         name=name,
         description=description,
+        input_extension_required=input_extension_required,
     )
-    request_handler = handler_module.DefaultRequestHandlerV2(
-        agent_executor=AvalanA2AAgentExecutor(app),
-        task_store=task_store_module.InMemoryTaskStore(),
-        agent_card=card,
+    task_store = task_store_module.InMemoryTaskStore()
+    executor = AvalanA2AAgentExecutor(app, task_store=task_store)
+    request_handler = _A2ARequestHandler(
+        handler_module.DefaultRequestHandlerV2(
+            agent_executor=executor,
+            task_store=task_store,
+            agent_card=card,
+            request_context_builder=_A2ARequestContextBuilder(task_store),
+        ),
+        executor,
+    )
+    call_context_builder = _A2AServerCallContextBuilder(
+        route_common_module.DefaultServerCallContextBuilder()
     )
     jsonrpc_routes = _validated_a2a_routes(
         _a2a_jsonrpc_routes(
             jsonrpc_routes_module,
             request_handler,
             prefix=prefix,
+            context_builder=call_context_builder,
         ),
         route_class=routing_module.Route,
         jsonrpc=True,
+        required_extensions=(
+            frozenset({A2A_INPUT_EXTENSION_URI})
+            if input_extension_required
+            else frozenset()
+        ),
     )
     rest_routes = _validated_a2a_routes(
         rest_routes_module.create_rest_routes(
             request_handler,
             path_prefix=prefix,
+            context_builder=call_context_builder,
             enable_v0_3_compat=False,
         ),
         route_class=routing_module.Route,
+        required_extensions=(
+            frozenset({A2A_INPUT_EXTENSION_URI})
+            if input_extension_required
+            else frozenset()
+        ),
     )
     route_module.add_a2a_routes_to_fastapi(
         app,
@@ -210,7 +461,15 @@ def _agent_card_routes(
         absolute_interface_url = _absolute_url(request, interface_url)
         for supported_interface in card.supported_interfaces:
             supported_interface.url = absolute_interface_url
-        return json_response(agent_card_to_dict(card))
+        payload = agent_card_to_dict(card)
+        capabilities = payload.get("capabilities")
+        if isinstance(capabilities, dict):
+            extensions = capabilities.get("extensions")
+            if isinstance(extensions, list):
+                for extension in extensions:
+                    if isinstance(extension, dict):
+                        extension.setdefault("required", False)
+        return json_response(payload)
 
     return [
         route_class(
@@ -230,31 +489,47 @@ def _a2a_jsonrpc_routes(
     request_handler: Any,
     *,
     prefix: str,
+    context_builder: Any = None,
 ) -> list[Any]:
     root_routes = jsonrpc_routes_module.create_jsonrpc_routes(
         request_handler,
         rpc_url=prefix,
+        context_builder=context_builder,
         enable_v0_3_compat=False,
     )
     tenant_routes = jsonrpc_routes_module.create_jsonrpc_routes(
         request_handler,
         rpc_url=f"/{{tenant}}{prefix}",
+        context_builder=context_builder,
         enable_v0_3_compat=False,
     )
     return [*root_routes, *tenant_routes]
 
 
 def _validated_a2a_routes(
-    routes: Sequence[Any], *, route_class: Any, jsonrpc: bool = False
+    routes: Sequence[Any],
+    *,
+    route_class: Any,
+    jsonrpc: bool = False,
+    required_extensions: frozenset[str] = frozenset(),
 ) -> list[Any]:
     return [
-        _validated_a2a_route(route, route_class=route_class, jsonrpc=jsonrpc)
+        _validated_a2a_route(
+            route,
+            route_class=route_class,
+            jsonrpc=jsonrpc,
+            required_extensions=required_extensions,
+        )
         for route in routes
     ]
 
 
 def _validated_a2a_route(
-    route: Any, *, route_class: Any, jsonrpc: bool = False
+    route: Any,
+    *,
+    route_class: Any,
+    jsonrpc: bool = False,
+    required_extensions: frozenset[str] = frozenset(),
 ) -> Any:
     nested_routes = getattr(route, "routes", None)
     if _is_sequence(nested_routes):
@@ -262,6 +537,7 @@ def _validated_a2a_route(
             cast(Sequence[Any], nested_routes),
             route_class=route_class,
             jsonrpc=jsonrpc,
+            required_extensions=required_extensions,
         )
         if isinstance(nested_routes, list):
             nested_routes[:] = wrapped_routes
@@ -276,14 +552,23 @@ def _validated_a2a_route(
         return route
     return route_class(
         path=path,
-        endpoint=_validated_a2a_endpoint(endpoint, jsonrpc=jsonrpc),
+        endpoint=_validated_a2a_endpoint(
+            endpoint,
+            jsonrpc=jsonrpc,
+            required_extensions=required_extensions,
+        ),
         methods=list(methods),
         name=getattr(route, "name", None),
         include_in_schema=getattr(route, "include_in_schema", True),
     )
 
 
-def _validated_a2a_endpoint(endpoint: Any, *, jsonrpc: bool = False) -> Any:
+def _validated_a2a_endpoint(
+    endpoint: Any,
+    *,
+    jsonrpc: bool = False,
+    required_extensions: frozenset[str] = frozenset(),
+) -> Any:
     async def _endpoint(request: Any) -> Any:
         try:
             payload = await _validate_a2a_json_file_parts(request)
@@ -295,7 +580,23 @@ def _validated_a2a_endpoint(endpoint: Any, *, jsonrpc: bool = False) -> Any:
             raise
         if jsonrpc:
             _inject_a2a_jsonrpc_tenant(request, payload)
-        return await endpoint(request)
+        requested = _requested_a2a_extensions(request)
+        missing = required_extensions - requested
+        if missing:
+            return _required_extension_response(
+                payload,
+                jsonrpc=jsonrpc,
+            )
+        response = await endpoint(request)
+        response_status = _normalize_a2a_error_response(response)
+        if response_status is not None:
+            response.status_code = response_status
+            if response_status == 401:
+                response.headers["WWW-Authenticate"] = "Bearer"
+        activated = requested & {A2A_INPUT_EXTENSION_URI}
+        if activated:
+            response.headers["A2A-Extensions"] = ",".join(sorted(activated))
+        return response
 
     return _endpoint
 
@@ -340,6 +641,53 @@ async def _a2a_jsonrpc_validation_error_response(
             },
         },
         status_code=200,
+    )
+
+
+def _requested_a2a_extensions(request: Any) -> frozenset[str]:
+    headers = getattr(request, "headers", None)
+    if headers is None:
+        return frozenset()
+    getlist = getattr(headers, "getlist", None)
+    values = (
+        getlist("A2A-Extensions")
+        if callable(getlist)
+        else [headers.get("A2A-Extensions", "")]
+    )
+    return frozenset(
+        extension
+        for value in values
+        if isinstance(value, str)
+        for candidate in value.split(",")
+        if (extension := candidate.strip())
+    )
+
+
+def _required_extension_response(
+    payload: object | None,
+    *,
+    jsonrpc: bool,
+) -> JSONResponse:
+    if not jsonrpc:
+        return JSONResponse(
+            {
+                "code": -32008,
+                "message": "Structured input contract result.",
+                "data": {"code": "avalan.input.extension_required"},
+            },
+            status_code=400,
+        )
+    return JSONResponse(
+        {
+            "jsonrpc": "2.0",
+            "id": _a2a_jsonrpc_request_id(payload),
+            "error": {
+                "code": -32008,
+                "message": "Structured input contract result.",
+                "data": {"code": "avalan.input.extension_required"},
+            },
+        },
+        status_code=400,
     )
 
 
@@ -647,6 +995,7 @@ def _build_agent_card(
     interface_url: str,
     name: str,
     description: str | None,
+    input_extension_required: bool = False,
 ) -> Any:
     skill_description = description or "Execute the Avalan agent."
     return a2a_pb2.AgentCard(
@@ -660,7 +1009,17 @@ def _build_agent_card(
                 protocol_version=constants.PROTOCOL_VERSION_1_0,
             )
         ],
-        capabilities=a2a_pb2.AgentCapabilities(streaming=True),
+        capabilities=a2a_pb2.AgentCapabilities(
+            streaming=True,
+            extensions=[
+                a2a_pb2.AgentExtension(
+                    uri=A2A_INPUT_EXTENSION_URI,
+                    description=A2A_INPUT_EXTENSION_DESCRIPTION,
+                    required=input_extension_required,
+                    params=A2A_INPUT_EXTENSION_PARAMS,
+                )
+            ],
+        ),
         default_input_modes=A2A_FILE_MODES,
         default_output_modes=A2A_OUTPUT_MODES,
         skills=[
@@ -1050,11 +1409,264 @@ def _is_sequence(value: object) -> bool:
     )
 
 
+def _a2a_task_state(task: object | None) -> object | None:
+    status = _field_value(task, "status")
+    if status is _MISSING:
+        return None
+    state = _field_value(status, "state")
+    return None if state is _MISSING else state
+
+
+def _strip_a2a_input_extension(value: object | None) -> None:
+    if value is None:
+        return
+    _strip_a2a_input_extension_message(value)
+    status = _field_value(value, "status")
+    if status is not _MISSING and status is not None:
+        message = _field_value(status, "message")
+        if message is not _MISSING and message is not None:
+            _strip_a2a_input_extension_message(message)
+    history = _field_value(value, "history")
+    if _is_sequence(history):
+        for message in cast(Sequence[object], history):
+            _strip_a2a_input_extension_message(message)
+
+
+def _strip_a2a_input_extension_message(value: object) -> None:
+    metadata = _field_value(value, "metadata")
+    if (
+        metadata is not _MISSING
+        and metadata is not None
+        and A2A_INPUT_EXTENSION_URI in cast(Any, metadata)
+    ):
+        del cast(Any, metadata)[A2A_INPUT_EXTENSION_URI]
+    extensions = _field_value(value, "extensions")
+    if extensions is _MISSING or extensions is None:
+        return
+    mutable_extensions = cast(Any, extensions)
+    while A2A_INPUT_EXTENSION_URI in mutable_extensions:
+        mutable_extensions.remove(A2A_INPUT_EXTENSION_URI)
+
+
+def _a2a_message_ids(message: object | None) -> set[str]:
+    message_id = _string_field(message, "message_id", "messageId")
+    return {message_id} if message_id is not None else set()
+
+
+def _a2a_transport_ids(context: object) -> set[str]:
+    state = getattr(context, "state", None)
+    if not isinstance(state, Mapping):
+        return set()
+    request_id = state.get("request_id")
+    if isinstance(request_id, bool) or not isinstance(request_id, str | int):
+        return set()
+    return {str(request_id)}
+
+
+def _a2a_invalid_params(message: str) -> Exception:
+    errors = import_module("a2a.utils.errors")
+    return cast(
+        Exception,
+        errors.InvalidParamsError(
+            "Structured input contract result.",
+            data={"code": "avalan.input.validation"},
+        ),
+    )
+
+
+def _a2a_unauthorized() -> Exception:
+    return _a2a_protocol_error(
+        -32602,
+        403,
+        "avalan.input.unauthorized",
+    )
+
+
+def _a2a_authentication_required() -> Exception:
+    return _a2a_protocol_error(
+        -32602,
+        401,
+        "avalan.input.authentication_required",
+    )
+
+
+def _a2a_contract_error(error: InputContractError) -> Exception:
+    if error.code in {
+        InputErrorCode.ALREADY_RESOLVED,
+        InputErrorCode.IDEMPOTENCY_CONFLICT,
+        InputErrorCode.IDEMPOTENCY_LEDGER_FULL,
+        InputErrorCode.STALE_REVISION,
+    }:
+        return _a2a_protocol_error(
+            -31911,
+            409,
+            "avalan.input.already_resolved",
+            interaction_state="answered",
+        )
+    if error.code is InputErrorCode.EXPIRED:
+        return _a2a_protocol_error(
+            -31912,
+            410,
+            "avalan.input.expired",
+            interaction_state="expired",
+        )
+    if error.code is InputErrorCode.SUPERSEDED:
+        return _a2a_protocol_error(
+            -31913,
+            409,
+            "avalan.input.superseded",
+            interaction_state="superseded",
+        )
+    if error.code in {
+        InputErrorCode.UNAVAILABLE,
+        InputErrorCode.CAPACITY_EXCEEDED,
+        InputErrorCode.STORE_CLOSED,
+        InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+    }:
+        return _a2a_unavailable()
+    if error.code is InputErrorCode.FORBIDDEN:
+        return _a2a_unauthorized()
+    return _a2a_invalid_params(error.code.value)
+
+
+def _a2a_unavailable() -> Exception:
+    return _a2a_protocol_error(
+        -31910,
+        503,
+        "avalan.input.unavailable",
+        interaction_state="unavailable",
+    )
+
+
+def _a2a_protocol_error(
+    jsonrpc_code: int,
+    http_status: int,
+    data_code: str,
+    *,
+    interaction_state: str | None = None,
+) -> Exception:
+    key = (jsonrpc_code, http_status)
+    error_type = _A2A_ERROR_TYPES.get(key)
+    if error_type is None:
+        errors = import_module("a2a.utils.errors")
+        error_handlers = import_module("a2a.utils.error_handlers")
+        jsonrpc_models = import_module("a2a.server.jsonrpc_models")
+        response_helpers = import_module(
+            "a2a.server.request_handlers.response_helpers"
+        )
+        error_type = cast(
+            type[Exception],
+            type(
+                f"AvalanA2AProtocolError{abs(jsonrpc_code)}_{http_status}",
+                (errors.A2AError,),
+                {},
+            ),
+        )
+        errors.JSON_RPC_ERROR_CODE_MAP[error_type] = jsonrpc_code
+        response_helpers.EXCEPTION_MAP[error_type] = (
+            jsonrpc_models.JSONRPCError
+        )
+        error_handlers.A2A_ERROR_MAPPING[error_type] = errors.ErrorMapping(
+            http_status,
+            {
+                401: "UNAUTHENTICATED",
+                403: "PERMISSION_DENIED",
+                409: "ABORTED",
+                410: "FAILED_PRECONDITION",
+                503: "UNAVAILABLE",
+            }.get(http_status, "UNKNOWN"),
+            data_code.rsplit(".", maxsplit=1)[-1].upper(),
+        )
+        _A2A_ERROR_TYPES[key] = error_type
+    data = {"code": data_code}
+    if interaction_state is not None:
+        data["interaction_state"] = interaction_state
+    error = cast(Any, error_type)(
+        "Structured input contract result.",
+        data=data,
+    )
+    return cast(Exception, error)
+
+
+def _normalize_a2a_error_response(response: object) -> int | None:
+    body = getattr(response, "body", None)
+    if not isinstance(body, bytes | bytearray):
+        return None
+    try:
+        payload = loads(body)
+    except (TypeError, ValueError):
+        return None
+    if not isinstance(payload, Mapping):
+        return None
+    error = payload.get("error")
+    if not isinstance(error, Mapping):
+        return None
+    data: object = error.get("data")
+    if (
+        isinstance(data, list)
+        and data
+        and isinstance(data[0], Mapping)
+        and isinstance(data[0].get("metadata"), Mapping)
+    ):
+        metadata = cast(Mapping[object, object], data[0]["metadata"])
+        code = metadata.get("code")
+        if isinstance(code, str) and code.startswith("avalan.input."):
+            normalized = dict(error)
+            normalized["data"] = {
+                str(key): value for key, value in metadata.items()
+            }
+            payload = dict(payload)
+            payload["error"] = normalized
+            encoded = dumps(payload, separators=(",", ":")).encode("utf-8")
+            mutable_response = cast(Any, response)
+            mutable_response.body = encoded
+            mutable_response.headers["content-length"] = str(len(encoded))
+            data = normalized["data"]
+    if not isinstance(data, Mapping):
+        return None
+    code = data.get("code")
+    return (
+        _A2A_ERROR_HTTP_STATUSES.get(code) if isinstance(code, str) else None
+    )
+
+
+def _raise_a2a_convergence_errors(
+    message: str,
+    errors: list[BaseException],
+) -> None:
+    if not errors:
+        return
+    if len(errors) == 1:
+        raise errors[0]
+    raise BaseExceptionGroup(message, errors)
+
+
+def _a2a_resolution_idempotency_key(
+    task_id: str,
+    resolution: object,
+) -> ResolutionIdempotencyKey:
+    if not isinstance(resolution, InputCandidateResolution):
+        if not isinstance(resolution, CancelledResolution):
+            raise _a2a_invalid_params("unsupported input resolution")
+    payload = encode_a2a_input_resolution_metadata(cast(Any, resolution))
+    digest = sha256(
+        dumps(
+            {"task_id": task_id, "resolution": payload},
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode("utf-8")
+    ).hexdigest()
+    return ResolutionIdempotencyKey(f"a2a:{digest}")
+
+
 class AvalanA2AAgentExecutor:
     """Execute Avalan orchestrator calls for A2A SDK routes."""
 
-    def __init__(self, app: FastAPI) -> None:
+    def __init__(self, app: FastAPI, *, task_store: Any = None) -> None:
         self._app = app
+        self._task_store = task_store
+        self._pending: dict[str, _A2APendingInput] = {}
+        self._pending_lock = Lock()
 
     async def execute(self, context: Any, event_queue: Any) -> None:
         _ensure_typing_override()
@@ -1065,6 +1677,29 @@ class AvalanA2AAgentExecutor:
             event_queue, task_id=task_id, context_id=context_id
         )
         a2a_pb2 = import_module("a2a.types.a2a_pb2")
+        current_state = _a2a_task_state(context.current_task)
+        input_required_state = getattr(
+            a2a_pb2.TaskState,
+            "TASK_STATE_INPUT_REQUIRED",
+            None,
+        )
+        if (
+            input_required_state is not None
+            and current_state == input_required_state
+        ):
+            await self._resume_pending(context, updater)
+            return
+        auth_required_state = getattr(
+            a2a_pb2.TaskState,
+            "TASK_STATE_AUTH_REQUIRED",
+            None,
+        )
+        if (
+            auth_required_state is not None
+            and current_state == auth_required_state
+        ):
+            await updater.update_status(current_state)
+            return
         if context.current_task is None:
             await event_queue.enqueue_event(
                 a2a_pb2.Task(
@@ -1081,14 +1716,22 @@ class AvalanA2AAgentExecutor:
         )
 
         response: AsyncIterable[object] | None = None
-        iterator: AsyncIterator[object] | None = None
+        iterator: AsyncIterator[StreamConsumerProjection] | None = None
         translator: A2AResponseTranslator | None = None
+        retained = False
         try:
             orchestrator = await self._orchestrator()
             request = await self._chat_request(context, orchestrator)
             logger = cast(Logger, self._app.state.logger)
+            runtime, handler = await self._interaction_runtime(
+                context,
+                task_id,
+            )
             response, _response_uuid, _timestamp = await orchestrate(
-                request, logger, orchestrator
+                request,
+                logger,
+                orchestrator,
+                interaction_runtime=runtime,
             )
             translator = A2AResponseTranslator(
                 updater,
@@ -1108,6 +1751,41 @@ class AvalanA2AAgentExecutor:
             )
             async for item in iterator:
                 await translator.process(item)
+                if (
+                    handler is not None
+                    and item.kind is StreamItemKind.INTERACTION_PENDING
+                ):
+                    assert runtime is not None
+                    request_id = item.correlation.request_id
+                    if request_id is None:
+                        raise StreamValidationError(
+                            "A2A pending input has no request correlation"
+                        )
+                    pending_request = await handler.request(request_id)
+                    pending = _A2APendingInput(
+                        task_id=task_id,
+                        context_id=context_id,
+                        actor=runtime.actor,
+                        request=pending_request,
+                        response=response,
+                        iterator=iterator,
+                        translator=translator,
+                        orchestrator=orchestrator,
+                        activated=self._extension_activated(context),
+                        handler=handler,
+                        updater=updater,
+                        seen_message_ids=_a2a_message_ids(context.message),
+                        seen_transport_ids=_a2a_transport_ids(
+                            context.call_context
+                        ),
+                    )
+                    await self._publish_pending(
+                        pending,
+                        updater,
+                        a2a_pb2,
+                    )
+                    retained = True
+                    return
             await translator.finish()
             if translator.succeeded:
                 await orchestrator.sync_messages(response)
@@ -1132,10 +1810,675 @@ class AvalanA2AAgentExecutor:
                 )
             raise
         else:
-            if response is not None:
+            if response is not None and not retained:
                 await cleanup_stream_sources(
                     response, iterator, cancelled=False
                 )
+
+    async def prepare_follow_up(self, params: Any, context: Any) -> Any:
+        """Validate and resolve one pending same-task A2A follow-up."""
+        actor = await self._activated_actor(context)
+        task_id = _string_field(params.message, "task_id", "taskId")
+        if task_id is None:
+            return None
+        async with self._pending_lock:
+            pending = self._pending.get(task_id)
+        if pending is None:
+            await self._raise_stored_terminal_error(task_id, context)
+            return None
+        explicit_context_id = _string_field(
+            params.message,
+            "context_id",
+            "contextId",
+        )
+        if (
+            explicit_context_id is not None
+            and explicit_context_id != pending.context_id
+        ):
+            raise _a2a_invalid_params("bad context id")
+        if actor is None:
+            actor = await self._actor(context)
+        if actor is None:
+            raise _a2a_authentication_required()
+        if actor.principal != pending.actor.principal:
+            raise _a2a_unauthorized()
+        message_ids = _a2a_message_ids(params.message)
+        transport_ids = _a2a_transport_ids(context)
+        state = getattr(context, "state", None)
+        transport_id_required = isinstance(
+            state.get("method") if isinstance(state, Mapping) else None,
+            str,
+        )
+        if len(message_ids) != 1 or (
+            transport_id_required and len(transport_ids) != 1
+        ):
+            raise _a2a_invalid_params(
+                "input follow-up requires fresh message and transport IDs"
+            )
+        async with pending.lock:
+            async with self._pending_lock:
+                if self._pending.get(task_id) is not pending:
+                    await self._raise_stored_terminal_error(task_id, context)
+                    return None
+            if (
+                message_ids & pending.seen_message_ids
+                or transport_ids & pending.seen_transport_ids
+            ):
+                raise _a2a_invalid_params(
+                    "input follow-up IDs must not be reused"
+                )
+            pending.seen_message_ids.update(message_ids)
+            pending.seen_transport_ids.update(transport_ids)
+            if A2A_INPUT_EXTENSION_URI not in context.requested_extensions:
+                context.state[_A2A_REFRESH_STATE_KEY] = pending
+                return None
+            if A2A_INPUT_EXTENSION_URI not in params.message.extensions:
+                context.state[_A2A_REFRESH_STATE_KEY] = pending
+                return None
+            metadata = _jsonable_value(params.message.metadata)
+            if not isinstance(metadata, Mapping):
+                context.state[_A2A_REFRESH_STATE_KEY] = pending
+                return None
+            payload = metadata.get(A2A_INPUT_EXTENSION_URI)
+            if payload is None:
+                context.state[_A2A_REFRESH_STATE_KEY] = pending
+                return None
+            self._raise_request_terminal_error(pending.request)
+            try:
+                resolution = decode_a2a_input_resolution_metadata(
+                    payload,
+                    request=pending.request,
+                    resolved_at=datetime.now(timezone.utc),
+                )
+                encoded = encode_a2a_input_resolution_metadata(resolution)
+                if pending.continuation_claimed:
+                    if encoded != pending.accepted_resolution:
+                        raise _a2a_protocol_error(
+                            -31911,
+                            409,
+                            "avalan.input.already_resolved",
+                            interaction_state="answered",
+                        )
+                    return await self._working_task(
+                        task_id,
+                        context,
+                        pending,
+                    )
+                await self._authorize_resolution(actor, pending, resolution)
+                record = await self._apply_resolution(
+                    actor,
+                    pending,
+                    resolution,
+                )
+            except InputContractError as exc:
+                terminal = await self._terminal_interaction(pending)
+                if terminal is not None:
+                    request, status = terminal
+                    if request is not None:
+                        pending.request = request
+                    self._raise_resolution_status_error(status)
+                raise _a2a_contract_error(exc) from None
+            pending.request = record.request
+            pending.accepted_resolution = encoded
+            pending.continuation_claimed = True
+            context.state[_A2A_RESOLUTION_STATE_KEY] = pending
+            return None
+
+    def deactivate_result(
+        self,
+        context: Any,
+        result: Any = None,
+    ) -> None:
+        """Remove structured input metadata from one plain response."""
+        if self._extension_activated(context):
+            return
+        _strip_a2a_input_extension(result)
+
+    async def _publish_pending(
+        self,
+        pending: _A2APendingInput,
+        updater: Any,
+        a2a_pb2: Any,
+        *,
+        previous: _A2APendingInput | None = None,
+    ) -> None:
+        async with self._pending_lock:
+            current = self._pending.get(pending.task_id)
+            if current is not previous:
+                raise RuntimeError("A2A task already has pending input")
+            self._pending[pending.task_id] = pending
+        try:
+            await self._emit_pending_status(pending, updater, a2a_pb2)
+            pending.auto_resume_task = create_task(
+                self._auto_resume_pending(pending),
+                name=f"a2a-input-resume-{pending.task_id}",
+            )
+        except BaseException:
+            async with self._pending_lock:
+                if self._pending.get(pending.task_id) is pending:
+                    if previous is None:
+                        del self._pending[pending.task_id]
+                    else:
+                        self._pending[pending.task_id] = previous
+            raise
+
+    async def _emit_pending_status(
+        self,
+        pending: _A2APendingInput,
+        updater: Any,
+        a2a_pb2: Any,
+        *,
+        activated: bool | None = None,
+    ) -> None:
+        message = a2a_pb2.Message(
+            message_id=str(uuid4()),
+            task_id=pending.task_id,
+            context_id=pending.context_id,
+            role=a2a_pb2.Role.ROLE_AGENT,
+            parts=[a2a_pb2.Part(text=a2a_input_request_text(pending.request))],
+        )
+        task_metadata = None
+        if pending.activated if activated is None else activated:
+            payload = encode_a2a_input_request_metadata(pending.request)
+            message.extensions.append(A2A_INPUT_EXTENSION_URI)
+            message.metadata.update({A2A_INPUT_EXTENSION_URI: payload})
+            task_metadata = {
+                A2A_INPUT_EXTENSION_URI: {
+                    "kind": "request",
+                    "request_id": str(pending.request.request_id),
+                }
+            }
+        await updater.update_status(
+            a2a_pb2.TaskState.TASK_STATE_INPUT_REQUIRED,
+            message=message,
+            metadata=task_metadata,
+        )
+
+    async def _resume_pending(self, context: Any, updater: Any) -> None:
+        pending = context.call_context.state.get(_A2A_RESOLUTION_STATE_KEY)
+        refresh = context.call_context.state.get(_A2A_REFRESH_STATE_KEY)
+        if pending is None and isinstance(refresh, _A2APendingInput):
+            pending = refresh
+            async with pending.lock:
+                async with self._pending_lock:
+                    if self._pending.get(pending.task_id) is not pending:
+                        raise _a2a_invalid_params(
+                            "input request is no longer pending"
+                        )
+                activated = self._extension_activated(context)
+                await self._emit_pending_status(
+                    pending,
+                    updater,
+                    import_module("a2a.types.a2a_pb2"),
+                    activated=activated,
+                )
+            return
+        if not isinstance(pending, _A2APendingInput):
+            raise _a2a_invalid_params(
+                "pending input requires structured extension metadata"
+            )
+        async with pending.lock:
+            async with self._pending_lock:
+                if self._pending.get(pending.task_id) is not pending:
+                    raise _a2a_invalid_params(
+                        "input request is no longer pending"
+                    )
+        await self._continue_pending(
+            pending,
+            updater,
+            activated=self._extension_activated(context),
+        )
+
+    async def _continue_pending(
+        self,
+        pending: _A2APendingInput,
+        updater: Any,
+        *,
+        activated: bool,
+    ) -> None:
+        a2a_pb2 = import_module("a2a.types.a2a_pb2")
+        await updater.update_status(
+            a2a_pb2.TaskState.TASK_STATE_WORKING,
+            metadata={
+                A2A_INPUT_EXTENSION_URI: {
+                    "kind": "resolution",
+                    "request_id": str(pending.request.request_id),
+                }
+            },
+        )
+        retained = False
+        cancelled = False
+        convergence_errors: list[BaseException] = []
+        try:
+            async for item in pending.iterator:
+                await pending.translator.process(item)
+                if item.kind is StreamItemKind.INTERACTION_PENDING:
+                    request_id = item.correlation.request_id
+                    if request_id is None:
+                        raise StreamValidationError(
+                            "A2A pending input has no request correlation"
+                        )
+                    request = await pending.handler.request(request_id)
+                    if request.request_id == pending.request.request_id:
+                        raise StreamValidationError(
+                            "A2A sequential input reused its prior request"
+                        )
+                    successor = _A2APendingInput(
+                        task_id=pending.task_id,
+                        context_id=pending.context_id,
+                        actor=pending.actor,
+                        request=request,
+                        response=pending.response,
+                        iterator=pending.iterator,
+                        translator=pending.translator,
+                        orchestrator=pending.orchestrator,
+                        activated=activated,
+                        handler=pending.handler,
+                        updater=updater,
+                        seen_message_ids=pending.seen_message_ids,
+                        seen_transport_ids=pending.seen_transport_ids,
+                    )
+                    await self._publish_pending(
+                        successor,
+                        updater,
+                        a2a_pb2,
+                        previous=pending,
+                    )
+                    retained = True
+                    return
+            await pending.translator.finish()
+            if pending.translator.succeeded:
+                await pending.orchestrator.sync_messages(pending.response)
+        except BaseException as error:
+            cancelled = isinstance(error, CancelledError)
+            convergence_errors.append(error)
+            try:
+                await pending.translator.abort(
+                    (
+                        StreamTerminalOutcome.CANCELLED
+                        if cancelled
+                        else StreamTerminalOutcome.ERRORED
+                    )
+                )
+            except BaseException as abort_error:
+                convergence_errors.append(abort_error)
+        finally:
+            if not retained:
+                try:
+                    await cleanup_stream_sources(
+                        pending.response,
+                        pending.iterator,
+                        cancelled=cancelled,
+                    )
+                except BaseException as cleanup_error:
+                    convergence_errors.append(cleanup_error)
+                finally:
+                    async with self._pending_lock:
+                        if self._pending.get(pending.task_id) is pending:
+                            del self._pending[pending.task_id]
+        _raise_a2a_convergence_errors(
+            "A2A continuation convergence failed",
+            convergence_errors,
+        )
+
+    async def _auto_resume_pending(
+        self,
+        pending: _A2APendingInput,
+    ) -> None:
+        try:
+            await pending.handler.settlement_event(
+                str(pending.request.request_id)
+            ).wait()
+            terminal = await self._terminal_interaction(pending)
+            if terminal is None:
+                raise RuntimeError(
+                    "settled A2A input has no terminal interaction"
+                )
+            request, status = terminal
+            async with pending.lock:
+                async with self._pending_lock:
+                    if self._pending.get(pending.task_id) is not pending:
+                        return
+                if pending.continuation_claimed:
+                    return
+                if request is not None:
+                    pending.request = request
+                pending.continuation_claimed = True
+            if status in {
+                ResolutionStatus.EXPIRED,
+                ResolutionStatus.SUPERSEDED,
+            }:
+                await self._record_terminal_interaction(pending, status)
+            await self._continue_pending(
+                pending,
+                pending.updater,
+                activated=pending.activated,
+            )
+        except CancelledError:
+            raise
+        except BaseException as error:
+            await self._converge_auto_resume_failure(pending, error)
+
+    async def _converge_auto_resume_failure(
+        self,
+        pending: _A2APendingInput,
+        error: BaseException,
+    ) -> None:
+        owns_pending = False
+        async with pending.lock:
+            async with self._pending_lock:
+                if self._pending.get(pending.task_id) is pending:
+                    del self._pending[pending.task_id]
+                    owns_pending = True
+        convergence_errors: list[BaseException] = []
+        if owns_pending:
+            try:
+                await pending.translator.abort(StreamTerminalOutcome.ERRORED)
+            except BaseException as abort_error:
+                convergence_errors.append(abort_error)
+            try:
+                await cleanup_stream_sources(
+                    pending.response,
+                    pending.iterator,
+                    cancelled=False,
+                )
+            except BaseException as cleanup_error:
+                convergence_errors.append(cleanup_error)
+        logger = cast(Logger, self._app.state.logger)
+        logger.error(
+            "A2A automatic continuation failed for task %s",
+            pending.task_id,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+        for convergence_error in convergence_errors:
+            logger.error(
+                "A2A automatic continuation cleanup failed for task %s",
+                pending.task_id,
+                exc_info=(
+                    type(convergence_error),
+                    convergence_error,
+                    convergence_error.__traceback__,
+                ),
+            )
+
+    async def _terminal_interaction(
+        self,
+        pending: _A2APendingInput,
+    ) -> tuple[InputRequest | None, ResolutionStatus] | None:
+        service = getattr(self._app.state, "interaction_service", None)
+        if not isinstance(service, ServerInteractionService):
+            return None
+        projection = await service.configuration.broker.inspect(
+            ScopedInteractionLookup(
+                actor=pending.actor,
+                correlation=InteractionCorrelation.from_request(
+                    pending.request
+                ),
+            )
+        )
+        if isinstance(projection, InteractionRecord):
+            request = projection.request
+            if request.state in {
+                RequestState.CREATED,
+                RequestState.PENDING,
+            }:
+                return None
+            return request, ResolutionStatus(request.state.value)
+        if isinstance(projection, InteractionTerminalMetadata):
+            return None, projection.status
+        return None
+
+    async def _record_terminal_interaction(
+        self,
+        pending: _A2APendingInput,
+        status: ResolutionStatus,
+    ) -> None:
+        await pending.updater.update_status(
+            import_module(
+                "a2a.types.a2a_pb2"
+            ).TaskState.TASK_STATE_INPUT_REQUIRED,
+            metadata={
+                A2A_INPUT_EXTENSION_URI: {
+                    "kind": "resolution",
+                    "request_id": str(pending.request.request_id),
+                    "interaction_state": status.value,
+                }
+            },
+        )
+
+    async def _interaction_runtime(
+        self,
+        context: Any,
+        task_id: str,
+    ) -> tuple[AttachedInteractionRuntime | None, _A2AInputHandler | None]:
+        actor = await self._actor(context)
+        service = getattr(self._app.state, "interaction_service", None)
+        if actor is None or not isinstance(service, ServerInteractionService):
+            return None, None
+        handler = _A2AInputHandler()
+        return (
+            AttachedInteractionRuntime(
+                broker=service.configuration.broker,
+                actor=actor,
+                handler=handler,
+                task_id=TaskId(task_id),
+            ),
+            handler,
+        )
+
+    async def _activated_actor(
+        self,
+        context: Any,
+    ) -> InteractionActor | None:
+        if not self._extension_activated(context):
+            return None
+        service = getattr(self._app.state, "interaction_service", None)
+        if not isinstance(service, ServerInteractionService):
+            raise _a2a_unavailable()
+        actor = await self._actor(context)
+        if actor is None:
+            raise _a2a_authentication_required()
+        return actor
+
+    async def _stored_task(self, task_id: str, context: Any) -> Any:
+        if self._task_store is None:
+            return None
+        return await self._task_store.get(task_id, context)
+
+    async def _working_task(
+        self,
+        task_id: str,
+        context: Any,
+        pending: _A2APendingInput,
+    ) -> Any:
+        task = await self._stored_task(task_id, context)
+        if task is None or self._task_store is None:
+            return task
+        a2a_pb2 = import_module("a2a.types.a2a_pb2")
+        if task.status.state != a2a_pb2.TaskState.TASK_STATE_INPUT_REQUIRED:
+            return task
+        if task.status.HasField("message"):
+            task.history.append(task.status.message)
+            task.status.ClearField("message")
+        task.status.state = a2a_pb2.TaskState.TASK_STATE_WORKING
+        task.metadata.update(
+            {
+                A2A_INPUT_EXTENSION_URI: {
+                    "kind": "resolution",
+                    "request_id": str(pending.request.request_id),
+                }
+            }
+        )
+        await self._task_store.save(task, context)
+        return task
+
+    async def _raise_stored_terminal_error(
+        self,
+        task_id: str,
+        context: Any,
+    ) -> None:
+        task = await self._stored_task(task_id, context)
+        metadata = _jsonable_value(getattr(task, "metadata", None))
+        if not isinstance(metadata, Mapping):
+            return
+        payload = metadata.get(A2A_INPUT_EXTENSION_URI)
+        if not isinstance(payload, Mapping):
+            return
+        state = payload.get("interaction_state")
+        if not isinstance(state, str):
+            return
+        try:
+            status = ResolutionStatus(state)
+        except ValueError:
+            return
+        self._raise_resolution_status_error(status)
+
+    def _raise_request_terminal_error(self, request: InputRequest) -> None:
+        try:
+            status = ResolutionStatus(request.state.value)
+        except ValueError:
+            return
+        self._raise_resolution_status_error(status)
+
+    def _raise_resolution_status_error(
+        self,
+        status: ResolutionStatus,
+    ) -> None:
+        error = {
+            ResolutionStatus.EXPIRED: (
+                -31912,
+                410,
+                "avalan.input.expired",
+            ),
+            ResolutionStatus.SUPERSEDED: (
+                -31913,
+                409,
+                "avalan.input.superseded",
+            ),
+        }.get(status)
+        if error is not None:
+            raise _a2a_protocol_error(
+                *error,
+                interaction_state=status.value,
+            )
+
+    async def _actor(self, context: Any) -> InteractionActor | None:
+        service = getattr(self._app.state, "interaction_service", None)
+        if not isinstance(service, ServerInteractionService):
+            return None
+        call_context = getattr(context, "call_context", context)
+        state = getattr(call_context, "state", {})
+        request = (
+            state.get(_A2A_HTTP_REQUEST_STATE_KEY)
+            if isinstance(state, Mapping)
+            else None
+        )
+        if request is None:
+            return None
+        try:
+            actor = await service.configuration.principal_resolver(request)
+        except Exception:
+            return None
+        return actor if isinstance(actor, InteractionActor) else None
+
+    def _extension_activated(self, context: Any) -> bool:
+        call_context = getattr(context, "call_context", context)
+        requested = getattr(call_context, "requested_extensions", ())
+        return A2A_INPUT_EXTENSION_URI in requested
+
+    async def _authorize_resolution(
+        self,
+        actor: InteractionActor,
+        pending: _A2APendingInput,
+        resolution: object,
+    ) -> None:
+        service = cast(
+            ServerInteractionService,
+            self._app.state.interaction_service,
+        )
+        operation = (
+            InteractionOperation.CANCEL_REQUEST
+            if isinstance(resolution, CancelledResolution)
+            else InteractionOperation.RESOLVE
+        )
+        target = InteractionRequestAuthorizationTarget(
+            request_id=pending.request.request_id,
+            origin=pending.request.origin,
+        )
+        decision = await service.configuration.authorizer.authorize(
+            actor,
+            operation,
+            target,
+        )
+        if (
+            not isinstance(decision, InteractionAuthorizationDecision)
+            or decision.actor != actor
+            or decision.operation is not operation
+            or decision.target != target
+            or not decision.allowed
+        ):
+            raise _a2a_unauthorized()
+
+    async def _apply_resolution(
+        self,
+        actor: InteractionActor,
+        pending: _A2APendingInput,
+        resolution: object,
+    ) -> Any:
+        service = cast(
+            ServerInteractionService,
+            self._app.state.interaction_service,
+        )
+        correlation = InteractionCorrelation.from_request(pending.request)
+        if isinstance(resolution, CancelledResolution):
+            result = await service.configuration.broker.cancel(
+                CancelInteractionCommand(
+                    actor=actor,
+                    correlation=correlation,
+                    provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                    expected_state_revision=pending.request.state_revision,
+                )
+            )
+        else:
+            candidate = cast(InputCandidateResolution, resolution)
+            result = await service.configuration.broker.resolve(
+                ResolveInteractionCommand(
+                    actor=actor,
+                    correlation=correlation,
+                    expected_state_revision=StateRevision(
+                        pending.request.state_revision
+                    ),
+                    idempotency_key=_a2a_resolution_idempotency_key(
+                        pending.task_id,
+                        candidate,
+                    ),
+                    proposed_resolution=candidate,
+                )
+            )
+        if not isinstance(result, InteractionBrokerResult):
+            raise _a2a_unavailable()
+        store_result = result.store_result
+        if isinstance(
+            store_result,
+            (
+                ResolveInteractionApplied,
+                CancelInteractionApplied,
+                InteractionStoreReplayed,
+            ),
+        ):
+            return store_result.record
+        if isinstance(store_result, ResolveInteractionRejected):
+            raise InputContractError(
+                store_result.error.code,
+                store_result.error.path,
+                store_result.error.message,
+            )
+        error = getattr(store_result, "error", None)
+        if error is not None and all(
+            hasattr(error, name) for name in ("code", "path", "message")
+        ):
+            raise InputContractError(error.code, error.path, error.message)
+        raise _a2a_unavailable()
 
     async def cancel(self, context: Any, event_queue: Any) -> None:
         _ensure_typing_override()
@@ -1145,7 +2488,81 @@ class AvalanA2AAgentExecutor:
         updater = updater_module.TaskUpdater(
             event_queue, task_id=task_id, context_id=context_id
         )
-        await updater.cancel()
+        async with self._pending_lock:
+            pending = self._pending.get(task_id)
+        if pending is None:
+            await updater.cancel()
+            return
+        async with pending.lock:
+            actor = await self._actor(context)
+            if actor is None or actor.principal != pending.actor.principal:
+                raise _a2a_unauthorized()
+            resolution = CancelledResolution(
+                request_id=pending.request.request_id,
+                provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                resolved_at=datetime.now(timezone.utc),
+            )
+            await self._authorize_resolution(actor, pending, resolution)
+            record = await self._apply_resolution(
+                actor,
+                pending,
+                resolution,
+            )
+            pending.request = record.request
+            pending.continuation_claimed = True
+            convergence_errors = []
+            try:
+                await cleanup_stream_sources(
+                    pending.response,
+                    pending.iterator,
+                    cancelled=True,
+                )
+            except BaseException as cleanup_error:
+                convergence_errors.append(cleanup_error)
+            finally:
+                async with self._pending_lock:
+                    if self._pending.get(task_id) is pending:
+                        del self._pending[task_id]
+            try:
+                metadata = {
+                    A2A_INPUT_EXTENSION_URI: {
+                        "kind": "resolution",
+                        "request_id": str(pending.request.request_id),
+                    }
+                }
+                if self._task_store is None:
+                    await updater.update_status(
+                        import_module(
+                            "a2a.types.a2a_pb2"
+                        ).TaskState.TASK_STATE_CANCELED,
+                        metadata=metadata,
+                    )
+                else:
+                    call_context = getattr(
+                        context,
+                        "call_context",
+                        context,
+                    )
+                    task = await self._task_store.get(
+                        task_id,
+                        call_context,
+                    )
+                    if task is None:
+                        raise RuntimeError("A2A task is not stored")
+                    a2a_pb2 = import_module("a2a.types.a2a_pb2")
+                    task.status.CopyFrom(
+                        a2a_pb2.TaskStatus(
+                            state=(a2a_pb2.TaskState.TASK_STATE_CANCELED)
+                        )
+                    )
+                    task.metadata.update(metadata)
+                    await self._task_store.save(task, call_context)
+            except BaseException as update_error:
+                convergence_errors.append(update_error)
+            _raise_a2a_convergence_errors(
+                "A2A cancellation convergence failed",
+                convergence_errors,
+            )
 
     async def _orchestrator(self) -> Orchestrator:
         server_module = import_module("avalan.server")
@@ -1188,6 +2605,7 @@ class A2AResponseTranslator:
         self._a2a_pb2 = import_module("a2a.types.a2a_pb2")
         self._terminal_outcome: StreamTerminalOutcome | None = None
         self._finished = False
+        self._terminal_status_emitted = False
         self._locally_closed = False
         self._open_artifacts: set[str] = set()
         output_redaction_settings = coerce_server_output_redaction_settings(
@@ -1276,6 +2694,7 @@ class A2AResponseTranslator:
                 StreamTerminalOutcome.COMPLETED,
             )
             await self._updater.complete()
+        self._terminal_status_emitted = True
 
     async def abort(self, outcome: StreamTerminalOutcome) -> None:
         """Finish the current translation with one abnormal task terminal."""
@@ -1284,6 +2703,12 @@ class A2AResponseTranslator:
             StreamTerminalOutcome.ERRORED,
         )
         if self._finished:
+            if not self._terminal_status_emitted:
+                if outcome is StreamTerminalOutcome.CANCELLED:
+                    await self._updater.cancel()
+                else:
+                    await self._updater.failed()
+                self._terminal_status_emitted = True
             return
         self._terminal_outcome = outcome
         await self.finish()

@@ -20,6 +20,7 @@ sys_path.append(str(Path(__file__).parents[1] / "interaction" / "stores"))
 sys_path.append(str(Path(__file__).parent))
 sys_path.append(str(Path(__file__).parents[1]))
 
+import a2a_contract_test as a2a_support  # noqa: E402
 import attached_runtime_matrix_test as matrix_support  # noqa: E402
 import failure_matrix_task_e2e_test as task_support  # noqa: E402
 import interaction_pgsql_store_test as durable_support  # noqa: E402
@@ -940,3 +941,14 @@ def test_multi_agent_origin() -> None:
 def test_mcp_projection() -> None:
     """Run the negotiated inbound, downstream, and durable MCP paths."""
     run(mcp_support._public_projection())
+
+
+def test_a2a_projection() -> None:
+    """Run the negotiated inbound and downstream A2A continuation."""
+    projection = a2a_support._public_projection()
+    structured = projection.result.get("structuredContent")
+    assert isinstance(structured, dict)
+    assert structured.get("state") == "TASK_STATE_COMPLETED"
+    assert projection.provider_calls == 2
+    assert projection.sync_calls == 1
+    assert len(projection.local_requests) == 1

@@ -122,6 +122,12 @@ from avalan.interaction import (
     WaitForInteractionChangeCommand,
     create_input_request,
 )
+from avalan.interaction.a2a import A2AInputRequestMetadata
+from avalan.interaction.a2a_continuation import (
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
+    encode_a2a_tool_continuation_observation,
+)
 from avalan.interaction.continuation import (
     derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
@@ -987,6 +993,7 @@ async def _commit_resolution_before_task_reentry(
     database: FakePgsqlDatabase,
     *,
     request: InputRequest | None = None,
+    continuation: PortableContinuation | None = None,
 ) -> tuple[
     PgsqlInteractionStore,
     PgsqlTaskStore,
@@ -1004,7 +1011,7 @@ async def _commit_resolution_before_task_reentry(
     request = request or _request()
     staged = await coordinator.create_and_suspend(
         _create_command(request),
-        _portable(request),
+        continuation or _portable(request),
         queue_item_id="queue-item",
         claim_token="claim-token",
         segment_id="segment",
@@ -4167,12 +4174,62 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
 
     async def test_atomic_completion_and_successor_suspension(self) -> None:
         database = FakePgsqlDatabase()
+        previous_request = _request()
+        call_arguments = {
+            "uri": "https://peer.example/a2a",
+            "name": "remote.skill",
+            "arguments": {},
+        }
+
+        def checkpoint(
+            request: InputRequest,
+            *,
+            cycle: int,
+            counts: tuple[tuple[str, int], ...],
+        ) -> A2AToolContinuationCheckpoint:
+            return A2AToolContinuationCheckpoint(
+                call_id="input-call",
+                canonical_name="a2a.call",
+                provider_name="a2a.call",
+                provider_name_encoded=False,
+                arguments=call_arguments,
+                remote=A2ARemoteInputContinuation(
+                    request=A2AInputRequestMetadata(
+                        request_id=InputRequestId(f"remote-{cycle}"),
+                        required=request.required,
+                        questions=request.questions,
+                    ),
+                    request_text=request.reason,
+                    task_id="remote-task",
+                    context_id="remote-context",
+                    prior_message_id=f"remote-message-{cycle}",
+                    prior_content=(),
+                    ttl_seconds=300,
+                    input_cycle_count=cycle,
+                ),
+                interaction_fingerprint_counts=counts,
+            )
+
+        previous_checkpoint = checkpoint(
+            previous_request,
+            cycle=1,
+            counts=(("first", 1),),
+        )
+        previous = replace(
+            _portable(previous_request),
+            observations=(
+                encode_a2a_tool_continuation_observation(previous_checkpoint),
+            ),
+        )
         (
             store,
             task_store,
             interaction,
-        ) = await _commit_resolution_before_task_reentry(database)
-        previous_request = interaction.record.request
+        ) = await _commit_resolution_before_task_reentry(
+            database,
+            request=previous_request,
+            continuation=previous,
+        )
         ready = await store.get_continuation(previous_request.continuation_id)
         receipt = await store.claim(
             ready.continuation_id,
@@ -4208,22 +4265,15 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
             continuation_id=ContinuationId("continuation-next"),
         )
         base_successor = _portable(successor_request)
-        assert base_successor.provider_snapshot is not None
+        successor_checkpoint = checkpoint(
+            successor_request,
+            cycle=2,
+            counts=(("first", 1), ("second", 1)),
+        )
         successor = replace(
             base_successor,
-            provider_call_correlation_id="input-call-next",
-            provider_snapshot=replace(
-                base_successor.provider_snapshot,
-                payload={
-                    "reserved_capability_call_id": "input-call-next",
-                    "replay_items": (
-                        {
-                            "id": "reasoning-item-next",
-                            "type": "reasoning",
-                            "encrypted_content": "provider-ciphertext-next",
-                        },
-                    ),
-                },
+            observations=(
+                encode_a2a_tool_continuation_observation(successor_checkpoint),
             ),
             interaction_count=dispatched.interaction_count + 1,
             stream_sequence=dispatched.stream_sequence + 1,
@@ -4236,6 +4286,42 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
             result_digest="b" * 64,
         )
         coordinator = PgsqlDurableTaskCoordinator(store, task_store)
+
+        for replayed_remote in (
+            replace(
+                successor_checkpoint.remote,
+                request=previous_checkpoint.remote.request,
+            ),
+            replace(
+                successor_checkpoint.remote,
+                prior_message_id=previous_checkpoint.remote.prior_message_id,
+            ),
+        ):
+            replayed = replace(
+                successor,
+                observations=(
+                    encode_a2a_tool_continuation_observation(
+                        replace(
+                            successor_checkpoint,
+                            remote=replayed_remote,
+                        )
+                    ),
+                ),
+            )
+            before_replay = database.snapshot()
+            with self.assertRaises(InputValidationError):
+                await coordinator.complete_and_resuspend(
+                    completion,
+                    _create_command(successor_request),
+                    replayed,
+                    queue_item_id="queue-item",
+                    claim_token="resumed-claim-token",
+                    segment_id="segment-next",
+                    task_run_id="run",
+                    checkpoint_id="checkpoint-next",
+                    now=_NOW + timedelta(seconds=5),
+                )
+            self.assertEqual(database.snapshot(), before_replay)
 
         database.fail_query = 'UPDATE "task_runs"\nSET\n    "state"'
         with self.assertRaises(Exception):

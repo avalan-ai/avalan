@@ -10,7 +10,7 @@ from asyncio import (
     sleep,
 )
 from asyncio import run as asyncio_run
-from collections.abc import Callable, Coroutine, Mapping
+from collections.abc import AsyncIterator, Callable, Coroutine, Mapping
 from contextlib import AsyncExitStack
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
@@ -19,10 +19,14 @@ from functools import wraps
 from json import dumps
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from types import SimpleNamespace
 from typing import Any, ParamSpec, cast
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import UUID
 
 import pytest
+from a2a.types import a2a_pb2
+from google.protobuf.struct_pb2 import Struct
 
 from avalan.agent import continuation as continuation_module
 from avalan.agent import continuation_stager as continuation_stager_module
@@ -35,7 +39,14 @@ from avalan.agent.continuation import (
     DurableAgentContinuationClaimLease,
     DurableAgentContinuationResumer,
 )
-from avalan.agent.execution import AgentExecution, ExecutionCorrelationError
+from avalan.agent.execution import (
+    AgentExecution,
+    AgentExecutionStatus,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+    ExecutionCorrelationError,
+    ExecutionInputRequiredError,
+)
 from avalan.agent.loader import OrchestratorLoader
 from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.response.orchestrator_response import (
@@ -43,6 +54,19 @@ from avalan.agent.orchestrator.response.orchestrator_response import (
 )
 from avalan.entities import Message, MessageRole
 from avalan.event.manager import EventManager
+from avalan.interaction.a2a import (
+    A2A_INPUT_EXTENSION_URI,
+    A2AInputRequestMetadata,
+    encode_a2a_input_request_metadata,
+)
+from avalan.interaction.a2a_continuation import (
+    A2AInputRequiredError,
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
+    decode_a2a_tool_continuation_observation,
+    encode_a2a_tool_continuation_observation,
+    project_a2a_remote_resolution,
+)
 from avalan.interaction.broker import InteractionBrokerRequest
 from avalan.interaction.codec import (
     canonical_resolution_digest,
@@ -66,6 +90,7 @@ from avalan.interaction.continuation import (
     DurableContinuationResumeState,
     PortableContinuation,
     ResolvedContinuationRuntime,
+    derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
 )
 from avalan.interaction.entities import (
@@ -106,6 +131,8 @@ from avalan.interaction.entities import (
     StreamSessionId,
     SupersededResolution,
     TaskId,
+    TextAnswer,
+    TextQuestion,
     TimedOutResolution,
     TurnId,
     UnavailableResolution,
@@ -151,6 +178,9 @@ from avalan.task.resume import (
     task_resume_result_digest,
 )
 from avalan.task.settlement import TaskDurableResumeFailure
+from avalan.tool.a2a import A2AToolSet
+from avalan.tool.context import A2AToolSettings, ToolSettingsContext
+from avalan.tool.manager import ToolManager
 from avalan.types import JsonValue
 
 _NOW = datetime(2026, 7, 23, 12, tzinfo=UTC)
@@ -249,6 +279,9 @@ class _Executor:
         self.event_listener_registrations: list[_EventListenerRegistration] = (
             []
         )
+        self.cancelled_a2a: list[
+            tuple[PortableContinuation, A2AToolContinuationCheckpoint]
+        ] = []
 
     def register_event_listener(
         self,
@@ -274,6 +307,13 @@ class _Executor:
         if self.failure is not None:
             raise self.failure
         return {"answer": "resumed"}
+
+    async def cancel_a2a_continuation(
+        self,
+        continuation: PortableContinuation,
+        checkpoint: A2AToolContinuationCheckpoint,
+    ) -> None:
+        self.cancelled_a2a.append((continuation, checkpoint))
 
     async def close_continuation_runtime(self) -> None:
         self.close_calls += 1
@@ -778,6 +818,43 @@ def _portable(
     )
 
 
+def _a2a_checkpoint(
+    request: InputRequest,
+    *,
+    remote_request_id: str = "remote-request",
+    message_id: str = "remote-message",
+    cycle: int = 1,
+    prior_content: tuple[str, ...] = (),
+) -> A2AToolContinuationCheckpoint:
+    arguments = {
+        "uri": "https://peer.example/a2a",
+        "name": "remote.skill",
+        "arguments": {},
+    }
+    return A2AToolContinuationCheckpoint(
+        call_id="call-input",
+        canonical_name="a2a.call",
+        provider_name="a2a.call",
+        provider_name_encoded=False,
+        arguments=arguments,
+        remote=A2ARemoteInputContinuation(
+            request=A2AInputRequestMetadata(
+                request_id=InputRequestId(remote_request_id),
+                required=request.required,
+                questions=request.questions,
+            ),
+            request_text=request.reason,
+            task_id="remote-task",
+            context_id="remote-context",
+            prior_message_id=message_id,
+            prior_content=prior_content,
+            ttl_seconds=300,
+            input_cycle_count=cycle,
+        ),
+        interaction_fingerprint_counts=(("first-input", 1),),
+    )
+
+
 def _catalog(
     binding: ContinuationRevisionBinding,
 ) -> ModelCapabilityCatalog:
@@ -969,6 +1046,14 @@ async def test_resume_admits_every_canonical_resumable_terminal_outcome() -> (
         assert await admission.dispatch() == {"answer": "resumed"}
         await admission.complete(_RESULT_DIGEST)
         assert len(harness.executor.commands) == 1
+        if isinstance(resolution, TimedOutResolution | UnavailableResolution):
+            assert (
+                project_a2a_remote_resolution(
+                    request,
+                    _a2a_checkpoint(request).remote,
+                )
+                is None
+            )
 
 
 @_async_test
@@ -1008,6 +1093,70 @@ async def test_resume_rejects_canonical_termination_before_provider_work() -> (
         assert harness.adapter.validated == []
         assert harness.adapter.imported == []
         assert harness.executor.commands == []
+
+        a2a = _harness()
+        a2a_request = _request_with_resolution(a2a.request, resolution)
+        _set_harness_terminal_request(a2a, a2a_request)
+        checkpoint = _a2a_checkpoint(a2a_request)
+        continuation = replace(
+            a2a.record.continuation,
+            observations=(
+                encode_a2a_tool_continuation_observation(checkpoint),
+            ),
+        )
+        a2a.store.continuation = continuation
+        a2a.loader.runtime = replace(
+            a2a.loader.runtime,
+            model=MagicMock(),
+        )
+        if type(resolution) is ExpiredResolution:
+            cast(Any, a2a.executor).cancel_a2a_continuation = None
+            unavailable = replace(
+                a2a,
+                record=replace(a2a.record, continuation=continuation),
+            )
+            with pytest.raises(InputValidationError) as raised:
+                await _admit(unavailable)
+            assert raised.value.path == "resume.runtime.executor"
+            continue
+        with pytest.raises(InputValidationError) as raised:
+            await a2a.resumer.admit(
+                replace(a2a.record, continuation=continuation),
+                actor=InteractionActor(principal=a2a_request.origin.principal),
+                expected_request_id=a2a_request.request_id,
+                expected_run_id=a2a_request.origin.run_id,
+                expected_checkpoint_id="checkpoint",
+                owner_id=ContinuationClaimOwnerId("worker-claim"),
+                lease_expires_at=_LEASE_EXPIRES_AT,
+                dispatch_id=_DISPATCH_ID,
+            )
+        assert raised.value.path == "resume.interaction.state"
+        assert len(a2a.executor.cancelled_a2a) == 1
+        cancelled, restored = a2a.executor.cancelled_a2a[0]
+        assert restored == checkpoint
+        assert cancelled.dispatch is not None
+        assert cancelled.dispatch.dispatch_id == _DISPATCH_ID
+        assert (
+            cancelled.claim.state
+            is ContinuationClaimState.DISPATCHED_AMBIGUOUS
+        )
+        assert a2a.store.calls == [
+            "lookup",
+            "claim",
+            "mark_dispatching",
+            "mark_dispatched",
+            "complete",
+        ]
+        assert (
+            a2a.store.continuation.claim.state
+            is ContinuationClaimState.COMPLETED
+        )
+        assert a2a.store.continuation.completion is not None
+        assert (
+            a2a.store.continuation.completion.result_digest
+            == canonical_resolution_digest(resolution)
+        )
+        assert a2a.executor.close_calls == 1
 
 
 @_async_test
@@ -2205,6 +2354,12 @@ async def test_resume_command_and_admission_reject_every_drifted_component() -> 
         with pytest.raises(InputValidationError) as raised:
             replace(command, **changes)
         assert raised.value.path == expected_path
+    with pytest.raises(InputValidationError) as raised:
+        replace(
+            command,
+            a2a_checkpoint=_a2a_checkpoint(harness.request),
+        )
+    assert raised.value.path == "resume.command.a2a_checkpoint"
 
     common = {
         "store": harness.store,
@@ -2791,6 +2946,20 @@ def test_runtime_catalog_snapshot_and_reserved_call_checks_fail_closed() -> (
             )
     assert raised.value.path == "resume.task_input_call"
 
+    checkpoint = _a2a_checkpoint(harness.request)
+    with pytest.raises(InputValidationError) as raised:
+        continuation_module._restore_a2a_checkpoint(
+            runtime,
+            replace(
+                continuation,
+                observations=(
+                    encode_a2a_tool_continuation_observation(checkpoint),
+                ),
+                interaction_count=2,
+            ),
+        )
+    assert raised.value.path == "resume.continuation.observations"
+
 
 @_async_test
 async def test_portable_stager_and_runtime_ownership_validate_boundaries() -> (
@@ -2923,6 +3092,69 @@ async def test_portable_stager_and_runtime_ownership_validate_boundaries() -> (
                 staging=corrupt_staging,
             )
         wall_datetime.now.assert_called_once_with(UTC)
+
+    checkpoint = replace(
+        _a2a_checkpoint(harness.request),
+        interaction_fingerprint_counts=(),
+    )
+    a2a_staging = object.__new__(DurableInteractionStagingContext)
+    for name, value in (
+        ("a2a_checkpoint", checkpoint),
+        ("continuation_id", harness.request.continuation_id),
+        ("provider_call_correlation_id", checkpoint.call_id),
+        ("revision_binding", harness.record.continuation.revision_binding),
+        ("provider_snapshot", harness.record.continuation.provider_snapshot),
+    ):
+        object.__setattr__(a2a_staging, name, value)
+    execution.messages = ()
+    execution.definition = harness.request.origin.definition
+    execution.operation_index = 0
+    execution.interaction_count = 0
+    execution.revision = 1
+    execution.snapshot = SimpleNamespace(
+        status=AgentExecutionStatus.RUNNING,
+        active_interaction_fingerprint=None,
+        interaction_fingerprint_counts=(),
+    )
+    response.continuation_generation_settings = {}
+    response.continuation_tool_loop_count = 0
+    await stager(
+        request,
+        execution=execution,
+        response=response,
+        stream_sequence=0,
+        staging=a2a_staging,
+    )
+    execution.snapshot = SimpleNamespace(
+        status=AgentExecutionStatus.PREPARING_INPUT,
+        active_interaction_fingerprint="active",
+        interaction_fingerprint_counts=(("active", 1),),
+    )
+    with pytest.raises(ExecutionCorrelationError, match="running tool cycle"):
+        await stager(
+            request,
+            execution=execution,
+            response=response,
+            stream_sequence=0,
+            staging=a2a_staging,
+        )
+    for previous, message in (
+        (
+            replace(
+                harness.record.continuation,
+                provider_snapshot=None,
+            ),
+            "exact replay state",
+        ),
+        (harness.record.continuation, "interaction replay state"),
+    ):
+        with pytest.raises(ExecutionCorrelationError, match=message):
+            await stager.stage_a2a_successor(
+                request,
+                execution=execution,
+                previous=previous,
+                checkpoint=_a2a_checkpoint(harness.request),
+            )
 
     with pytest.raises(TypeError, match="event_manager"):
         durable_runtime_module._TrustedContinuationEventListenerRegistration(
@@ -3136,6 +3368,411 @@ async def test_trusted_executor_rejects_runtime_and_replay_corruption() -> (
 
 
 @_async_test
+async def test_persisted_a2a_resume_restages_then_continues_provider() -> None:
+    harness = _harness()
+    initial_result = cast(AnsweredResolution, harness.request.resolution)
+    questions = (
+        *harness.request.questions,
+        TextQuestion(
+            question_id=QuestionId("detail"),
+            prompt="Provide a short reason.",
+            required=True,
+        ),
+    )
+    request = replace(
+        harness.request,
+        questions=questions,
+        resolution=replace(
+            initial_result,
+            answers=(
+                *initial_result.answers,
+                TextAnswer(
+                    question_id=QuestionId("detail"),
+                    provenance=AnswerProvenance.HUMAN,
+                    value="Continue safely.",
+                ),
+            ),
+        ),
+    )
+    _set_harness_terminal_request(harness, request)
+
+    checkpoint = _a2a_checkpoint(
+        request,
+        remote_request_id="remote-request-one",
+        message_id="remote-message-one",
+        prior_content=("retained-prefix",),
+    )
+    continuation = replace(
+        _portable(request, _binding()),
+        transcript=(
+            continuation_stager_module._encode_message_record(
+                Message(role=MessageRole.USER, content="hello")
+            ),
+        ),
+        observations=(encode_a2a_tool_continuation_observation(checkpoint),),
+    )
+    harness.store.continuation = continuation
+
+    second_request = A2AInputRequestMetadata(
+        request_id=InputRequestId("remote-request-two"),
+        required=True,
+        questions=questions,
+    )
+    metadata = Struct()
+    metadata.update(
+        {
+            A2A_INPUT_EXTENSION_URI: encode_a2a_input_request_metadata(
+                second_request
+            )
+        }
+    )
+
+    def status(
+        state: int,
+        *,
+        message: object | None = None,
+    ) -> object:
+        return a2a_pb2.StreamResponse(
+            status_update=a2a_pb2.TaskStatusUpdateEvent(
+                task_id="remote-task",
+                context_id="remote-context",
+                status=a2a_pb2.TaskStatus(
+                    state=state,
+                    message=message,
+                ),
+            )
+        )
+
+    second_input_message = a2a_pb2.Message(
+        message_id="remote-message-two",
+        task_id="remote-task",
+        context_id="remote-context",
+        role=a2a_pb2.Role.ROLE_AGENT,
+        parts=[a2a_pb2.Part(text=request.reason)],
+        metadata=metadata,
+        extensions=[A2A_INPUT_EXTENSION_URI],
+    )
+    batches = (
+        (
+            status(a2a_pb2.TaskState.TASK_STATE_WORKING),
+            status(
+                a2a_pb2.TaskState.TASK_STATE_INPUT_REQUIRED,
+                message=second_input_message,
+            ),
+        ),
+        (
+            status(a2a_pb2.TaskState.TASK_STATE_WORKING),
+            status(a2a_pb2.TaskState.TASK_STATE_COMPLETED),
+        ),
+    )
+    http_client = SimpleNamespace(
+        event_hooks={"response": []},
+        authorization="Bearer trusted-runtime-token",
+    )
+    stream_requests: list[object] = []
+    stream_contexts: list[object] = []
+
+    class SdkClient:
+        async def send_message(
+            self,
+            sdk_request: object,
+            *,
+            context: object = None,
+        ) -> AsyncIterator[object]:
+            stream_requests.append(sdk_request)
+            stream_contexts.append(context)
+            parameters = getattr(context, "service_parameters", None) or {}
+            extension = parameters.get("A2A-Extensions", "")
+            response = SimpleNamespace(
+                request=SimpleNamespace(headers={"A2A-Extensions": extension}),
+                headers={"A2A-Extensions": extension},
+            )
+            for hook in tuple(http_client.event_hooks["response"]):
+                await cast(Any, hook)(response)
+            for item in batches[len(stream_requests) - 1]:
+                yield item
+
+    sdk_client = SdkClient()
+    client_configs: list[object] = []
+
+    async def create_client(
+        _card: object,
+        *,
+        client_config: object,
+    ) -> SdkClient:
+        assert client_config.httpx_client is http_client
+        assert http_client.authorization == "Bearer trusted-runtime-token"
+        client_configs.append(client_config)
+        return sdk_client
+
+    toolset = A2AToolSet(
+        settings=A2AToolSettings(
+            client_params={"httpx_client": http_client},
+            call_params={"state": {"authorization": "trusted"}},
+        )
+    )
+    manager = ToolManager.create_instance(
+        available_toolsets=[toolset],
+        enable_tools=["a2a.call"],
+    )
+    stack = AsyncExitStack()
+    await stack.enter_async_context(manager)
+    ownership = durable_runtime_module._TrustedContinuationRuntimeOwnership(
+        stack
+    )
+    orchestrator = MagicMock(spec=Orchestrator)
+    orchestrator.id = UUID("00000000-0000-0000-0000-000000000099")
+    orchestrator.tool = manager
+    orchestrator.event_manager = EventManager()
+    provider_result = MagicMock(spec=OrchestratorResponse)
+    orchestrator.resume_agent_execution = AsyncMock(
+        return_value=provider_result
+    )
+    stager = durable_runtime_module.PortableAgentContinuationStager(
+        clock=lambda: _NOW
+    )
+    executor = durable_runtime_module.TrustedAgentContinuationExecutor(
+        orchestrator,
+        stager=stager,
+        ownership=ownership,
+    )
+    adapter = MagicMock()
+    harness.loader.runtime = replace(
+        harness.loader.runtime,
+        runtime=executor,
+        model=adapter,
+        tools=manager,
+    )
+    with patch("a2a.client.create_client", new=create_client):
+        first_admission = await harness.resumer.admit(
+            replace(harness.record, continuation=continuation),
+            actor=InteractionActor(principal=request.origin.principal),
+            expected_request_id=request.request_id,
+            expected_run_id=request.origin.run_id,
+            expected_checkpoint_id="checkpoint",
+            owner_id=ContinuationClaimOwnerId("first-worker"),
+            lease_expires_at=_LEASE_EXPIRES_AT,
+            dispatch_id=_DISPATCH_ID,
+        )
+        with pytest.raises(ExecutionInputRequiredError) as raised:
+            await first_admission.dispatch()
+    successor = raised.value.durable
+    assert successor is not None
+    assert harness.store.calls == [
+        "lookup",
+        "claim",
+        "mark_dispatching",
+        "mark_dispatched",
+    ]
+    assert first_admission.state is DurableContinuationResumeState.DISPATCHED
+    successor_checkpoint = decode_a2a_tool_continuation_observation(
+        successor.continuation.observations
+    )
+    assert successor_checkpoint is not None
+    assert successor_checkpoint.remote.request.questions == questions
+    assert successor_checkpoint.remote.prior_content == ("retained-prefix",)
+
+    pending = successor.command.request
+    resolution = AnsweredResolution(
+        request_id=pending.request_id,
+        provenance=AnswerProvenance.HUMAN,
+        resolved_at=_NOW + timedelta(seconds=5),
+        answers=cast(AnsweredResolution, request.resolution).answers,
+    )
+    terminal = _request_with_resolution(pending, resolution)
+    digest = canonical_resolution_digest(resolution)
+    harness.store.interaction_record = replace(
+        harness.store.interaction_record,
+        request=terminal,
+        semantic_fingerprint=semantic_request_fingerprint(terminal),
+        absolute_expires_at=successor.continuation.expires_at,
+        resolution_digest=digest,
+        idempotency_ledger=(
+            ResolutionIdempotencyEntry(
+                key=ResolutionIdempotencyKey("successor-resolution"),
+                resolution_digest=digest,
+            ),
+        ),
+        resolved_by=terminal.origin.principal,
+    )
+    harness.store.continuation = successor.continuation
+    harness.store.calls.clear()
+    with patch("a2a.client.create_client", new=create_client):
+        successor_admission = await harness.resumer.admit(
+            DurableContinuationRecord(
+                continuation=successor.continuation,
+                task_run_id="task-run",
+                checkpoint_id="successor-checkpoint",
+            ),
+            actor=InteractionActor(principal=terminal.origin.principal),
+            expected_request_id=terminal.request_id,
+            expected_run_id=terminal.origin.run_id,
+            expected_checkpoint_id="successor-checkpoint",
+            owner_id=ContinuationClaimOwnerId("second-worker"),
+            lease_expires_at=_LEASE_EXPIRES_AT,
+            dispatch_id=derive_continuation_dispatch_id(
+                successor.continuation.continuation_id
+            ),
+        )
+        assert await successor_admission.dispatch() is provider_result
+    await successor_admission.complete(_RESULT_DIGEST)
+    unavailable_request = _request_with_resolution(
+        terminal,
+        UnavailableResolution(
+            request_id=terminal.request_id,
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_NOW + timedelta(seconds=6),
+        ),
+    )
+    unavailable_outcome = continuation_module.project_resolution_to_model(
+        unavailable_request,
+        containing_run_exists=True,
+    )
+    assert type(unavailable_outcome) is ResumeInputContinuation
+    unavailable_command = AgentContinuationResumeCommand(
+        continuation=successor_admission.command.continuation,
+        request=unavailable_request,
+        model_result=unavailable_outcome.result,
+        resolved_runtime=successor_admission.command.resolved_runtime,
+        a2a_checkpoint=successor_admission.command.a2a_checkpoint,
+    )
+    with patch(
+        "a2a.client.create_client",
+        side_effect=AssertionError("non-answer must remain local"),
+    ):
+        assert (
+            await executor.resume_agent_continuation(unavailable_command)
+            is provider_result
+        )
+    resumed_execution = orchestrator.resume_agent_execution.await_args.args[0]
+    local_error = resumed_execution.messages[-1].tool_call_error
+    assert local_error is not None
+    assert local_error.error == {
+        "type": "A2AInputUnavailable",
+        "resolution": "unavailable",
+    }
+    assert len(stream_requests) == len(stream_contexts) == 2
+    assert all(
+        request.message.task_id == "remote-task"
+        and request.message.context_id == "remote-context"
+        for request in stream_requests
+    )
+    assert all(
+        context.state == {"authorization": "trusted"}
+        for context in stream_contexts
+    )
+    assert len(client_configs) == 2
+    assert str(orchestrator.id) != str(request.origin.agent_id)
+    assert http_client.event_hooks["response"] == []
+    assert orchestrator.resume_agent_execution.await_count == 2
+    assert harness.store.calls == [
+        "lookup",
+        "claim",
+        "mark_dispatching",
+        "mark_dispatched",
+        "complete",
+    ]
+    assert adapter.validate_continuation_snapshot_call.call_count == 2
+    assert adapter.import_continuation_snapshot.call_count == 2
+
+    restored = successor_admission.command.a2a_checkpoint
+    assert restored is not None
+    with pytest.raises(InputValidationError, match="counts do not match"):
+        await executor.resume_agent_continuation(
+            replace(
+                successor_admission.command,
+                continuation=replace(
+                    successor_admission.command.continuation,
+                    interaction_count=3,
+                ),
+            )
+        )
+
+    reconstructed = MagicMock(spec=AgentExecution)
+    reconstructed.origin = terminal.origin
+    reconstructed.interaction_runtime = DurableInteractionRuntime(
+        actor=InteractionActor(principal=terminal.origin.principal),
+        stager=stager,
+    )
+    reconstructed.begin_interaction = AsyncMock()
+    reconstructed.abandon_interaction = AsyncMock()
+    callable_a2a = SimpleNamespace(
+        resume_input=AsyncMock(
+            side_effect=A2AInputRequiredError(restored.remote)
+        ),
+        cancel_input=AsyncMock(),
+    )
+    prepared = SimpleNamespace(
+        call=durable_runtime_module._a2a_tool_call(restored),
+        callable=callable_a2a,
+        context=object(),
+    )
+    with (
+        patch.object(
+            executor,
+            "_reconstruct_execution",
+            return_value=reconstructed,
+        ),
+        patch.object(
+            executor,
+            "_prepare_a2a_tool",
+            AsyncMock(return_value=prepared),
+        ),
+    ):
+        with (
+            patch.object(
+                stager,
+                "stage_a2a_successor",
+                AsyncMock(side_effect=RuntimeError("restage failed")),
+            ),
+            pytest.raises(RuntimeError, match="restage failed"),
+        ):
+            await executor.resume_agent_continuation(
+                successor_admission.command
+            )
+        with pytest.raises(
+            ExecutionCorrelationError,
+            match="persisted operation fence",
+        ):
+            await executor.cancel_a2a_continuation(
+                harness.record.continuation,
+                restored,
+            )
+        await executor.cancel_a2a_continuation(
+            successor_admission.command.continuation,
+            restored,
+        )
+    assert reconstructed.abandon_interaction.await_count == 3
+    callable_a2a.cancel_input.assert_awaited_once()
+
+    for continuation_value, checkpoint_value, message in (
+        (object(), restored, "portable continuation"),
+        (
+            successor_admission.command.continuation,
+            object(),
+            "A2A tool checkpoint",
+        ),
+    ):
+        with pytest.raises(TypeError, match=message):
+            await executor.cancel_a2a_continuation(
+                cast(Any, continuation_value),
+                cast(Any, checkpoint_value),
+            )
+    with (
+        patch.object(
+            orchestrator.tool,
+            "prepare_call",
+            AsyncMock(return_value=object()),
+        ),
+        pytest.raises(InputValidationError, match="exact A2A tool call"),
+    ):
+        await executor._prepare_a2a_tool(reconstructed, restored)
+
+    await successor_admission.close()
+    await orchestrator.event_manager.aclose()
+
+
+@_async_test
 async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
     None
 ):
@@ -3155,10 +3792,16 @@ async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
         )
         loader = MagicMock(spec=OrchestratorLoader)
         stack = AsyncExitStack()
+        trusted_tool_settings = ToolSettingsContext(
+            a2a=A2AToolSettings(
+                call_params={"state": {"authorization": "trusted"}}
+            )
+        )
         valid = {
             "loader": loader,
             "stack": stack,
             "allowed_roots": (root,),
+            "tool_settings": trusted_tool_settings,
         }
         constructor_cases = (
             ("loader must be an orchestrator loader", {"loader": object()}),
@@ -3232,6 +3875,10 @@ async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
                 _binding(),
             )
         assert raised.value.path == "continuation_runtime.orchestrator"
+        assert (
+            admission_loader.from_file.await_args.kwargs["tool_settings"]
+            is trusted_tool_settings
+        )
 
         orchestrator = MagicMock(spec=Orchestrator)
         orchestrator.__aenter__ = AsyncMock(return_value=orchestrator)
@@ -3255,6 +3902,15 @@ async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
 
 
 def test_durable_runtime_decoders_reject_every_malformed_shape() -> None:
+    remote = _a2a_checkpoint(_harness().request).remote
+    for prior_content in (
+        ("x" * 16_385,),
+        tuple("x" for _ in range(33)),
+        tuple("x" * 2_049 for _ in range(32)),
+    ):
+        with pytest.raises(InputValidationError, match="safe bounds"):
+            replace(remote, prior_content=prior_content)
+
     encoded_user = continuation_stager_module._encode_message_record(
         Message(role=MessageRole.USER, content="hello")
     )

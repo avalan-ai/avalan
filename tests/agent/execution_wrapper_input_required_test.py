@@ -104,6 +104,7 @@ from avalan.interaction import (
     encode_continuation_snapshot,
     resolve_request,
 )
+from avalan.interaction.a2a_continuation import A2AToolContinuationCheckpoint
 from avalan.interaction.broker import InteractionBroker
 from avalan.interaction.continuation import (
     derive_continuation_dispatch_id,
@@ -288,6 +289,36 @@ def _openai_client() -> OpenAIClient:
 
 class DurableInteractionStagingContextValidationTest(TestCase):
     """Exercise every fail-closed provider staging boundary."""
+
+    def test_accepts_only_one_exact_a2a_checkpoint(self) -> None:
+        valid = _durable_staging_context()
+        call = valid.task_input_call
+        assert call is not None
+        checkpoint = object.__new__(A2AToolContinuationCheckpoint)
+        object.__setattr__(checkpoint, "call_id", str(call.call_id))
+        valid = replace(
+            valid,
+            task_input_call=None,
+            a2a_checkpoint=checkpoint,
+        )
+        cases = (
+            (
+                {"a2a_checkpoint": object()},
+                TypeError,
+                "must be an A2A tool checkpoint",
+            ),
+            (
+                {"task_input_call": call},
+                ExecutionCorrelationError,
+                "A2A staging context is incomplete",
+            ),
+        )
+        for changes, error_type, message in cases:
+            with (
+                self.subTest(message=message),
+                self.assertRaisesRegex(error_type, message),
+            ):
+                replace(valid, **cast(Any, changes))
 
     def test_rejects_invalid_identity_and_codec_components(self) -> None:
         valid = _durable_staging_context()

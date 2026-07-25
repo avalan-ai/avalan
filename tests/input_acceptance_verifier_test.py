@@ -292,6 +292,9 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
 ) -> None:
     """Execute every current orchestration acceptance node."""
     executed: tuple[Any, ...] = ()
+    current_phase = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.json"
+    ).current_phase
 
     def verify_nodes(nodes: tuple[Any, ...], root: Path) -> tuple[str, ...]:
         nonlocal executed
@@ -310,7 +313,7 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         _VERIFIER,
         "_parse_args",
         lambda: _VERIFIER.Namespace(
-            through_phase=10,
+            through_phase=current_phase,
             manifest=_FIXTURES / "acceptance_manifest.json",
             repo_root=_ROOT,
             runtime_only=True,
@@ -325,17 +328,15 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
         for requirement_id in node.requirement_ids
     }
     assert requirements == {
-        "INPUT-N-075",
-        "INPUT-N-076",
-        "INPUT-N-077",
-        "INPUT-N-078",
-        "INPUT-N-079",
-        "INPUT-N-080",
+        "INPUT-N-081",
+        "INPUT-N-082",
+        "INPUT-N-083",
+        "INPUT-N-084",
         "INPUT-N-106",
-        "INPUT-26.8",
+        "INPUT-26.9",
     }
-    assert len(executed) == 20
-    assert all(node.active_from_phase == 10 for node in executed)
+    assert len(executed) == 18
+    assert all(node.active_from_phase == current_phase for node in executed)
     assert f"nodes={len(executed)}" in capsys.readouterr().out
 
 
@@ -427,15 +428,17 @@ def test_current_phase_requires_real_postgresql_harness(
 ) -> None:
     """Reject current acceptance outside the provisioned PostgreSQL gate."""
     monkeypatch.delenv("AVALAN_TASK_TEST_POSTGRESQL_DSN", raising=False)
+    manifest_path = _FIXTURES / "acceptance_manifest.json"
+    current_phase = _VERIFIER.load_manifest(manifest_path).current_phase
 
     with pytest.raises(
         _VERIFIER.AcceptanceVerificationError,
         match="real PostgreSQL harness",
     ):
         _VERIFIER.verify_acceptance(
-            _FIXTURES / "acceptance_manifest.json",
+            manifest_path,
             repo_root=_ROOT,
-            through_phase=10,
+            through_phase=current_phase,
         )
 
 
@@ -445,8 +448,12 @@ def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
     type_manifest = _VERIFIER.load_type_manifest(
         _FIXTURES / "type_contract_manifest.json"
     )
+    lagged_type_manifest = replace(
+        type_manifest,
+        current_phase=manifest.current_phase - 1,
+    )
 
-    _VERIFIER._validate_type_contract_phase(manifest, type_manifest)
+    _VERIFIER._validate_type_contract_phase(manifest, lagged_type_manifest)
 
     obligation = replace(
         type_manifest.fixtures[0],
@@ -459,8 +466,8 @@ def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:
         _VERIFIER._validate_type_contract_phase(
             manifest,
             replace(
-                type_manifest,
-                fixtures=(*type_manifest.fixtures, obligation),
+                lagged_type_manifest,
+                fixtures=(*lagged_type_manifest.fixtures, obligation),
             ),
         )
     with pytest.raises(

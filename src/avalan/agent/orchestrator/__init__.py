@@ -757,9 +757,12 @@ class Orchestrator:
         initial_tool_cycle_count: int,
     ) -> OrchestratorResponse:
         """Dispatch one reconstructed continuation without initial input."""
-        if execution.status is not AgentExecutionStatus.RESUMING:
+        if execution.status not in {
+            AgentExecutionStatus.RUNNING,
+            AgentExecutionStatus.RESUMING,
+        }:
             raise RuntimeError(
-                "resumed execution must contain one correlated input result"
+                "resumed execution must contain one correlated result"
             )
         (
             definition,

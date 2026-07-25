@@ -802,6 +802,34 @@ class LedgerReplayDefenseTest(TestCase):
             continuation_id=created.continuation_id,
             detached_resumption_available=True,
         )
+        tool_required = ExecutionLedgerEntry(
+            sequence=1,
+            kind=ExecutionLedgerEntryKind.INPUT_REQUIRED,
+            origin=origin,
+            request=created,
+            input_required=required,
+        )
+        replayed = execution_module._replay_execution_ledger(
+            (
+                _input_entry(origin),
+                tool_required,
+            )
+        )
+        self.assertIs(replayed.status, AgentExecutionStatus.INPUT_REQUIRED)
+        with self.assertRaisesRegex(
+            ExecutionCorrelationError,
+            "tool input-required ledger entry is invalid",
+        ):
+            _replay(
+                _input_entry(origin),
+                replace(
+                    tool_required,
+                    input_required=replace(
+                        required,
+                        detached_resumption_available=False,
+                    ),
+                ),
+            )
 
         persisted_required = ExecutionLedgerEntry(
             sequence=2,

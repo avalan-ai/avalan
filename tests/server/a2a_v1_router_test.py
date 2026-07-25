@@ -1,13 +1,35 @@
-from asyncio import CancelledError
+from asyncio import CancelledError, Event, create_task, sleep
 from base64 import b64encode
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from json import loads
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
 
+from avalan.interaction.a2a import (
+    A2A_INPUT_EXTENSION_URI,
+    A2AInputRequestMetadata,
+    decode_a2a_input_resolution_metadata,
+)
+from avalan.interaction.entities import (
+    AnsweredResolution,
+    CancelledResolution,
+    ConfirmationQuestion,
+    InputRequestId,
+    MultilineTextAnswer,
+    MultilineTextQuestion,
+    QuestionId,
+    ResolutionStatus,
+    TextAnswer,
+    TextQuestion,
+)
+from avalan.interaction.error import InputContractError, InputErrorCode
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -72,6 +94,70 @@ def test_build_agent_card_keeps_a2a_skills_metadata_separate() -> None:
 
     assert [skill.id for skill in card.skills] == ["run"]
     assert all(skill.id != "skills.read" for skill in card.skills)
+
+
+def _extension_message_projection() -> dict[str, Any]:
+    return {
+        "metadata": {A2A_INPUT_EXTENSION_URI: {"kind": "request"}},
+        "extensions": [A2A_INPUT_EXTENSION_URI],
+    }
+
+
+def _extension_task_projection() -> dict[str, Any]:
+    return {
+        "metadata": {A2A_INPUT_EXTENSION_URI: {"kind": "request"}},
+        "status": {"message": _extension_message_projection()},
+        "history": [_extension_message_projection()],
+    }
+
+
+def _assert_extension_projection(
+    value: dict[str, Any],
+    *,
+    activated: bool,
+) -> None:
+    assert (A2A_INPUT_EXTENSION_URI in value["metadata"]) is activated
+    messages = [value["status"]["message"], *value["history"]]
+    for message in messages:
+        assert (A2A_INPUT_EXTENSION_URI in message["metadata"]) is activated
+        assert (A2A_INPUT_EXTENSION_URI in message["extensions"]) is activated
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("activated", (False, True))
+async def test_request_handler_scrubs_cancel_and_subscribe_projections(
+    activated: bool,
+) -> None:
+    cancel_projection = _extension_task_projection()
+    subscribe_projection = _extension_task_projection()
+
+    async def subscribe(
+        params: Any,
+        context: Any,
+    ) -> AsyncIterator[dict[str, Any]]:
+        _ = params, context
+        yield subscribe_projection
+
+    delegate = SimpleNamespace(
+        on_cancel_task=AsyncMock(return_value=cancel_projection),
+        on_subscribe_to_task=subscribe,
+    )
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    handler = a2a_router._A2ARequestHandler(delegate, executor)
+    context = SimpleNamespace(
+        requested_extensions=((A2A_INPUT_EXTENSION_URI,) if activated else ())
+    )
+
+    cancel_result = await handler.on_cancel_task(object(), context)
+    results = [
+        result
+        async for result in handler.on_subscribe_to_task(object(), context)
+    ]
+
+    assert cancel_result is cancel_projection
+    assert results == [subscribe_projection]
+    _assert_extension_projection(cancel_projection, activated=activated)
+    _assert_extension_projection(subscribe_projection, activated=activated)
 
 
 def test_a2a_route_rejects_invalid_raw_base64_before_sdk_parse() -> None:
@@ -315,6 +401,154 @@ def test_install_a2a_routes_reports_missing_sdk(monkeypatch) -> None:
             prefix="/a2a",
             name="run",
             description=None,
+        )
+
+
+def test_a2a_extension_error_envelopes_are_exact() -> None:
+    response_helpers = pytest.importorskip(
+        "a2a.server.request_handlers.response_helpers"
+    )
+    cases = (
+        (
+            a2a_router._a2a_unavailable(),
+            -31910,
+            503,
+            {
+                "code": "avalan.input.unavailable",
+                "interaction_state": "unavailable",
+            },
+        ),
+        (
+            a2a_router._a2a_contract_error(
+                InputContractError(
+                    InputErrorCode.SUPERSEDED,
+                    "interaction",
+                    "input request was superseded",
+                )
+            ),
+            -31913,
+            409,
+            {
+                "code": "avalan.input.superseded",
+                "interaction_state": "superseded",
+            },
+        ),
+    )
+
+    for error, code, status, data in cases:
+        response = JSONResponse(
+            response_helpers.build_error_response("rpc-1", error)
+        )
+
+        assert a2a_router._normalize_a2a_error_response(response) == status
+        assert loads(bytes(response.body)) == {
+            "jsonrpc": "2.0",
+            "id": "rpc-1",
+            "error": {
+                "code": code,
+                "message": "Structured input contract result.",
+                "data": data,
+            },
+        }
+
+
+def test_a2a_resolution_rejects_unknown_and_missing_answer_keys() -> None:
+    request = A2AInputRequestMetadata(
+        request_id=InputRequestId("request-1"),
+        required=True,
+        questions=(
+            ConfirmationQuestion(
+                question_id=QuestionId("required"),
+                prompt="Continue?",
+                required=True,
+            ),
+            TextQuestion(
+                question_id=QuestionId("optional"),
+                prompt="Add a note.",
+                required=False,
+            ),
+        ),
+    )
+    metadata = {
+        "kind": "resolution",
+        "request_id": "request-1",
+        "action": "accept",
+        "answers": {"required": True},
+    }
+
+    with pytest.raises(
+        InputContractError,
+        match="answer keys must include every pending question",
+    ):
+        decode_a2a_input_resolution_metadata(
+            metadata,
+            request=request,
+            resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
+        )
+
+    metadata["answers"] = {
+        "required": True,
+        "optional": "note",
+        "unknown": "value",
+    }
+    with pytest.raises(
+        InputContractError,
+        match="answer keys must reference pending questions",
+    ):
+        decode_a2a_input_resolution_metadata(
+            metadata,
+            request=request,
+            resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
+        )
+
+
+@pytest.mark.parametrize(
+    "question_type",
+    (TextQuestion, MultilineTextQuestion),
+)
+def test_a2a_resolution_allows_empty_optional_text_only(
+    question_type: type[TextQuestion] | type[MultilineTextQuestion],
+) -> None:
+    optional = question_type(
+        question_id=QuestionId("text"),
+        prompt="Optional text.",
+        required=False,
+    )
+    metadata = {
+        "kind": "resolution",
+        "request_id": "request-1",
+        "action": "accept",
+        "answers": {"text": ""},
+    }
+
+    resolution = decode_a2a_input_resolution_metadata(
+        metadata,
+        request=A2AInputRequestMetadata(
+            request_id=InputRequestId("request-1"),
+            required=False,
+            questions=(optional,),
+        ),
+        resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
+    )
+
+    assert isinstance(resolution, AnsweredResolution)
+    assert isinstance(resolution.answers[0], TextAnswer | MultilineTextAnswer)
+    assert resolution.answers[0].value == ""
+
+    required = question_type(
+        question_id=QuestionId("text"),
+        prompt="Required text.",
+        required=True,
+    )
+    with pytest.raises(InputContractError, match="non-empty string"):
+        decode_a2a_input_resolution_metadata(
+            metadata,
+            request=A2AInputRequestMetadata(
+                request_id=InputRequestId("request-1"),
+                required=True,
+                questions=(required,),
+            ),
+            resolved_at=datetime(2026, 7, 24, tzinfo=UTC),
         )
 
 
@@ -2066,6 +2300,38 @@ async def test_translator_handles_projection_cancel_error_and_bad_items(
     assert errored_updater.failed_count == 1
 
 
+@pytest.mark.parametrize(
+    "outcome",
+    (
+        StreamTerminalOutcome.CANCELLED,
+        StreamTerminalOutcome.ERRORED,
+    ),
+)
+@pytest.mark.anyio
+async def test_translator_abort_converges_after_finish_failure(
+    monkeypatch,
+    fake_a2a_imports,
+    outcome: StreamTerminalOutcome,
+) -> None:
+    updater = _FakeUpdater()
+    translator = A2AResponseTranslator(updater)
+    monkeypatch.setattr(
+        translator,
+        "_flush_model_text",
+        AsyncMock(side_effect=RuntimeError("finish failed")),
+    )
+
+    with pytest.raises(RuntimeError, match="finish failed"):
+        await translator.finish()
+    await translator.abort(outcome)
+    await translator.abort(outcome)
+
+    assert updater.cancelled == int(outcome is StreamTerminalOutcome.CANCELLED)
+    assert updater.failed_count == int(
+        outcome is StreamTerminalOutcome.ERRORED
+    )
+
+
 @pytest.mark.anyio
 async def test_translator_leaves_input_required_task_nonterminal(
     fake_a2a_imports,
@@ -2165,8 +2431,8 @@ async def test_translator_rejects_missing_input_required_task_state(
 
 @pytest.mark.anyio
 async def test_executor_cancel_and_exception_paths(
-    monkeypatch,
-    fake_a2a_imports,
+    monkeypatch: pytest.MonkeyPatch,
+    fake_a2a_imports: Any,
 ) -> None:
     app = FastAPI()
     app.state.logger = MagicMock()
@@ -2174,6 +2440,18 @@ async def test_executor_cancel_and_exception_paths(
     executor = AvalanA2AAgentExecutor(app)
     context = _ExecutorContext()
     event_queue = _FakeEventQueue()
+
+    fake_a2a_imports.TaskState.TASK_STATE_AUTH_REQUIRED = "auth_required"
+    auth_queue = _FakeEventQueue()
+    await executor.execute(
+        _ExecutorContext(
+            current_task=SimpleNamespace(
+                status=SimpleNamespace(state="auth_required")
+            )
+        ),
+        auth_queue,
+    )
+    assert cast(Any, auth_queue.events[0])["state"] == "auth_required"
 
     async def fail_orchestrate(*args: object, **kwargs: object):
         raise RuntimeError("broken")
@@ -2197,6 +2475,717 @@ async def test_executor_cancel_and_exception_paths(
         "status",
         "cancel",
     ]
+
+
+@pytest.mark.anyio
+async def test_a2a_input_handler_waits_for_exact_registration() -> None:
+    handler = a2a_router._A2AInputHandler()
+    first_request = cast(Any, SimpleNamespace(request_id="request-1"))
+    second_request = cast(Any, SimpleNamespace(request_id="request-2"))
+    first_task = create_task(
+        handler(cast(Any, SimpleNamespace(request=first_request)))
+    )
+
+    assert await handler.request("request-1") is first_request
+    second_wait = create_task(handler.request("request-2"))
+    await sleep(0)
+    assert not second_wait.done()
+    second_task = create_task(
+        handler(cast(Any, SimpleNamespace(request=second_request)))
+    )
+    assert await second_wait is second_request
+
+    for task in (first_task, second_task):
+        task.cancel()
+        with pytest.raises(CancelledError):
+            await task
+
+
+@pytest.mark.anyio
+async def test_a2a_input_helper_negative_branches(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_a2a_imports: Any,
+) -> None:
+    class _ImmediateEvent:
+        def set(self) -> None:
+            pass
+
+        async def wait(self) -> None:
+            pass
+
+    monkeypatch.setattr(a2a_router, "Event", _ImmediateEvent)
+    with pytest.raises(AssertionError, match="cannot finish"):
+        await a2a_router._A2AInputHandler()(
+            cast(
+                Any,
+                SimpleNamespace(
+                    request=SimpleNamespace(request_id="request-completed")
+                ),
+            )
+        )
+
+    handler = a2a_router._A2AInputHandler()
+    registered = Event()
+    registered.set()
+    handler._registered["missing"] = registered
+    with pytest.raises(RuntimeError, match="did not register"):
+        await handler.request("missing")
+    with pytest.raises(RuntimeError, match="did not register"):
+        handler.settlement_event("missing")
+
+    task_store = SimpleNamespace(
+        get=AsyncMock(return_value=SimpleNamespace(context_id="expected"))
+    )
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await a2a_router._A2ARequestContextBuilder(task_store).build(
+            object(),
+            task_id="task-1",
+            context_id="wrong",
+        )
+
+    executor = SimpleNamespace(
+        prepare_follow_up=AsyncMock(return_value="replay"),
+        deactivate_result=MagicMock(),
+    )
+    delegate = SimpleNamespace(forwarded="value")
+    request_handler = a2a_router._A2ARequestHandler(
+        delegate,
+        cast(Any, executor),
+    )
+    assert request_handler.forwarded == "value"
+    stream = request_handler.on_message_send_stream(object(), object())
+    assert [value async for value in stream] == ["replay"]
+
+    response = a2a_router._required_extension_response(None, jsonrpc=False)
+    assert response.status_code == 400
+    a2a_router._strip_a2a_input_extension(None)
+    for state in (None, {"request_id": True}, {"request_id": object()}):
+        assert not a2a_router._a2a_transport_ids(SimpleNamespace(state=state))
+
+    for code in (
+        InputErrorCode.ALREADY_RESOLVED,
+        InputErrorCode.EXPIRED,
+        InputErrorCode.UNAVAILABLE,
+        InputErrorCode.FORBIDDEN,
+    ):
+        a2a_router._a2a_contract_error(
+            InputContractError(code, "interaction", "failed")
+        )
+    for response in (
+        SimpleNamespace(body=b"{", headers={}),
+        JSONResponse(1),
+    ):
+        assert a2a_router._normalize_a2a_error_response(response) is None
+    with pytest.raises(Exception, match="Structured input contract result"):
+        a2a_router._a2a_resolution_idempotency_key("task-1", object())
+
+
+@pytest.mark.anyio
+async def test_follow_up_rejects_ambiguous_and_stale_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def scenario(
+        *,
+        metadata: object = None,
+        message_id: object = "message-new",
+        seen: set[str] | None = None,
+    ) -> tuple[Any, Any, Any, Any]:
+        executor = AvalanA2AAgentExecutor(FastAPI())
+        actor = SimpleNamespace(principal="owner")
+        pending = SimpleNamespace(
+            context_id="context-1",
+            actor=actor,
+            seen_message_ids=set() if seen is None else seen,
+            seen_transport_ids=set(),
+            lock=a2a_router.Lock(),
+            request=SimpleNamespace(
+                request_id="request-1",
+                state=SimpleNamespace(value="created"),
+            ),
+            continuation_claimed=False,
+        )
+        executor._pending["task-1"] = pending
+        message = SimpleNamespace(
+            task_id="task-1",
+            message_id=message_id,
+            extensions=[A2A_INPUT_EXTENSION_URI],
+            metadata=(
+                {A2A_INPUT_EXTENSION_URI: {"kind": "resolution"}}
+                if metadata is None
+                else metadata
+            ),
+        )
+        context = SimpleNamespace(
+            state={"method": "send", "request_id": "transport-new"},
+            requested_extensions=(A2A_INPUT_EXTENSION_URI,),
+        )
+        monkeypatch.setattr(
+            executor,
+            "_activated_actor",
+            AsyncMock(return_value=actor),
+        )
+        monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=actor))
+        return executor, pending, SimpleNamespace(message=message), context
+
+    executor, _, params, context = scenario()
+    monkeypatch.setattr(
+        executor,
+        "_activated_actor",
+        AsyncMock(return_value=None),
+    )
+    monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=None))
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor.prepare_follow_up(params, context)
+
+    executor, _, params, context = scenario(message_id=None)
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor.prepare_follow_up(params, context)
+
+    executor, pending, params, context = scenario()
+
+    class _RemovingLock:
+        async def __aenter__(self) -> None:
+            executor._pending.clear()
+
+        async def __aexit__(self, *args: object) -> None:
+            pass
+
+    pending.lock = _RemovingLock()
+    terminal = AsyncMock()
+    monkeypatch.setattr(executor, "_raise_stored_terminal_error", terminal)
+    assert await executor.prepare_follow_up(params, context) is None
+    terminal.assert_awaited_once()
+
+    executor, _, params, context = scenario(seen={"message-new"})
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor.prepare_follow_up(params, context)
+
+    metadata_cases: tuple[object, ...] = ("invalid", {})
+    for metadata in metadata_cases:
+        executor, pending, params, context = scenario(metadata=metadata)
+        assert await executor.prepare_follow_up(params, context) is None
+        assert context.state[a2a_router._A2A_REFRESH_STATE_KEY] is pending
+
+    executor, pending, params, context = scenario()
+    replacement = SimpleNamespace(request_id="request-replacement")
+    monkeypatch.setattr(
+        a2a_router,
+        "decode_a2a_input_resolution_metadata",
+        MagicMock(
+            side_effect=InputContractError(
+                InputErrorCode.EXPIRED,
+                "interaction",
+                "expired",
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        executor,
+        "_terminal_interaction",
+        AsyncMock(return_value=(replacement, ResolutionStatus.EXPIRED)),
+    )
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor.prepare_follow_up(params, context)
+    assert pending.request is replacement
+
+
+@pytest.mark.anyio
+async def test_executor_cancel_settles_and_cleans_pending_input(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    actor = SimpleNamespace(principal="owner")
+    request = SimpleNamespace(request_id="request-1")
+    response = object()
+    iterator = _CancelledResponse()
+    pending = a2a_router._A2APendingInput(
+        task_id="task-1",
+        context_id="ctx-1",
+        actor=cast(Any, actor),
+        request=cast(Any, request),
+        response=response,
+        iterator=iterator,
+        translator=MagicMock(),
+        orchestrator=cast(Any, MagicMock()),
+        activated=True,
+        handler=cast(Any, MagicMock()),
+        updater=MagicMock(),
+    )
+    executor._pending["task-1"] = pending
+    authorize = AsyncMock()
+    applied_request = SimpleNamespace(request_id="request-1")
+    apply_resolution = AsyncMock(
+        return_value=SimpleNamespace(request=applied_request)
+    )
+    cleanup = AsyncMock()
+    monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(executor, "_authorize_resolution", authorize)
+    monkeypatch.setattr(executor, "_apply_resolution", apply_resolution)
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", cleanup)
+    queue = _FakeEventQueue()
+
+    await executor.cancel(
+        SimpleNamespace(task_id="task-1", context_id="ctx-1"),
+        queue,
+    )
+
+    assert apply_resolution.await_args is not None
+    resolution = apply_resolution.await_args.args[2]
+    assert isinstance(resolution, CancelledResolution)
+    authorize.assert_awaited_once_with(actor, pending, resolution)
+    cleanup.assert_awaited_once_with(response, iterator, cancelled=True)
+    assert executor._pending == {}
+    assert queue.events == [
+        {
+            "kind": "status",
+            "state": "canceled",
+            "metadata": {
+                A2A_INPUT_EXTENSION_URI: {
+                    "kind": "resolution",
+                    "request_id": "request-1",
+                }
+            },
+            "task_id": "task-1",
+            "context_id": "ctx-1",
+        }
+    ]
+
+
+@pytest.mark.anyio
+async def test_executor_cancel_keeps_pending_when_settlement_fails(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    actor = SimpleNamespace(principal="owner")
+    response = object()
+    iterator = _CancelledResponse()
+    pending = a2a_router._A2APendingInput(
+        task_id="task-1",
+        context_id="ctx-1",
+        actor=cast(Any, actor),
+        request=cast(Any, SimpleNamespace(request_id="request-1")),
+        response=response,
+        iterator=iterator,
+        translator=MagicMock(),
+        orchestrator=cast(Any, MagicMock()),
+        activated=True,
+        handler=cast(Any, MagicMock()),
+        updater=MagicMock(),
+    )
+    executor._pending["task-1"] = pending
+    cleanup = AsyncMock()
+    monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=None))
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor.cancel(
+            SimpleNamespace(task_id="task-1", context_id="ctx-1"),
+            _FakeEventQueue(),
+        )
+    monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(executor, "_authorize_resolution", AsyncMock())
+    monkeypatch.setattr(
+        executor,
+        "_apply_resolution",
+        AsyncMock(side_effect=RuntimeError("settlement failed")),
+    )
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", cleanup)
+    queue = _FakeEventQueue()
+
+    with pytest.raises(RuntimeError, match="settlement failed"):
+        await executor.cancel(
+            SimpleNamespace(task_id="task-1", context_id="ctx-1"),
+            queue,
+        )
+
+    cleanup.assert_not_awaited()
+    assert executor._pending == {"task-1": pending}
+    assert queue.events == []
+
+
+@pytest.mark.anyio
+async def test_executor_cancel_removes_terminal_pending_after_cleanup_failure(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    actor = SimpleNamespace(principal="owner")
+    response = object()
+    iterator = _CancelledResponse()
+    pending = a2a_router._A2APendingInput(
+        task_id="task-1",
+        context_id="ctx-1",
+        actor=cast(Any, actor),
+        request=cast(Any, SimpleNamespace(request_id="request-1")),
+        response=response,
+        iterator=iterator,
+        translator=MagicMock(),
+        orchestrator=cast(Any, MagicMock()),
+        activated=True,
+        handler=cast(Any, MagicMock()),
+        updater=MagicMock(),
+    )
+    executor._pending["task-1"] = pending
+    cleanup = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    monkeypatch.setattr(executor, "_actor", AsyncMock(return_value=actor))
+    monkeypatch.setattr(executor, "_authorize_resolution", AsyncMock())
+    monkeypatch.setattr(
+        executor,
+        "_apply_resolution",
+        AsyncMock(
+            return_value=SimpleNamespace(
+                request=SimpleNamespace(request_id="request-1")
+            )
+        ),
+    )
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", cleanup)
+    executor._task_store = SimpleNamespace(get=AsyncMock(return_value=None))
+    queue = _FakeEventQueue()
+
+    with pytest.raises(BaseExceptionGroup) as error_info:
+        await executor.cancel(
+            SimpleNamespace(task_id="task-1", context_id="ctx-1"),
+            queue,
+        )
+
+    cleanup.assert_awaited_once_with(response, iterator, cancelled=True)
+    assert executor._pending == {}
+    assert [str(error) for error in error_info.value.exceptions] == [
+        "cleanup failed",
+        "A2A task is not stored",
+    ]
+    assert queue.events == []
+
+
+@pytest.mark.anyio
+async def test_resume_pending_aborts_before_cleanup_on_stream_failure(
+    monkeypatch,
+    fake_a2a_imports,
+) -> None:
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    translator = SimpleNamespace(
+        process=AsyncMock(),
+        finish=AsyncMock(),
+        abort=AsyncMock(side_effect=RuntimeError("abort failed")),
+        succeeded=False,
+    )
+    response = object()
+    iterator = _ErroredResponse()
+    pending = a2a_router._A2APendingInput(
+        task_id="task-1",
+        context_id="ctx-1",
+        actor=cast(Any, SimpleNamespace(principal="owner")),
+        request=cast(Any, SimpleNamespace(request_id="request-1")),
+        response=response,
+        iterator=iterator,
+        translator=cast(Any, translator),
+        orchestrator=cast(Any, MagicMock()),
+        activated=True,
+        handler=cast(Any, MagicMock()),
+        updater=MagicMock(),
+    )
+    executor._pending["task-1"] = pending
+    cleanup = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", cleanup)
+    updater = _FakeUpdater()
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor._resume_pending(
+            SimpleNamespace(call_context=SimpleNamespace(state={})),
+            updater,
+        )
+    context = SimpleNamespace(
+        call_context=SimpleNamespace(
+            state={a2a_router._A2A_RESOLUTION_STATE_KEY: pending}
+        )
+    )
+
+    with pytest.raises(BaseExceptionGroup) as error_info:
+        await executor._resume_pending(context, updater)
+
+    assert [str(error) for error in error_info.value.exceptions] == [
+        "stream broken",
+        "abort failed",
+        "cleanup failed",
+    ]
+    translator.abort.assert_awaited_once_with(StreamTerminalOutcome.ERRORED)
+    cleanup.assert_awaited_once_with(response, iterator, cancelled=False)
+    assert executor._pending == {}
+    assert updater.statuses[0]["state"] == "working"
+
+
+@pytest.mark.anyio
+async def test_pending_publish_and_successor_failures(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_a2a_imports: Any,
+) -> None:
+    pending = SimpleNamespace(task_id="task-1")
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    executor._pending["task-1"] = object()
+    with pytest.raises(RuntimeError, match="already has pending"):
+        await executor._publish_pending(
+            cast(Any, pending),
+            object(),
+            object(),
+        )
+
+    for previous in (None, object()):
+        executor = AvalanA2AAgentExecutor(FastAPI())
+        if previous is not None:
+            executor._pending["task-1"] = cast(Any, previous)
+        monkeypatch.setattr(
+            executor,
+            "_emit_pending_status",
+            AsyncMock(side_effect=RuntimeError("publish failed")),
+        )
+        with pytest.raises(RuntimeError, match="publish failed"):
+            await executor._publish_pending(
+                cast(Any, pending),
+                object(),
+                object(),
+                previous=cast(Any, previous),
+            )
+        assert executor._pending.get("task-1") is previous
+
+    async def one(item: object) -> AsyncIterator[object]:
+        yield item
+
+    translator = SimpleNamespace(process=AsyncMock(), abort=AsyncMock())
+    current = SimpleNamespace(request_id="request-current")
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", AsyncMock())
+    for request_id, handler_request, message in (
+        (None, None, "no request correlation"),
+        (
+            "request-next",
+            SimpleNamespace(request_id="request-current"),
+            "reused its prior request",
+        ),
+    ):
+        executor = AvalanA2AAgentExecutor(FastAPI())
+        continuation = SimpleNamespace(
+            task_id="task-1",
+            request=current,
+            response=object(),
+            iterator=one(
+                SimpleNamespace(
+                    kind=StreamItemKind.INTERACTION_PENDING,
+                    correlation=SimpleNamespace(request_id=request_id),
+                )
+            ),
+            translator=translator,
+            handler=SimpleNamespace(
+                request=AsyncMock(return_value=handler_request)
+            ),
+        )
+        executor._pending["task-1"] = cast(Any, continuation)
+        with pytest.raises(StreamValidationError, match=message):
+            await executor._continue_pending(
+                cast(Any, continuation),
+                _FakeUpdater(),
+                activated=True,
+            )
+
+
+@pytest.mark.anyio
+async def test_interaction_service_negative_branches(
+    monkeypatch: pytest.MonkeyPatch,
+    fake_a2a_imports: Any,
+) -> None:
+    fake_a2a_imports.TaskState.TASK_STATE_INPUT_REQUIRED = "input_required"
+    pending = SimpleNamespace(
+        actor=object(),
+        request=SimpleNamespace(
+            request_id="request-1",
+            origin=object(),
+            state_revision=1,
+        ),
+    )
+    empty = AvalanA2AAgentExecutor(FastAPI())
+    assert await empty._terminal_interaction(cast(Any, pending)) is None
+    assert await empty._stored_task("task-1", object()) is None
+
+    broker = SimpleNamespace(
+        inspect=AsyncMock(
+            side_effect=(
+                SimpleNamespace(status=ResolutionStatus.EXPIRED),
+                object(),
+            )
+        )
+    )
+    service = SimpleNamespace(
+        configuration=SimpleNamespace(
+            broker=broker,
+            principal_resolver=AsyncMock(
+                side_effect=RuntimeError("auth failed")
+            ),
+        ),
+    )
+    app = FastAPI()
+    app.state.interaction_service = service
+    executor = AvalanA2AAgentExecutor(app)
+    for name, value in (
+        ("ServerInteractionService", SimpleNamespace),
+        ("InteractionTerminalMetadata", SimpleNamespace),
+        (
+            "InteractionCorrelation",
+            SimpleNamespace(from_request=MagicMock(return_value=object())),
+        ),
+        ("ScopedInteractionLookup", lambda **values: values),
+    ):
+        monkeypatch.setattr(a2a_router, name, value)
+    assert await executor._terminal_interaction(cast(Any, pending)) == (
+        None,
+        ResolutionStatus.EXPIRED,
+    )
+    assert await executor._terminal_interaction(cast(Any, pending)) is None
+
+    executor._task_store = SimpleNamespace(
+        get=AsyncMock(
+            side_effect=(
+                None,
+                SimpleNamespace(status=SimpleNamespace(state="working")),
+            )
+        )
+    )
+    results = [
+        await executor._working_task(
+            "task-1",
+            object(),
+            cast(Any, pending),
+        )
+        for _ in range(2)
+    ]
+    assert results[0] is None and results[1].status.state == "working"
+
+    stored: tuple[dict[str, object], ...] = (
+        {A2A_INPUT_EXTENSION_URI: None},
+        {A2A_INPUT_EXTENSION_URI: {}},
+        {A2A_INPUT_EXTENSION_URI: {"interaction_state": "invalid"}},
+    )
+    monkeypatch.setattr(
+        executor,
+        "_stored_task",
+        AsyncMock(
+            side_effect=tuple(
+                SimpleNamespace(metadata=value) for value in stored
+            )
+        ),
+    )
+    for _ in stored:
+        await executor._raise_stored_terminal_error("task-1", object())
+
+    for state in (
+        {},
+        {a2a_router._A2A_HTTP_REQUEST_STATE_KEY: object()},
+    ):
+        assert await executor._actor(SimpleNamespace(state=state)) is None
+
+    service.configuration.authorizer = SimpleNamespace(
+        authorize=AsyncMock(return_value=None)
+    )
+    monkeypatch.setattr(
+        a2a_router,
+        "InteractionRequestAuthorizationTarget",
+        lambda **values: SimpleNamespace(**values),
+    )
+    actor = SimpleNamespace(principal="owner")
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor._authorize_resolution(
+            actor, cast(Any, pending), object()
+        )
+
+    error = SimpleNamespace(
+        code=InputErrorCode.EXPIRED,
+        path="interaction",
+        message="expired",
+    )
+    rejected_type = type("_Rejected", (SimpleNamespace,), {})
+    service.configuration.broker = SimpleNamespace(
+        cancel=AsyncMock(
+            side_effect=(
+                object(),
+                SimpleNamespace(store_result=rejected_type(error=error)),
+                SimpleNamespace(store_result=SimpleNamespace(error=error)),
+                SimpleNamespace(store_result=SimpleNamespace()),
+            )
+        )
+    )
+    for name, value in (
+        ("CancelledResolution", SimpleNamespace),
+        ("InteractionBrokerResult", SimpleNamespace),
+        ("ResolveInteractionRejected", rejected_type),
+        ("CancelInteractionCommand", lambda **values: values),
+    ):
+        monkeypatch.setattr(a2a_router, name, value)
+    for _ in range(4):
+        with pytest.raises(Exception):
+            await executor._apply_resolution(
+                actor,
+                cast(Any, pending),
+                SimpleNamespace(),
+            )
+
+
+@pytest.mark.anyio
+async def test_auto_resume_failure_logs_and_cleans_pending(
+    monkeypatch,
+) -> None:
+    app = FastAPI()
+    app.state.logger = MagicMock()
+    executor = AvalanA2AAgentExecutor(app)
+    handler = a2a_router._A2AInputHandler()
+    request = cast(Any, SimpleNamespace(request_id="request-1"))
+    handler_task = create_task(
+        handler(cast(Any, SimpleNamespace(request=request)))
+    )
+    assert await handler.request("request-1") is request
+    handler_task.cancel()
+    with pytest.raises(CancelledError):
+        await handler_task
+    translator = SimpleNamespace(
+        abort=AsyncMock(side_effect=RuntimeError("abort failed"))
+    )
+    response = object()
+    iterator = _CancelledResponse()
+    pending = a2a_router._A2APendingInput(
+        task_id="task-1",
+        context_id="ctx-1",
+        actor=cast(Any, SimpleNamespace(principal="owner")),
+        request=cast(Any, request),
+        response=response,
+        iterator=iterator,
+        translator=cast(Any, translator),
+        orchestrator=cast(Any, MagicMock()),
+        activated=True,
+        handler=handler,
+        updater=MagicMock(),
+    )
+    pending.handler = SimpleNamespace(
+        settlement_event=lambda request_id: SimpleNamespace(
+            wait=AsyncMock(side_effect=CancelledError)
+        )
+    )
+    with pytest.raises(CancelledError):
+        await executor._auto_resume_pending(pending)
+    pending.handler = handler
+    executor._pending[pending.task_id] = pending
+    monkeypatch.setattr(
+        executor,
+        "_terminal_interaction",
+        AsyncMock(return_value=None),
+    )
+    cleanup = AsyncMock(side_effect=RuntimeError("cleanup failed"))
+    monkeypatch.setattr(a2a_router, "cleanup_stream_sources", cleanup)
+
+    await executor._auto_resume_pending(pending)
+
+    assert executor._pending == {}
+    translator.abort.assert_awaited_once_with(StreamTerminalOutcome.ERRORED)
+    cleanup.assert_awaited_once_with(
+        response,
+        iterator,
+        cancelled=False,
+    )
+    assert app.state.logger.error.call_count == 3
 
 
 @pytest.mark.anyio
@@ -2252,6 +3241,32 @@ async def test_executor_cleans_response_on_stream_error(
 
     assert cleaned == [False]
 
+    async def pending_items() -> AsyncIterator[Any]:
+        yield SimpleNamespace(
+            kind=StreamItemKind.INTERACTION_PENDING,
+            correlation=SimpleNamespace(request_id=None),
+        )
+
+    translator = SimpleNamespace(process=AsyncMock(), abort=AsyncMock())
+    monkeypatch.setattr(
+        executor,
+        "_interaction_runtime",
+        AsyncMock(return_value=(SimpleNamespace(actor=object()), MagicMock())),
+    )
+    monkeypatch.setattr(
+        a2a_router,
+        "stream_consumer_iterator",
+        lambda *args, **kwargs: pending_items(),
+    )
+    monkeypatch.setattr(
+        a2a_router,
+        "A2AResponseTranslator",
+        lambda *args, **kwargs: translator,
+    )
+    with pytest.raises(StreamValidationError, match="no request correlation"):
+        await executor.execute(_ExecutorContext(), _FakeEventQueue())
+    translator.abort.assert_awaited_once_with(StreamTerminalOutcome.ERRORED)
+
 
 @pytest.fixture
 def fake_a2a_imports(monkeypatch):
@@ -2277,6 +3292,7 @@ class _FakeProtoMessage:
 class _FakeA2APb2:
     AgentCapabilities = _FakeProtoMessage
     AgentCard = _FakeProtoMessage
+    AgentExtension = _FakeProtoMessage
     AgentInterface = _FakeProtoMessage
     AgentSkill = _FakeProtoMessage
     Part = _FakeProtoMessage
@@ -2286,6 +3302,7 @@ class _FakeA2APb2:
         TASK_STATE_SUBMITTED="submitted",
         TASK_STATE_WORKING="working",
         TASK_STATE_INPUT_REQUIRED="input_required",
+        TASK_STATE_CANCELED="canceled",
     )
 
 

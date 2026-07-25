@@ -8,6 +8,7 @@ from ..entities import (
     MessageToolCall,
     normalize_tool_arguments,
 )
+from ..interaction.a2a_continuation import A2AToolContinuationCheckpoint
 from ..interaction.broker import (
     InteractionBroker,
     InteractionBrokerRequest,
@@ -828,6 +829,16 @@ def _replay_execution_ledger(
                         )
                     _validate_request_matches_task_input_call(request, call)
                     pending_request = request
+                elif status is AgentExecutionStatus.RUNNING:
+                    if (
+                        request.state is not RequestState.CREATED
+                        or request.origin != origin
+                        or not required.detached_resumption_available
+                    ):
+                        raise ExecutionCorrelationError(
+                            "tool input-required ledger entry is invalid"
+                        )
+                    pending_request = request
                 else:
                     _require_replay_status(
                         status,
@@ -1194,9 +1205,8 @@ class DurableInteractionStager(Protocol):
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DurableInteractionStagingContext:
-    """Bind one provider-owned replay snapshot to its reserved call."""
+    """Bind one provider replay snapshot to its exact suspended call."""
 
-    task_input_call: TaskInputCapabilityCall
     continuation_id: ContinuationId
     dispatch_id: ContinuationDispatchId
     revision_binding: ContinuationRevisionBinding
@@ -1205,31 +1215,41 @@ class DurableInteractionStagingContext:
     provider_snapshot: ContinuationSnapshot = field(repr=False)
     provider_idempotency_key: ProviderIdempotencyKey
     provider_call_correlation_id: str
+    task_input_call: TaskInputCapabilityCall | None = None
+    a2a_checkpoint: A2AToolContinuationCheckpoint | None = None
 
     def __post_init__(self) -> None:
-        if type(self.task_input_call) is not TaskInputCapabilityCall:
-            raise TypeError(
-                "task_input_call must be a task-input capability call"
-            )
-        if (
-            self.task_input_call.advertisement
-            is not TaskInputCapabilityAdvertisement.DURABLE
-        ):
-            raise ExecutionCorrelationError(
-                "durable staging requires a durable reserved call"
-            )
+        checkpoint = self.a2a_checkpoint
+        call = self.task_input_call
+        if checkpoint is None:
+            if type(call) is not TaskInputCapabilityCall:
+                raise TypeError(
+                    "task_input_call must be a task-input capability call"
+                )
+            if (
+                call.advertisement
+                is not TaskInputCapabilityAdvertisement.DURABLE
+            ):
+                raise ExecutionCorrelationError(
+                    "durable staging requires a durable reserved call"
+                )
+            expected_call_id = str(call.call_id)
+        else:
+            if type(checkpoint) is not A2AToolContinuationCheckpoint:
+                raise TypeError(
+                    "a2a_checkpoint must be an A2A tool checkpoint"
+                )
+            if call is not None:
+                raise ExecutionCorrelationError(
+                    "durable A2A staging context is incomplete"
+                )
+            expected_call_id = checkpoint.call_id
         continuation_id = ContinuationId(
-            validate_opaque_id(
-                self.continuation_id,
-                "continuation_id",
-            )
+            validate_opaque_id(self.continuation_id, "continuation_id")
         )
         object.__setattr__(self, "continuation_id", continuation_id)
         dispatch_id = ContinuationDispatchId(
-            validate_opaque_id(
-                self.dispatch_id,
-                "dispatch_id",
-            )
+            validate_opaque_id(self.dispatch_id, "dispatch_id")
         )
         object.__setattr__(self, "dispatch_id", dispatch_id)
         if dispatch_id != derive_continuation_dispatch_id(continuation_id):
@@ -1250,11 +1270,12 @@ class DurableInteractionStagingContext:
             raise ExecutionCorrelationError(
                 "durable staging codec is not registered for the revision"
             )
-        if type(self.provider_snapshot) is not ContinuationSnapshot:
+        snapshot = self.provider_snapshot
+        if type(snapshot) is not ContinuationSnapshot:
             raise TypeError(
                 "provider_snapshot must be a continuation snapshot"
             )
-        if not self.codec.accepts(self.provider_snapshot):
+        if not self.codec.accepts(snapshot):
             raise ExecutionCorrelationError(
                 "provider snapshot does not match the durable codec"
             )
@@ -1284,11 +1305,10 @@ class DurableInteractionStagingContext:
             "provider_call_correlation_id",
             correlation_id,
         )
-        if correlation_id != str(self.task_input_call.call_id):
+        if correlation_id != expected_call_id:
             raise ExecutionCorrelationError(
                 "provider correlation does not match the reserved call"
             )
-        snapshot = self.provider_snapshot
         if snapshot.provider_idempotency_key != self.provider_idempotency_key:
             raise ExecutionCorrelationError(
                 "provider snapshot changed its idempotency key"
@@ -2332,6 +2352,7 @@ class AgentExecution:
         result: InputRequiredResult,
         *,
         expected_revision: int | None = None,
+        tool_input: bool = False,
     ) -> bool:
         """End a segment around one uncommitted durable request."""
         if type(request) is not InputRequest:
@@ -2359,11 +2380,12 @@ class AgentExecution:
                 raise ExecutionCorrelationError(
                     "interaction origin does not match execution"
                 )
-            task_input_call, _ = _active_task_input(current.ledger)
-            _validate_request_matches_task_input_call(
-                request,
-                task_input_call,
-            )
+            if not tool_input:
+                task_input_call, _ = _active_task_input(current.ledger)
+                _validate_request_matches_task_input_call(
+                    request,
+                    task_input_call,
+                )
             if (
                 request.request_id != result.request_id
                 or request.continuation_id != result.continuation_id

@@ -67,10 +67,10 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     manifest = _manifest()
     history = manifest.activation_history()
 
-    assert manifest.current_phase == 10
+    assert manifest.current_phase == 11
     assert len(manifest.nodes) == 944
-    assert len(manifest.active_nodes(10)) == 860
-    assert len(manifest.planned_nodes()) == 84
+    assert len(manifest.active_nodes(manifest.current_phase)) == 878
+    assert len(manifest.planned_nodes()) == 66
     assert tuple(map(len, history)) == (
         23,
         79,
@@ -83,6 +83,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         834,
         840,
         860,
+        878,
     )
     assert all(
         set(history[phase]).issubset(history[phase + 1])
@@ -90,7 +91,7 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     )
     assert all(
         node.active_from_phase <= manifest.current_phase
-        for node in manifest.active_nodes(10)
+        for node in manifest.active_nodes(manifest.current_phase)
     )
     assert all(
         node.active_from_phase > manifest.current_phase
@@ -102,7 +103,9 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         for requirement_id in node.requirement_ids
     }
     for requirement_id in requirement_ids:
-        active, remaining = manifest.requirement_slice(requirement_id, 10)
+        active, remaining = manifest.requirement_slice(
+            requirement_id, manifest.current_phase
+        )
         expected = {
             node.node_id
             for node in manifest.nodes
@@ -111,26 +114,24 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         assert set(active).isdisjoint(remaining)
         assert set(active) | set(remaining) == expected
     assert {node.node_id for node in manifest.current_phase_nodes()} == {
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_075",
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_076",
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_077",
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_078",
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_079",
-        "tests/input/mcp_contract_test.py::test_requirement_input_n_080",
-        "tests/input/public_interaction_e2e_test.py::test_mcp_projection",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_13",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14",
-        "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15",
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_081",
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_082",
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_083",
+        "tests/input/a2a_contract_test.py::test_requirement_input_n_084",
+        "tests/input/public_interaction_e2e_test.py::test_a2a_projection",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14",
+        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15",
     }
 
 
@@ -214,7 +215,8 @@ def test_baseline_evidence_is_complete() -> None:
 
     assert (
         evidence["authoritative_gate"]["command"]
-        == "make test-pgsql-exact no-install INPUT_PHASE=10"
+        == "make test-pgsql-exact no-install "
+        f"INPUT_PHASE={manifest.current_phase}"
     )
     assert evidence["authoritative_gate"]["fresh_report_required"] is True
     assert evidence["invariants"] == {

@@ -1,7 +1,13 @@
 """Claim, reconstruct, and fence one durable agent continuation."""
 
 from ..event import Event
+from ..interaction.a2a_continuation import (
+    A2AToolContinuationCheckpoint,
+    decode_a2a_tool_continuation_observation,
+    project_a2a_remote_resolution,
+)
 from ..interaction.codec import (
+    canonical_resolution_digest,
     encode_input_model_result,
     encode_input_question,
 )
@@ -54,6 +60,7 @@ from ..model.capability import (
     TaskInputCapabilityCall,
 )
 from ..types import JsonValue
+from .execution import ExecutionInputRequiredError
 
 from asyncio import CancelledError, Lock, Task, create_task, shield
 from collections.abc import Awaitable, Callable, Mapping
@@ -95,6 +102,14 @@ class AgentContinuationExecutor(Protocol):
         command: "AgentContinuationResumeCommand",
     ) -> object:
         """Append one correlated input result and resume provider execution."""
+        ...
+
+    async def cancel_a2a_continuation(
+        self,
+        continuation: PortableContinuation,
+        checkpoint: A2AToolContinuationCheckpoint,
+    ) -> None:
+        """Cancel one trusted checkpointed downstream A2A task."""
         ...
 
     async def close_continuation_runtime(self) -> None:
@@ -204,9 +219,10 @@ class AgentContinuationResumeCommand:
     continuation: PortableContinuation
     request: InputRequest
     model_result: InputModelResult
-    task_input_call: TaskInputCapabilityCall
-    correlated_result: CorrelatedCapabilityResult
     resolved_runtime: ResolvedContinuationRuntime
+    task_input_call: TaskInputCapabilityCall | None = None
+    correlated_result: CorrelatedCapabilityResult | None = None
+    a2a_checkpoint: A2AToolContinuationCheckpoint | None = None
 
     def __post_init__(self) -> None:
         continuation = self.continuation
@@ -247,49 +263,69 @@ class AgentContinuationResumeCommand:
                 "resume.command.model_result",
                 "model result does not match the terminal request",
             )
-        if type(self.task_input_call) is not TaskInputCapabilityCall:
-            _invalid_type(
-                "resume.command.task_input_call",
-                "a task-input capability call",
-            )
-        call = self.task_input_call
-        if (
-            str(call.call_id) != continuation.provider_call_correlation_id
-            or call.mode != self.request.mode
-            or call.reason != self.request.reason
-            or call.questions != self.request.questions
-            or call.advertisement
-            is not TaskInputCapabilityAdvertisement.DURABLE
-        ):
-            _correlation_error(
-                "resume.command.task_input_call",
-                "reserved task-input call does not match the continuation",
-            )
-        if type(self.correlated_result) is not CorrelatedCapabilityResult:
-            _invalid_type(
-                "resume.command.correlated_result",
-                "a correlated capability result",
-            )
-        correlated = self.correlated_result
-        expected_payload = CorrelatedCapabilityResult(
-            call_id=call.call_id,
-            canonical_name=call.canonical_name,
-            provider_name=call.provider_name,
-            payload=cast(
-                Mapping[str, JsonValue],
-                encode_input_model_result(self.model_result),
-            ),
-        ).payload
-        if (
-            str(correlated.call_id) != str(call.call_id)
-            or correlated.canonical_name != call.canonical_name
-            or correlated.provider_name != call.provider_name
-            or correlated.payload != expected_payload
-        ):
-            _correlation_error(
-                "resume.command.correlated_result",
-                "capability result does not match the reserved call",
-            )
+        checkpoint = self.a2a_checkpoint
+        if checkpoint is None:
+            if type(self.task_input_call) is not TaskInputCapabilityCall:
+                _invalid_type(
+                    "resume.command.task_input_call",
+                    "a task-input capability call",
+                )
+            call = self.task_input_call
+            if (
+                str(call.call_id) != continuation.provider_call_correlation_id
+                or call.mode != self.request.mode
+                or call.reason != self.request.reason
+                or call.questions != self.request.questions
+                or call.advertisement
+                is not TaskInputCapabilityAdvertisement.DURABLE
+            ):
+                _correlation_error(
+                    "resume.command.task_input_call",
+                    "reserved task-input call does not match the continuation",
+                )
+            if type(self.correlated_result) is not CorrelatedCapabilityResult:
+                _invalid_type(
+                    "resume.command.correlated_result",
+                    "a correlated capability result",
+                )
+            correlated = self.correlated_result
+            expected_payload = CorrelatedCapabilityResult(
+                call_id=call.call_id,
+                canonical_name=call.canonical_name,
+                provider_name=call.provider_name,
+                payload=cast(
+                    Mapping[str, JsonValue],
+                    encode_input_model_result(self.model_result),
+                ),
+            ).payload
+            if (
+                str(correlated.call_id) != str(call.call_id)
+                or correlated.canonical_name != call.canonical_name
+                or correlated.provider_name != call.provider_name
+                or correlated.payload != expected_payload
+            ):
+                _correlation_error(
+                    "resume.command.correlated_result",
+                    "capability result does not match the reserved call",
+                )
+        else:
+            if (
+                type(checkpoint) is not A2AToolContinuationCheckpoint
+                or self.task_input_call is not None
+                or self.correlated_result is not None
+                or checkpoint.call_id
+                != continuation.provider_call_correlation_id
+                or checkpoint.mode is not self.request.mode
+                or " ".join(checkpoint.remote.request_text.split())[:500]
+                != self.request.reason
+                or checkpoint.remote.request.questions
+                != self.request.questions
+            ):
+                _correlation_error(
+                    "resume.command.a2a_checkpoint",
+                    "A2A checkpoint does not match the continuation",
+                )
+            project_a2a_remote_resolution(self.request, checkpoint.remote)
         runtime = self.resolved_runtime
         if type(runtime) is not ResolvedContinuationRuntime:
             _invalid_type(
@@ -802,10 +838,18 @@ class DurableAgentContinuationAdmission:
             raise
         self._continuation = marked
         self._state = DurableContinuationResumeState.DISPATCHING
+        input_required: ExecutionInputRequiredError | None = None
+        result: object = None
         try:
             result = await self._executor.resume_agent_continuation(
                 self._command
             )
+        except ExecutionInputRequiredError as error:
+            input_required = error
+        except BaseException:
+            self._state = DurableContinuationResumeState.AMBIGUOUS
+            raise
+        try:
             dispatched = await self._store.mark_dispatched(
                 self._continuation.continuation_id,
                 expected_store_revision=self._continuation.store_revision,
@@ -824,6 +868,8 @@ class DurableAgentContinuationAdmission:
             raise
         self._continuation = dispatched
         self._state = DurableContinuationResumeState.DISPATCHED
+        if input_required is not None:
+            raise input_required
         return result
 
     async def _complete_once(
@@ -1081,6 +1127,7 @@ class DurableAgentContinuationResumer:
         )
         claimed = receipt.continuation
         executor: AgentContinuationExecutor | None = None
+        release_on_error = True
         try:
             if claim_lease_observer is not None:
                 await claim_lease_observer(
@@ -1101,22 +1148,95 @@ class DurableAgentContinuationResumer:
                     "continuation expired during runtime reconstruction",
                 )
             catalog = _validated_catalog(resolved, claimed)
-            call = _task_input_call(claimed, terminal_request, catalog)
-            _restore_provider_snapshot(resolved, claimed, call)
             outcome = project_resolution_to_model(
                 terminal_request,
                 containing_run_exists=True,
             )
-            assert type(outcome) is ResumeInputContinuation
-            correlated = catalog.project_result(call, outcome.result)
-            command = AgentContinuationResumeCommand(
-                continuation=claimed,
-                request=terminal_request,
-                model_result=outcome.result,
-                task_input_call=call,
-                correlated_result=correlated,
-                resolved_runtime=resolved,
-            )
+            checkpoint = _restore_a2a_checkpoint(resolved, claimed)
+            if type(outcome) is not ResumeInputContinuation:
+                if checkpoint is not None:
+                    cancel = getattr(
+                        executor,
+                        "cancel_a2a_continuation",
+                        None,
+                    )
+                    if not iscoroutinefunction(cancel):
+                        _unavailable(
+                            "resume.runtime.executor",
+                            "fresh runtime cannot cancel its A2A task",
+                        )
+                    marked = await self._store.mark_dispatching(
+                        claimed.continuation_id,
+                        expected_store_revision=claimed.store_revision,
+                        owner_id=owner_id,
+                        fencing_token=receipt.fencing_token,
+                        now=self._now(),
+                    )
+                    release_on_error = False
+                    _validate_dispatching_continuation(
+                        claimed,
+                        marked,
+                        owner_id=owner_id,
+                        fencing_token=receipt.fencing_token,
+                    )
+                    claimed = marked
+                    await cancel(claimed, checkpoint)
+                    dispatched = await self._store.mark_dispatched(
+                        claimed.continuation_id,
+                        expected_store_revision=claimed.store_revision,
+                        owner_id=owner_id,
+                        fencing_token=receipt.fencing_token,
+                        now=self._now(),
+                    )
+                    _validate_dispatched_continuation(
+                        claimed,
+                        dispatched,
+                        owner_id=owner_id,
+                        fencing_token=receipt.fencing_token,
+                    )
+                    claimed = dispatched
+                    resolution = terminal_request.resolution
+                    assert resolution is not None
+                    digest = canonical_resolution_digest(resolution)
+                    completed = await self._store.complete(
+                        claimed.continuation_id,
+                        expected_store_revision=claimed.store_revision,
+                        owner_id=owner_id,
+                        fencing_token=receipt.fencing_token,
+                        result_digest=digest,
+                        now=self._now(),
+                    )
+                    _validate_completed_continuation(
+                        claimed,
+                        completed,
+                        fencing_token=receipt.fencing_token,
+                        result_digest=digest,
+                    )
+                    claimed = completed
+                _illegal_transition(
+                    "resume.interaction.state",
+                    "terminal interaction cannot resume its containing run",
+                )
+            if checkpoint is None:
+                call = _task_input_call(claimed, terminal_request, catalog)
+                _restore_provider_snapshot(resolved, claimed, call)
+                correlated = catalog.project_result(call, outcome.result)
+                command = AgentContinuationResumeCommand(
+                    continuation=claimed,
+                    request=terminal_request,
+                    model_result=outcome.result,
+                    task_input_call=call,
+                    correlated_result=correlated,
+                    resolved_runtime=resolved,
+                )
+            else:
+                command = AgentContinuationResumeCommand(
+                    continuation=claimed,
+                    request=terminal_request,
+                    model_result=outcome.result,
+                    resolved_runtime=resolved,
+                    a2a_checkpoint=checkpoint,
+                )
             return DurableAgentContinuationAdmission(
                 store=self._store,
                 command=command,
@@ -1132,6 +1252,7 @@ class DurableAgentContinuationResumer:
                     owner_id=owner_id,
                     fencing_token=receipt.fencing_token,
                     executor=executor,
+                    release_claim=release_on_error,
                 ),
                 name=(
                     "durable-agent-admission-cleanup-"
@@ -1158,25 +1279,27 @@ class DurableAgentContinuationResumer:
         owner_id: ContinuationClaimOwnerId,
         fencing_token: ContinuationFencingToken,
         executor: AgentContinuationExecutor | None,
+        release_claim: bool = True,
     ) -> tuple[BaseException, ...]:
         """Release the claim and close every reconstructed runtime resource."""
         errors: list[BaseException] = []
-        try:
-            released = await self._store.release(
-                claimed.continuation_id,
-                expected_store_revision=claimed.store_revision,
-                owner_id=owner_id,
-                fencing_token=fencing_token,
-                now=self._now(),
-            )
-            _validate_released_continuation(
-                claimed,
-                released,
-                owner_id=owner_id,
-                fencing_token=fencing_token,
-            )
-        except BaseException as error:
-            errors.append(error)
+        if release_claim:
+            try:
+                released = await self._store.release(
+                    claimed.continuation_id,
+                    expected_store_revision=claimed.store_revision,
+                    owner_id=owner_id,
+                    fencing_token=fencing_token,
+                    now=self._now(),
+                )
+                _validate_released_continuation(
+                    claimed,
+                    released,
+                    owner_id=owner_id,
+                    fencing_token=fencing_token,
+                )
+            except BaseException as error:
+                errors.append(error)
         if executor is not None:
             try:
                 await executor.close_continuation_runtime()
@@ -1230,7 +1353,13 @@ class DurableAgentContinuationResumer:
             request,
             containing_run_exists=True,
         )
-        if type(outcome) is not ResumeInputContinuation:
+        if (
+            type(outcome) is not ResumeInputContinuation
+            and decode_a2a_tool_continuation_observation(
+                continuation.observations
+            )
+            is None
+        ):
             _illegal_transition(
                 "resume.interaction.resolution",
                 "terminal interaction cannot resume its containing run",
@@ -1525,6 +1654,48 @@ def _restore_provider_snapshot(
     continuation: PortableContinuation,
     call: TaskInputCapabilityCall,
 ) -> None:
+    _restore_provider_snapshot_call(
+        runtime,
+        continuation,
+        provider_name=call.provider_name,
+        arguments=call.arguments,
+    )
+
+
+def _restore_a2a_checkpoint(
+    runtime: ResolvedContinuationRuntime,
+    continuation: PortableContinuation,
+) -> A2AToolContinuationCheckpoint | None:
+    checkpoint = decode_a2a_tool_continuation_observation(
+        continuation.observations
+    )
+    if checkpoint is None:
+        return None
+    if (
+        checkpoint.call_id != continuation.provider_call_correlation_id
+        or sum(count for _, count in checkpoint.interaction_fingerprint_counts)
+        != continuation.interaction_count
+    ):
+        _correlation_error(
+            "resume.continuation.observations",
+            "A2A call identity or interaction counts changed",
+        )
+    _restore_provider_snapshot_call(
+        runtime,
+        continuation,
+        provider_name=checkpoint.provider_name,
+        arguments=checkpoint.arguments,
+    )
+    return checkpoint
+
+
+def _restore_provider_snapshot_call(
+    runtime: ResolvedContinuationRuntime,
+    continuation: PortableContinuation,
+    *,
+    provider_name: str,
+    arguments: Mapping[str, JsonValue],
+) -> None:
     snapshot = continuation.provider_snapshot
     assert snapshot is not None
     adapter = runtime.model
@@ -1542,8 +1713,8 @@ def _restore_provider_snapshot(
         provider_call_correlation_id=(
             continuation.provider_call_correlation_id
         ),
-        expected_provider_name=call.provider_name,
-        expected_arguments=call.arguments,
+        expected_provider_name=provider_name,
+        expected_arguments=arguments,
     )
     restore(
         snapshot,

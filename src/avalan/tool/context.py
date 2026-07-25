@@ -6,13 +6,30 @@ from .database import DatabaseToolSettings
 from .graph_settings import GraphToolSettings
 from .shell import ShellToolSettings
 
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from typing import final
 
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
+class A2AToolSettings:
+    """Configure one trusted A2A client runtime."""
+
+    client_params: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+    )
+    call_params: Mapping[str, object] = field(
+        default_factory=dict,
+        repr=False,
+    )
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
 class ToolSettingsContext:
+    a2a: A2AToolSettings | None = None
     browser: BrowserToolSettings | None = None
     database: DatabaseToolSettings | None = None
     graph: GraphToolSettings | None = None

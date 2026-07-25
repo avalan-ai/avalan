@@ -1,13 +1,19 @@
 """Run durable task recovery through real PostgreSQL worker processes."""
 
 from asyncio import Event, create_task, gather, wait_for
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import AsyncExitStack
 from dataclasses import replace
 from datetime import timedelta
 from pathlib import Path
 from sys import path as sys_path
-from typing import cast
+from types import SimpleNamespace
+from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import AsyncMock, MagicMock, patch
+
+from a2a.types import a2a_pb2
+from google.protobuf.struct_pb2 import Struct
 
 sys_path.append(str(Path(__file__).parents[2] / "task"))
 sys_path.append(str(Path(__file__).parents[2] / "task" / "stores"))
@@ -20,12 +26,20 @@ from pgsql_harness import (  # noqa: E402
     task_pgsql_psycopg_dsn,
 )
 
+from avalan.agent import (
+    continuation_stager as continuation_stager_module,  # noqa: E402
+)
+from avalan.agent import (
+    durable_runtime as durable_runtime_module,  # noqa: E402
+)
 from avalan.agent.continuation import (  # noqa: E402
     AgentContinuationEventListener,
     AgentContinuationEventListenerRegistration,
     AgentContinuationResumeCommand,
     DurableAgentContinuationResumer,
 )
+from avalan.agent.execution import ExecutionInputRequiredError  # noqa: E402
+from avalan.entities import Message, MessageRole  # noqa: E402
 from avalan.interaction import (  # noqa: E402
     AnswerProvenance,
     BranchId,
@@ -37,6 +51,7 @@ from avalan.interaction import (  # noqa: E402
     DurableInteractionSuspension,
     ExecutionDefinitionRef,
     InputRequest,
+    InputRequestId,
     InputRequiredResult,
     InteractionBranchRegistration,
     InteractionBranchRootLookup,
@@ -56,11 +71,23 @@ from avalan.interaction import (  # noqa: E402
     UserId,
     WaitForInteractionChangeCommand,
 )
+from avalan.interaction.a2a import (  # noqa: E402
+    A2A_INPUT_EXTENSION_URI,
+    A2AInputRequestMetadata,
+    encode_a2a_input_request_metadata,
+)
+from avalan.interaction.a2a_continuation import (  # noqa: E402
+    A2ARemoteInputContinuation,
+    A2AToolContinuationCheckpoint,
+    decode_a2a_tool_continuation_observation,
+    encode_a2a_tool_continuation_observation,
+)
 from avalan.interaction.codec import (  # noqa: E402
     decode_continuation_snapshot,
     encode_continuation_snapshot,
 )
 from avalan.interaction.continuation import (  # noqa: E402
+    ContinuationClaimState,
     derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
 )
@@ -105,6 +132,7 @@ from avalan.task import (  # noqa: E402
     TaskMetadata,
     TaskOutputContract,
     TaskQueueItemState,
+    TaskQueueSubmission,
     TaskRunPolicy,
     TaskRunState,
     TaskTargetContext,
@@ -114,6 +142,7 @@ from avalan.task import (  # noqa: E402
     TaskValidationContext,
     TaskValidationIssue,
     TaskWorker,
+    TaskWorkerProcessResult,
     completed_task_target_outcome,
     suspended_task_target_outcome,
 )
@@ -128,10 +157,74 @@ from avalan.task.stores import (  # noqa: E402
     PgsqlTaskStore,
     task_pgsql_upgrade,
 )
+from avalan.tool.a2a import A2AToolSet  # noqa: E402
+from avalan.tool.context import A2AToolSettings  # noqa: E402
+from avalan.tool.manager import ToolManager  # noqa: E402
+from avalan.types import JsonValue  # noqa: E402
 
 _NOW = durable_support._NOW
 _QUEUE = "durable-worker-e2e"
 _CHECKPOINT = "durable-worker-checkpoint"
+_A2A_CHECKPOINT = "durable-worker-a2a-successor"
+
+
+class _A2ASdkClient:
+    """Yield one configured downstream continuation batch."""
+
+    def __init__(self, batch: tuple[object, ...], http_client: object) -> None:
+        self.batch = batch
+        self.http_client = http_client
+        self.requests: list[Any] = []
+
+    async def send_message(
+        self,
+        request: object,
+        *,
+        context: object = None,
+    ) -> AsyncIterator[object]:
+        self.requests.append(request)
+        parameters = getattr(context, "service_parameters", None) or {}
+        extension = parameters.get("A2A-Extensions", "")
+        response = SimpleNamespace(
+            request=SimpleNamespace(headers={"A2A-Extensions": extension}),
+            headers={"A2A-Extensions": extension},
+        )
+        for hook in tuple(self.http_client.event_hooks["response"]):
+            await cast(Any, hook)(response)
+        for item in self.batch:
+            yield item
+
+
+def _a2a_checkpoint(request: InputRequest) -> A2AToolContinuationCheckpoint:
+    return A2AToolContinuationCheckpoint(
+        call_id="input-call",
+        canonical_name="a2a.call",
+        provider_name="a2a.call",
+        provider_name_encoded=False,
+        arguments=cast(
+            Mapping[str, JsonValue],
+            {
+                "uri": "https://peer.example/a2a",
+                "name": "remote.skill",
+                "arguments": {},
+            },
+        ),
+        remote=A2ARemoteInputContinuation(
+            request=A2AInputRequestMetadata(
+                request_id=InputRequestId("remote-request"),
+                required=True,
+                questions=request.questions,
+            ),
+            request_text=request.reason,
+            task_id="remote-task",
+            context_id="remote-context",
+            prior_message_id="remote-input-message",
+            prior_content=(),
+            ttl_seconds=300,
+            input_cycle_count=1,
+        ),
+        interaction_fingerprint_counts=(("first-input", 1),),
+    )
 
 
 class _DurableWorkerTarget(TaskTargetRunner):
@@ -141,6 +234,7 @@ class _DurableWorkerTarget(TaskTargetRunner):
         self,
         checkpoint_id: str = _CHECKPOINT,
         *,
+        a2a: bool = False,
         branch_id: BranchId | None = None,
         parent_branch_id: BranchId | None = None,
     ) -> None:
@@ -148,7 +242,9 @@ class _DurableWorkerTarget(TaskTargetRunner):
         self.initial_calls = 0
         self.resume_calls = 0
         self.suspension: DurableInteractionSuspension | None = None
+        self.restaged: DurableInteractionSuspension | None = None
         self.checkpoint_id = checkpoint_id
+        self.a2a = a2a
         self.branch_id = branch_id
         self.parent_branch_id = parent_branch_id
 
@@ -193,6 +289,20 @@ class _DurableWorkerTarget(TaskTargetRunner):
                 ),
             ),
         )
+        if self.a2a:
+            continuation = replace(
+                continuation,
+                transcript=(
+                    continuation_stager_module._encode_message_record(
+                        Message(role=MessageRole.USER, content="hello")
+                    ),
+                ),
+                observations=(
+                    encode_a2a_tool_continuation_observation(
+                        _a2a_checkpoint(request)
+                    ),
+                ),
+            )
         self.suspension = DurableInteractionSuspension(
             command=durable_support._create_command(request),
             continuation=continuation,
@@ -214,7 +324,19 @@ class _DurableWorkerTarget(TaskTargetRunner):
     ) -> TaskTargetOutcome:
         assert context.durable_resume is durable_resume
         self.resume_calls += 1
-        return completed_task_target_outcome(await durable_resume.dispatch())
+        try:
+            output = await durable_resume.dispatch()
+        except ExecutionInputRequiredError as error:
+            if not self.a2a:
+                raise
+            assert error.durable is not None
+            self.restaged = error.durable
+            return suspended_task_target_outcome(
+                error.result,
+                checkpoint_id=_A2A_CHECKPOINT,
+                durable=error.durable,
+            )
+        return completed_task_target_outcome(output)
 
 
 class _ResumeAdapter:
@@ -243,8 +365,12 @@ class _ResumeAdapter:
         assert isinstance(replay_item, Mapping)
         assert replay_item["id"] == "reasoning-item"
         assert replay_item["encrypted_content"] == "provider-ciphertext"
-        assert expected_provider_name == "request_user_input"
-        assert expected_arguments["mode"] == "required"
+        if expected_provider_name == "a2a.call":
+            assert expected_provider_name == "a2a.call"
+            assert expected_arguments["uri"] == "https://peer.example/a2a"
+        else:
+            assert expected_provider_name == "request_user_input"
+            assert expected_arguments["mode"] == "required"
 
     def import_continuation_snapshot(
         self,
@@ -1435,44 +1561,204 @@ SELECT
                 repeated_counts = await cursor.fetchone()
         self.assertEqual(repeated_counts, transition_counts)
 
-    async def test_worker_restart_crash_recovery_and_retention(self) -> None:
-        before_restart = await self._database("before-restart")
-        task_store = PgsqlTaskStore(
-            before_restart,
-            clock=lambda: _NOW,
-        )
-        queue = PgsqlTaskQueue(
-            before_restart,
-            clock=lambda: _NOW,
-        )
-        interaction_store = await durable_support._store(before_restart)
-        coordinator = PgsqlDurableTaskCoordinator(
-            interaction_store,
-            task_store,
-        )
-        await task_store.register_definition(
-            _definition(),
-            definition_hash="durable-worker-definition",
-        )
-        submission = await queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id="durable-worker-definition",
-                queue=_QUEUE,
-            ),
-            queue_name=_QUEUE,
-        )
-        initial_target = _DurableWorkerTarget()
-        first_worker = TaskWorker(
-            task_store,
-            queue,
+    async def test_a2a_resuspension_uses_real_postgresql(self) -> None:
+        database = await self._database("a2a-initial")
+        initial_target = _DurableWorkerTarget(a2a=True)
+        submission, store, _ = await self._initial_suspension(
+            database,
             target=initial_target,
-            worker_id="worker-before-restart",
-            queue_name=_QUEUE,
-            durable_suspension_coordinator=coordinator,
-            clock=lambda: _NOW,
+            definition_hash="durable-a2a-definition",
+            worker_id="a2a-initial-worker",
+        )
+        run_id = submission.run.run_id
+        assert initial_target.suspension is not None
+
+        async def answer(
+            interaction_store: PgsqlInteractionStore,
+            resume_database: PsycopgAsyncDatabase,
+            durable: DurableInteractionSuspension,
+            key: str,
+        ) -> None:
+            record = await interaction_store.lookup_scoped(
+                ScopedInteractionLookup(
+                    actor=durable.command.actor,
+                    correlation=InteractionCorrelation.from_request(
+                        durable.command.request
+                    ),
+                )
+            )
+            assert isinstance(record, InteractionRecord)
+            await PgsqlDurableTaskCoordinator(
+                interaction_store,
+                PgsqlTaskStore(resume_database),
+            ).resolve_and_requeue(
+                durable_support._answer(
+                    CreateInteractionApplied(
+                        command=durable.command,
+                        record=record,
+                        policy=InteractionPolicy(),
+                    ),
+                    key=key,
+                ),
+                task_run_id=run_id,
+            )
+
+        await answer(
+            store,
+            database,
+            initial_target.suspension,
+            "a2a-first-answer",
+        )
+        http_client = SimpleNamespace(event_hooks={"response": []})
+        metadata = Struct()
+        metadata.update(
+            {
+                A2A_INPUT_EXTENSION_URI: encode_a2a_input_request_metadata(
+                    A2AInputRequestMetadata(
+                        request_id=InputRequestId("remote-request-two"),
+                        required=True,
+                        questions=initial_target.suspension.command.request.questions,
+                    )
+                )
+            }
         )
 
-        suspended = await first_worker.process_once()
+        def status(state: int, message: object | None = None) -> object:
+            return a2a_pb2.StreamResponse(
+                status_update=a2a_pb2.TaskStatusUpdateEvent(
+                    task_id="remote-task",
+                    context_id="remote-context",
+                    status=a2a_pb2.TaskStatus(
+                        state=state,
+                        message=message,
+                    ),
+                )
+            )
+
+        working = a2a_pb2.TaskState.TASK_STATE_WORKING
+        batches = (
+            (
+                status(working),
+                status(
+                    a2a_pb2.TaskState.TASK_STATE_INPUT_REQUIRED,
+                    a2a_pb2.Message(
+                        message_id="remote-message-two",
+                        task_id="remote-task",
+                        context_id="remote-context",
+                        role=a2a_pb2.Role.ROLE_AGENT,
+                        parts=[
+                            a2a_pb2.Part(
+                                text=initial_target.suspension.command.request.reason
+                            )
+                        ],
+                        metadata=metadata,
+                        extensions=[A2A_INPUT_EXTENSION_URI],
+                    ),
+                ),
+            ),
+            (
+                status(working),
+                status(a2a_pb2.TaskState.TASK_STATE_COMPLETED),
+            ),
+        )
+        clients: list[_A2ASdkClient] = []
+        configs: list[object] = []
+
+        async def create_client(
+            _card: object,
+            *,
+            client_config: object,
+        ) -> object:
+            assert getattr(client_config, "httpx_client") is http_client
+            client = _A2ASdkClient(batches[len(clients)], http_client)
+            clients.append(client)
+            configs.append(client_config)
+            return client
+
+        with patch("a2a.client.create_client", new=create_client):
+            first_database = await self._database("a2a-first-resume")
+            first_bundle = await self._runtime_bundle(
+                first_database,
+                worker_id="a2a-first-resume",
+                task_run_id=run_id,
+                a2a_http_client=http_client,
+            )
+            resuspended = await first_bundle.worker.process_once()
+            assert resuspended.suspension is not None
+            assert first_bundle.target.restaged is not None
+            successor = first_bundle.target.restaged
+            first_store = await durable_support._store(first_database)
+            predecessor = await first_store.get_continuation(
+                initial_target.suspension.continuation.continuation_id
+            )
+            current = await first_store.get_task_continuation_record(run_id)
+            assert predecessor.claim.state is ContinuationClaimState.COMPLETED
+            assert current.continuation == successor.continuation
+            checkpoint = decode_a2a_tool_continuation_observation(
+                successor.continuation.observations
+            )
+            assert checkpoint is not None
+            assert (
+                str(checkpoint.remote.request.request_id),
+                checkpoint.remote.prior_message_id,
+                checkpoint.remote.task_id,
+                checkpoint.remote.context_id,
+            ) == (
+                "remote-request-two",
+                "remote-message-two",
+                "remote-task",
+                "remote-context",
+            )
+            await answer(
+                first_store,
+                first_database,
+                successor,
+                "a2a-second-answer",
+            )
+
+            second_database = await self._database("a2a-second-resume")
+            second_bundle = await self._runtime_bundle(
+                second_database,
+                worker_id="a2a-second-resume",
+                task_run_id=run_id,
+                a2a_http_client=http_client,
+            )
+            completed = await second_bundle.worker.process_once()
+
+        assert completed.completion is not None
+        assert completed.completion.run.state is TaskRunState.SUCCEEDED
+        assert completed.output == "resumed output"
+        final_store = await durable_support._store(second_database)
+        final = await final_store.get_continuation(
+            successor.continuation.continuation_id
+        )
+        assert final.claim.state is ContinuationClaimState.COMPLETED
+        assert len(clients) == len(configs) == 2
+        assert clients[0] is not clients[1] and configs[0] is not configs[1]
+        message_ids = tuple(
+            client.requests[0].message.message_id for client in clients
+        )
+        assert len(set(message_ids)) == 2
+        assert not set(message_ids) & {
+            "remote-request",
+            "remote-request-two",
+            "remote-input-message",
+            "remote-message-two",
+        }
+
+    async def test_worker_restart_crash_recovery_and_retention(self) -> None:
+        before_restart = await self._database("before-restart")
+        initial_target = _DurableWorkerTarget()
+        (
+            submission,
+            interaction_store,
+            suspended,
+        ) = await self._initial_suspension(
+            before_restart,
+            target=initial_target,
+            definition_hash="durable-worker-definition",
+            worker_id="worker-before-restart",
+        )
 
         assert suspended.suspension is not None
         assert suspended.suspension.run.state is TaskRunState.INPUT_REQUIRED
@@ -2668,12 +2954,52 @@ SELECT
         self.databases.append(database)
         return database
 
+    async def _initial_suspension(
+        self,
+        database: PsycopgAsyncDatabase,
+        *,
+        target: _DurableWorkerTarget,
+        definition_hash: str,
+        worker_id: str,
+    ) -> tuple[
+        TaskQueueSubmission,
+        PgsqlInteractionStore,
+        TaskWorkerProcessResult,
+    ]:
+        task_store = PgsqlTaskStore(database, clock=lambda: _NOW)
+        queue = PgsqlTaskQueue(database, clock=lambda: _NOW)
+        store = await durable_support._store(database)
+        await task_store.register_definition(
+            _definition(),
+            definition_hash=definition_hash,
+        )
+        submission = await queue.enqueue_run(
+            TaskExecutionRequest(
+                definition_id=definition_hash,
+                queue=_QUEUE,
+            ),
+            queue_name=_QUEUE,
+        )
+        result = await TaskWorker(
+            task_store,
+            queue,
+            target=target,
+            worker_id=worker_id,
+            queue_name=_QUEUE,
+            durable_suspension_coordinator=(
+                PgsqlDurableTaskCoordinator(store, task_store)
+            ),
+            clock=lambda: _NOW,
+        ).process_once()
+        return submission, store, result
+
     async def _runtime_bundle(
         self,
         database: PsycopgAsyncDatabase,
         *,
         worker_id: str,
         task_run_id: str,
+        a2a_http_client: object | None = None,
     ) -> _RuntimeBundle:
         interaction_store = await durable_support._store(database)
         task_store = PgsqlTaskStore(
@@ -2688,15 +3014,56 @@ SELECT
             task_run_id
         )
         continuation = record.continuation
-        adapter = _ResumeAdapter()
         executor = _ResumeExecutor()
+        adapter = _ResumeAdapter()
+        runtime_executor: object = executor
+        tools: object = object()
+        if a2a_http_client is not None:
+            manager = ToolManager.create_instance(
+                available_toolsets=[
+                    A2AToolSet(
+                        settings=A2AToolSettings(
+                            client_params={
+                                "httpx_client": a2a_http_client,
+                            },
+                        )
+                    )
+                ],
+                enable_tools=["a2a.call"],
+            )
+            stack = AsyncExitStack()
+            await stack.enter_async_context(manager)
+            orchestrator = MagicMock(spec=durable_runtime_module.Orchestrator)
+            orchestrator.tool = manager
+            orchestrator.event_manager = durable_runtime_module.EventManager()
+            stack.push_async_callback(orchestrator.event_manager.aclose)
+            orchestrator.resume_agent_execution = AsyncMock(
+                return_value="resumed output"
+            )
+            executor_type = (
+                durable_runtime_module.TrustedAgentContinuationExecutor
+            )
+            runtime_executor = executor_type(
+                orchestrator,
+                stager=(
+                    durable_runtime_module.PortableAgentContinuationStager(
+                        clock=lambda: _NOW
+                    )
+                ),
+                ownership=(
+                    durable_runtime_module._TrustedContinuationRuntimeOwnership(
+                        stack
+                    )
+                ),
+            )
+            tools = manager
         runtime = ResolvedContinuationRuntime(
             definition=continuation.definition,
             revision_binding=continuation.revision_binding,
-            runtime=executor,
+            runtime=runtime_executor,
             operation=object(),
             model=adapter,
-            tools=object(),
+            tools=tools,
             capabilities=_catalog(continuation.revision_binding),
             credentials_reloaded_from_trusted_config=True,
         )
@@ -2718,7 +3085,7 @@ SELECT
             interaction_store,
             task_store,
         )
-        target = _DurableWorkerTarget()
+        target = _DurableWorkerTarget(a2a=a2a_http_client is not None)
         worker = TaskWorker(
             task_store,
             queue,
