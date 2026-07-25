@@ -38,9 +38,25 @@ from . import (
 )
 
 from collections.abc import Mapping
+from importlib import import_module
 from typing import Any, AsyncIterator, cast
 
-import litellm
+
+class _UnavailableLiteLLM:
+    async def acompletion(self, **kwargs: object) -> object:
+        """Reject completion when the optional SDK is unavailable."""
+        del kwargs
+        raise RuntimeError(
+            "LiteLLM requires the optional litellm dependency, which is "
+            "unavailable in this environment."
+        )
+
+
+litellm: Any
+try:
+    litellm = import_module("litellm")
+except ImportError:
+    litellm = _UnavailableLiteLLM()
 
 
 def _mutable_provider_json(value: object) -> object:

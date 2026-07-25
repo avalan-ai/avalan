@@ -69,12 +69,15 @@ def test_large_waiter_capacity_liveness_and_cleanup() -> None:
         )
         baseline_tasks = len(all_tasks())
         stopped = Event()
+        heartbeat_ready = Event()
         pulses = 0
 
         async def heartbeat() -> None:
             nonlocal pulses
             while not stopped.is_set():
                 pulses += 1
+                if pulses > 1:
+                    heartbeat_ready.set()
                 await sleep(0)
 
         heartbeat_task = create_task(heartbeat(), name="waiter-heartbeat")
@@ -89,6 +92,10 @@ def test_large_waiter_capacity_liveness_and_cleanup() -> None:
             await wait_for(
                 _wait_for_registration(store, _WAITER_COUNT),
                 timeout=30,
+            )
+            await wait_for(
+                heartbeat_ready.wait(),
+                timeout=_COMPLETION_TIMEOUT_SECONDS,
             )
             assert pulses > 1
             assert len(store._record_waiters) == _WAITER_COUNT

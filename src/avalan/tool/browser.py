@@ -21,7 +21,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast, final
 
 if TYPE_CHECKING:
     from faiss import IndexFlatL2
-    from markitdown import MarkItDown
+    from markitdown import MarkItDown as MarkItDownType
     from numpy import vstack
     from playwright.async_api import (
         Browser,
@@ -48,17 +48,19 @@ try:
 except ImportError:
     HAS_BROWSER_DEPENDENCIES = False
     IndexFlatL2 = None  # type: ignore[assignment, misc]
-    MarkItDown = None  # type: ignore[assignment, misc]
     vstack = None  # type: ignore[assignment]
     Browser = None  # type: ignore[assignment, misc]
     Page = None  # type: ignore[assignment, misc]
     PlaywrightContextManager = None  # type: ignore[assignment, misc]
     async_playwright = None  # type: ignore[assignment]
 
+MarkItDown: Any | None
 try:
-    from markitdown import MarkItDown
+    from markitdown import MarkItDown as _MarkItDown
 except ImportError:
-    MarkItDown = None  # type: ignore[assignment, misc]
+    MarkItDown = None
+else:
+    MarkItDown = _MarkItDown
 
 try:
     markdownify_html: Any | None = import_module("markdownify").markdownify
@@ -119,7 +121,7 @@ class BrowserTool(Tool):
     _settings: BrowserToolSettings
     _browser: "Browser | None" = None
     _page: "Page | None" = None
-    _md: "MarkItDown | None" = None
+    _md: "MarkItDownType | None" = None
     _partitioner: Partitioner | None = None
     _INTERRUPT_CLOSE_TIMEOUT = 0.5
 

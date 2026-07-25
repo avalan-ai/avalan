@@ -34,10 +34,13 @@ from numpy.linalg import norm
 from numpy.typing import NDArray
 from rich.console import Console
 
+MarkItDown: Any | None
 try:
-    from markitdown import MarkItDown
+    from markitdown import MarkItDown as _MarkItDown
 except ImportError:
-    MarkItDown = None  # type: ignore[assignment, misc]
+    MarkItDown = None
+else:
+    MarkItDown = _MarkItDown
 
 try:
     from ...memory.permanent.pgsql.raw import PgsqlRawMemory

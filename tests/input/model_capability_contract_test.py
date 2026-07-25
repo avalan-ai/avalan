@@ -10,7 +10,7 @@ from importlib import import_module
 from json import dumps, loads
 from logging import getLogger
 from pathlib import Path
-from subprocess import run as run_process
+from re import search
 from types import SimpleNamespace
 from typing import Any, Callable, cast, get_args
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -2719,18 +2719,11 @@ def test_requirement_input_n_028() -> None:
 def test_model_layer_tool_manager_references_match_documented_allowlist() -> (
     None
 ):
-    completed = run_process(
-        ("rg", "-n", r"\bToolManager\b", "src/avalan/model"),
-        cwd=_ROOT,
-        capture_output=True,
-        check=False,
-        text=True,
-    )
-    assert completed.returncode == 0
     references = {
-        (path, content.strip())
-        for line in completed.stdout.splitlines()
-        for path, _, content in (line.split(":", 2),)
+        (source_path.relative_to(_ROOT).as_posix(), line.strip())
+        for source_path in (_ROOT / "src" / "avalan" / "model").rglob("*.py")
+        for line in source_path.read_text(encoding="utf-8").splitlines()
+        if search(r"\bToolManager\b", line)
     }
     assert references == {
         (

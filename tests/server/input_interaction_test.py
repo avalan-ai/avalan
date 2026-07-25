@@ -432,9 +432,11 @@ async def _blocking_projection_stream() -> (
         yield cast(StreamConsumerProjection, None)
 
 
-async def _failing_projection_stream() -> (
-    AsyncIterator[StreamConsumerProjection]
-):
+async def _failing_projection_stream(
+    started: Event | None = None,
+) -> AsyncIterator[StreamConsumerProjection]:
+    if started is not None:
+        started.set()
     try:
         await Event().wait()
     except CancelledError:
@@ -2585,13 +2587,16 @@ async def _defensive_service_scenario() -> None:
             assert fault_entry.lifecycle[-1].type == "transport.disconnected"
             await disconnected_segment.aclose(cancelled=True)
 
-            orphan_segment = _server_segment(_failing_projection_stream())
+            retained_read_started = Event()
+            orphan_segment = _server_segment(
+                _failing_projection_stream(retained_read_started)
+            )
             fault_entry.segment = orphan_segment
             abandoned_read = create_task(
                 orphan_segment.next_projection(),
                 name="server-abandoned-retained-read",
             )
-            await sleep(0)
+            await wait_for(retained_read_started.wait(), timeout=1)
             retained_read = orphan_segment.pending_next
             assert retained_read is not None
             fault_broker.wait_value = InteractionTerminalMetadata(
