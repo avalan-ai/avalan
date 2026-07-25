@@ -94,6 +94,7 @@ from ..policy import (
     InteractionClock,
     InteractionIdFactory,
     InteractionPolicy,
+    InteractionTime,
     TaskInputClassifier,
 )
 from ..state import InputTransitionError
@@ -193,6 +194,7 @@ INTERACTION_PGSQL_INSTALL_COMMAND = (
 )
 INTERACTION_PGSQL_MIGRATION_COMMAND = "avalan task pgsql migrate head"
 
+_ADVISORY_DUE_EPSILON_SECONDS = 1e-9
 _MAX_RETENTION_DAYS = 3_650
 _SHA256_PATTERN = r"[0-9a-f]{64}"
 _T = TypeVar("_T")
@@ -790,6 +792,30 @@ class _PgsqlRuntimeState:
     wait_groups: dict[str | None, _PgsqlWaitGroup]
     wait_task: Task[None] | None
     wait_metadata: tuple[int, int] | None
+
+
+@final
+class _PgsqlOperationClock:
+    """Reuse one coherent observation throughout a PostgreSQL operation."""
+
+    def __init__(self, clock: InteractionClock) -> None:
+        self._clock = clock
+        self._observed_at: InteractionTime | None = None
+
+    @property
+    def observed_at(self) -> InteractionTime | None:
+        """Return the observation already consumed by this operation."""
+        return self._observed_at
+
+    async def read(self) -> InteractionTime:
+        """Return this operation's single coherent clock observation."""
+        if self._observed_at is None:
+            self._observed_at = await self._clock.read()
+        return self._observed_at
+
+    async def wait_until(self, monotonic_deadline: float) -> None:
+        """Delegate deadline waiting to the underlying trusted clock."""
+        await self._clock.wait_until(monotonic_deadline)
 
 
 @final
@@ -2642,6 +2668,7 @@ class PgsqlInteractionStore:
     ) -> _T:
         """Project one coherent snapshot after its short transaction closes."""
         self._ensure_open()
+        operation_clock = _PgsqlOperationClock(self._clock)
 
         async def load(unit: PgsqlUnitOfWork) -> object:
             await unit.cursor.execute(_SELECT_STORE_METADATA_SQL)
@@ -2659,6 +2686,7 @@ class PgsqlInteractionStore:
             )
             records = await self._load_records(
                 unit,
+                clock=operation_clock,
                 selection=resolved_selection,
             )
             branches = await self._load_branches(
@@ -2701,6 +2729,7 @@ class PgsqlInteractionStore:
             metadata=metadata,
             records=records,
             branches=branches,
+            clock=operation_clock,
         )
         async with self._runtime.lock:
             backing.resumers = dict(self._runtime.resumers)
@@ -2755,6 +2784,7 @@ class PgsqlInteractionStore:
             nonlocal committed_resumers
             nonlocal committed_wait_metadata
             nonlocal committed_wait_revisions
+            operation_clock = _PgsqlOperationClock(self._clock)
             metadata = await _lock_store_metadata(unit)
             resolved_selection = await self._resolve_snapshot_selection(
                 unit,
@@ -2768,6 +2798,7 @@ class PgsqlInteractionStore:
             )
             records = await self._load_records(
                 unit,
+                clock=operation_clock,
                 selection=resolved_selection,
             )
             branches = await self._load_branches(
@@ -2795,6 +2826,7 @@ class PgsqlInteractionStore:
                 metadata=metadata,
                 records=records,
                 branches=branches,
+                clock=operation_clock,
                 trusted_task_branch_closure=(
                     resolved_selection is not None
                     and resolved_selection.trusted_task_run_id is not None
@@ -2845,6 +2877,7 @@ class PgsqlInteractionStore:
                 await self._save_records(
                     unit,
                     changed_records,
+                    observed_at=operation_clock.observed_at,
                 )
                 await self._save_branches(
                     unit,
@@ -2930,12 +2963,13 @@ class PgsqlInteractionStore:
         metadata: PgsqlRow,
         records: tuple[InteractionRecord, ...],
         branches: tuple[InteractionBranchRecord, ...],
+        clock: InteractionClock,
         trusted_task_branch_closure: bool = False,
         scope_ownership_presence: _ScopeOwnershipPresence | None = None,
     ) -> _MemoryInteractionBacking:
         backing = _MemoryInteractionBacking(
             policy=self._policy,
-            clock=self._clock,
+            clock=clock,
             authorizer=self._authorizer,
             id_factory=self._id_factory,
             classifier=self._classifier,
@@ -3497,6 +3531,7 @@ class PgsqlInteractionStore:
         self,
         unit: PgsqlUnitOfWork,
         *,
+        clock: _PgsqlOperationClock | None = None,
         selection: _InteractionSnapshotSelection | None = None,
     ) -> tuple[InteractionRecord, ...]:
         if selection is not None and not selection.include_records:
@@ -3555,10 +3590,23 @@ class PgsqlInteractionStore:
                 )
         else:
             await unit.cursor.execute(_SELECT_RECORDS_SQL)
-        records: list[InteractionRecord] = []
-        for row in await unit.cursor.fetchall():
+        rows = await unit.cursor.fetchall()
+        observed_at = None
+        if rows:
+            operation_clock = clock or _PgsqlOperationClock(self._clock)
             try:
-                records.append(self._record_from_row(row))
+                observed_at = await operation_clock.read()
+            except BaseException as error:
+                raise _InteractionCallbackError(error) from error
+        records: list[InteractionRecord] = []
+        for row in rows:
+            try:
+                records.append(
+                    self._record_from_row(
+                        row,
+                        observed_at=observed_at,
+                    )
+                )
             except InputContractError:
                 if selection is None or not selection.tolerate_invalid_records:
                     raise
@@ -3630,10 +3678,12 @@ class PgsqlInteractionStore:
         self,
         unit: PgsqlUnitOfWork,
         records: tuple[InteractionRecord, ...],
+        *,
+        observed_at: InteractionTime | None = None,
     ) -> None:
         for record in records:
             encrypted = self._encrypt(
-                _encode_record(record),
+                _encode_record(record, observed_at=observed_at),
                 kind="record",
                 identifier=str(record.request.request_id),
             )
@@ -3717,13 +3767,18 @@ class PgsqlInteractionStore:
             if await unit.cursor.fetchone() is None:
                 _scope_identity_conflict("branch")
 
-    def _record_from_row(self, row: PgsqlRow) -> InteractionRecord:
+    def _record_from_row(
+        self,
+        row: PgsqlRow,
+        *,
+        observed_at: InteractionTime | None = None,
+    ) -> InteractionRecord:
         plaintext = self._decrypt(
             row,
             kind="record",
             identifier=_row_str(row, "request_id"),
         )
-        record = _decode_record(plaintext)
+        record = _decode_record(plaintext, observed_at=observed_at)
         _validate_record_row_identity(row, record)
         return record
 
@@ -6173,14 +6228,21 @@ async def _lock_resumed_task_continuation(
     return row
 
 
-def _encode_record(record: InteractionRecord) -> bytes:
+def _encode_record(
+    record: InteractionRecord,
+    *,
+    observed_at: InteractionTime | None = None,
+) -> bytes:
     payload: dict[str, object] = {
         "request": encode_input_request(record.request),
         "semantic_fingerprint": record.semantic_fingerprint,
         "absolute_expires_at": record.absolute_expires_at.isoformat(),
         "presentation": record.presentation.value,
         "store_revision": int(record.store_revision),
-        "advisory_wait": _encode_advisory(record.advisory_wait),
+        "advisory_wait": _encode_advisory(
+            record.advisory_wait,
+            observed_at=observed_at,
+        ),
         "resolution_digest": record.resolution_digest,
         "idempotency_ledger": [
             {
@@ -6194,7 +6256,11 @@ def _encode_record(record: InteractionRecord) -> bytes:
     return _canonical_bytes(payload)
 
 
-def _decode_record(value: bytes) -> InteractionRecord:
+def _decode_record(
+    value: bytes,
+    *,
+    observed_at: InteractionTime | None = None,
+) -> InteractionRecord:
     payload = _object_payload(value, "record")
     ledger_value = payload.get("idempotency_ledger")
     if not isinstance(ledger_value, list):
@@ -6229,7 +6295,10 @@ def _decode_record(value: bytes) -> InteractionRecord:
         store_revision=InteractionStoreRevision(
             _mapping_int(payload, "store_revision")
         ),
-        advisory_wait=_decode_advisory(payload.get("advisory_wait")),
+        advisory_wait=_decode_advisory(
+            payload.get("advisory_wait"),
+            observed_at=observed_at,
+        ),
         resolution_digest=_mapping_optional_str(
             payload,
             "resolution_digest",
@@ -6269,9 +6338,24 @@ def _decode_branch(value: bytes) -> InteractionBranchRecord:
     )
 
 
-def _encode_advisory(value: AdvisoryWaitState | None) -> object:
+def _encode_advisory(
+    value: AdvisoryWaitState | None,
+    *,
+    observed_at: InteractionTime | None = None,
+) -> object:
     if value is None:
         return None
+    monotonic_reference = None
+    if value.status in {
+        AdvisoryWaitStatus.RUNNING,
+        AdvisoryWaitStatus.PAUSED,
+    }:
+        if observed_at is None:
+            _invalid_payload("record.advisory_wait.monotonic_reference")
+        monotonic_reference = {
+            "wall_time": observed_at.wall_time.isoformat(),
+            "monotonic_seconds": observed_at.monotonic_seconds,
+        }
     return {
         "status": value.status.value,
         "budget_seconds": value.budget_seconds,
@@ -6292,16 +6376,21 @@ def _encode_advisory(value: AdvisoryWaitState | None) -> object:
         ),
         "activity_sequence": value.activity_sequence,
         "lease_expires_at_monotonic": value.lease_expires_at_monotonic,
+        "monotonic_reference": monotonic_reference,
     }
 
 
-def _decode_advisory(value: object) -> AdvisoryWaitState | None:
+def _decode_advisory(
+    value: object,
+    *,
+    observed_at: InteractionTime | None = None,
+) -> AdvisoryWaitState | None:
     if value is None:
         return None
     if not isinstance(value, Mapping):
         _invalid_payload("record.advisory_wait")
     payload = cast(Mapping[str, object], value)
-    return AdvisoryWaitState(
+    advisory = AdvisoryWaitState(
         status=AdvisoryWaitStatus(_mapping_str(payload, "status")),
         budget_seconds=_mapping_int(payload, "budget_seconds"),
         remaining_seconds=_mapping_number(payload, "remaining_seconds"),
@@ -6325,6 +6414,94 @@ def _decode_advisory(value: object) -> AdvisoryWaitState | None:
         lease_expires_at_monotonic=_mapping_optional_number(
             payload,
             "lease_expires_at_monotonic",
+        ),
+    )
+    if observed_at is None or advisory.status not in {
+        AdvisoryWaitStatus.RUNNING,
+        AdvisoryWaitStatus.PAUSED,
+    }:
+        return advisory
+    return _rebase_advisory_monotonic(
+        advisory,
+        payload,
+        observed_at,
+    )
+
+
+def _rebase_advisory_monotonic(
+    advisory: AdvisoryWaitState,
+    payload: Mapping[str, object],
+    observed_at: InteractionTime,
+) -> AdvisoryWaitState:
+    reference_value = payload.get("monotonic_reference")
+    if not isinstance(reference_value, Mapping):
+        _invalid_payload("record.advisory_wait.monotonic_reference")
+    reference = cast(Mapping[str, object], reference_value)
+    reference_wall_time = _payload_datetime(reference, "wall_time")
+    reference_monotonic = _mapping_number(
+        reference,
+        "monotonic_seconds",
+    )
+    if not 0 <= reference_monotonic < float("inf"):
+        _invalid_payload(
+            "record.advisory_wait.monotonic_reference.monotonic_seconds"
+        )
+    elapsed_seconds = max(
+        0.0,
+        (observed_at.wall_time - reference_wall_time).total_seconds(),
+    )
+    if advisory.status is AdvisoryWaitStatus.RUNNING:
+        running_since = advisory.running_since_monotonic
+        assert running_since is not None
+        remaining_seconds = min(
+            advisory.budget_seconds,
+            running_since
+            + advisory.remaining_seconds
+            - reference_monotonic
+            - elapsed_seconds,
+        )
+        if remaining_seconds > 0:
+            return replace(
+                advisory,
+                remaining_seconds=remaining_seconds,
+                running_since_monotonic=observed_at.monotonic_seconds,
+            )
+        return replace(
+            advisory,
+            remaining_seconds=_ADVISORY_DUE_EPSILON_SECONDS,
+            running_since_monotonic=max(
+                0.0,
+                observed_at.monotonic_seconds - _ADVISORY_DUE_EPSILON_SECONDS,
+            ),
+        )
+    lease_expires_at = advisory.lease_expires_at_monotonic
+    assert lease_expires_at is not None
+    lease_remaining_seconds = (
+        lease_expires_at - reference_monotonic - elapsed_seconds
+    )
+    if lease_remaining_seconds > 0:
+        return replace(
+            advisory,
+            lease_expires_at_monotonic=(
+                observed_at.monotonic_seconds + lease_remaining_seconds
+            ),
+        )
+    remaining_seconds = min(
+        advisory.budget_seconds,
+        advisory.remaining_seconds + lease_remaining_seconds,
+    )
+    if remaining_seconds > 0:
+        return replace(
+            advisory,
+            remaining_seconds=remaining_seconds,
+            lease_expires_at_monotonic=observed_at.monotonic_seconds,
+        )
+    return replace(
+        advisory,
+        remaining_seconds=_ADVISORY_DUE_EPSILON_SECONDS,
+        lease_expires_at_monotonic=max(
+            0.0,
+            observed_at.monotonic_seconds - _ADVISORY_DUE_EPSILON_SECONDS,
         ),
     )
 

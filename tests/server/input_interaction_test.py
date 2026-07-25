@@ -1169,6 +1169,88 @@ async def _detached_scenario() -> None:
         await broker.aclose()
 
 
+async def _terminal_retention_scenario() -> None:
+    broker = await _open_broker()
+    orchestrator = _FakeProviderOrchestrator()
+    app = _app(broker, orchestrator)
+    transport = ASGITransport(app=app)
+    completed: list[tuple[str, object]] = []
+    try:
+        with patch(
+            "avalan.server.interaction._TERMINAL_ENTRY_RETENTION_LIMIT",
+            2,
+        ):
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://server.test",
+            ) as client:
+                for index in range(3):
+                    orchestrator.request = None
+                    detached = await client.post(
+                        "/v1/chat/completions",
+                        headers=_EXTENSION_HEADERS,
+                        json=_completion_payload(
+                            stream=True,
+                            handling="detached",
+                        ),
+                    )
+                    assert detached.status_code == 200
+                    request = orchestrator.request
+                    assert request is not None
+                    request_id = str(request.request_id)
+                    inspected = await client.get(
+                        f"/v1/input/requests/{request_id}",
+                        headers={"Authorization": "Bearer owner"},
+                    )
+                    resolved = await client.post(
+                        f"/v1/input/requests/{request_id}/resolve",
+                        headers={"Authorization": "Bearer owner"},
+                        json=_resolve_payload_from_observation(
+                            inspected.json(),
+                            f"retention-key-{index}",
+                        ),
+                    )
+                    assert resolved.status_code == 200
+                    completion = await client.get(
+                        f"/v1/input/requests/{request_id}/poll",
+                        params={"transport": "json"},
+                        headers={"Authorization": "Bearer owner"},
+                    )
+                    assert completion.status_code == 200
+                    replay = await client.get(
+                        f"/v1/input/requests/{request_id}/poll",
+                        params={"transport": "json"},
+                        headers={"Authorization": "Bearer owner"},
+                    )
+                    assert replay.json() == completion.json()
+                    completed.append((request_id, completion.json()))
+
+                service = cast(
+                    ServerInteractionService,
+                    app.state.interaction_service,
+                )
+                assert len(service._entries) == 2
+                assert len(service._terminal_entries) == 2
+                evicted = await client.get(
+                    f"/v1/input/requests/{completed[0][0]}",
+                    headers={"Authorization": "Bearer owner"},
+                )
+                assert evicted.status_code == 404
+                for request_id, body in completed[1:]:
+                    replay = await client.get(
+                        f"/v1/input/requests/{request_id}/poll",
+                        params={"transport": "json"},
+                        headers={"Authorization": "Bearer owner"},
+                    )
+                    assert replay.status_code == 200
+                    assert replay.json() == body
+                assert orchestrator.provider_calls == 6
+                assert orchestrator.sync_calls == 3
+    finally:
+        await close_server_interactions(app)
+        await broker.aclose()
+
+
 async def _attached_scenario() -> None:
     broker = await _open_broker()
     orchestrator = _FakeProviderOrchestrator()
@@ -3004,6 +3086,7 @@ def test_server_input_lifecycle_events() -> None:
 def test_server_input_authenticated_resolution() -> None:
     """Cover scoped, correlated, idempotent remote resolution."""
     run(_detached_scenario())
+    run(_terminal_retention_scenario())
     run(_defensive_service_scenario())
 
 

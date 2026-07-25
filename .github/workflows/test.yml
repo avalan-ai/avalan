@@ -127,7 +127,22 @@ jobs:
           make lint
           make typecheck-input-contract INPUT_PHASE=5
 
+      - name: Start PostgreSQL
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql --set=ON_ERROR_STOP=1 \
+            --command="ALTER USER postgres PASSWORD 'postgres';"
+          pg_isready --host 127.0.0.1 --port 5432
+
+      - name: Run tests with PostgreSQL
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
+        env:
+          AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+        run: make test no-install
+
       - name: Run tests
+        if: matrix.target.os != 'ubuntu-latest' || matrix.python != '3.11'
         run: make test no-install
 
       - name: Verify clean generated metadata

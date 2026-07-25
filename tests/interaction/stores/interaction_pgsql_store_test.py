@@ -2992,6 +2992,255 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
             mutation_queries,
         )
 
+    async def test_running_advisory_timer_rebases_across_host_epochs(
+        self,
+    ) -> None:
+        cached_clock_source = _Clock()
+        operation_clock = interaction_pgsql._PgsqlOperationClock(
+            cached_clock_source
+        )
+        first_observation = await operation_clock.read()
+        cached_clock_source.now += timedelta(seconds=1)
+        cached_clock_source.monotonic += 1
+        self.assertIs(await operation_clock.read(), first_observation)
+        await operation_clock.wait_until(first_observation.monotonic_seconds)
+
+        database = FakePgsqlDatabase()
+        source_clock = _Clock()
+        source_clock.monotonic = 1_000
+        source_store = await _store(database, clock=source_clock)
+        request = _advisory_request("running-host-rebase")
+        created = await source_store.create(_create_command(request))
+        assert isinstance(created, CreateInteractionApplied)
+        presented = await source_store.mark_presented(
+            PresentInteractionCommand(
+                actor=created.command.actor,
+                correlation=created.record.correlation,
+                expected_store_revision=created.record.store_revision,
+            )
+        )
+        self.assertTrue(presented.store_mutation_applied)
+
+        higher_clock = _Clock()
+        higher_clock.now += timedelta(seconds=10)
+        higher_clock.monotonic = 10_000
+        higher_store = await _store(database, clock=higher_clock)
+        higher_deadline = (await higher_store.next_deadline()).deadline
+        self.assertIsNotNone(higher_deadline)
+        assert higher_deadline is not None
+        self.assertEqual(higher_deadline.monotonic_deadline, 10_050)
+
+        lower_clock = _Clock()
+        lower_clock.now += timedelta(seconds=10)
+        lower_clock.monotonic = 5
+        lower_store = await _store(database, clock=lower_clock)
+        lookup = ScopedInteractionLookup(
+            actor=created.command.actor,
+            correlation=created.record.correlation,
+        )
+        projection = await lower_store.lookup_scoped(lookup)
+        self.assertIsNotNone(projection)
+        assert projection is not None
+        wait = projection.advisory_wait
+        self.assertIsNotNone(wait)
+        assert wait is not None
+        self.assertEqual(wait.running_since_monotonic, 5)
+        self.assertEqual(wait.remaining_seconds, 50)
+        lower_deadline = (await lower_store.next_deadline()).deadline
+        self.assertIsNotNone(lower_deadline)
+        assert lower_deadline is not None
+        self.assertEqual(lower_deadline.monotonic_deadline, 55)
+
+        lower_clock.now += timedelta(seconds=49)
+        lower_clock.monotonic += 49
+        early = await lower_store.terminalize_due(
+            TerminalizeDueInteractionsCommand()
+        )
+        self.assertIsInstance(early, DueInteractionsApplied)
+        assert isinstance(early, DueInteractionsApplied)
+        self.assertEqual(early.records, ())
+
+        lower_clock.now += timedelta(seconds=1)
+        lower_clock.monotonic += 1
+        due = await lower_store.terminalize_due(
+            TerminalizeDueInteractionsCommand()
+        )
+        self.assertIsInstance(due, DueInteractionsApplied)
+        assert isinstance(due, DueInteractionsApplied)
+        self.assertEqual(len(due.records), 1)
+        self.assertEqual(
+            due.records[0].request.state,
+            RequestState.TIMED_OUT,
+        )
+
+    async def test_paused_advisory_lease_rebases_across_host_epochs(
+        self,
+    ) -> None:
+        database = FakePgsqlDatabase()
+        source_clock = _Clock()
+        source_clock.monotonic = 1_000
+        source_store = await _store(database, clock=source_clock)
+        request = _advisory_request("paused-host-rebase")
+        created = await source_store.create(_create_command(request))
+        assert isinstance(created, CreateInteractionApplied)
+        presented = await source_store.mark_presented(
+            PresentInteractionCommand(
+                actor=created.command.actor,
+                correlation=created.record.correlation,
+                expected_store_revision=created.record.store_revision,
+            )
+        )
+        self.assertTrue(presented.store_mutation_applied)
+        source_clock.now += timedelta(seconds=10)
+        source_clock.monotonic += 10
+        acquired = await source_store.record_activity(
+            RecordControllerActivityCommand(
+                actor=created.command.actor,
+                correlation=created.record.correlation,
+                evidence=AcquireControllerActivity(
+                    request_id=request.request_id,
+                    controller_id=ControllerId("rebase-controller"),
+                ),
+            )
+        )
+        self.assertTrue(acquired.store_mutation_applied)
+
+        higher_clock = _Clock()
+        higher_clock.now += timedelta(seconds=20)
+        higher_clock.monotonic = 10_000
+        higher_store = await _store(database, clock=higher_clock)
+        higher_deadline = (await higher_store.next_deadline()).deadline
+        self.assertIsNotNone(higher_deadline)
+        assert higher_deadline is not None
+        self.assertEqual(higher_deadline.monotonic_deadline, 10_020)
+
+        lower_clock = _Clock()
+        lower_clock.now += timedelta(seconds=20)
+        lower_clock.monotonic = 5
+        lower_store = await _store(database, clock=lower_clock)
+        lookup = ScopedInteractionLookup(
+            actor=created.command.actor,
+            correlation=created.record.correlation,
+        )
+        projection = await lower_store.lookup_scoped(lookup)
+        self.assertIsNotNone(projection)
+        assert projection is not None
+        wait = projection.advisory_wait
+        self.assertIsNotNone(wait)
+        assert wait is not None
+        self.assertEqual(wait.lease_expires_at_monotonic, 25)
+        self.assertEqual(wait.remaining_seconds, 50)
+
+        lower_clock.now += timedelta(seconds=20)
+        lower_clock.monotonic += 20
+        lease_expired = await lower_store.terminalize_due(
+            TerminalizeDueInteractionsCommand()
+        )
+        self.assertIsInstance(lease_expired, DueInteractionsApplied)
+        assert isinstance(lease_expired, DueInteractionsApplied)
+        self.assertEqual(len(lease_expired.records), 1)
+        resumed = lease_expired.records[0]
+        self.assertEqual(resumed.request.state, RequestState.PENDING)
+        resumed_wait = resumed.advisory_wait
+        self.assertIsNotNone(resumed_wait)
+        assert resumed_wait is not None
+        self.assertEqual(resumed_wait.status.value, "running")
+        self.assertEqual(resumed_wait.running_since_monotonic, 25)
+        self.assertEqual(resumed_wait.remaining_seconds, 50)
+
+    def test_advisory_monotonic_reference_validation_and_overdue_rebase(
+        self,
+    ) -> None:
+        observed_at = InteractionTime.from_clock(
+            wall_time=_NOW + timedelta(seconds=91),
+            monotonic_seconds=5,
+        )
+        reference = {
+            "wall_time": (_NOW + timedelta(seconds=10)).isoformat(),
+            "monotonic_seconds": 1_010,
+        }
+
+        def payload(status: str) -> dict[str, object]:
+            return {
+                "status": status,
+                "budget_seconds": 60,
+                "remaining_seconds": 50,
+                "presented_at": _NOW.isoformat(),
+                "running_since_monotonic": (
+                    1_010 if status == "running" else None
+                ),
+                "controller_id": "controller" if status == "paused" else None,
+                "lease_nonce": "nonce" if status == "paused" else None,
+                "activity_sequence": 0 if status == "paused" else None,
+                "lease_expires_at_monotonic": (
+                    1_040 if status == "paused" else None
+                ),
+                "monotonic_reference": reference,
+            }
+
+        missing_reference = payload("running")
+        missing_reference["monotonic_reference"] = None
+        invalid_reference = payload("running")
+        invalid_reference["monotonic_reference"] = {
+            **reference,
+            "monotonic_seconds": -1,
+        }
+        missing_running_anchor = payload("running")
+        missing_running_anchor["running_since_monotonic"] = None
+        missing_lease_deadline = payload("paused")
+        missing_lease_deadline["lease_expires_at_monotonic"] = None
+        for candidate in (
+            missing_reference,
+            invalid_reference,
+            missing_running_anchor,
+            missing_lease_deadline,
+        ):
+            with (
+                self.subTest(candidate=candidate),
+                self.assertRaises(InputContractError),
+            ):
+                interaction_pgsql._decode_advisory(
+                    candidate,
+                    observed_at=observed_at,
+                )
+
+        overdue_running = interaction_pgsql._decode_advisory(
+            payload("running"),
+            observed_at=observed_at,
+        )
+        self.assertIsNotNone(overdue_running)
+        assert overdue_running is not None
+        self.assertLessEqual(
+            overdue_running.running_since_monotonic
+            + overdue_running.remaining_seconds,
+            observed_at.monotonic_seconds,
+        )
+        with self.assertRaises(PgsqlInteractionStoreError):
+            interaction_pgsql._encode_advisory(overdue_running)
+
+        overdue_paused = interaction_pgsql._decode_advisory(
+            payload("paused"),
+            observed_at=observed_at,
+        )
+        self.assertIsNotNone(overdue_paused)
+        assert overdue_paused is not None
+        self.assertLessEqual(
+            overdue_paused.lease_expires_at_monotonic
+            + overdue_paused.remaining_seconds,
+            observed_at.monotonic_seconds,
+        )
+        queued = payload("queued")
+        queued["remaining_seconds"] = 60
+        queued["presented_at"] = None
+        queued["monotonic_reference"] = None
+        decoded_queued = interaction_pgsql._decode_advisory(
+            queued,
+            observed_at=observed_at,
+        )
+        self.assertIsNotNone(decoded_queued)
+        assert decoded_queued is not None
+        self.assertEqual(decoded_queued.status.value, "queued")
+
     async def test_wait_change_returns_projection_from_deciding_snapshot(
         self,
     ) -> None:
