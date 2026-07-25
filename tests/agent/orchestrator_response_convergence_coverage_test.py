@@ -11,6 +11,7 @@ from asyncio import (
 from asyncio import (
     Event as AsyncioEvent,
 )
+from datetime import UTC, datetime
 from logging import getLogger
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, cast
@@ -23,7 +24,9 @@ from avalan.agent.execution import (
     AgentExecution,
     AgentExecutionStatus,
     AttachedInteractionRuntime,
+    DurableInteractionRuntime,
     ExecutionTerminatedError,
+    create_agent_execution,
 )
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
@@ -44,17 +47,36 @@ from avalan.interaction.broker import (
     InteractionRequestResult,
 )
 from avalan.interaction.entities import (
+    AgentId,
+    ConfirmationQuestion,
+    ContinuationId,
+    ExecutionDefinitionRef,
+    ExecutionOrigin,
     InputModelResult,
     InputRequest,
     InputRequestId,
+    InputUnavailableResult,
     PrincipalScope,
+    QuestionId,
     RequestState,
+    RequirementMode,
     ResolutionStatus,
     TerminateInputContinuation,
+    TextQuestion,
     UserId,
 )
-from avalan.interaction.policy import InteractionActor
-from avalan.interaction.store import CreateInteractionApplied
+from avalan.interaction.error import InputErrorCode, InputValidationError
+from avalan.interaction.policy import (
+    InteractionActor,
+    InteractionPolicy,
+    InteractionTime,
+    RuntimeInteractionClock,
+    TaskInputCapabilityState,
+)
+from avalan.interaction.store import (
+    CreateInteractionApplied,
+    CreateInteractionRejected,
+)
 from avalan.model.call import ModelCallContext
 from avalan.model.capability import (
     ModelCapabilityCatalog,
@@ -132,7 +154,13 @@ def _task_input_call() -> TaskInputCapabilityCall:
     call.arguments = {}
     call.mode = "required"
     call.reason = "Need a decision."
-    call.questions = ("Continue?",)
+    call.questions = (
+        ConfirmationQuestion(
+            question_id=QuestionId("continue"),
+            prompt="Continue?",
+            required=True,
+        ),
+    )
     return cast(TaskInputCapabilityCall, call)
 
 
@@ -253,6 +281,83 @@ class OrchestratorResponseIterationCoverageTest(IsolatedAsyncioTestCase):
         propagate.assert_awaited_once_with()
         start.assert_awaited_once_with(call)
         self.assertIsNone(response._task_input_call)
+
+    async def test_inactive_stream_input_installs_unavailable_response(
+        self,
+    ) -> None:
+        """Replace a live stream when new task input is inactive."""
+
+        async def provider_items() -> AsyncIterator[object]:
+            yield object()
+
+        response = _response()
+        call = _task_input_call()
+        broker = SimpleNamespace(
+            request=AsyncMock(),
+            cancel_scope=AsyncMock(),
+        )
+        runtime = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, broker),
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("coverage-user"))
+            ),
+            handler=AsyncMock(),
+            policy=InteractionPolicy(
+                capability_state=TaskInputCapabilityState.DORMANT
+            ),
+        )
+        execution = MagicMock(spec=AgentExecution)
+        execution.interaction_runtime = runtime
+        execution.begin_interaction = AsyncMock()
+        response._execution = cast(AgentExecution, execution)
+        response._response_iterator = provider_items()
+        canonical = _canonical_item(
+            StreamItemKind.TOOL_CALL_DONE,
+            tool_call_id="input-call",
+        )
+        replacement = _text_response("unavailable")
+        resume = AsyncMock(return_value=replacement)
+
+        with (
+            patch.object(
+                response,
+                "_propagate_cancellation_to_pending_work",
+                AsyncMock(),
+            ),
+            patch.object(
+                response,
+                "_canonical_item_from_response_item",
+                return_value=canonical,
+            ),
+            patch.object(
+                response,
+                "_process_canonical_response_item",
+                AsyncMock(),
+            ),
+            patch.object(
+                response,
+                "_classify_completed_task_input_boundary",
+                return_value=call,
+            ),
+            patch.object(response._response, "aclose", AsyncMock()),
+            patch.object(response, "_finish_active_model_continuation"),
+            patch.object(
+                response,
+                "_resume_unavailable_task_input",
+                resume,
+            ),
+            patch.object(
+                response,
+                "_begin_tool_call_lifecycle_response",
+            ) as begin_lifecycle,
+        ):
+            await response._next_item()
+
+        self.assertIs(response._response, replacement)
+        self.assertFalse(response._response_drained)
+        execution.begin_interaction.assert_awaited_once()
+        resume.assert_awaited_once()
+        begin_lifecycle.assert_called_once_with()
 
     async def test_stream_cleanup_finishes_state_before_provider_error(
         self,
@@ -379,6 +484,42 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
             "^task input requires an explicit interaction runtime$",
         ):
             await response._start_task_input(_task_input_call())
+
+    async def test_sensitive_input_is_rejected_before_ledger_reservation(
+        self,
+    ) -> None:
+        response = _response()
+        broker = SimpleNamespace(
+            request=AsyncMock(),
+            cancel_scope=AsyncMock(),
+        )
+        runtime = AttachedInteractionRuntime(
+            broker=cast(InteractionBroker, broker),
+            actor=InteractionActor(
+                principal=PrincipalScope(user_id=UserId("coverage-user"))
+            ),
+            handler=AsyncMock(),
+        )
+        execution = MagicMock(spec=AgentExecution)
+        execution.interaction_runtime = runtime
+        execution.begin_interaction = AsyncMock()
+        response._execution = cast(AgentExecution, execution)
+        call = _task_input_call()
+        cast(Any, call).questions = (
+            TextQuestion(
+                question_id=QuestionId("login-code"),
+                prompt="Enter your sign-in code.",
+                required=True,
+            ),
+        )
+
+        with self.assertRaises(InputValidationError) as error:
+            await response._start_task_input(call)
+
+        self.assertIs(error.exception.code, InputErrorCode.PROHIBITED_INPUT)
+        execution.begin_interaction.assert_not_awaited()
+        broker.request.assert_not_awaited()
+        self.assertIsNone(response._pending_interaction_task)
 
     async def test_start_task_input_abandons_failed_scheduling(self) -> None:
         response = _response()
@@ -576,6 +717,265 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
         self.assertIsNone(response._pending_interaction_call)
         self.assertEqual(response._pending_interaction_assistant_text, "")
         self.assertFalse(response._pending_interaction_published)
+
+    async def test_capability_loss_resumes_with_unavailable_result(
+        self,
+    ) -> None:
+        response = _response()
+        execution = MagicMock(spec=AgentExecution)
+        response._execution = cast(AgentExecution, execution)
+        created = InputRequest(
+            request_id=InputRequestId("unavailable-request"),
+            continuation_id=ContinuationId("unavailable-continuation"),
+            origin=cast(
+                ExecutionOrigin,
+                MagicMock(spec=ExecutionOrigin),
+            ),
+            mode=RequirementMode.REQUIRED,
+            reason="Need a decision.",
+            questions=(
+                ConfirmationQuestion(
+                    question_id=QuestionId("continue"),
+                    prompt="Continue?",
+                    required=True,
+                ),
+            ),
+            created_at=datetime(2099, 7, 24, tzinfo=UTC),
+        )
+        continued = _text_response("continued")
+        resume = AsyncMock(return_value=continued)
+        publish = AsyncMock()
+        append = AsyncMock()
+
+        with (
+            patch.object(response, "_publish_interaction_wait", publish),
+            patch.object(response, "_append_interaction_terminal", append),
+            patch.object(response, "_resume_after_task_input", resume),
+        ):
+            result = await response._resume_unavailable_task_input(
+                _task_input_call(),
+                assistant_text="provider preface",
+                created=created,
+            )
+
+        self.assertIs(result, continued)
+        assert publish.await_args is not None
+        assert append.await_args is not None
+        assert resume.await_args is not None
+        pending = publish.await_args.args[0]
+        terminal = append.await_args.args[0]
+        self.assertIs(pending.state, RequestState.PENDING)
+        self.assertIs(terminal.state, RequestState.UNAVAILABLE)
+        self.assertIsNotNone(terminal.resolution)
+        assert terminal.resolution is not None
+        self.assertEqual(
+            terminal.resolution.resolved_at,
+            created.created_at,
+        )
+        model_result = resume.await_args.args[2]
+        self.assertIsInstance(model_result, InputUnavailableResult)
+        self.assertEqual(model_result.request_id, created.request_id)
+
+    async def test_capability_loss_without_request_uses_trusted_clock(
+        self,
+    ) -> None:
+        """Use durable runtime time for synthesized capability loss."""
+        response = _response()
+        trusted_time = datetime(2099, 8, 25, tzinfo=UTC)
+        clock_reads = 0
+
+        def wall_clock() -> datetime:
+            nonlocal clock_reads
+            clock_reads += 1
+            return trusted_time
+
+        async def unused_stager(*args: Any, **kwargs: Any) -> Any:
+            raise AssertionError((args, kwargs))
+
+        principal = PrincipalScope(user_id=UserId("durable-owner"))
+        runtime = DurableInteractionRuntime(
+            actor=InteractionActor(principal=principal),
+            stager=unused_stager,
+            clock=RuntimeInteractionClock(wall_clock),
+        )
+        execution = await create_agent_execution(
+            definition=ExecutionDefinitionRef(
+                agent_definition_locator="file:///trusted/agent.toml",
+                agent_definition_revision="agent-r1",
+                operation_id="operation",
+                operation_index=0,
+                model_config_reference="model",
+                tool_revision="tools-r1",
+                capability_revision="capabilities-r1",
+            ),
+            agent_id=AgentId("durable-agent"),
+            principal=principal,
+            initial_messages=(
+                Message(role=MessageRole.USER, content="hello"),
+            ),
+            interaction_runtime=runtime,
+        )
+        response._execution = execution
+        call = _task_input_call()
+        object.__setattr__(call, "mode", RequirementMode.REQUIRED)
+        continued = _text_response("continued")
+        resume = AsyncMock(return_value=continued)
+        publish = AsyncMock()
+        append = AsyncMock()
+
+        with (
+            patch.object(response, "_publish_interaction_wait", publish),
+            patch.object(response, "_append_interaction_terminal", append),
+            patch.object(response, "_resume_after_task_input", resume),
+        ):
+            result = await response._resume_unavailable_task_input(
+                call,
+                assistant_text="provider preface",
+            )
+
+        self.assertIs(result, continued)
+        self.assertIsNone(execution.interaction_broker)
+        self.assertIs(execution.interaction_clock, runtime.clock)
+        self.assertEqual(clock_reads, 1)
+        assert publish.await_args is not None
+        assert append.await_args is not None
+        pending = publish.await_args.args[0]
+        terminal = append.await_args.args[0]
+        self.assertEqual(pending.created_at, trusted_time)
+        self.assertIsNotNone(terminal.resolution)
+        assert terminal.resolution is not None
+        self.assertEqual(terminal.resolution.resolved_at, trusted_time)
+
+    async def test_capability_loss_uses_attached_broker_time(self) -> None:
+        """Use the attached broker when no runtime clock is exposed."""
+        response = _response()
+        trusted_time = datetime(2099, 8, 26, tzinfo=UTC)
+        observed_at = InteractionTime.from_clock(
+            wall_time=trusted_time,
+            monotonic_seconds=1,
+        )
+        read_time = AsyncMock(return_value=observed_at)
+        execution = SimpleNamespace(
+            interaction_clock=None,
+            interaction_broker=SimpleNamespace(read_time=read_time),
+            origin=MagicMock(spec=ExecutionOrigin),
+        )
+        response._execution = cast(AgentExecution, execution)
+        call = _task_input_call()
+        object.__setattr__(call, "mode", RequirementMode.REQUIRED)
+        continued = _text_response("continued")
+        publish = AsyncMock()
+
+        with (
+            patch.object(response, "_publish_interaction_wait", publish),
+            patch.object(
+                response,
+                "_append_interaction_terminal",
+                AsyncMock(),
+            ),
+            patch.object(
+                response,
+                "_resume_after_task_input",
+                AsyncMock(return_value=continued),
+            ),
+        ):
+            result = await response._resume_unavailable_task_input(
+                call,
+                assistant_text="provider preface",
+            )
+
+        self.assertIs(result, continued)
+        read_time.assert_awaited_once_with()
+        assert publish.await_args is not None
+        self.assertEqual(publish.await_args.args[0].created_at, trusted_time)
+
+    async def test_capability_loss_rejects_missing_or_invalid_time(
+        self,
+    ) -> None:
+        """Fail closed without a genuine clock or broker observation."""
+        call = _task_input_call()
+        object.__setattr__(call, "mode", RequirementMode.REQUIRED)
+        cases = (
+            (
+                None,
+                "capability loss requires a trusted interaction clock",
+            ),
+            (
+                SimpleNamespace(read_time=AsyncMock(return_value=object())),
+                "trusted interaction clock returned invalid time",
+            ),
+        )
+        for broker, message in cases:
+            response = _response()
+            response._execution = cast(
+                AgentExecution,
+                SimpleNamespace(
+                    interaction_clock=None,
+                    interaction_broker=broker,
+                ),
+            )
+            with self.subTest(message=message):
+                with self.assertRaisesRegex(RuntimeError, message):
+                    await response._resume_unavailable_task_input(
+                        call,
+                        assistant_text="provider preface",
+                    )
+
+    async def test_attached_input_returns_immediate_unavailable_response(
+        self,
+    ) -> None:
+        """Return the immediate policy response without awaiting a task."""
+        response = _response()
+        response._execution = cast(
+            AgentExecution,
+            SimpleNamespace(
+                interaction_runtime=object.__new__(AttachedInteractionRuntime)
+            ),
+        )
+        replacement = _text_response("unavailable")
+        start = AsyncMock(return_value=replacement)
+
+        with patch.object(response, "_start_task_input", start):
+            result = await response._run_attached_task_input(
+                _task_input_call()
+            )
+
+        self.assertIs(result, replacement)
+        start.assert_awaited_once()
+
+    async def test_finish_unavailable_admission_resumes_model(self) -> None:
+        """Map a broker availability rejection to a model continuation."""
+        response = _response()
+        call = _task_input_call()
+        created = MagicMock(spec=InputRequest)
+        rejected = MagicMock(spec=CreateInteractionRejected)
+        rejected.error.code = InputErrorCode.UNAVAILABLE
+        rejected.command.request = created
+        response._pending_interaction_task = cast(Task[Any], object())
+        response._pending_interaction_call = call
+        response._pending_interaction_assistant_text = "provider preface"
+        continued = _text_response("continued")
+        resume = AsyncMock(return_value=continued)
+
+        with patch.object(
+            response,
+            "_resume_unavailable_task_input",
+            resume,
+        ):
+            result = await response._finish_task_input(
+                cast(
+                    InteractionRequestResult,
+                    SimpleNamespace(create_result=rejected, delivery=None),
+                ),
+                raise_on_noncompletion=False,
+            )
+
+        self.assertIs(result, continued)
+        resume.assert_awaited_once_with(
+            call,
+            assistant_text="provider preface",
+            created=created,
+        )
 
     async def _finish_terminated(
         self,

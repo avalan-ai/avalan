@@ -29,6 +29,7 @@ from avalan.interaction import (
     InteractionActor,
     InteractionAuthorizationDecision,
     InteractionDisclosure,
+    InteractionPolicy,
     ModelCallId,
     PrincipalScope,
     QuestionId,
@@ -38,6 +39,7 @@ from avalan.interaction import (
     StateRevision,
     StreamSessionId,
     TaskId,
+    TaskInputCapabilityState,
     TurnId,
     UserId,
     mark_request_pending,
@@ -295,6 +297,19 @@ async def test_initialized_session_negotiates_tasks_and_form() -> None:
     request.headers["MCP-Protocol-Version"] = "2025-03-26"
     with pytest.raises(MCPFormSessionError):
         await mcp_router._mcp_session_context(cast(object, request))
+    request.headers["MCP-Protocol-Version"] = "2025-11-25"
+    request.app.state.interaction_service.configuration = (
+        ServerInteractionConfiguration(
+            broker=cast(object, _Broker()),
+            principal_resolver=_Resolver(),
+            authorizer=_Authorizer(),
+            policy=InteractionPolicy(
+                capability_state=TaskInputCapabilityState.DORMANT
+            ),
+        )
+    )
+    with pytest.raises(MCPFormSessionError):
+        await mcp_router._mcp_session_context(cast(object, request))
 
 
 @pytest.mark.anyio
@@ -389,9 +404,7 @@ async def test_router_dispatches_session_tasks_errors_and_close() -> None:
         )
         error = loads(rejected.body)["error"]
         assert error["code"] == -32602
-        assert error["data"]["reason"] == (
-            MCPFormErrorCode.INVALID_CAPABILITIES.value
-        )
+        assert error["data"] == {"code": "avalan.input.validation"}
 
     ping = await rpc(
         _wire_request(
@@ -1008,9 +1021,14 @@ async def test_task_status_hook_and_consumer_terminal_paths() -> None:
             related_task_id="task",
         )
     )
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "input_required"
+    pending = await controller.get("task", requestor=owner)
+    assert pending["status"] == "input_required"
+    assert pending["_meta"] == {
+        "https://avalan.ai/extensions/task-input/v1": {
+            "kind": "request",
+            "request_id": "request",
+        }
+    }
     await hook(
         mcp_router.MCPFormStatusEvent(
             session_id="session",
@@ -1019,9 +1037,14 @@ async def test_task_status_hook_and_consumer_terminal_paths() -> None:
             related_task_id="task",
         )
     )
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "working"
+    working = await controller.get("task", requestor=owner)
+    assert working["status"] == "working"
+    assert working["_meta"] == {
+        "https://avalan.ai/extensions/task-input/v1": {
+            "kind": "resolution",
+            "request_id": "request",
+        }
+    }
 
     async def result_stream() -> AsyncIterator[bytes]:
         yield b'{"jsonrpc":"2.0","id":"call","result":{"content":[]}}\n'
@@ -1362,7 +1385,7 @@ async def test_session_rejects_unavailable_and_anonymous_tasks() -> None:
     assert loads(rejected.body)["error"] == {
         "code": -32001,
         "message": "MCP form capacity is unavailable.",
-        "data": {"reason": MCPFormErrorCode.CAPACITY.value},
+        "data": {"code": "avalan.input.unavailable"},
     }
 
 

@@ -1306,6 +1306,7 @@ async def _initialize_mcp_session(
     if (
         protocol_version == LATEST_PROTOCOL_VERSION
         and actor_and_service is not None
+        and actor_and_service[1].configuration.policy.advertise
     ):
         actor, service = actor_and_service
         owner = actor.principal
@@ -1384,6 +1385,8 @@ async def _mcp_session_context(
     if actor_and_service is None:
         raise _mcp_session_unavailable()
     actor, service = actor_and_service
+    if not service.configuration.policy.resolve_existing:
+        raise _mcp_session_unavailable()
     registry = _get_form_session_registry(request)
     negotiation = await registry.negotiation(session_id, actor.principal)
     protocol_header = headers.get("MCP-Protocol-Version")
@@ -1455,7 +1458,7 @@ def _mcp_protocol_error_response(
         payload: JsonObject = {
             "code": error.rpc_code,
             "message": error.safe_message,
-            "data": {"reason": error.code.value},
+            "data": {"code": _mcp_form_public_error_code(error.code)},
         }
     else:
         payload = error.as_error()
@@ -1465,6 +1468,22 @@ def _mcp_protocol_error_response(
         "error": payload,
     }
     return JSONResponse(response)
+
+
+def _mcp_form_public_error_code(code: MCPFormErrorCode) -> str:
+    if code in {
+        MCPFormErrorCode.INVALID_CAPABILITIES,
+        MCPFormErrorCode.INVALID_RESPONSE,
+        MCPFormErrorCode.OVERSIZED_RESPONSE,
+        MCPFormErrorCode.AMBIGUOUS_RESPONSE,
+    }:
+        return "avalan.input.validation"
+    if code in {
+        MCPFormErrorCode.STALE_RESPONSE,
+        MCPFormErrorCode.RESPONSE_NOT_PENDING,
+    }:
+        return "avalan.input.already_resolved"
+    return "avalan.input.unavailable"
 
 
 class StreamResponse(Protocol):
@@ -1520,6 +1539,7 @@ def _mcp_interaction_runtime(
             related_task_id=related_task_id,
             status_hook=status_hook,
         ),
+        policy=session.service.configuration.policy,
         task_id=(
             TaskId(related_task_id) if related_task_id is not None else None
         ),
@@ -1837,7 +1857,7 @@ def _mcp_task_status_hook(
 ) -> MCPFormStatusHook:
     async def update(event: MCPFormStatusEvent) -> None:
         if event.status is MCPFormStatus.INPUT_REQUIRED:
-            await handle.transition_input_required()
+            await handle.transition_input_required(event.request_id)
         else:
             try:
                 await handle.transition_working()

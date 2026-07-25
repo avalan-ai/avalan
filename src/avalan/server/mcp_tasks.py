@@ -11,6 +11,7 @@ from uuid import uuid4
 
 MCP_TASK_PROTOCOL_VERSION = "2025-11-25"
 MCP_RELATED_TASK_METADATA_KEY = "io.modelcontextprotocol/related-task"
+MCP_TASK_INPUT_METADATA_KEY = "https://avalan.ai/extensions/task-input/v1"
 
 MCPTaskStatus: TypeAlias = Literal[
     "working",
@@ -224,6 +225,7 @@ class _Record:
     poll_interval_ms: int
     cancel_callback: MCPTaskCancellationCallback | None
     outcome: MCPTaskOutcome | None = None
+    input_request_id: str | None = None
     changed: Event = field(default_factory=Event)
     cancelled: Event = field(default_factory=Event)
 
@@ -258,11 +260,15 @@ class MCPTaskHandle:
         """Wait for cancellation or cleanup."""
         await self._cancelled.wait()
 
-    async def transition_input_required(self) -> JsonObject:
+    async def transition_input_required(
+        self,
+        request_id: str | None = None,
+    ) -> JsonObject:
         """Move from working to input required."""
         return await self._controller.transition_input_required(
             self.task_id,
             requestor=self.requestor,
+            request_id=request_id,
         )
 
     async def transition_working(self) -> JsonObject:
@@ -505,14 +511,20 @@ class MCPTaskController:
         task_id: str,
         *,
         requestor: MCPTaskRequestor | None,
+        request_id: str | None = None,
     ) -> JsonObject:
         """Move a working task to input required."""
+        if request_id is not None and (
+            not isinstance(request_id, str) or not request_id
+        ):
+            raise TypeError("request_id must be a non-empty string")
         return await self._transition(
             task_id,
             requestor,
             "working",
             "input_required",
             "Additional input is required.",
+            input_request_id=request_id,
         )
 
     async def transition_working(
@@ -649,6 +661,8 @@ class MCPTaskController:
         expected: MCPTaskStatus,
         target: MCPTaskStatus,
         message: str,
+        *,
+        input_request_id: str | None = None,
     ) -> JsonObject:
         _requestor(requestor)
         async with self._lock:
@@ -657,6 +671,8 @@ class MCPTaskController:
                 return _view(record)
             if record.status != expected:
                 raise _state_error()
+            if input_request_id is not None:
+                record.input_request_id = input_request_id
             record.status = target
             record.message = message
             record.updated_at = self._now()
@@ -986,7 +1002,7 @@ def without_related_task_metadata(
 
 
 def _view(record: _Record) -> JsonObject:
-    return {
+    task: JsonObject = {
         "taskId": record.task_id,
         "status": record.status,
         "statusMessage": record.message,
@@ -995,6 +1011,18 @@ def _view(record: _Record) -> JsonObject:
         "ttl": record.ttl_ms,
         "pollInterval": record.poll_interval_ms,
     }
+    if record.input_request_id is not None:
+        task["_meta"] = {
+            MCP_TASK_INPUT_METADATA_KEY: {
+                "kind": (
+                    "request"
+                    if record.status == "input_required"
+                    else "resolution"
+                ),
+                "request_id": record.input_request_id,
+            }
+        }
+    return task
 
 
 def _require_related_value(value: object, task_id: str) -> None:

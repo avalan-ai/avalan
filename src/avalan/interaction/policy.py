@@ -25,8 +25,10 @@ from .validation import (
     validate_opaque_id,
 )
 
+from asyncio import get_running_loop, sleep
+from collections.abc import Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, Protocol, TypeAlias, final
 
@@ -85,6 +87,14 @@ class DeadlineTiePolicy(StrEnum):
     """Define precedence when a submission arrives exactly at a deadline."""
 
     DEADLINE_FIRST = "deadline_first"
+
+
+class TaskInputCapabilityState(StrEnum):
+    """Select one atomic task-input availability state."""
+
+    DORMANT = "dormant"
+    ROLLBACK = "rollback"
+    ACTIVE = "active"
 
 
 class InteractionSettlement(StrEnum):
@@ -231,6 +241,36 @@ class InteractionClock(Protocol):
     async def wait_until(self, monotonic_deadline: float) -> None:
         """Wait until the monotonic deadline or task cancellation."""
         ...
+
+
+@final
+class RuntimeInteractionClock:
+    """Mint coherent observations from one trusted host clock."""
+
+    def __init__(
+        self,
+        wall_clock: Callable[[], datetime] | None = None,
+    ) -> None:
+        assert wall_clock is None or callable(wall_clock)
+        self._wall_clock = wall_clock
+
+    async def read(self) -> InteractionTime:
+        """Return one coherent trusted clock observation."""
+        loop = get_running_loop()
+        wall_time = (
+            datetime.now(UTC)
+            if self._wall_clock is None
+            else self._wall_clock()
+        )
+        return InteractionTime.from_clock(
+            wall_time=wall_time,
+            monotonic_seconds=loop.time(),
+        )
+
+    async def wait_until(self, monotonic_deadline: float) -> None:
+        """Wait until the monotonic deadline or task cancellation."""
+        delay = max(0.0, monotonic_deadline - get_running_loop().time())
+        await sleep(delay)
 
 
 class InteractionIdFactory(Protocol):
@@ -851,6 +891,9 @@ def is_controller_activity_evidence(value: object) -> bool:
 class InteractionPolicy:
     """Freeze runtime limits and deterministic failure behavior."""
 
+    capability_state: TaskInputCapabilityState = (
+        TaskInputCapabilityState.ACTIVE
+    )
     maximum_unresolved_interactions_per_run: int = (
         MAX_UNRESOLVED_INTERACTIONS_PER_RUN
     )
@@ -878,6 +921,15 @@ class InteractionPolicy:
     task_input_policy_revision: str = "task-input-policy-v1"
 
     def __post_init__(self) -> None:
+        if not isinstance(
+            self.capability_state,
+            TaskInputCapabilityState,
+        ):
+            raise InputValidationError(
+                InputErrorCode.INVALID_TYPE,
+                "policy.capability_state",
+                "value must be a task-input capability state",
+            )
         for field_name, maximum in (
             (
                 "maximum_unresolved_interactions_per_run",
@@ -975,3 +1027,21 @@ class InteractionPolicy:
                 "deadline settlement must precede answer acceptance "
                 "at equality",
             )
+
+    @property
+    def advertise(self) -> bool:
+        """Return whether capable hosts may advertise task input."""
+        return self.capability_state is TaskInputCapabilityState.ACTIVE
+
+    @property
+    def accept_new(self) -> bool:
+        """Return whether capable hosts may admit new task input."""
+        return self.capability_state is TaskInputCapabilityState.ACTIVE
+
+    @property
+    def resolve_existing(self) -> bool:
+        """Return whether existing task input may resolve and resume."""
+        return self.capability_state in {
+            TaskInputCapabilityState.ROLLBACK,
+            TaskInputCapabilityState.ACTIVE,
+        }

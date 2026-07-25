@@ -2,6 +2,7 @@ import asyncio
 from argparse import Namespace
 from base64 import b64encode
 from collections.abc import AsyncIterator
+from contextlib import redirect_stderr, redirect_stdout
 from dataclasses import dataclass
 from gc import collect
 from io import StringIO
@@ -31,6 +32,10 @@ from avalan.cli.commands import (
 )
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.display_snapshot import CliStreamSnapshotBuilder
+from avalan.cli.interaction_renderer import (
+    CliInteractionExit,
+    cli_input_required_result,
+)
 from avalan.cli.theme import TokenRenderState
 from avalan.cli.theme.basic import BasicTheme
 from avalan.cli.theme.fancy import FancyTheme
@@ -2508,6 +2513,8 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
     async def test_token_generation_fails_closed_for_input_required(
         self,
     ) -> None:
+        stdout, stderr = StringIO(), StringIO()
+
         class EmptyPresenter:
             requires_completion_snapshot = True
 
@@ -2530,11 +2537,13 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 _ = logger, event_stats
                 return EmptyPresenter()
 
+        correlation = StreamItemCorrelation()
+
         async def fake_stream(
             *_args: object,
             **_kwargs: object,
         ) -> AsyncIterator[StreamConsumerProjection]:
-            yield StreamConsumerProjection(
+            projection = StreamConsumerProjection(
                 stream_session_id="stream",
                 run_id="run",
                 turn_id="turn",
@@ -2542,13 +2551,15 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 kind=StreamItemKind.STREAM_INPUT_REQUIRED,
                 channel=StreamChannel.CONTROL,
                 correlation=StreamItemCorrelation(
-                    request_id="request-1",
-                    continuation_id="continuation-1",
-                    agent_id="agent-1",
-                    branch_id="branch-1",
+                    request_id="validated-request",
+                    continuation_id="validated-continuation",
+                    agent_id="validated-agent",
+                    branch_id="validated-branch",
                 ),
                 terminal_outcome=StreamTerminalOutcome.INPUT_REQUIRED,
             )
+            object.__setattr__(projection, "correlation", correlation)
+            yield projection
 
         class Response:
             input_token_count = 1
@@ -2558,22 +2569,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
             def set_thinking(self, value: bool) -> None:
                 self.is_thinking = value
 
-        with (
-            patch.object(
-                model_cmds,
-                "_stream_render_projections",
-                fake_stream,
-            ),
-            patch.object(
-                model_cmds,
-                "_stream_completed_projection",
-                wraps=model_cmds._stream_completed_projection,
-            ) as completed_projection,
-            self.assertRaisesRegex(
-                StreamValidationError,
-                "CLI input-required projection is unavailable",
-            ),
-        ):
+        async def generate() -> None:
             await model_cmds.token_generation(
                 args=Namespace(skip_display_reasoning_time=False),
                 console=MagicMock(),
@@ -2592,6 +2588,41 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 display_config=self._display_config(interactive=False),
             )
 
+        with (
+            patch.object(
+                model_cmds,
+                "_stream_render_projections",
+                fake_stream,
+            ),
+            patch.object(
+                model_cmds,
+                "_stream_completed_projection",
+                wraps=model_cmds._stream_completed_projection,
+            ) as completed_projection,
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+        ):
+            with self.assertRaisesRegex(
+                StreamValidationError,
+                "lacks correlation",
+            ):
+                await generate()
+
+            correlation = StreamItemCorrelation(
+                request_id="request-1",
+                continuation_id="continuation-1",
+                agent_id="agent-1",
+                branch_id="branch-1",
+            )
+            with self.assertRaises(CliInteractionExit) as raised:
+                await generate()
+
+        self.assertEqual(raised.exception.code, 75)
+        self.assertEqual(
+            raised.exception.result,
+            cli_input_required_result("request-1", "continuation-1"),
+        )
+        self.assertEqual((stdout.getvalue(), stderr.getvalue()), ("", ""))
         completed_projection.assert_not_called()
 
     async def test_token_generation_retry_presentation_error_propagates(

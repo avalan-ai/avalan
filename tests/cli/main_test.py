@@ -3,9 +3,10 @@ import logging
 import sys
 from argparse import ArgumentParser, Namespace, _SubParsersAction
 from collections.abc import Callable
-from contextlib import ExitStack, redirect_stderr
+from contextlib import ExitStack, redirect_stderr, redirect_stdout
 from datetime import datetime
 from io import StringIO
+from json import loads
 from os import environ, pathsep
 from pathlib import Path
 from subprocess import run
@@ -28,8 +29,18 @@ from avalan.cli.__main__ import (
 )
 from avalan.cli.commands import agent as agent_cmds
 from avalan.cli.display import cli_stream_display_config
+from avalan.cli.interaction_renderer import (
+    CliInteractionExit,
+    CliRunCancelled,
+    cli_input_required_result,
+)
 from avalan.cli.theme_registry import DEFAULT_THEME_NAME, create_theme
 from avalan.entities import Model, ReasoningSummaryMode
+from avalan.interaction import (
+    InputContractError,
+    InputErrorCode,
+    InputValidationError,
+)
 from avalan.model.reasoning import ReasoningSummaryCapabilityError
 from avalan.tool.database import DatabaseToolSettings
 from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
@@ -1679,6 +1690,30 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             gettext=lambda s: s, ngettext=lambda s, p, n: s if n == 1 else p
         )
 
+    async def _call_with_failure(
+        self, failure: BaseException
+    ) -> BaseException:
+        console = MagicMock(export_text=lambda: "")
+        with (
+            patch.object(sys, "argv", ["prog"]),
+            patch(
+                "avalan.cli.__main__.translation",
+                return_value=self.translator,
+            ),
+            patch(
+                "avalan.cli.__main__.create_theme",
+                return_value=MagicMock(get_styles=lambda: {}),
+            ),
+            patch("avalan.cli.__main__.Console", return_value=console),
+            patch.object(CLI, "_needs_hf_token", return_value=False),
+            patch.object(CLI, "_main", AsyncMock(side_effect=failure)),
+        ):
+            try:
+                await self.cli()
+            except BaseException as error:
+                return error
+        raise AssertionError("CLI failure was not propagated")
+
     async def test_call_runs_main(self):
         console = MagicMock(export_text=lambda: "")
         with (
@@ -1699,6 +1734,32 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             await self.cli()
         main_mock.assert_awaited_once()
         help_mock.assert_not_called()
+
+    async def test_call_maps_public_interaction_failures(self) -> None:
+        expired = await self._call_with_failure(
+            InputContractError(
+                InputErrorCode.EXPIRED,
+                "interaction",
+                "input request expired",
+            )
+        )
+        self.assertIsInstance(expired, CliInteractionExit)
+        assert isinstance(expired, CliInteractionExit)
+        self.assertEqual(expired.code, 74)
+        self.assertEqual(expired.result.envelope_id, "cli.expired.v1")
+
+        invalid = InputValidationError(
+            InputErrorCode.INVALID_FORMAT,
+            "answer",
+            "answer is invalid",
+        )
+        self.assertIs(await self._call_with_failure(invalid), invalid)
+
+        cancelled = await self._call_with_failure(CliRunCancelled())
+        self.assertIsInstance(cancelled, CliInteractionExit)
+        assert isinstance(cancelled, CliInteractionExit)
+        self.assertEqual(cancelled.code, 130)
+        self.assertEqual(cancelled.result.envelope_id, "cli.cancelled.v1")
 
     async def test_call_maps_unsupported_reasoning_summary_safely(self):
         console = MagicMock(export_text=lambda: "")
@@ -4333,6 +4394,35 @@ class CliMainFunctionTestCase(TestCase):
             main()
         run.assert_called_once()
         cli.assert_called_once()
+
+    def test_main_emits_one_control_envelope_without_touching_stdout(self):
+        result = cli_input_required_result("request", "continuation")
+        stdout = StringIO()
+        stderr = StringIO()
+
+        def run_loop(_: object) -> None:
+            print("answer", end="")
+            raise CliInteractionExit(result)
+
+        with (
+            patch("avalan.cli.__main__.run_in_loop", side_effect=run_loop),
+            patch("avalan.cli.__main__.CLI"),
+            redirect_stdout(stdout),
+            redirect_stderr(stderr),
+            self.assertRaises(CliInteractionExit) as raised,
+        ):
+            from avalan.cli.__main__ import main
+
+            main()
+
+        self.assertEqual(raised.exception.code, 75)
+        self.assertEqual(stdout.getvalue(), "answer")
+        lines = stderr.getvalue().splitlines()
+        self.assertEqual(len(lines), 1)
+        self.assertEqual(
+            loads(lines[0]),
+            {"envelope_id": result.envelope_id, "payload": result.payload},
+        )
 
     def test_main_sets_tokenizers_parallelism_default(self):
         with (

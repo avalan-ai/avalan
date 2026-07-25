@@ -61,6 +61,7 @@ from avalan.agent.execution import (  # noqa: E402
     create_agent_execution,
     create_child_interaction_runtime,
 )
+from avalan.entities import ToolCall  # noqa: E402
 from avalan.interaction import (  # noqa: E402
     AgentId,
     AnsweredResolution,
@@ -103,8 +104,12 @@ from avalan.model.response.text import TextGenerationResponse  # noqa: E402
 from avalan.model.stream import (  # noqa: E402
     CanonicalStreamItem,
     StreamItemKind,
+    stream_observability_payload,
 )
-from avalan.task import TaskInteractionEventType  # noqa: E402
+from avalan.task import (  # noqa: E402
+    PrivacySanitizer,
+    TaskInteractionEventType,
+)
 from avalan.task.stores import PgsqlTaskStore  # noqa: E402
 
 
@@ -952,3 +957,112 @@ def test_a2a_projection() -> None:
     assert projection.provider_calls == 2
     assert projection.sync_calls == 1
     assert len(projection.local_requests) == 1
+
+
+def test_approval_isolation() -> None:
+    """Require separate authorization before a protected action executes."""
+
+    async def exercise() -> None:
+        executions: list[str] = []
+        handler = matrix_support._AnsweringHandler(text_value="yes")
+        approval = matrix_support._ApprovalGate()
+        harness = await matrix_support._Harness.create(
+            handler=handler,
+            tool=matrix_support._protected_tool_manager(executions),
+            tool_confirm=approval,
+            responses=[
+                matrix_support._task_input_response(
+                    "public-approval-input",
+                    matrix_support._input_arguments(
+                        matrix_support._question(QuestionType.TEXT)
+                    ),
+                ),
+                matrix_support._provider_response(
+                    "public-protected-action",
+                    calls=(
+                        ToolCall(
+                            id="public-protected-action-call",
+                            name="protected_action",
+                            arguments={"command": "deploy"},
+                        ),
+                    ),
+                ),
+                matrix_support._provider_response(
+                    "public-approval-complete",
+                    answer="executed",
+                ),
+            ],
+        )
+        consumption = None
+        try:
+            response = await harness.response()
+            consumption = create_task(matrix_support._consume(response))
+            await approval.started.wait()
+            assert executions == []
+            assert len(approval.calls) == 1
+            result = matrix_support._model_result(harness.contexts[1])
+            answers = cast(list[dict[str, object]], result["answers"])
+            assert answers[0]["value"] == "yes"
+
+            approval.release.set()
+            await consumption
+            assert executions == ["deploy"]
+        finally:
+            approval.release.set()
+            if consumption is not None and not consumption.done():
+                await consumption
+            await harness.close()
+
+    run(exercise())
+
+
+def test_privacy() -> None:
+    """Keep canonical input visible to the model but out of telemetry."""
+
+    async def exercise() -> None:
+        secret_like = "sk-proj-publicprivacyabcdefghijkl"
+        handler = matrix_support._AnsweringHandler(text_value=secret_like)
+        harness = await matrix_support._Harness.create(
+            handler=handler,
+            responses=[
+                matrix_support._task_input_response(
+                    "public-private-input",
+                    matrix_support._input_arguments(
+                        matrix_support._question(QuestionType.TEXT)
+                    ),
+                ),
+                matrix_support._provider_response(
+                    "public-private-complete",
+                    answer="privacy-complete",
+                ),
+            ],
+        )
+        try:
+            response = await harness.response()
+            items = await matrix_support._consume(response)
+            result = matrix_support._model_result(harness.contexts[1])
+            answers = cast(list[dict[str, object]], result["answers"])
+            assert answers[0]["value"] == secret_like
+
+            telemetry = tuple(
+                stream_observability_payload(item) for item in items
+            )
+            assert secret_like not in dumps(telemetry, sort_keys=True)
+            diagnostic = cast(
+                dict[str, object],
+                PrivacySanitizer().sanitize_event(
+                    "interaction.resolved",
+                    {
+                        "answer": secret_like,
+                        "state": RequestState.ANSWERED.value,
+                        "surface": "sdk",
+                    },
+                ),
+            )
+            assert secret_like not in repr(diagnostic)
+            assert "answer" not in diagnostic
+            assert diagnostic["state"] == RequestState.ANSWERED.value
+        finally:
+            await harness.close()
+
+    run(exercise())

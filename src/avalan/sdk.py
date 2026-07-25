@@ -54,6 +54,7 @@ from .interaction.handler import (
     InputHandlerDetached,
     InputHandlerDisconnected,
     InputHandlerResolution,
+    _InputHandlerOutcome,
     _is_async_callable,
 )
 from .interaction.headless import (
@@ -78,10 +79,14 @@ from .interaction.policy import (
     InteractionPolicy,
     InteractionRequestAuthorizationTarget,
     InteractionScopeAuthorizationTarget,
-    InteractionTime,
+    RuntimeInteractionClock,
     TaskInputClassification,
     TaskInputClassificationDecision,
     TaskInputClassificationRequest,
+)
+from .interaction.security import (
+    enforce_task_input_questions_policy,
+    enforce_task_input_request_policy,
 )
 from .interaction.store import (
     InteractionCorrelation,
@@ -97,11 +102,10 @@ from .interaction.store import (
 from .interaction.stores.memory import MemoryInteractionStoreFactory
 from .interaction.validation import validate_presentation_text
 
-from asyncio import get_running_loop, sleep
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
-from datetime import UTC, datetime
+from datetime import datetime
 from enum import StrEnum
 from hashlib import sha256
 from hmac import compare_digest
@@ -120,6 +124,8 @@ from typing import (
     runtime_checkable,
 )
 from uuid import uuid4
+
+_SystemInteractionClock = RuntimeInteractionClock
 
 if TYPE_CHECKING:
     from .agent.orchestrator.orchestrators.default import (
@@ -376,6 +382,14 @@ class InputInspection:
                 "inspection.request",
                 "value must be an input request view",
             )
+        enforce_task_input_questions_policy(
+            self.request.questions,
+            "inspection.request",
+            surrounding_text=(
+                self.request.reason,
+                self.request.context_label or "",
+            ),
+        )
         if type(self.detached_resumption_available) is not bool:
             raise InputValidationError(
                 InputErrorCode.INVALID_TYPE,
@@ -924,6 +938,7 @@ async def create_attached_input_runtime(
     handler: AttachedInputHandler | None = None,
     *,
     principal: InputPrincipal | None = None,
+    interaction_policy: InteractionPolicy | None = None,
 ) -> AgentInteractionRuntime:
     """Create an owned in-process runtime for one async public handler."""
     if handler is not None and not _is_async_callable(handler):
@@ -936,7 +951,14 @@ async def create_attached_input_runtime(
     actor = InteractionActor(principal=scope)
     clock = _SystemInteractionClock()
     id_factory = _UuidInteractionIdFactory()
-    policy = InteractionPolicy()
+    value = interaction_policy
+    policy = InteractionPolicy() if value is None else value
+    if not isinstance(policy, InteractionPolicy):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "interaction_policy",
+            "value must be an interaction policy",
+        )
     authorizer = _BoundPrincipalAuthorizer(scope)
     classifier = _AllowTaskInputClassifier(policy)
     store = await MemoryInteractionStoreFactory(
@@ -958,6 +980,7 @@ async def create_attached_input_runtime(
         broker=broker,
         actor=actor,
         handler=_AttachedInputHandlerAdapter(public_handler, clock),
+        policy=policy,
     )
     return _new_agent_interaction_runtime(runtime, broker.aclose)
 
@@ -1060,21 +1083,32 @@ def create_durable_input_integration(
     *,
     principal: InputPrincipal | None = None,
     handoff_wait_seconds: int = DEFAULT_DURABLE_HANDOFF_WAIT_SECONDS,
+    interaction_policy: InteractionPolicy | None = None,
 ) -> DurableInputIntegration:
     """Create a durable runtime over one atomic external host bridge."""
     _validate_durable_input_bridge(bridge)
     scope = _principal_scope(principal or InputPrincipal())
+    value = interaction_policy
+    resolved_policy = InteractionPolicy() if value is None else value
+    if not isinstance(resolved_policy, InteractionPolicy):
+        raise InputValidationError(
+            InputErrorCode.INVALID_TYPE,
+            "interaction_policy",
+            "value must be an interaction policy",
+        )
     runtime = DurableInteractionRuntime(
         actor=InteractionActor(principal=scope),
         stager=PortableAgentContinuationStager(),
+        clock=_SystemInteractionClock(),
+        policy=resolved_policy,
     )
-    policy = DurableHandoffInputPolicy(
+    headless_policy = DurableHandoffInputPolicy(
         handoff=_DurableInputBridgeHandoff(bridge),
         durable_handoff_wait_seconds=handoff_wait_seconds,
     )
     return DurableInputIntegration(
         runtime=_new_agent_interaction_runtime(runtime, _noop_close),
-        headless_policy=_new_agent_headless_input_policy(policy),
+        headless_policy=_new_agent_headless_input_policy(headless_policy),
         controller=create_input_controller(bridge),
     )
 
@@ -1148,6 +1182,7 @@ class AsyncInputController:
                 "durable_authority",
                 "durable authority must return a boolean",
             )
+        enforce_task_input_request_policy(record.request, "controller.inspect")
         return _inspection(record, resumable=resumable)
 
     async def resolve(
@@ -1501,7 +1536,14 @@ def _runtime_for_policy(
             "interaction_runtime",
             "attached headless policy requires an attached runtime",
         )
-    return replace(runtime, handler=policy)
+
+    async def secure_handler(
+        context: InputHandlerContext,
+    ) -> _InputHandlerOutcome:
+        enforce_task_input_request_policy(context.request, "headless.request")
+        return await policy(context)
+
+    return replace(runtime, handler=secure_handler)
 
 
 async def _input_required_result(
@@ -1513,6 +1555,14 @@ async def _input_required_result(
         return AgentRunFailed(
             code="input.correlation_unavailable",
             message="input correlation is unavailable",
+            retryable=False,
+        )
+    try:
+        enforce_task_input_request_policy(request, "run_agent.input_required")
+    except InputContractError as policy_error:
+        return AgentRunFailed(
+            code=policy_error.code.value,
+            message=policy_error.safe_message,
             retryable=False,
         )
     if isinstance(policy, DurableHandoffInputPolicy):
@@ -1636,20 +1686,6 @@ def _principal_scope(principal: InputPrincipal) -> PrincipalScope:
             else SessionId(principal.session_id)
         ),
     )
-
-
-@final
-class _SystemInteractionClock:
-    async def read(self) -> InteractionTime:
-        loop = get_running_loop()
-        return InteractionTime.from_clock(
-            wall_time=datetime.now(UTC),
-            monotonic_seconds=loop.time(),
-        )
-
-    async def wait_until(self, monotonic_deadline: float) -> None:
-        delay = max(0.0, monotonic_deadline - get_running_loop().time())
-        await sleep(delay)
 
 
 @final
@@ -1817,6 +1853,10 @@ class _AttachedInputHandlerAdapter:
         | InputHandlerDetached
         | InputHandlerDisconnected
     ):
+        enforce_task_input_request_policy(
+            context.request,
+            "attached_input.request",
+        )
         outcome = await self._handler(_public_handler_context(context))
         _validate_attached_input_outcome(outcome)
         if isinstance(outcome, InputAnswerSubmission):
@@ -1862,6 +1902,10 @@ class _DurableInputBridgeHandoff:
                 "value must be a durable interaction suspension",
             )
         staged = suspension.command.request
+        enforce_task_input_request_policy(
+            staged,
+            "durable_bridge.request",
+        )
         correlation = InteractionCorrelation.from_request(staged)
         request_id = InputRequestRef(
             _encode_correlation_ref("request", correlation)

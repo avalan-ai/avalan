@@ -37,7 +37,11 @@ from avalan.interaction.handler import (
     InputHandlerDetached,
     InputHandlerOutcome,
 )
-from avalan.interaction.policy import InteractionActor
+from avalan.interaction.policy import (
+    InteractionActor,
+    InteractionPolicy,
+    TaskInputCapabilityState,
+)
 from avalan.interaction.store import TerminalizeInteractionScopeCommand
 from avalan.memory.manager import MemoryManager
 from avalan.model.capability import (
@@ -460,6 +464,23 @@ class OrchestratorInteractionRuntimeTestCase(IsolatedAsyncioTestCase):
 
 
 class OrchestratorConstructionInteractionRuntimeTestCase(TestCase):
+    def test_runtime_rejects_broker_policy_drift(self) -> None:
+        broker = _Broker()
+        broker.policy = InteractionPolicy(
+            capability_state=TaskInputCapabilityState.DORMANT
+        )
+
+        with self.assertRaisesRegex(
+            TypeError,
+            "broker and interaction policies must match",
+        ):
+            AttachedInteractionRuntime(
+                broker=cast(InteractionBroker, broker),
+                actor=InteractionActor(principal=PrincipalScope()),
+                handler=_handler,
+                policy=InteractionPolicy(),
+            )
+
     def test_constructor_rejects_untyped_runtime(self) -> None:
         invalid = cast(InteractionRuntime, object())
 

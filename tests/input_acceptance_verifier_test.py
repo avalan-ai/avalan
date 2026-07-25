@@ -10,6 +10,7 @@ from sys import modules
 from sys import path as sys_path
 from types import ModuleType
 from typing import Any
+from xml.etree.ElementTree import Element, SubElement
 
 import pytest
 
@@ -93,7 +94,7 @@ def test_acceptance_rejects_invalid_inventory(
 def test_acceptance_rejects_na_reason_without_exact_ids(
     tmp_path: Path,
 ) -> None:
-    """Reject overlapping rules instead of storing narrative N/A cells."""
+    """Reject duplicate cells across compact applicability rules."""
     payload = _read("failure_matrix.json")
     payload["applicability_rules"][1]["condition_id"] = payload[
         "applicability_rules"
@@ -209,6 +210,59 @@ def test_acceptance_rejects_execution_for_different_collected_instance(
         _VERIFIER._verify_nodes((node,), tmp_path)
 
 
+def test_acceptance_collection_failure_includes_bounded_stderr(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Expose the useful tail of a failed pytest collection."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    path = tests / "sample_test.py"
+    path.write_text(
+        "def test_value() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    node = _VERIFIER.AcceptanceNode(
+        id="synthetic",
+        category="unit",
+        lifecycle="active",
+        active_from_phase=0,
+        requirement_ids=("INPUT-N-001",),
+        node_id="tests/sample_test.py::test_value",
+    )
+    hidden_prefix = "not-in-bounded-tail"
+    diagnostic = "ERROR: test node does not exist"
+
+    def collection_failure(
+        root: Path,
+        arguments: tuple[str, ...],
+        *,
+        timeout: int,
+    ) -> Any:
+        assert root == tmp_path
+        assert "--collect-only" in arguments
+        assert timeout == 180
+        return _VERIFIER.CompletedProcess(
+            arguments,
+            4,
+            stdout="collection stopped\n",
+            stderr=hidden_prefix + "x" * 5000 + diagnostic,
+        )
+
+    monkeypatch.setattr(_VERIFIER, "_pytest", collection_failure)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="pytest collection failed",
+    ) as error_info:
+        _VERIFIER._verify_nodes((node,), tmp_path)
+
+    message = str(error_info.value)
+    assert "stdout:\ncollection stopped" in message
+    assert f"stderr:\n{'x' * (4000 - len(diagnostic))}{diagnostic}" in message
+    assert hidden_prefix not in message
+
+
 def test_acceptance_rejects_pytest_non_evidence(tmp_path: Path) -> None:
     """Reject skipped tests before they can count as acceptance evidence."""
     tests = tmp_path / "tests"
@@ -292,9 +346,8 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
 ) -> None:
     """Execute every current orchestration acceptance node."""
     executed: tuple[Any, ...] = ()
-    current_phase = _VERIFIER.load_manifest(
-        _FIXTURES / "acceptance_manifest.json"
-    ).current_phase
+    manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
+    current_phase = manifest.current_phase
 
     def verify_nodes(nodes: tuple[Any, ...], root: Path) -> tuple[str, ...]:
         nonlocal executed
@@ -322,20 +375,9 @@ def test_current_runtime_executes_and_reports_exact_phase_nodes(
 
     assert _VERIFIER.main() == 0
 
-    requirements = {
-        requirement_id
-        for node in executed
-        for requirement_id in node.requirement_ids
-    }
-    assert requirements == {
-        "INPUT-N-081",
-        "INPUT-N-082",
-        "INPUT-N-083",
-        "INPUT-N-084",
-        "INPUT-N-106",
-        "INPUT-26.9",
-    }
+    assert executed == manifest.current_phase_nodes()
     assert len(executed) == 18
+    assert not manifest.planned_nodes()
     assert all(node.active_from_phase == current_phase for node in executed)
     assert f"nodes={len(executed)}" in capsys.readouterr().out
 
@@ -396,9 +438,194 @@ def test_failure_matrix_rules_bind_real_manifest_nodes() -> None:
         public_envelope_ids=envelopes,
     )
 
-    assert len(matrix.rules) == 169
-    assert len(matrix.applicable_cells()) == 564
-    assert len(matrix.all_cells() - matrix.applicable_cells()) == 696
+    assert len(matrix.rules) == 93
+    assert len(matrix.non_applicability_rules) == 17
+    assert len(matrix.applicable_cells()) == 145
+    assert len(matrix.non_applicable_cells()) == 1115
+    assert matrix.applicable_cells().isdisjoint(matrix.non_applicable_cells())
+    assert (
+        matrix.applicable_cells() | matrix.non_applicable_cells()
+        == matrix.all_cells()
+    )
+
+
+def test_contract_decisions_reject_invalid_capability_activation(
+    tmp_path: Path,
+) -> None:
+    """Reject unsupported, unevidenced, or malformed production rows."""
+    cases = (
+        ("planned_enabled", "enabled capability evidence"),
+        ("unsupported_provider", "unsupported provider or local"),
+        ("disabled_consumer", "consumer must remain production enabled"),
+        ("unknown_field", "capability row has invalid keys"),
+        (
+            "unadvertised_active_evidence",
+            "unadvertised capability evidence must remain planned",
+        ),
+        ("missing_evidence", "enabled capability evidence test is missing"),
+    )
+    active_evidence = (
+        "active:tests/model/nlp/vendor_openai_continuation_test.py::"
+        "test_native_openai_model_registers_exact_durable_revision"
+    )
+    for case, match in cases:
+        payload = _read("contract_decisions.json")
+        rows = {row["id"]: row for row in payload["capability_matrix"]["rows"]}
+        if case == "planned_enabled":
+            rows["provider-openai"][
+                "evidence"
+            ] = "planned:src/avalan/model/nlp/text/vendor/openai.py"
+        elif case == "unsupported_provider":
+            rows["provider-anthropic"].update(
+                production_advertised=True,
+                evidence=active_evidence,
+            )
+        elif case == "disabled_consumer":
+            rows["sdk-attached"]["production_advertised"] = False
+        elif case == "unknown_field":
+            rows["sdk-attached"]["unexpected"] = True
+        elif case == "unadvertised_active_evidence":
+            rows["cli-model-run-attached-tty"]["evidence"] = active_evidence
+        else:
+            rows["provider-openai"]["evidence"] = (
+                "active:tests/model/nlp/vendor_openai_continuation_test.py::"
+                "test_missing"
+            )
+        _resign(payload, "contract_sha256")
+        path = tmp_path / f"{case}.json"
+        _write(path, payload)
+
+        with pytest.raises(
+            _VERIFIER.AcceptanceVerificationError,
+            match=match,
+        ):
+            _VERIFIER._validate_decisions(path)
+
+
+def test_failure_matrix_rejects_resigned_applicability_overlap(
+    tmp_path: Path,
+) -> None:
+    """Reject one cell declared both applicable and non-applicable."""
+    payload = _read("failure_matrix.json")
+    applicable = payload["applicability_rules"][0]
+    surface_id = applicable["surface_ids"][0]
+    rule = next(
+        item
+        for item in payload["non_applicability_rules"]
+        if surface_id in item["surface_ids"]
+    )
+    rule["condition_ids"].append(applicable["condition_id"])
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="applicable and non-applicable failure cells overlap",
+    ):
+        _VERIFIER.load_failure_matrix(path)
+
+
+def test_failure_matrix_rejects_resigned_unexplained_omission(
+    tmp_path: Path,
+) -> None:
+    """Reject one cell omitted from both explicit matrix partitions."""
+    payload = _read("failure_matrix.json")
+    payload["non_applicability_rules"][0]["condition_ids"].pop()
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="failure matrix has unexplained cells",
+    ):
+        _VERIFIER.load_failure_matrix(path)
+
+
+def test_failure_matrix_rejects_active_planned_na_evidence(
+    tmp_path: Path,
+) -> None:
+    """Reject planned prose masquerading as active N/A evidence."""
+    payload = _read("failure_matrix.json")
+    payload["non_applicability_rules"][0]["evidence"] = "planned: decide later"
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="active non-applicability evidence cannot be planned",
+    ):
+        _VERIFIER.load_failure_matrix(path)
+
+
+def test_failure_matrix_rejects_missing_na_evidence_path(
+    tmp_path: Path,
+) -> None:
+    """Reject a non-applicability claim backed by a missing file."""
+    payload = _read("failure_matrix.json")
+    payload["non_applicability_rules"][0][
+        "evidence"
+    ] = "tests/input/missing_evidence_test.py"
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="evidence path is missing",
+    ):
+        _VERIFIER.load_failure_matrix(path)
+
+
+def test_failure_matrix_rejects_missing_na_json_fragment(
+    tmp_path: Path,
+) -> None:
+    """Reject a non-applicability claim backed by a missing JSON path."""
+    payload = _read("failure_matrix.json")
+    payload["non_applicability_rules"][0]["evidence"] = (
+        "tests/fixtures/input/contract_decisions.json"
+        "#error_status.public_failure_surfaces"
+    )
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="JSON fragment is missing",
+    ):
+        _VERIFIER.load_failure_matrix(path)
+
+
+@pytest.mark.parametrize(
+    ("reference", "match"),
+    (
+        (
+            "src/avalan/cli/commands/agent.py#missing_runtime",
+            "evidence symbol is missing",
+        ),
+        (
+            "tests/input_contract_test.py::test_missing_contract",
+            "evidence test is missing",
+        ),
+    ),
+)
+def test_failure_matrix_rejects_missing_na_python_symbol(
+    tmp_path: Path,
+    reference: str,
+    match: str,
+) -> None:
+    """Reject missing Python symbols in both evidence reference forms."""
+    payload = _read("failure_matrix.json")
+    payload["non_applicability_rules"][0]["evidence"] = reference
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure_matrix.json"
+    _write(path, payload)
+
+    with pytest.raises(_VERIFIER.AcceptanceVerificationError, match=match):
+        _VERIFIER.load_failure_matrix(path)
 
 
 def test_failure_matrix_rejects_resigned_transition_tampering(
@@ -421,6 +648,115 @@ def test_failure_matrix_rejects_resigned_transition_tampering(
         match="does not match condition and surface semantics",
     ):
         _VERIFIER.load_failure_matrix(path)
+
+
+@pytest.mark.parametrize(
+    "case, match",
+    (
+        ("missing", "needs one evidence"),
+        ("malformed", "not strict JSON"),
+        ("multi", "must own one surface"),
+        ("duplicate", "duplicate dynamic"),
+        ("wrong_owner", "unassigned failure evidence"),
+        ("wrong_surface", "differs from instance"),
+        ("wrong_claim", "differs from rule"),
+        ("schema_invalid", "violates frozen schema"),
+    ),
+)
+def test_failure_evidence_rejects_unowned_or_inaccurate_rows(
+    case: str,
+    match: str,
+) -> None:
+    """Reject every way one JUnit property can overclaim a matrix cell."""
+    node = "tests/sample_test.py::test_value"
+    rule = _VERIFIER.ApplicabilityRule(
+        condition_id="INPUT-F-01",
+        surface_ids=("surface",),
+        active_from_phase=0,
+        evidence_claim=(
+            "INPUT-F-01",
+            "created",
+            "unavailable",
+            "test.unavailable.v1",
+            "exit",
+            "69",
+            0,
+            0,
+        ),
+        negative_e2e_node=node,
+    )
+    matrix = _VERIFIER.FailureMatrix(
+        surfaces=(
+            _VERIFIER.FailureSurface(id="surface", active_from_phase=0),
+        ),
+        conditions=(
+            _VERIFIER.FailureCondition(
+                id="INPUT-F-01",
+                active_from_phase=0,
+                requirement_id="INPUT-N-106",
+            ),
+        ),
+        rules=(rule,),
+    )
+    observation = {
+        "condition_id": "INPUT-F-01",
+        "surface_id": "surface",
+        "transition_from": "created",
+        "transition_to": "unavailable",
+        "public_result_id": "test.unavailable.v1",
+        "public_result": {"kind": "unavailable"},
+        "status_key": "exit",
+        "status_value": "69",
+        "provider_call_count": 0,
+        "domain_side_effect_count": 0,
+    }
+    testcase = Element(
+        "testcase",
+        file="tests/sample_test.py",
+        classname="tests.sample_test",
+        name="test_value[surface]",
+    )
+    properties = SubElement(testcase, "properties")
+    property_element = SubElement(
+        properties,
+        "property",
+        name="failure_matrix_evidence",
+        value=dumps([observation]),
+    )
+    testcases: tuple[Element, ...] = (testcase,)
+    schemas = {
+        "test.unavailable.v1": {
+            "type": "object",
+            "required": ["kind"],
+            "properties": {"kind": {"const": "unavailable"}},
+        }
+    }
+    _VERIFIER._verify_failure_matrix_evidence(testcases, matrix, schemas)
+    if case == "missing":
+        properties.remove(property_element)
+    elif case == "malformed":
+        property_element.set("value", "{")
+    elif case == "multi":
+        property_element.set("value", dumps([observation, observation]))
+    elif case == "duplicate":
+        testcases = (testcase, deepcopy(testcase))
+    elif case == "wrong_owner":
+        testcase.set("name", "test_other[surface]")
+    elif case == "wrong_surface":
+        testcase.set("name", "test_value[other]")
+    elif case == "wrong_claim":
+        observation["status_value"] = "0"
+        property_element.set("value", dumps([observation]))
+    else:
+        observation["public_result"] = {}
+        property_element.set("value", dumps([observation]))
+
+    with pytest.raises(_VERIFIER.AcceptanceVerificationError, match=match):
+        _VERIFIER._verify_failure_matrix_evidence(
+            testcases,
+            matrix,
+            schemas,
+        )
 
 
 def test_current_phase_requires_real_postgresql_harness(

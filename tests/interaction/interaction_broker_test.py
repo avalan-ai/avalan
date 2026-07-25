@@ -111,6 +111,7 @@ from avalan.interaction import (
     ScopeSupersessionApplied,
     StreamSessionId,
     SupersedeInteractionScopeCommand,
+    TaskInputCapabilityState,
     TaskInputClassification,
     TaskInputClassificationDecision,
     TaskInputClassificationRequest,
@@ -119,6 +120,7 @@ from avalan.interaction import (
     TerminalizeInteractionCommand,
     TerminalizeInteractionScopeCommand,
     TextAnswer,
+    TextQuestion,
     TrustedDefaultResolutionApplied,
     TrustedDefaultResolutionRequest,
     TurnId,
@@ -1168,6 +1170,125 @@ def _decline(record: InteractionRecord, key: str) -> ResolveInteractionCommand:
     )
 
 
+@pytest.mark.parametrize(
+    "prompt",
+    (
+        "Enter your p@ssword.",
+        "Provide passw0rd.",
+        "Type p a s s w o r d.",
+        "Provide the API k\u0435y.",
+        "Provide A P I k e y.",
+        "Enter the one\u2011time code.",
+        "Enter the account PIN.",
+    ),
+)
+def test_broker_rejects_obfuscated_credentials_before_admission(
+    prompt: str,
+) -> None:
+    """Reject credential bypasses before IDs or store records exist."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        try:
+            with pytest.raises(InputValidationError) as error:
+                await harness.broker.request(
+                    _request(
+                        None,
+                        questions=(
+                            TextQuestion(
+                                question_id=QuestionId("context"),
+                                prompt=prompt,
+                                required=True,
+                            ),
+                        ),
+                    )
+                )
+            assert error.value.code is InputErrorCode.PROHIBITED_INPUT
+            assert harness.ids.request_ids == []
+            assert harness.ids.continuation_ids == []
+            assert (
+                await harness.broker.list(
+                    ListInteractionsCommand(
+                        actor=_actor(),
+                        scope=InteractionExecutionScope(run_id=RunId("run")),
+                    )
+                )
+                == ()
+            )
+            assert harness.ids.request_ids == []
+            assert harness.ids.continuation_ids == []
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+@pytest.mark.parametrize(
+    ("prompt", "header", "reason"),
+    (
+        (
+            "Place a map pin for the office.",
+            None,
+            "Need public map context.",
+        ),
+        (
+            "Provide a summary of the password policy architecture.",
+            None,
+            "Need design documentation.",
+        ),
+        (
+            "Enter the deployment code name.",
+            "API key policy architecture",
+            "Discuss authentication architecture.",
+        ),
+    ),
+)
+def test_broker_allows_noncredential_pin_and_architecture_prompts(
+    prompt: str,
+    header: str | None,
+    reason: str,
+) -> None:
+    """Allow benign discussion and non-authentication pin questions."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        try:
+            result = await harness.broker.request(
+                _request(
+                    _LossHandler(
+                        InputHandlerDisconnected(
+                            reason=(
+                                InputDisconnectReason.CONTROL_CHANNEL_CLOSED
+                            )
+                        )
+                    ),
+                    reason=reason,
+                    questions=(
+                        TextQuestion(
+                            question_id=QuestionId("context"),
+                            prompt=prompt,
+                            header=header,
+                            required=True,
+                        ),
+                    ),
+                )
+            )
+            assert result.delivery is not None
+            assert len(harness.ids.request_ids) == 1
+            assert len(harness.ids.continuation_ids) == 1
+            records = await harness.broker.list(
+                ListInteractionsCommand(
+                    actor=_actor(),
+                    scope=InteractionExecutionScope(run_id=RunId("run")),
+                )
+            )
+            assert records == (result.delivery.record,)
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
 def test_observer_and_request_dtos_are_strict_and_immutable() -> None:
     """Reject malformed metadata and broker request construction."""
 
@@ -1518,6 +1639,109 @@ def test_create_cancellation_and_failure_unbind_resumer() -> None:
             assert harness.broker._create_tasks == {}
             assert harness.broker._resumers == {}
         finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+@pytest.mark.parametrize(
+    "state",
+    (
+        TaskInputCapabilityState.DORMANT,
+        TaskInputCapabilityState.ROLLBACK,
+    ),
+)
+def test_inactive_broker_rejects_new_requests_without_delivery(
+    state: TaskInputCapabilityState,
+) -> None:
+    async def exercise() -> None:
+        policy = InteractionPolicy(capability_state=state)
+        harness = await _harness(policy=policy)
+        handler = _CorrectionHandler()
+        try:
+            result = await harness.broker.request(_request(handler))
+
+            assert harness.broker.policy is policy
+            assert isinstance(result.create_result, CreateInteractionRejected)
+            assert (
+                result.create_result.error.code is InputErrorCode.UNAVAILABLE
+            )
+            assert result.delivery is None
+            assert handler.contexts == []
+            assert harness.broker._create_tasks == {}
+            assert harness.broker._resumers == {}
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_dormant_broker_rejects_resolution_of_existing_request() -> None:
+    """Apply dormant resolution policy before consulting shared state."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        result = await harness.broker.request(
+            _request(
+                _LossHandler(InputHandlerDetached()),
+                resumer=_Resumer(),
+            )
+        )
+        assert result.delivery is not None
+        record = result.delivery.record
+        policy = InteractionPolicy(
+            capability_state=TaskInputCapabilityState.DORMANT
+        )
+        broker = AsyncInteractionBroker(
+            store=await harness.factory.open(),
+            clock=harness.clock,
+            id_factory=harness.ids,
+            policy=policy,
+            classifier=_Classifier(policy),
+        )
+        try:
+            with pytest.raises(InputValidationError) as candidate:
+                await broker.resolve(_decline(record, "dormant-resolution"))
+            with pytest.raises(InputValidationError) as trusted_default:
+                await broker.resolve_trusted_default(
+                    TrustedDefaultResolutionRequest(
+                        actor=_actor(),
+                        correlation=record.correlation,
+                        expected_state_revision=record.request.state_revision,
+                    )
+                )
+            assert candidate.value.code is InputErrorCode.UNAVAILABLE
+            assert trusted_default.value.code is InputErrorCode.UNAVAILABLE
+        finally:
+            await broker.aclose()
+            await harness.broker.aclose()
+
+    run(exercise())
+
+
+def test_broker_read_time_rejects_untrusted_clock_value() -> None:
+    """Return only a genuine observation from the configured clock."""
+
+    class InvalidClock(_Clock):
+        async def read(self) -> InteractionTime:
+            """Return an invalid value behind the clock protocol."""
+            return cast(InteractionTime, object())
+
+    async def exercise() -> None:
+        harness = await _harness()
+        invalid = AsyncInteractionBroker(
+            store=await harness.factory.open(),
+            clock=InvalidClock(),
+            id_factory=harness.ids,
+            policy=harness.policy,
+            classifier=harness.classifier,
+        )
+        try:
+            assert type(await harness.broker.read_time()) is InteractionTime
+            with pytest.raises(TypeError, match="invalid time"):
+                await invalid.read_time()
+        finally:
+            await invalid.aclose()
             await harness.broker.aclose()
 
     run(exercise())
@@ -2317,6 +2541,7 @@ def test_attached_owning_cancellation_marks_admission_ready() -> None:
                 )
             )
             assert len(records) == 1
+            assert isinstance(records[0], InteractionRecord)
             assert records[0].request.state is RequestState.UNAVAILABLE
         finally:
             authorizer.release.set()

@@ -9,7 +9,11 @@ from unittest.mock import Mock, patch
 from avalan.agent import NoOperationAvailableException
 from avalan.agent.execution import AgentExecution, AgentExecutionStatus
 from avalan.agent.orchestrator import Orchestrator
-from avalan.interaction import InputErrorCode, InputSnapshotError
+from avalan.interaction import (
+    InputErrorCode,
+    InputSnapshotError,
+    InteractionPolicy,
+)
 from avalan.model.capability import (
     ModelCapabilityCatalog,
     ProviderCapabilitySupport,
@@ -95,11 +99,14 @@ class OrchestratorContractCoverageTest(TestCase):
             orchestrator.continuation_execution_contract(0)
 
         orchestrator._execution_definition_locator = "file://agent.toml"
+        with self.assertRaisesRegex(TypeError, "interaction policy"):
+            orchestrator.continuation_execution_contract(
+                0,
+                policy=cast(Any, False),
+            )
         capability = SimpleNamespace(
             revision_binding=None,
-            task_input_advertisement=(
-                TaskInputCapabilityAdvertisement.INCAPABLE
-            ),
+            task_input_resolution=(TaskInputCapabilityAdvertisement.INCAPABLE),
         )
         with (
             patch.object(
@@ -119,6 +126,7 @@ class OrchestratorContractCoverageTest(TestCase):
             orchestrator._execution_contract(
                 0,
                 cast(TaskInputCapabilityAdvertisement, object()),
+                InteractionPolicy(),
             )
 
         with (
@@ -132,6 +140,7 @@ class OrchestratorContractCoverageTest(TestCase):
             orchestrator._execution_contract(
                 0,
                 TaskInputCapabilityAdvertisement.DURABLE,
+                InteractionPolicy(),
             )
 
     def test_codec_registration_contains_snapshot_and_type_failures(
@@ -169,6 +178,7 @@ class OrchestratorContractCoverageTest(TestCase):
             returned_definition, capability = orchestrator._execution_contract(
                 0,
                 TaskInputCapabilityAdvertisement.DURABLE,
+                InteractionPolicy(),
             )
         self.assertIs(returned_definition, definition)
         self.assertIs(
@@ -199,6 +209,7 @@ class OrchestratorContractCoverageTest(TestCase):
             orchestrator._execution_contract(
                 0,
                 TaskInputCapabilityAdvertisement.DURABLE,
+                InteractionPolicy(),
             )
 
     def test_codec_registration_cannot_change_execution_identity(self) -> None:
@@ -207,7 +218,7 @@ class OrchestratorContractCoverageTest(TestCase):
         first_definition = object()
         second_definition = object()
         capability = SimpleNamespace(
-            task_input_advertisement=TaskInputCapabilityAdvertisement.DURABLE
+            task_input_resolution=TaskInputCapabilityAdvertisement.DURABLE
         )
 
         with (
@@ -238,6 +249,7 @@ class OrchestratorContractCoverageTest(TestCase):
             orchestrator._execution_contract(
                 0,
                 TaskInputCapabilityAdvertisement.DURABLE,
+                InteractionPolicy(),
             )
 
     def test_revision_binding_requires_versioned_provider_model(self) -> None:
@@ -282,9 +294,8 @@ class OrchestratorResumeContractCoverageTest(IsolatedAsyncioTestCase):
 
         incapable = SimpleNamespace(
             revision_binding=None,
-            task_input_advertisement=(
-                TaskInputCapabilityAdvertisement.INCAPABLE
-            ),
+            task_input_resolution=(TaskInputCapabilityAdvertisement.INCAPABLE),
+            policy=InteractionPolicy(),
         )
         with self.assertRaises(RuntimeError):
             await orchestrator.resume_agent_execution(
@@ -304,9 +315,8 @@ class OrchestratorResumeContractCoverageTest(IsolatedAsyncioTestCase):
         )
         expected_capability = SimpleNamespace(
             revision_binding=object(),
-            task_input_advertisement=(
-                TaskInputCapabilityAdvertisement.DURABLE
-            ),
+            task_input_resolution=(TaskInputCapabilityAdvertisement.DURABLE),
+            policy=InteractionPolicy(),
         )
         with (
             patch.object(

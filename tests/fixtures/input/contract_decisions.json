@@ -1482,8 +1482,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning adapter activates",
         "fallback": "explicit unavailable; never fabricate detached resumability",
         "active_from_phase": 3,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/model/nlp/text/vendor/openai.py",
+        "production_advertised": true,
+        "evidence": "active:tests/model/nlp/vendor_openai_continuation_test.py::test_native_openai_model_registers_exact_durable_revision",
         "public_failure_surface": null
       },
       {
@@ -1604,12 +1604,12 @@
         "path": "src/avalan/cli/commands/model.py",
         "attached_prerequisite": "registered async resolver with live cancellation propagation",
         "durable_prerequisite": "durable store plus registered continuation resolver and validated provider snapshot",
-        "advertisement_rule": "advertise only when an attached resolver exists or every durable store, resumer, and provider snapshot prerequisite is satisfied",
+        "advertisement_rule": "never advertise structured task input because this command supplies no interaction runtime or durable resolver",
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
         "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/model.py#cli-model-attached-tty",
+        "evidence": "planned:src/avalan/cli/commands/model.py#interaction-runtime-and-durable-resolver-absent",
         "public_failure_surface": "cli-model-run-attached-tty",
         "interaction_mode": "interactive"
       },
@@ -1619,12 +1619,12 @@
         "path": "src/avalan/cli/commands/model.py",
         "attached_prerequisite": "registered async resolver with live cancellation propagation",
         "durable_prerequisite": "durable store plus registered continuation resolver and validated provider snapshot",
-        "advertisement_rule": "advertise only when an attached resolver exists or every durable store, resumer, and provider snapshot prerequisite is satisfied",
+        "advertisement_rule": "never advertise structured task input because this command supplies no interaction runtime or durable resolver",
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
         "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/model.py#cli-model-piped-with-tty",
+        "evidence": "planned:src/avalan/cli/commands/model.py#interaction-runtime-and-durable-resolver-absent",
         "public_failure_surface": "cli-model-run-piped-with-tty",
         "interaction_mode": "interactive"
       },
@@ -1634,12 +1634,12 @@
         "path": "src/avalan/cli/commands/model.py",
         "attached_prerequisite": "registered async resolver with live cancellation propagation",
         "durable_prerequisite": "durable store plus registered continuation resolver and validated provider snapshot",
-        "advertisement_rule": "advertise only when an attached resolver exists or every durable store, resumer, and provider snapshot prerequisite is satisfied",
+        "advertisement_rule": "never advertise structured task input because this command supplies no interaction runtime or durable resolver",
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
         "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/model.py#cli-model-fully-headless-durable",
+        "evidence": "planned:src/avalan/cli/commands/model.py#interaction-runtime-and-durable-resolver-absent",
         "public_failure_surface": "cli-model-run-fully-headless-durable",
         "interaction_mode": "headless"
       },
@@ -1668,8 +1668,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/agent.py#cli-agent-attached-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/cli/interaction_cli_pty_e2e_test.py::test_attached_tty_prompt_and_clarification_complete_one_run",
         "public_failure_surface": "cli-agent-run-attached-tty",
         "interaction_mode": "interactive"
       },
@@ -1683,8 +1683,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/agent.py#cli-agent-piped-with-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/cli/interaction_cli_pty_e2e_test.py::test_piped_prompt_and_pty_clarification_complete_one_run",
         "public_failure_surface": "cli-agent-run-piped-with-tty",
         "interaction_mode": "interactive"
       },
@@ -1698,8 +1698,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/agent.py#cli-agent-fully-headless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_interaction_e2e_test.py::test_fully_headless_run",
         "public_failure_surface": "cli-agent-run-fully-headless-durable",
         "interaction_mode": "headless"
       },
@@ -1728,8 +1728,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/flow.py#cli-flow-attached-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_attached_runtime_bypasses_durable_state",
         "public_failure_surface": "cli-flow-run-attached-tty",
         "interaction_mode": "interactive"
       },
@@ -1743,8 +1743,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/flow.py#cli-flow-piped-with-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_attached_runtime_bypasses_durable_state",
         "public_failure_surface": "cli-flow-run-piped-with-tty",
         "interaction_mode": "interactive"
       },
@@ -1758,8 +1758,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/flow.py#cli-flow-fully-headless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_serializes_parallel_durable_input",
         "public_failure_surface": "cli-flow-run-fully-headless-durable",
         "interaction_mode": "headless"
       },
@@ -1788,8 +1788,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-direct-attached-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
         "public_failure_surface": "cli-task-direct-attached-tty",
         "interaction_mode": "interactive"
       },
@@ -1803,8 +1803,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-direct-piped-with-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
         "public_failure_surface": "cli-task-direct-piped-with-tty",
         "interaction_mode": "interactive"
       },
@@ -1818,8 +1818,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-direct-fully-headless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_interaction_e2e_test.py::test_fully_headless_run",
         "public_failure_surface": "cli-task-direct-fully-headless-durable",
         "interaction_mode": "headless"
       },
@@ -1848,8 +1848,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-enqueue-worker-attached-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
         "public_failure_surface": "cli-task-enqueue-worker-attached-tty",
         "interaction_mode": "interactive"
       },
@@ -1863,8 +1863,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-enqueue-worker-piped-with-tty",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
         "public_failure_surface": "cli-task-enqueue-worker-piped-with-tty",
         "interaction_mode": "interactive"
       },
@@ -1878,8 +1878,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 7,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/task.py#cli-task-enqueue-worker-fully-headless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_interaction_e2e_test.py::test_fully_headless_run",
         "public_failure_surface": "cli-task-enqueue-worker-fully-headless-durable",
         "interaction_mode": "headless"
       },
@@ -1908,8 +1908,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/agent.py#cli-agent-serve",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_policy_negotiation",
         "public_failure_surface": "cli-agent-serve",
         "interaction_mode": "remote"
       },
@@ -1923,8 +1923,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/cli/commands/agent.py#cli-agent-proxy",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_policy_negotiation",
         "public_failure_surface": "cli-agent-proxy",
         "interaction_mode": "remote"
       },
@@ -2028,8 +2028,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 6,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/agent/engine.py#sdk-attached",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_sdk_construction_test.py::test_root_only_consumer_drives_attached_and_atomic_durable_bridge",
         "public_failure_surface": "sdk-attached",
         "interaction_mode": "attached"
       },
@@ -2043,8 +2043,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 6,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/agent/engine.py#sdk-headless-predeclared",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_sdk_construction_test.py::test_root_only_consumer_drives_attached_and_atomic_durable_bridge",
         "public_failure_surface": "sdk-headless-predeclared",
         "interaction_mode": "headless"
       },
@@ -2058,8 +2058,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 6,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/agent/engine.py#sdk-headless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_sdk_construction_test.py::test_root_only_consumer_drives_attached_and_atomic_durable_bridge",
         "public_failure_surface": "sdk-headless-durable",
         "interaction_mode": "headless"
       },
@@ -2073,8 +2073,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 6,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/agent/engine.py#sdk-serverless-durable",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_sdk_construction_test.py::test_root_only_consumer_drives_attached_and_atomic_durable_bridge",
         "public_failure_surface": "sdk-serverless-durable",
         "interaction_mode": "headless"
       },
@@ -2103,8 +2103,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/engine.py#http-engine",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_authenticated_resolution",
         "public_failure_surface": "http-engine",
         "interaction_mode": "execution"
       },
@@ -2118,8 +2118,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/chat.py#http-chat-completions-stream",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_lifecycle_events",
         "public_failure_surface": "http-chat-completions-stream",
         "interaction_mode": "execution"
       },
@@ -2133,8 +2133,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/chat.py#http-chat-completions-nonstream",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_extension_envelopes",
         "public_failure_surface": "http-chat-completions-nonstream",
         "interaction_mode": "execution"
       },
@@ -2148,8 +2148,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/responses.py#http-responses-stream",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_lifecycle_events",
         "public_failure_surface": "http-responses-stream",
         "interaction_mode": "execution"
       },
@@ -2163,8 +2163,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/responses.py#http-responses-nonstream",
+        "production_advertised": true,
+        "evidence": "active:tests/server/input_interaction_test.py::test_server_input_extension_envelopes",
         "public_failure_surface": "http-responses-nonstream",
         "interaction_mode": "execution"
       },
@@ -2178,8 +2178,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 8,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/flow.py#http-flow-run",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_serializes_parallel_durable_input",
         "public_failure_surface": "http-flow-run",
         "interaction_mode": "execution"
       },
@@ -2283,8 +2283,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 10,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/mcp.py#mcp-inbound-elicitation-form",
+        "production_advertised": true,
+        "evidence": "active:tests/server/mcp_projection_test.py::test_initialized_session_negotiates_tasks_and_form",
         "public_failure_surface": "mcp-inbound-elicitation-form",
         "interaction_mode": "protocol"
       },
@@ -2313,8 +2313,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 10,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/routers/mcp.py#mcp-inbound-task",
+        "production_advertised": true,
+        "evidence": "active:tests/server/mcp_tasks_test.py::MCPTaskControllerTest::test_immediate_creation_and_full_blocking_lifecycle",
         "public_failure_surface": "mcp-inbound-task",
         "interaction_mode": "protocol"
       },
@@ -2328,8 +2328,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 10,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/tool/mcp.py#mcp-downstream-elicitation",
+        "production_advertised": true,
+        "evidence": "active:tests/tool/mcp_downstream_session_test.py::McpSessionProjectionTestCase::test_capabilities_advertise_only_routable_form",
         "public_failure_surface": "mcp-downstream-elicitation",
         "interaction_mode": "protocol"
       },
@@ -2343,8 +2343,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 11,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/server/a2a/router.py#a2a-server",
+        "production_advertised": true,
+        "evidence": "active:tests/server/a2a_v1_router_test.py::test_agent_card_requires_live_active_interaction_configuration",
         "public_failure_surface": "a2a-server",
         "interaction_mode": "protocol"
       },
@@ -2358,8 +2358,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 11,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/tool/a2a.py#a2a-downstream",
+        "production_advertised": true,
+        "evidence": "active:tests/tool/a2a_continuation_test.py::A2AContinuationTestCase::test_routes_two_requests_and_continues_same_task",
         "public_failure_surface": "a2a-downstream",
         "interaction_mode": "protocol"
       },
@@ -2373,8 +2373,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 5,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/task/definition.py#task-target-agent-direct",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/agent_target_test.py::AgentTaskTargetRunnerTest::test_interaction_runtime_factory_is_awaited_and_fenced",
         "public_failure_surface": "task-target-agent-direct",
         "interaction_mode": "durable"
       },
@@ -2388,8 +2388,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 5,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/task/definition.py#task-target-agent-queue",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_interaction_e2e_test.py::test_fully_headless_run",
         "public_failure_surface": "task-target-agent-queue",
         "interaction_mode": "durable"
       },
@@ -2403,8 +2403,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 5,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/task/definition.py#task-target-flow-direct",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_attached_runtime_bypasses_durable_state",
         "public_failure_surface": "task-target-flow-direct",
         "interaction_mode": "durable"
       },
@@ -2418,8 +2418,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 5,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/task/definition.py#task-target-flow-queue",
+        "production_advertised": true,
+        "evidence": "active:tests/task/targets/flow_target_test.py::FlowTaskTargetRunnerExecutionTest::test_strict_flow_serializes_parallel_durable_input",
         "public_failure_surface": "task-target-flow-queue",
         "interaction_mode": "durable"
       },
@@ -2703,8 +2703,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 9,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/flow/definition.py#flow-node-agent",
+        "production_advertised": true,
+        "evidence": "active:tests/input/orchestration_contract_test.py::test_requirement_input_n_085",
         "public_failure_surface": "flow-node-agent",
         "interaction_mode": "nested"
       },
@@ -2778,8 +2778,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 9,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/flow/definition.py#flow-node-subflow",
+        "production_advertised": true,
+        "evidence": "active:tests/input/orchestration_contract_test.py::test_requirement_input_n_086",
         "public_failure_surface": "flow-node-subflow",
         "interaction_mode": "nested"
       },
@@ -2793,8 +2793,8 @@
         "snapshot_resumability": "unvalidated and unavailable until the owning surface activates",
         "fallback": "explicit unavailable with detached_resumption_available=false",
         "active_from_phase": 9,
-        "production_advertised": false,
-        "evidence": "planned:src/avalan/agent/orchestrator#nested-agent-branch",
+        "production_advertised": true,
+        "evidence": "active:tests/input/public_interaction_e2e_test.py::test_multi_agent_origin",
         "public_failure_surface": "nested-agent-branch",
         "interaction_mode": "nested"
       },
@@ -4849,64 +4849,55 @@
           },
           "result": {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "required": [
-              "task"
+              "id",
+              "contextId",
+              "status",
+              "metadata"
             ],
             "properties": {
-              "task": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contextId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
                 "type": "object",
-                "additionalProperties": false,
+                "additionalProperties": true,
                 "required": [
-                  "id",
-                  "contextId",
-                  "status",
-                  "metadata"
+                  "state"
                 ],
                 "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "contextId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "status": {
+                  "state": {
+                    "const": "TASK_STATE_CANCELED"
+                  }
+                }
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": [
+                  "https://avalan.ai/extensions/task-input/v1"
+                ],
+                "properties": {
+                  "https://avalan.ai/extensions/task-input/v1": {
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
-                      "state"
+                      "kind",
+                      "request_id"
                     ],
                     "properties": {
-                      "state": {
-                        "const": "TASK_STATE_CANCELED"
-                      }
-                    }
-                  },
-                  "metadata": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "https://avalan.ai/extensions/task-input/v1"
-                    ],
-                    "properties": {
-                      "https://avalan.ai/extensions/task-input/v1": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "kind",
-                          "request_id"
-                        ],
-                        "properties": {
-                          "kind": {
-                            "const": "resolution"
-                          },
-                          "request_id": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        }
+                      "kind": {
+                        "const": "resolution"
+                      },
+                      "request_id": {
+                        "type": "string",
+                        "minLength": 1
                       }
                     }
                   }
@@ -4944,7 +4935,7 @@
             "properties": {
               "task": {
                 "type": "object",
-                "additionalProperties": false,
+                "additionalProperties": true,
                 "required": [
                   "id",
                   "contextId",
@@ -4962,7 +4953,7 @@
                   },
                   "status": {
                     "type": "object",
-                    "additionalProperties": false,
+                    "additionalProperties": true,
                     "required": [
                       "state",
                       "message"
@@ -4973,7 +4964,7 @@
                       },
                       "message": {
                         "type": "object",
-                        "additionalProperties": false,
+                        "additionalProperties": true,
                         "required": [
                           "taskId",
                           "contextId",
@@ -5062,7 +5053,7 @@
                   },
                   "metadata": {
                     "type": "object",
-                    "additionalProperties": false,
+                    "additionalProperties": true,
                     "required": [
                       "https://avalan.ai/extensions/task-input/v1"
                     ],
@@ -5341,64 +5332,55 @@
           },
           "result": {
             "type": "object",
-            "additionalProperties": false,
+            "additionalProperties": true,
             "required": [
-              "task"
+              "id",
+              "contextId",
+              "status",
+              "metadata"
             ],
             "properties": {
-              "task": {
+              "id": {
+                "type": "string",
+                "minLength": 1
+              },
+              "contextId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
                 "type": "object",
-                "additionalProperties": false,
+                "additionalProperties": true,
                 "required": [
-                  "id",
-                  "contextId",
-                  "status",
-                  "metadata"
+                  "state"
                 ],
                 "properties": {
-                  "id": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "contextId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "status": {
+                  "state": {
+                    "const": "TASK_STATE_WORKING"
+                  }
+                }
+              },
+              "metadata": {
+                "type": "object",
+                "additionalProperties": true,
+                "required": [
+                  "https://avalan.ai/extensions/task-input/v1"
+                ],
+                "properties": {
+                  "https://avalan.ai/extensions/task-input/v1": {
                     "type": "object",
                     "additionalProperties": false,
                     "required": [
-                      "state"
+                      "kind",
+                      "request_id"
                     ],
                     "properties": {
-                      "state": {
-                        "const": "TASK_STATE_WORKING"
-                      }
-                    }
-                  },
-                  "metadata": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "https://avalan.ai/extensions/task-input/v1"
-                    ],
-                    "properties": {
-                      "https://avalan.ai/extensions/task-input/v1": {
-                        "type": "object",
-                        "additionalProperties": false,
-                        "required": [
-                          "kind",
-                          "request_id"
-                        ],
-                        "properties": {
-                          "kind": {
-                            "const": "resolution"
-                          },
-                          "request_id": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        }
+                      "kind": {
+                        "const": "resolution"
+                      },
+                      "request_id": {
+                        "type": "string",
+                        "minLength": 1
                       }
                     }
                   }
@@ -5740,6 +5722,27 @@
           }
         }
       },
+      "cli.process_exit.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "exit_code",
+          "stdout",
+          "stderr"
+        ],
+        "properties": {
+          "exit_code": {
+            "type": "integer"
+          },
+          "stdout": {
+            "type": "string"
+          },
+          "stderr": {
+            "type": "string"
+          }
+        }
+      },
       "cli.resolution_accepted.v1": {
         "$schema": "https://json-schema.org/draft/2020-12/schema",
         "type": "object",
@@ -5783,6 +5786,24 @@
           },
           "channel": {
             "const": "control"
+          }
+        }
+      },
+      "cli.terminal_validation.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "stream",
+          "text"
+        ],
+        "properties": {
+          "stream": {
+            "const": "control"
+          },
+          "text": {
+            "type": "string",
+            "pattern": "^Invalid input: "
           }
         }
       },
@@ -6141,19 +6162,15 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "error",
-          "interaction_state",
-          "channel"
+          "code",
+          "message"
         ],
         "properties": {
-          "error": {
+          "code": {
             "const": "input.already_resolved"
           },
-          "interaction_state": {
-            "const": "answered"
-          },
-          "channel": {
-            "const": "json"
+          "message": {
+            "const": "Input request is already resolved."
           }
         }
       },
@@ -6219,19 +6236,15 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "error",
-          "interaction_state",
-          "channel"
+          "code",
+          "message"
         ],
         "properties": {
-          "error": {
+          "code": {
             "const": "input.expired"
           },
-          "interaction_state": {
-            "const": "expired"
-          },
-          "channel": {
-            "const": "json"
+          "message": {
+            "const": "Input request has expired."
           }
         }
       },
@@ -6240,18 +6253,14 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "kind",
+          "status",
           "request_id",
           "continuation_id",
-          "detached_resumption_available",
-          "channel"
+          "detached_resumption_available"
         ],
         "properties": {
-          "kind": {
+          "status": {
             "const": "input_required"
-          },
-          "channel": {
-            "const": "json"
           },
           "request_id": {
             "type": "string",
@@ -6485,19 +6494,15 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "kind",
-          "detached_resumption_available",
-          "channel"
+          "code",
+          "message"
         ],
         "properties": {
-          "kind": {
-            "const": "unavailable"
+          "code": {
+            "const": "input.unavailable"
           },
-          "detached_resumption_available": {
-            "const": false
-          },
-          "channel": {
-            "const": "json"
+          "message": {
+            "const": "Structured input is unavailable."
           }
         }
       },
@@ -6506,19 +6511,52 @@
         "type": "object",
         "additionalProperties": false,
         "required": [
-          "error",
-          "interaction_state",
-          "channel"
+          "code",
+          "message"
         ],
         "properties": {
-          "error": {
+          "code": {
             "const": "input.validation"
           },
-          "interaction_state": {
-            "const": "pending"
+          "message": {
+            "const": "Input submission is invalid."
+          }
+        }
+      },
+      "mcp.call_tool_result.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "content"
+        ],
+        "properties": {
+          "content": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "additionalProperties": true,
+              "required": [
+                "type"
+              ],
+              "properties": {
+                "type": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           },
-          "channel": {
-            "const": "json"
+          "structuredContent": {
+            "type": "object",
+            "additionalProperties": true
+          },
+          "isError": {
+            "type": "boolean"
+          },
+          "_meta": {
+            "type": "object",
+            "additionalProperties": true
           }
         }
       },
@@ -6570,6 +6608,77 @@
                 }
               }
             }
+          }
+        }
+      },
+      "mcp.downstream_elicit_result.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "action"
+        ],
+        "properties": {
+          "action": {
+            "enum": [
+              "accept",
+              "decline",
+              "cancel"
+            ]
+          },
+          "content": {
+            "type": "object",
+            "additionalProperties": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "integer"
+                },
+                {
+                  "type": "number"
+                },
+                {
+                  "type": "boolean"
+                },
+                {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "_meta": {
+            "type": "object",
+            "additionalProperties": true
+          }
+        }
+      },
+      "mcp.downstream_error_data.v1": {
+        "$schema": "https://json-schema.org/draft/2020-12/schema",
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "integer"
+          },
+          "message": {
+            "type": "string",
+            "minLength": 1
+          },
+          "data": {
+            "type": "object",
+            "additionalProperties": true
           }
         }
       },
@@ -6775,71 +6884,48 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "task",
+              "taskId",
+              "status",
+              "createdAt",
+              "lastUpdatedAt",
+              "ttl",
               "_meta"
             ],
             "properties": {
-              "task": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "taskId",
-                  "status",
-                  "createdAt",
-                  "lastUpdatedAt",
-                  "ttl"
-                ],
-                "properties": {
-                  "taskId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "status": {
-                    "const": "cancelled"
-                  },
-                  "statusMessage": {
-                    "type": "string"
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "lastUpdatedAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "ttl": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "pollInterval": {
-                    "type": "number"
-                  }
-                }
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "const": "cancelled"
+              },
+              "statusMessage": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "lastUpdatedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "ttl": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "pollInterval": {
+                "type": "number"
               },
               "_meta": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "io.modelcontextprotocol/related-task",
                   "https://avalan.ai/extensions/task-input/v1"
                 ],
                 "properties": {
-                  "io.modelcontextprotocol/related-task": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "taskId"
-                    ],
-                    "properties": {
-                      "taskId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  },
                   "https://avalan.ai/extensions/task-input/v1": {
                     "type": "object",
                     "additionalProperties": false,
@@ -6886,71 +6972,48 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "task",
+              "taskId",
+              "status",
+              "createdAt",
+              "lastUpdatedAt",
+              "ttl",
               "_meta"
             ],
             "properties": {
-              "task": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "taskId",
-                  "status",
-                  "createdAt",
-                  "lastUpdatedAt",
-                  "ttl"
-                ],
-                "properties": {
-                  "taskId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "status": {
-                    "const": "input_required"
-                  },
-                  "statusMessage": {
-                    "type": "string"
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "lastUpdatedAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "ttl": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "pollInterval": {
-                    "type": "number"
-                  }
-                }
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "const": "input_required"
+              },
+              "statusMessage": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "lastUpdatedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "ttl": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "pollInterval": {
+                "type": "number"
               },
               "_meta": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "io.modelcontextprotocol/related-task",
                   "https://avalan.ai/extensions/task-input/v1"
                 ],
                 "properties": {
-                  "io.modelcontextprotocol/related-task": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "taskId"
-                    ],
-                    "properties": {
-                      "taskId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  },
                   "https://avalan.ai/extensions/task-input/v1": {
                     "type": "object",
                     "additionalProperties": false,
@@ -6997,71 +7060,48 @@
             "type": "object",
             "additionalProperties": false,
             "required": [
-              "task",
+              "taskId",
+              "status",
+              "createdAt",
+              "lastUpdatedAt",
+              "ttl",
               "_meta"
             ],
             "properties": {
-              "task": {
-                "type": "object",
-                "additionalProperties": false,
-                "required": [
-                  "taskId",
-                  "status",
-                  "createdAt",
-                  "lastUpdatedAt",
-                  "ttl"
-                ],
-                "properties": {
-                  "taskId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "status": {
-                    "const": "working"
-                  },
-                  "statusMessage": {
-                    "type": "string"
-                  },
-                  "createdAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "lastUpdatedAt": {
-                    "type": "string",
-                    "format": "date-time"
-                  },
-                  "ttl": {
-                    "type": [
-                      "number",
-                      "null"
-                    ]
-                  },
-                  "pollInterval": {
-                    "type": "number"
-                  }
-                }
+              "taskId": {
+                "type": "string",
+                "minLength": 1
+              },
+              "status": {
+                "const": "working"
+              },
+              "statusMessage": {
+                "type": "string"
+              },
+              "createdAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "lastUpdatedAt": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "ttl": {
+                "type": [
+                  "number",
+                  "null"
+                ]
+              },
+              "pollInterval": {
+                "type": "number"
               },
               "_meta": {
                 "type": "object",
                 "additionalProperties": false,
                 "required": [
-                  "io.modelcontextprotocol/related-task",
                   "https://avalan.ai/extensions/task-input/v1"
                 ],
                 "properties": {
-                  "io.modelcontextprotocol/related-task": {
-                    "type": "object",
-                    "additionalProperties": false,
-                    "required": [
-                      "taskId"
-                    ],
-                    "properties": {
-                      "taskId": {
-                        "type": "string",
-                        "minLength": 1
-                      }
-                    }
-                  },
                   "https://avalan.ai/extensions/task-input/v1": {
                     "type": "object",
                     "additionalProperties": false,
@@ -8009,17 +8049,15 @@
         "jsonrpc": "2.0",
         "id": "rpc-0001",
         "result": {
-          "task": {
-            "id": "task-0001",
-            "contextId": "context-0001",
-            "status": {
-              "state": "TASK_STATE_CANCELED"
-            },
-            "metadata": {
-              "https://avalan.ai/extensions/task-input/v1": {
-                "kind": "resolution",
-                "request_id": "request-0001"
-              }
+          "id": "task-0001",
+          "contextId": "context-0001",
+          "status": {
+            "state": "TASK_STATE_CANCELED"
+          },
+          "metadata": {
+            "https://avalan.ai/extensions/task-input/v1": {
+              "kind": "resolution",
+              "request_id": "request-0001"
             }
           }
         }
@@ -8078,17 +8116,15 @@
         "jsonrpc": "2.0",
         "id": "rpc-0001",
         "result": {
-          "task": {
-            "id": "task-0001",
-            "contextId": "context-0001",
-            "status": {
-              "state": "TASK_STATE_WORKING"
-            },
-            "metadata": {
-              "https://avalan.ai/extensions/task-input/v1": {
-                "kind": "resolution",
-                "request_id": "request-0001"
-              }
+          "id": "task-0001",
+          "contextId": "context-0001",
+          "status": {
+            "state": "TASK_STATE_WORKING"
+          },
+          "metadata": {
+            "https://avalan.ai/extensions/task-input/v1": {
+              "kind": "resolution",
+              "request_id": "request-0001"
             }
           }
         }
@@ -8171,6 +8207,11 @@
         "redacted": true,
         "channel": "control"
       },
+      "cli.process_exit.v1": {
+        "exit_code": 0,
+        "stdout": "completed\n",
+        "stderr": ""
+      },
       "cli.resolution_accepted.v1": {
         "kind": "resolution_accepted",
         "interaction_state": "answered",
@@ -8181,6 +8222,10 @@
         "error": "input.superseded",
         "interaction_state": "superseded",
         "channel": "control"
+      },
+      "cli.terminal_validation.v1": {
+        "stream": "control",
+        "text": "Invalid input: Enter yes or no."
       },
       "cli.timed_out.v1": {
         "kind": "timed_out",
@@ -8266,9 +8311,8 @@
         "channel": "flow-control"
       },
       "http.already_resolved.v1": {
-        "error": "input.already_resolved",
-        "interaction_state": "answered",
-        "channel": "json"
+        "code": "input.already_resolved",
+        "message": "Input request is already resolved."
       },
       "http.cancellation_ack.v1": {
         "interaction_state": "cancelled",
@@ -8285,16 +8329,14 @@
         "channel": "json"
       },
       "http.expired.v1": {
-        "error": "input.expired",
-        "interaction_state": "expired",
-        "channel": "json"
+        "code": "input.expired",
+        "message": "Input request has expired."
       },
       "http.input_required.v1": {
-        "kind": "input_required",
+        "status": "input_required",
         "request_id": "request-0001",
         "continuation_id": "continuation-0001",
-        "detached_resumption_available": true,
-        "channel": "json"
+        "detached_resumption_available": true
       },
       "http.observation_answered.v1": {
         "interaction_state": "answered",
@@ -8348,14 +8390,21 @@
         "channel": "json"
       },
       "http.unavailable.v1": {
-        "kind": "unavailable",
-        "detached_resumption_available": false,
-        "channel": "json"
+        "code": "input.unavailable",
+        "message": "Structured input is unavailable."
       },
       "http.validation_error.v1": {
-        "error": "input.validation",
-        "interaction_state": "pending",
-        "channel": "json"
+        "code": "input.validation",
+        "message": "Input submission is invalid."
+      },
+      "mcp.call_tool_result.v1": {
+        "content": [
+          {
+            "type": "text",
+            "text": "ordinary"
+          }
+        ],
+        "isError": false
       },
       "mcp.conflict_error.v1": {
         "jsonrpc": "2.0",
@@ -8366,6 +8415,19 @@
           "data": {
             "code": "avalan.input.already_resolved"
           }
+        }
+      },
+      "mcp.downstream_elicit_result.v1": {
+        "action": "accept",
+        "content": {
+          "name": "Ada"
+        }
+      },
+      "mcp.downstream_error_data.v1": {
+        "code": -32001,
+        "message": "Avalan input is unavailable",
+        "data": {
+          "code": "avalan.input.unavailable"
         }
       },
       "mcp.expired_error.v1": {
@@ -8418,19 +8480,14 @@
         "jsonrpc": "2.0",
         "id": "rpc-0001",
         "result": {
-          "task": {
-            "taskId": "task-0001",
-            "status": "cancelled",
-            "statusMessage": "Task was cancelled.",
-            "createdAt": "2026-07-20T00:00:00Z",
-            "lastUpdatedAt": "2026-07-20T00:00:00Z",
-            "ttl": 0,
-            "pollInterval": 0
-          },
+          "taskId": "task-0001",
+          "status": "cancelled",
+          "statusMessage": "Task was cancelled.",
+          "createdAt": "2026-07-20T00:00:00Z",
+          "lastUpdatedAt": "2026-07-20T00:00:00Z",
+          "ttl": 0,
+          "pollInterval": 0,
           "_meta": {
-            "io.modelcontextprotocol/related-task": {
-              "taskId": "task-0001"
-            },
             "https://avalan.ai/extensions/task-input/v1": {
               "kind": "resolution",
               "request_id": "request-0001"
@@ -8442,19 +8499,14 @@
         "jsonrpc": "2.0",
         "id": "rpc-0001",
         "result": {
-          "task": {
-            "taskId": "task-0001",
-            "status": "input_required",
-            "statusMessage": "Task requires input.",
-            "createdAt": "2026-07-20T00:00:00Z",
-            "lastUpdatedAt": "2026-07-20T00:00:00Z",
-            "ttl": 0,
-            "pollInterval": 0
-          },
+          "taskId": "task-0001",
+          "status": "input_required",
+          "statusMessage": "Task requires input.",
+          "createdAt": "2026-07-20T00:00:00Z",
+          "lastUpdatedAt": "2026-07-20T00:00:00Z",
+          "ttl": 0,
+          "pollInterval": 0,
           "_meta": {
-            "io.modelcontextprotocol/related-task": {
-              "taskId": "task-0001"
-            },
             "https://avalan.ai/extensions/task-input/v1": {
               "kind": "request",
               "request_id": "request-0001"
@@ -8466,19 +8518,14 @@
         "jsonrpc": "2.0",
         "id": "rpc-0001",
         "result": {
-          "task": {
-            "taskId": "task-0001",
-            "status": "working",
-            "statusMessage": "Task is working.",
-            "createdAt": "2026-07-20T00:00:00Z",
-            "lastUpdatedAt": "2026-07-20T00:00:00Z",
-            "ttl": 0,
-            "pollInterval": 0
-          },
+          "taskId": "task-0001",
+          "status": "working",
+          "statusMessage": "Task is working.",
+          "createdAt": "2026-07-20T00:00:00Z",
+          "lastUpdatedAt": "2026-07-20T00:00:00Z",
+          "ttl": 0,
+          "pollInterval": 0,
           "_meta": {
-            "io.modelcontextprotocol/related-task": {
-              "taskId": "task-0001"
-            },
             "https://avalan.ai/extensions/task-input/v1": {
               "kind": "resolution",
               "request_id": "request-0001"
@@ -8690,7 +8737,6 @@
           "invariant_id": "a2a_resolution_task_id",
           "path": [
             "result",
-            "task",
             "id"
           ],
           "replacement": "task-mismatch",
@@ -8700,7 +8746,6 @@
           "invariant_id": "a2a_resolution_context_id",
           "path": [
             "result",
-            "task",
             "contextId"
           ],
           "replacement": "context-mismatch",
@@ -8710,7 +8755,6 @@
           "invariant_id": "a2a_resolution_request_id",
           "path": [
             "result",
-            "task",
             "metadata",
             "https://avalan.ai/extensions/task-input/v1",
             "request_id"
@@ -8775,21 +8819,6 @@
       ],
       "mcp.task_cancelled.v1": [
         {
-          "invariant_id": "mcp_related_task_id",
-          "path": [
-            "result",
-            "_meta",
-            "io.modelcontextprotocol/related-task",
-            "taskId"
-          ],
-          "replacement": "task-mismatch",
-          "equals_path": [
-            "result",
-            "task",
-            "taskId"
-          ]
-        },
-        {
           "invariant_id": "mcp_canonical_request_id",
           "path": [
             "result",
@@ -8803,21 +8832,6 @@
       ],
       "mcp.task_input_required.v1": [
         {
-          "invariant_id": "mcp_related_task_id",
-          "path": [
-            "result",
-            "_meta",
-            "io.modelcontextprotocol/related-task",
-            "taskId"
-          ],
-          "replacement": "task-mismatch",
-          "equals_path": [
-            "result",
-            "task",
-            "taskId"
-          ]
-        },
-        {
           "invariant_id": "mcp_canonical_request_id",
           "path": [
             "result",
@@ -8830,21 +8844,6 @@
         }
       ],
       "mcp.task_working.v1": [
-        {
-          "invariant_id": "mcp_related_task_id",
-          "path": [
-            "result",
-            "_meta",
-            "io.modelcontextprotocol/related-task",
-            "taskId"
-          ],
-          "replacement": "task-mismatch",
-          "equals_path": [
-            "result",
-            "task",
-            "taskId"
-          ]
-        },
         {
           "invariant_id": "mcp_canonical_request_id",
           "path": [
@@ -8866,10 +8865,10 @@
     "counter": "independent from domain tool cycles"
   },
   "activation": {
-    "production_default": "absent",
-    "test_hosts": "only explicit deterministic fixture hosts may advertise before atomic activation",
-    "atomic_rule": "activate only after every enabled consumer handles the canonical lifecycle",
-    "rollback": "stop new advertisement while retaining resolver capacity for already-pending requests"
+    "production_default": "capability_gated",
+    "test_hosts": "fixture and production hosts advertise only while live attached or durable prerequisites satisfy the final capability gate",
+    "atomic_rule": "capable hosts advertise and accept new requests only while live prerequisites hold; incapable and control-only surfaces never advertise",
+    "rollback": "stop new advertisement and acceptance while preserving resolution and resumption for already-pending requests"
   },
   "capacity_budgets": {
     "pending_requests_per_process": 1024,
@@ -8912,5 +8911,5 @@
     },
     "measurement": "barriers, queues, local peers, call_soon callbacks, and real monotonic loop time; no timing sleeps or network"
   },
-  "contract_sha256": "a195dca79295a5dff56d5e961c278406a5eb29394e643c9467b5d84fcf998ccb"
+  "contract_sha256": "5b33fe730c24c4d92b6935969bae5530909a7715c1538f9ddd4ed55fabe414e2"
 }

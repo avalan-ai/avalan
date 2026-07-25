@@ -44,8 +44,10 @@ from .policy import (
     InteractionClock,
     InteractionIdFactory,
     InteractionPolicy,
+    InteractionTime,
     TaskInputClassifier,
 )
+from .security import enforce_task_input_questions_policy
 from .state import InputTransitionError, project_resolution_to_model
 from .store import (
     CancelInteractionApplied,
@@ -708,6 +710,10 @@ class InteractionBroker(Protocol):
         """Return broker-local liveness without consulting lifecycle state."""
         ...
 
+    async def read_time(self) -> InteractionTime:
+        """Return one observation from the broker's trusted clock."""
+        ...
+
     async def aclose(self) -> None:
         """Idempotently close the broker and its owned store handle."""
         ...
@@ -863,6 +869,11 @@ class AsyncInteractionBroker:
         """Return whether this broker handle has closed."""
         return self._closed
 
+    @property
+    def policy(self) -> InteractionPolicy:
+        """Return the broker's immutable interaction policy."""
+        return self._policy
+
     async def request(
         self,
         request: InteractionBrokerRequest,
@@ -874,6 +885,11 @@ class AsyncInteractionBroker:
                 "broker.request",
                 "value must be an interaction broker request",
             )
+        enforce_task_input_questions_policy(
+            request.questions,
+            "broker.request.questions",
+            surrounding_text=(request.reason, request.context_label or ""),
+        )
         admission_lease = _validate_attached_admission_lease(request)
         await self._ensure_started()
         observed_at = await self._clock.read()
@@ -902,6 +918,18 @@ class AsyncInteractionBroker:
                 resumer=store_resumer,
             )
         )
+        if not self._policy.accept_new:
+            return InteractionRequestResult(
+                create_result=CreateInteractionRejected(
+                    command=admission_command._command,
+                    error=InputTransitionError(
+                        code=InputErrorCode.UNAVAILABLE,
+                        path="broker.request",
+                        message="task input is not accepting new requests",
+                    ),
+                ),
+                delivery=None,
+            )
         if request.resumer is not None:
             await self._bind_resumer(
                 request_id,
@@ -1040,6 +1068,12 @@ class AsyncInteractionBroker:
         command: ResolveInteractionCommand,
     ) -> InteractionBrokerResult:
         """Submit one candidate resolution atomically."""
+        if not self._policy.resolve_existing:
+            raise InputValidationError(
+                InputErrorCode.UNAVAILABLE,
+                "broker.resolve",
+                "task input cannot resolve existing requests",
+            )
         await self._ensure_started()
         result = await self._store.resolve(command)
         failed = await self._settle_store_result(result)
@@ -1053,6 +1087,12 @@ class AsyncInteractionBroker:
         request: TrustedDefaultResolutionRequest,
     ) -> InteractionBrokerResult:
         """Resolve declared defaults through store-owned authority."""
+        if not self._policy.resolve_existing:
+            raise InputValidationError(
+                InputErrorCode.UNAVAILABLE,
+                "broker.resolve_trusted_default",
+                "task input cannot resolve existing requests",
+            )
         await self._ensure_started()
         result = await self._store.resolve_trusted_default(
             _new_trusted_default_resolution_command(request)
@@ -1157,6 +1197,13 @@ class AsyncInteractionBroker:
             )
         )
         return InteractionBrokerHeartbeat(sequence=sequence)
+
+    async def read_time(self) -> InteractionTime:
+        """Return one observation from the broker's trusted clock."""
+        observed_at = await self._clock.read()
+        if type(observed_at) is not InteractionTime:
+            raise TypeError("interaction clock returned invalid time")
+        return observed_at
 
     async def aclose(self) -> None:
         """Idempotently close the broker and its owned store handle.

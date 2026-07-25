@@ -4,12 +4,14 @@ from asyncio import Event, create_task, run, wait_for
 from collections.abc import Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from json import dumps, loads
 from pathlib import Path
 from sys import path as sys_path
 from types import MappingProxyType
 from typing import Any, Literal, cast
 
 import pytest
+from jsonschema import Draft202012Validator
 
 from avalan import (
     AgentRunCancelled,
@@ -25,6 +27,7 @@ from avalan import (
     InputAnswerSubmission,
     InputContinuationRef,
     InputExpiredError,
+    InputPrincipal,
     InputRequestRef,
     InputResolutionAccepted,
     InputSupersededError,
@@ -35,6 +38,7 @@ from avalan import (
     SingleSelectionAnswer,
     SingleSelectionQuestion,
     TextAnswer,
+    create_attached_input_runtime,
     resolve_input,
     run_agent,
 )
@@ -43,6 +47,7 @@ from avalan.agent.execution import (
     DurableInteractionRuntime,
     ExecutionInputRequiredError,
 )
+from avalan.cli.interaction_renderer import cli_interaction_result
 from avalan.interaction.broker import (
     AsyncInteractionBroker,
     InteractionDelivery,
@@ -53,6 +58,7 @@ from avalan.interaction.entities import (
     AnsweredResolution,
     InputRequiredResult,
     InputTimedOutResult,
+    PresentationHint,
     PrincipalScope,
     RequestState,
     RequirementMode,
@@ -85,7 +91,7 @@ from avalan.interaction.store import (
     SupersedeInteractionScopeCommand,
     TerminalizeDueInteractionsCommand,
 )
-from avalan.sdk import AsyncInputController
+from avalan.sdk import AsyncInputController, AttachedInputContext
 from avalan.task import TaskRunState
 
 sys_path.append(str(Path(__file__).parents[1] / "interaction" / "stores"))
@@ -105,6 +111,28 @@ _FOUR_SDK_SURFACES = (
     "sdk-serverless-durable",
 )
 _ALL_SDK_SURFACES = (*_FOUR_SDK_SURFACES, "sdk-sessionless")
+_CLI_RESOLUTION_SCHEMA = loads(
+    (
+        Path(__file__).parents[1] / "fixtures/input/contract_decisions.json"
+    ).read_text(encoding="utf-8")
+)["error_status"]["public_envelope_catalog"]["cli.resolution_accepted.v1"]
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Bind each failure observation to one immutable SDK surface instance."""
+    if "surface_id" not in metafunc.fixturenames:
+        return
+    condition_id = metafunc.function.__name__.replace(
+        "test_input_f_", "INPUT-F-"
+    ).replace("_", "")
+    surfaces = _FOUR_SDK_SURFACES
+    if condition_id == "INPUT-F-01":
+        surfaces = _ALL_SDK_SURFACES
+    elif condition_id == "INPUT-F-12":
+        surfaces = ("sdk-headless-durable", "sdk-serverless-durable")
+    elif condition_id == "INPUT-F-14":
+        surfaces = ("sdk-attached",)
+    metafunc.parametrize("surface_id", surfaces, ids=surfaces)
 
 
 @dataclass(frozen=True, slots=True)
@@ -217,9 +245,7 @@ class _AttachedAdvisoryOrchestrator:
     """Continue the same public run after its broker-owned timeout."""
 
     def __init__(
-        self,
-        request: object,
-        resumer: broker_support._Resumer,
+        self, request: object, resumer: broker_support._Resumer
     ) -> None:
         self.request = request
         self.resumer = resumer
@@ -248,6 +274,24 @@ class _AttachedAdvisoryOrchestrator:
         assert settled.request.state is RequestState.TIMED_OUT
         self.provider_call_count += 1
         return _CompletedResponse()
+
+
+class _HintAttachedOrchestrator(_CausalAttachedOrchestrator):
+    """Wait for one semantic answer before completing the public run."""
+
+    def __init__(
+        self,
+        request: object,
+        resumer: broker_support._Resumer,
+    ) -> None:
+        super().__init__(request)
+        self.resumer = resumer
+
+    async def __call__(self, input: object, **kwargs: object) -> object:
+        result = await super().__call__(input, **kwargs)
+        await self.resumer.called.wait()
+        self.provider_call_count += 1
+        return result
 
 
 class _DurableAdvisoryOrchestrator:
@@ -993,16 +1037,17 @@ async def _resolve_causal_surface(
 def _record(
     record_property: Callable[[str, object], None],
     observations: tuple[_SurfaceObservation, ...],
+    surface_id: str,
 ) -> None:
-    assert observations
-    keys = {
-        (observation.condition_id, observation.surface_id)
+    owned = tuple(
+        observation
         for observation in observations
-    }
-    assert len(keys) == len(observations)
+        if observation.surface_id == surface_id
+    )
+    assert len(owned) == 1
     record_property(
         _EVIDENCE_PROPERTY,
-        [observation.evidence() for observation in observations],
+        dumps([owned[0].evidence()], sort_keys=True),
     )
 
 
@@ -1212,6 +1257,7 @@ class _UnavailableOrchestrator:
 
 def test_input_f_01(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Report unavailable input without invoking a provider or side effect."""
 
@@ -1365,7 +1411,7 @@ def test_input_f_01(
                 await harness.broker.aclose()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def _exercise_sdk_validation_rejections(
@@ -1448,39 +1494,43 @@ def _exercise_sdk_validation_rejections(
 
 def test_input_f_04(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject a mismatched semantic answer type."""
     observations = _exercise_sdk_validation_rejections(
         "INPUT-F-04",
         InputErrorCode.ANSWER_TYPE_MISMATCH,
     )
-    _record(record_property, observations)
+    _record(record_property, observations, surface_id)
 
 
 def test_input_f_05(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject an unknown selection choice."""
     observations = _exercise_sdk_validation_rejections(
         "INPUT-F-05",
         InputErrorCode.UNKNOWN_CHOICE,
     )
-    _record(record_property, observations)
+    _record(record_property, observations, surface_id)
 
 
 def test_input_f_06(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject omission of a required answer."""
     observations = _exercise_sdk_validation_rejections(
         "INPUT-F-06",
         InputErrorCode.MISSING_REQUIRED_ANSWER,
     )
-    _record(record_property, observations)
+    _record(record_property, observations, surface_id)
 
 
 def test_input_f_07(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Accept a same-key resolution replay idempotently."""
 
@@ -1535,6 +1585,11 @@ def test_input_f_07(
                     public_result.interaction_state
                     == after_replay.request.state.value
                 )
+                cli_result = cli_interaction_result(public_result)
+                assert cli_result.envelope_id == "cli.resolution_accepted.v1"
+                Draft202012Validator(_CLI_RESOLUTION_SCHEMA).validate(
+                    cli_result.payload
+                )
                 observations.append(
                     _SurfaceObservation(
                         condition_id="INPUT-F-07",
@@ -1562,11 +1617,12 @@ def test_input_f_07(
                 await surface.close()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_08(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject a conflicting second resolution with a public typed error."""
 
@@ -1658,11 +1714,12 @@ def test_input_f_08(
                 await surface.close()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_09(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject resolution after absolute continuation expiry."""
 
@@ -1764,11 +1821,12 @@ def test_input_f_09(
                 await surface.close()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_10(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Cancel the exact pending request through its owning host boundary."""
 
@@ -1842,11 +1900,12 @@ def test_input_f_10(
                 await surface.close()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_11(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject resolution of a superseded originating turn."""
 
@@ -1953,11 +2012,12 @@ def test_input_f_11(
                 await surface.close()
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_12(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Return durable opaque correlation after bounded required waiting."""
 
@@ -1970,11 +2030,12 @@ def test_input_f_12(
             observations.append(await _durable_pause_for_surface(surface_id))
         return tuple(observations)
 
-    _record(record_property, run(exercise()))
+    _record(record_property, run(exercise()), surface_id)
 
 
 def test_input_f_13(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Continue advisory input after timeout without an invented answer."""
 
@@ -2008,4 +2069,96 @@ def test_input_f_13(
         and observation.domain_side_effect_count == 0
         for observation in observations
     )
-    _record(record_property, observations)
+    _record(record_property, observations, surface_id)
+
+
+def test_input_f_14(
+    record_property: Callable[[str, object], None],
+    surface_id: str,
+) -> None:
+    """Honor semantics when an attached SDK host ignores a UI hint."""
+
+    async def exercise() -> _SurfaceObservation:
+        async def handler(
+            context: AttachedInputContext,
+        ) -> InputAnswerSubmission:
+            question = context.request.questions[0]
+            assert question.presentation_hint is PresentationHint.SINGLE_LINE
+            return InputAnswerSubmission(
+                provenance=AnswerProvenance.HUMAN,
+                answers=(
+                    ConfirmationAnswer(
+                        question_id=question.question_id,
+                        provenance=AnswerProvenance.HUMAN,
+                        value=True,
+                    ),
+                ),
+            )
+
+        runtime = await create_attached_input_runtime(
+            handler,
+            principal=InputPrincipal(
+                user_id="user",
+                tenant_id="tenant",
+                participant_id="participant",
+                session_id="session",
+            ),
+        )
+        resumer = broker_support._Resumer()
+        request = replace(
+            broker_support._request(
+                None,
+                run_id="INPUT-F-14-sdk-attached",
+                resumer=resumer,
+                reason="Exercise advisory rendering semantics.",
+            ),
+            questions=(
+                ConfirmationQuestion(
+                    question_id=QuestionId("answer"),
+                    prompt="Continue?",
+                    required=True,
+                    presentation_hint=PresentationHint.SINGLE_LINE,
+                ),
+            ),
+        )
+        internal = cast(Any, runtime)._runtime
+        orchestrator = _HintAttachedOrchestrator(request, resumer)
+        try:
+            result = await run_agent(
+                cast(Any, orchestrator),
+                "sdk-attached",
+                interaction_runtime=runtime,
+            )
+            assert isinstance(result, AgentRunCompleted)
+            assert result.to_str() == "continued"
+            requested = orchestrator.result
+            assert requested is not None
+            delivery = requested.delivery
+            assert isinstance(delivery, InteractionDelivery)
+            record = await broker_support._inspect(
+                internal.broker,
+                delivery.correlation,
+            )
+            assert record.request.state is RequestState.ANSWERED
+            assert len(resumer.notifications) == 1
+            assert orchestrator.domain_side_effects == []
+            return _SurfaceObservation(
+                condition_id="INPUT-F-14",
+                surface_id="sdk-attached",
+                transition_from=RequestState.PENDING,
+                transition_to=RequestState.ANSWERED,
+                public_result_id="sdk.completed.v1",
+                public_result={
+                    "kind": result.kind.value,
+                    "value": result.to_str(),
+                    "channel": result.channel,
+                },
+                status_key="result",
+                status_value="AgentRunCompleted",
+                provider_call_count=orchestrator.provider_call_count,
+                domain_side_effect_count=0,
+            )
+        finally:
+            await runtime.aclose()
+
+    _record(record_property, (run(exercise()),), surface_id)

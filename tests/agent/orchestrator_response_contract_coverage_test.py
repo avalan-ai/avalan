@@ -13,6 +13,7 @@ from avalan.agent.execution import (
     AgentExecution,
     AgentExecutionStatus,
     DurableInteractionRuntime,
+    DurableInteractionStager,
     ExecutionInputRequiredError,
 )
 from avalan.agent.orchestrator.response import orchestrator_response
@@ -24,17 +25,23 @@ from avalan.entities import (
     Message,
     MessageRole,
     ToolCall,
+    ToolCallContext,
+    ToolCallError,
     TransformerEngineSettings,
 )
 from avalan.event.manager import EventManager
 from avalan.interaction import (
+    ConfirmationQuestion,
     ContinuationId,
     DurableInteractionSuspension,
     InputRequestId,
     InputRequiredResult,
     InteractionActor,
+    InteractionPolicy,
     PrincipalScope,
+    QuestionId,
     RequestState,
+    TaskInputCapabilityState,
     UserId,
 )
 from avalan.interaction.a2a import A2AInputRequestMetadata
@@ -114,7 +121,13 @@ def _task_input_call() -> TaskInputCapabilityCall:
     call.arguments = {}
     call.mode = "required"
     call.reason = "Need a decision."
-    call.questions = ("Continue?",)
+    call.questions = (
+        ConfirmationQuestion(
+            question_id=QuestionId("continue"),
+            prompt="Continue?",
+            required=True,
+        ),
+    )
     return cast(TaskInputCapabilityCall, call)
 
 
@@ -369,13 +382,87 @@ class OrchestratorResponseAsyncContractCoverageTest(IsolatedAsyncioTestCase):
         ):
             await response._stage_durable_a2a_input(call, remote)
         staged.assert_awaited_once()
+        assert staged.await_args is not None
         checkpoint = staged.await_args.args[1]
         self.assertIsInstance(checkpoint, A2AToolContinuationCheckpoint)
         self.assertTrue(staged.await_args.kwargs["tool_input"])
 
+    async def test_inactive_a2a_input_continues_with_unavailable_result(
+        self,
+    ) -> None:
+        call = ToolCall(
+            id="a2a-call",
+            name="a2a.call",
+            arguments={
+                "uri": "https://peer.example/a2a",
+                "name": "remote.skill",
+                "arguments": {},
+            },
+        )
+        for state in (
+            TaskInputCapabilityState.DORMANT,
+            TaskInputCapabilityState.ROLLBACK,
+        ):
+            response = _response()
+            runtime = DurableInteractionRuntime(
+                actor=InteractionActor(
+                    principal=PrincipalScope(user_id=UserId("coverage-user"))
+                ),
+                stager=AsyncMock(),
+                policy=InteractionPolicy(capability_state=state),
+            )
+            begin = AsyncMock()
+            response._execution = cast(
+                AgentExecution,
+                SimpleNamespace(
+                    interaction_runtime=runtime,
+                    begin_interaction=begin,
+                ),
+            )
+            stage = AsyncMock()
+            with (
+                patch.object(
+                    response,
+                    "_execute_tool_call",
+                    AsyncMock(
+                        side_effect=A2AInputRequiredError(_a2a_remote())
+                    ),
+                ),
+                patch.object(
+                    response,
+                    "_stage_durable_interaction",
+                    stage,
+                ),
+                patch.object(
+                    response,
+                    "_new_tool_context",
+                    return_value=MagicMock(),
+                ),
+            ):
+                outcome = await response._execute_tool_call_with_lifecycle(
+                    call,
+                    confirm=False,
+                    abort_on_reject=False,
+                    emit_ready=False,
+                    planned_index=0,
+                    allow_durable_input=True,
+                )
+
+            self.assertIsInstance(outcome.result, ToolCallError)
+            result = cast(ToolCallError, outcome.result)
+            self.assertEqual(
+                result.error,
+                {
+                    "type": "A2AInputUnavailable",
+                    "resolution": "unavailable",
+                },
+            )
+            stage.assert_not_awaited()
+            begin.assert_not_awaited()
+
     async def test_durable_task_input_must_suspend_execution(self) -> None:
         response = _response()
-        response._tool_context = object()
+        response._tool_context = cast(ToolCallContext, object())
         response._task_input_call = _task_input_call()
         response._execution = cast(
             AgentExecution,
@@ -393,11 +480,37 @@ class OrchestratorResponseAsyncContractCoverageTest(IsolatedAsyncioTestCase):
             patch.object(
                 response,
                 "_start_task_input",
-                AsyncMock(),
+                AsyncMock(return_value=None),
             ) as start,
             self.assertRaises(AssertionError),
         ):
             await response._react(response._response)
+        start.assert_awaited_once()
+
+    async def test_durable_unavailable_input_replaces_response(self) -> None:
+        """Continue a durable run with an immediate policy response."""
+        response = _response()
+        response._tool_context = cast(ToolCallContext, object())
+        response._task_input_call = _task_input_call()
+        response._execution = cast(
+            AgentExecution,
+            SimpleNamespace(
+                interaction_runtime=object.__new__(DurableInteractionRuntime)
+            ),
+        )
+        replacement = _text_response()
+        parse = AsyncMock(side_effect=(("preface", []), ("unavailable", [])))
+        start = AsyncMock(return_value=replacement)
+
+        with (
+            patch.object(response, "_response_text_and_calls", parse),
+            patch.object(response, "_start_task_input", start),
+        ):
+            result = await response._react(response._response)
+
+        self.assertEqual(result, "prefaceunavailable")
+        self.assertIs(response._response, replacement)
+        self.assertEqual(parse.await_count, 2)
         start.assert_awaited_once()
 
     async def test_durable_staging_preserves_cleanup_failure(self) -> None:
@@ -412,7 +525,7 @@ class OrchestratorResponseAsyncContractCoverageTest(IsolatedAsyncioTestCase):
             actor=InteractionActor(
                 principal=PrincipalScope(user_id=UserId("coverage-user"))
             ),
-            stager=fail_staging,
+            stager=cast(DurableInteractionStager, fail_staging),
         )
         execution = SimpleNamespace(
             interaction_runtime=runtime,
@@ -427,7 +540,11 @@ class OrchestratorResponseAsyncContractCoverageTest(IsolatedAsyncioTestCase):
             patch.object(
                 orchestrator_response,
                 "InteractionBrokerRequest",
-                return_value=object(),
+                return_value=SimpleNamespace(
+                    questions=_task_input_call().questions,
+                    reason="Need a decision.",
+                    context_label=None,
+                ),
             ),
             patch.object(
                 response,

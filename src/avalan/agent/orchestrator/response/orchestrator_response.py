@@ -39,18 +39,30 @@ from ....interaction.entities import (
     ContinuationId,
     InputModelResult,
     InputRequest,
+    InputRequestId,
     InputRequiredResult,
     RequestState,
     ResumeInputContinuation,
     TerminateInputContinuation,
+    UnavailableResolution,
+    create_input_request,
 )
+from ....interaction.error import InputErrorCode
 from ....interaction.handler import (
     InputHandlerContext,
     _InputHandlerOutcome,
 )
-from ....interaction.state import project_resolution_to_model
+from ....interaction.policy import InteractionTime
+from ....interaction.security import enforce_task_input_questions_policy
+from ....interaction.state import (
+    InputTransitionApplied,
+    mark_request_pending,
+    project_resolution_to_model,
+    resolve_request,
+)
 from ....interaction.store import (
     CreateInteractionApplied,
+    CreateInteractionRejected,
     InteractionExecutionScope,
     TerminalizeInteractionScopeCommand,
 )
@@ -1794,7 +1806,12 @@ class OrchestratorResponse(
                     return None
                 call = self._task_input_call
                 self._task_input_call = None
-                await self._start_task_input(call)
+                response = await self._start_task_input(call)
+                if response is not None:
+                    self._response = response
+                    self._response_iterator = aiter(response)
+                    self._response_drained = False
+                    self._begin_tool_call_lifecycle_response()
                 return None
             if not calls:
                 return None
@@ -1965,7 +1982,12 @@ class OrchestratorResponse(
                     StreamItemKind.MODEL_CONTINUATION_COMPLETED
                 )
                 self._task_input_call = None
-                await self._start_task_input(task_input)
+                response = await self._start_task_input(task_input)
+                if response is not None:
+                    self._response = response
+                    self._response_iterator = aiter(response)
+                    self._response_drained = False
+                    self._begin_tool_call_lifecycle_response()
         except StopAsyncIteration:
             self._response_drained = True
             continuation_item = self._finish_active_model_continuation(
@@ -2654,11 +2676,16 @@ class OrchestratorResponse(
                     execution.interaction_runtime,
                     DurableInteractionRuntime,
                 ):
-                    await self._start_task_input(call)
-                    raise AssertionError(
-                        "durable task input must suspend the execution"
+                    replacement = await self._start_task_input(call)
+                    if replacement is None:
+                        raise AssertionError(
+                            "durable task input must suspend the execution"
+                        )
+                    current_response = replacement
+                else:
+                    current_response = await self._run_attached_task_input(
+                        call
                     )
-                current_response = await self._run_attached_task_input(call)
                 self._response = current_response
                 (
                     new_text,
@@ -2713,7 +2740,7 @@ class OrchestratorResponse(
     async def _start_task_input(
         self,
         call: TaskInputCapabilityCall,
-    ) -> None:
+    ) -> TextGenerationResponse | None:
         """Start attached handling or stage a durable suspension."""
         execution = self._execution
         if execution is None or execution.interaction_runtime is None:
@@ -2721,6 +2748,12 @@ class OrchestratorResponse(
                 "task input requires an explicit interaction runtime"
             )
         assert self._pending_interaction_task is None
+        runtime = execution.interaction_runtime
+        enforce_task_input_questions_policy(
+            call.questions,
+            "orchestrator.task_input.questions",
+            surrounding_text=(call.reason, runtime.context_label or ""),
+        )
         fingerprint = sha256(
             repr((call.mode, call.reason, call.questions)).encode()
         ).hexdigest()
@@ -2745,7 +2778,11 @@ class OrchestratorResponse(
             self._pending_interaction_call = call
             self._pending_interaction_assistant_text = assistant_text
             self._pending_interaction_published = False
-            runtime = execution.interaction_runtime
+            if not runtime.policy.accept_new:
+                return await self._resume_unavailable_task_input(
+                    call,
+                    assistant_text=assistant_text,
+                )
             if isinstance(runtime, DurableInteractionRuntime):
                 await self._stage_durable_interaction(
                     InteractionBrokerRequest(
@@ -2782,6 +2819,7 @@ class OrchestratorResponse(
                 broker.request(broker_request),
                 name=f"agent-input-{call.call_id}",
             )
+            return None
         except ExecutionInputRequiredError:
             raise
         except Exception:
@@ -2791,6 +2829,77 @@ class OrchestratorResponse(
             if execution.status is AgentExecutionStatus.PREPARING_INPUT:
                 await execution.abandon_interaction()
             raise
+
+    async def _resume_unavailable_task_input(
+        self,
+        call: TaskInputCapabilityCall,
+        *,
+        assistant_text: str,
+        created: InputRequest | None = None,
+    ) -> TextGenerationResponse:
+        """Return capability loss to the originating model call."""
+        execution = self._execution
+        assert execution is not None
+        initial = created
+        if initial is None:
+            clock = execution.interaction_clock
+            if clock is not None:
+                observed_at = await clock.read()
+            else:
+                broker = execution.interaction_broker
+                if broker is None:
+                    raise RuntimeError(
+                        "capability loss requires a trusted interaction clock"
+                    )
+                observed_at = await broker.read_time()
+            if type(observed_at) is not InteractionTime:
+                raise RuntimeError(
+                    "trusted interaction clock returned invalid time"
+                )
+            initial = create_input_request(
+                request_id=InputRequestId(f"unavailable-{uuid4()}"),
+                continuation_id=ContinuationId(f"unavailable-{uuid4()}"),
+                origin=execution.origin,
+                mode=call.mode,
+                reason=call.reason,
+                questions=call.questions,
+                created_at=observed_at.wall_time,
+            )
+        pending = mark_request_pending(
+            initial,
+            expected_state_revision=initial.state_revision,
+        )
+        assert isinstance(pending, InputTransitionApplied)
+        await self._publish_interaction_wait(pending.request)
+        terminal = resolve_request(
+            pending.request,
+            UnavailableResolution(
+                request_id=initial.request_id,
+                provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                resolved_at=initial.created_at,
+            ),
+            expected_state_revision=pending.request.state_revision,
+        )
+        assert isinstance(terminal, InputTransitionApplied)
+        request = terminal.request
+        self._active_interaction_request = request
+        await self._append_interaction_terminal(request)
+        outcome = project_resolution_to_model(
+            request,
+            containing_run_exists=True,
+        )
+        assert isinstance(outcome, ResumeInputContinuation)
+        try:
+            return await self._resume_after_task_input(
+                call,
+                request,
+                outcome.result,
+                assistant_text=assistant_text,
+            )
+        finally:
+            self._pending_interaction_call = None
+            self._pending_interaction_assistant_text = ""
+            self._pending_interaction_published = False
 
     async def _stage_durable_interaction(
         self,
@@ -2803,6 +2912,14 @@ class OrchestratorResponse(
         """Stage and expose one durable interaction suspension."""
         runtime = execution.interaction_runtime
         assert isinstance(runtime, DurableInteractionRuntime)
+        enforce_task_input_questions_policy(
+            request_spec.questions,
+            "orchestrator.interaction.questions",
+            surrounding_text=(
+                request_spec.reason,
+                request_spec.context_label or "",
+            ),
+        )
         try:
             staging = self._durable_staging_context(call, execution)
             durable = await runtime.stager(
@@ -2986,7 +3103,9 @@ class OrchestratorResponse(
             AttachedInteractionRuntime,
         )
         try:
-            await self._start_task_input(call)
+            response = await self._start_task_input(call)
+            if response is not None:
+                return response
             task = self._pending_interaction_task
             assert task is not None
             broker_wait: Awaitable[InteractionRequestResult] = (
@@ -3103,6 +3222,18 @@ class OrchestratorResponse(
         self._pending_interaction_call = None
         self._pending_interaction_assistant_text = ""
         assert task is not None and call is not None
+        if isinstance(
+            broker_result.create_result,
+            CreateInteractionRejected,
+        ) and (
+            broker_result.create_result.error.code
+            is InputErrorCode.UNAVAILABLE
+        ):
+            return await self._resume_unavailable_task_input(
+                call,
+                assistant_text=assistant_text,
+                created=broker_result.create_result.command.request,
+            )
         if not isinstance(
             broker_result.create_result,
             CreateInteractionApplied,
@@ -3665,7 +3796,7 @@ class OrchestratorResponse(
         except ExecutionInputRequiredError:
             raise
         except A2AInputRequiredError as required:
-            await self._stage_durable_a2a_input(
+            result = await self._stage_durable_a2a_input(
                 call,
                 required.continuation,
             )
@@ -5082,7 +5213,7 @@ class OrchestratorResponse(
         self,
         call: ToolCall,
         remote: A2ARemoteInputContinuation,
-    ) -> NoReturn:
+    ) -> ToolCallError:
         """Stage one A2A tool checkpoint through the durable coordinator."""
         execution = self._execution
         if execution is None:
@@ -5090,6 +5221,8 @@ class OrchestratorResponse(
         runtime = execution.interaction_runtime
         if not isinstance(runtime, DurableInteractionRuntime):
             raise RuntimeError("durable A2A input route is unavailable")
+        if not runtime.policy.accept_new:
+            return self._a2a_input_unavailable_outcome(call)
         provider_call = self._provider_facing_tool_call(call)
         provider_name = provider_call.provider_name or provider_call.name
         arguments = normalize_tool_arguments(provider_call.arguments or {})
@@ -5120,6 +5253,22 @@ class OrchestratorResponse(
             checkpoint,
             execution,
             tool_input=True,
+        )
+
+    @staticmethod
+    def _a2a_input_unavailable_outcome(
+        call: ToolCall,
+        resolution: str = "unavailable",
+    ) -> ToolCallError:
+        """Return one correlated unavailable result for an A2A tool call."""
+        message = f"Downstream A2A input was {resolution.replace('_', ' ')}."
+        return replace(
+            OrchestratorResponse._exception_tool_call_error(
+                call,
+                RuntimeError(message),
+            ),
+            id=call.id or uuid4(),
+            error={"type": "A2AInputUnavailable", "resolution": resolution},
         )
 
     def _new_tool_context(

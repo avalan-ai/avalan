@@ -30,7 +30,6 @@ from ..interaction.continuation import (
     derive_provider_idempotency_key,
 )
 from ..interaction.entities import (
-    RESERVED_INPUT_CAPABILITY_NAME,
     ContinuationId,
     InputModelResult,
     InputRequest,
@@ -1612,7 +1611,7 @@ def _validated_catalog(
     catalog = runtime.capabilities
     if (
         catalog.revision_binding != continuation.revision_binding
-        or catalog.task_input_advertisement
+        or catalog.task_input_resolution
         is not TaskInputCapabilityAdvertisement.DURABLE
     ):
         _unavailable(
@@ -1731,8 +1730,7 @@ def _task_input_call(
     catalog: ModelCapabilityCatalog,
 ) -> TaskInputCapabilityCall:
     provider_family = str(continuation.revision_binding.provider_family)
-    provider_name = catalog.provider_name(
-        RESERVED_INPUT_CAPABILITY_NAME,
+    provider_name = catalog.provider_name_for_existing_task_input(
         provider_family=provider_family,
     )
     arguments: dict[str, object] = {
@@ -1742,7 +1740,7 @@ def _task_input_call(
             encode_input_question(question) for question in request.questions
         ],
     }
-    call = catalog.decode_call(
+    call = catalog.decode_existing_task_input(
         ProviderCapabilityCall(
             call_id=continuation.provider_call_correlation_id,
             provider_name=provider_name,

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "feature": "structured_task_input",
-  "current_phase": 11,
+  "current_phase": 12,
   "categories": [
     "unit",
     "integration",
@@ -15,13 +15,13 @@
       "phase": 1,
       "old_node_id": "tests/input_contract_test.py::test_capability_remains_absent",
       "replacement_node_ids": [
-        "tests/input_contract_test.py::test_capability_remains_dormant"
+        "tests/input_contract_test.py::test_capability_activation_is_gated"
       ],
       "requirement_ids": [
         "INPUT-GATE-012"
       ],
       "reviewed_by": "/root",
-      "evidence": "Canonical types exist while all production capability registries remain unadvertised."
+      "evidence": "Canonical types exist while production activation remains capability-gated."
     },
     {
       "phase": 5,
@@ -794,14 +794,14 @@
       "node_id": "tests/input_contract_test.py::test_baseline_evidence_is_complete"
     },
     {
-      "id": "gate-012-test_capability_remains_dormant",
+      "id": "gate-012-test_capability_activation_is_gated",
       "category": "security",
       "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "INPUT-GATE-012"
       ],
-      "node_id": "tests/input_contract_test.py::test_capability_remains_dormant"
+      "node_id": "tests/input_contract_test.py::test_capability_activation_is_gated"
     },
     {
       "id": "boundary-codec-snapshot-round-trip",
@@ -5572,7 +5572,397 @@
       "node_id": "tests/task/queues/pgsql_protocol_test.py::PgsqlTaskQueueTest::test_abandon_expired_routes_durable_before_generic_work"
     },
     {
-      "id": "failure-input-f-01-task",
+      "id": "failure-observation-001",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-observation-002",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-observation-003",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-observation-004",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-observation-005",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-observation-006",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-observation-007",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-observation-008",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-observation-009",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-observation-010",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-observation-011",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-observation-012",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-observation-013",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
+    },
+    {
+      "id": "failure-observation-014",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_cli_agent_failure"
+    },
+    {
+      "id": "failure-observation-015",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-observation-016",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-observation-017",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-observation-018",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-observation-019",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-observation-020",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-observation-021",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-observation-022",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-observation-023",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-observation-024",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-observation-026",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-observation-027",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15"
+    },
+    {
+      "id": "failure-observation-028",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01"
+    },
+    {
+      "id": "failure-observation-029",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
+    },
+    {
+      "id": "failure-observation-030",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05"
+    },
+    {
+      "id": "failure-observation-031",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06"
+    },
+    {
+      "id": "failure-observation-032",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07"
+    },
+    {
+      "id": "failure-observation-033",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08"
+    },
+    {
+      "id": "failure-observation-034",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09"
+    },
+    {
+      "id": "failure-observation-035",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10"
+    },
+    {
+      "id": "failure-observation-036",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11"
+    },
+    {
+      "id": "failure-observation-037",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-observation-038",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13"
+    },
+    {
+      "id": "failure-observation-039",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_14"
+    },
+    {
+      "id": "failure-observation-040",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_server_failure"
+    },
+    {
+      "id": "failure-observation-041",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5582,7 +5972,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_01"
     },
     {
-      "id": "failure-input-f-04-task",
+      "id": "failure-observation-042",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5592,7 +5982,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_04"
     },
     {
-      "id": "failure-input-f-05-task",
+      "id": "failure-observation-043",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5602,7 +5992,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_05"
     },
     {
-      "id": "failure-input-f-06-task",
+      "id": "failure-observation-044",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5612,7 +6002,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_06"
     },
     {
-      "id": "failure-input-f-07-task",
+      "id": "failure-observation-045",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5622,7 +6012,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_07"
     },
     {
-      "id": "failure-input-f-08-task",
+      "id": "failure-observation-046",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5632,7 +6022,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_08"
     },
     {
-      "id": "failure-input-f-09-task",
+      "id": "failure-observation-047",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5642,7 +6032,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_09"
     },
     {
-      "id": "failure-input-f-10-task",
+      "id": "failure-observation-048",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5652,7 +6042,7 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_10"
     },
     {
-      "id": "failure-input-f-11-task",
+      "id": "failure-observation-049",
       "category": "public_e2e",
       "lifecycle": "active",
       "active_from_phase": 5,
@@ -5662,9 +6052,29 @@
       "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_11"
     },
     {
+      "id": "failure-observation-050",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
+    },
+    {
+      "id": "failure-observation-051",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "INPUT-N-106"
+      ],
+      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
+    },
+    {
       "id": "behavior-016",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-016"
@@ -5674,7 +6084,7 @@
     {
       "id": "behavior-017",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-017"
@@ -5684,7 +6094,7 @@
     {
       "id": "behavior-018",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-018"
@@ -6119,7 +6529,7 @@
     {
       "id": "behavior-097",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-097"
@@ -6129,7 +6539,7 @@
     {
       "id": "behavior-098",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-098"
@@ -6139,7 +6549,7 @@
     {
       "id": "behavior-099",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-099"
@@ -6149,7 +6559,7 @@
     {
       "id": "behavior-100",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-100"
@@ -6159,7 +6569,7 @@
     {
       "id": "behavior-101",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-019",
@@ -6170,7 +6580,7 @@
     {
       "id": "behavior-102",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-102"
@@ -6180,7 +6590,7 @@
     {
       "id": "behavior-103",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-103"
@@ -6190,7 +6600,7 @@
     {
       "id": "behavior-104",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-104"
@@ -6200,7 +6610,7 @@
     {
       "id": "behavior-105",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-105"
@@ -6210,7 +6620,7 @@
     {
       "id": "behavior-106",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-106"
@@ -6220,7 +6630,7 @@
     {
       "id": "behavior-107",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-N-107"
@@ -6290,7 +6700,7 @@
     {
       "id": "scenario-26-7",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-26.7"
@@ -6330,902 +6740,12 @@
     {
       "id": "scenario-26-12",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "INPUT-26.12"
       ],
       "node_id": "tests/input/public_interaction_e2e_test.py::test_privacy"
-    },
-    {
-      "id": "failure-input-f-01-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-01-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_01"
-    },
-    {
-      "id": "failure-input-f-02-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_02"
-    },
-    {
-      "id": "failure-input-f-03-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_03"
-    },
-    {
-      "id": "failure-input-f-04-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-04-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_04"
-    },
-    {
-      "id": "failure-input-f-05-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-05-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_05"
-    },
-    {
-      "id": "failure-input-f-06-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-06-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_06"
-    },
-    {
-      "id": "failure-input-f-07-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-07-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_07"
-    },
-    {
-      "id": "failure-input-f-08-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-08-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_08"
-    },
-    {
-      "id": "failure-input-f-09-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-09-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_09"
-    },
-    {
-      "id": "failure-input-f-10-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-10-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_10"
-    },
-    {
-      "id": "failure-input-f-11-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-11-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_11"
-    },
-    {
-      "id": "failure-input-f-12-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-task",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-12-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_12"
-    },
-    {
-      "id": "failure-input-f-13-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-sdk",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-task",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 6,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_task_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-flow",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_flow_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-13-nested_agent",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_nested_agent_e2e_test.py::test_input_f_13"
-    },
-    {
-      "id": "failure-input-f-14-cli",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_cli_e2e_test.py::test_input_f_14"
-    },
-    {
-      "id": "failure-input-f-14-sdk",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_sdk_e2e_test.py::test_input_f_14"
-    },
-    {
-      "id": "failure-input-f-14-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_14"
-    },
-    {
-      "id": "failure-input-f-14-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_14"
-    },
-    {
-      "id": "failure-input-f-14-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14"
-    },
-    {
-      "id": "failure-input-f-15-server",
-      "category": "public_e2e",
-      "lifecycle": "planned",
-      "active_from_phase": 12,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_server_e2e_test.py::test_input_f_15"
-    },
-    {
-      "id": "failure-input-f-15-mcp",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 10,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_mcp_e2e_test.py::test_input_f_15"
-    },
-    {
-      "id": "failure-input-f-15-a2a",
-      "category": "public_e2e",
-      "lifecycle": "active",
-      "active_from_phase": 11,
-      "requirement_ids": [
-        "INPUT-N-106"
-      ],
-      "node_id": "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15"
     },
     {
       "id": "durable-acceptance-151",

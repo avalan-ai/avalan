@@ -15,7 +15,11 @@ from ..agent.execution import (
 from ..agent.loader import OrchestratorLoader
 from ..interaction.continuation import ContinuationRuntimeResolver
 from ..interaction.entities import PrincipalScope, RunId, TaskId
-from ..interaction.policy import InteractionActor
+from ..interaction.policy import (
+    InteractionActor,
+    InteractionPolicy,
+    RuntimeInteractionClock,
+)
 from ..tool.context import ToolSettingsContext
 from .context import TaskTargetContext
 from .resume import (
@@ -51,6 +55,7 @@ class DurableAgentTaskHost:
         disable_memory: bool = False,
         uri: str | None = None,
         clock: Callable[[], datetime] | None = None,
+        policy: InteractionPolicy | None = None,
     ) -> None:
         if not callable(
             getattr(
@@ -68,10 +73,14 @@ class DurableAgentTaskHost:
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
         clock_source = clock if clock is not None else _utc_now
+        resolved_policy = InteractionPolicy() if policy is None else policy
+        if not isinstance(resolved_policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
 
         def resolved_clock() -> datetime:
             return clock_source()
 
+        interaction_clock = RuntimeInteractionClock(resolved_clock)
         stager = PortableAgentContinuationStager(clock=resolved_clock)
         runtime_loader = TrustedAgentContinuationRuntimeLoader(
             orchestrator_loader,
@@ -81,6 +90,8 @@ class DurableAgentTaskHost:
             tool_settings=tool_settings,
             disable_memory=disable_memory,
             uri=uri,
+            clock=interaction_clock,
+            policy=resolved_policy,
         )
         resolver = ContinuationRuntimeResolver(
             runtime_loader,
@@ -94,6 +105,8 @@ class DurableAgentTaskHost:
         self._stager = stager
         self._runtime_loader = runtime_loader
         self._actor_resolver = resolved_actor
+        self._clock = interaction_clock
+        self._policy = resolved_policy
         self._resume_coordinator = TaskDurableResumeCoordinator(
             cast(TaskContinuationRecordStore, continuation_store),
             resumer,
@@ -125,6 +138,8 @@ class DurableAgentTaskHost:
         return DurableInteractionRuntime(
             actor=actor,
             stager=self._stager,
+            clock=self._clock,
+            policy=self._policy,
             id_factory=UuidExecutionIdFactory(),
             run_id=run_id,
             task_id=TaskId(context.execution.run_id),
