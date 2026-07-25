@@ -128,12 +128,16 @@ jobs:
           make typecheck-input-contract INPUT_PHASE=5
 
       - name: Run exact tests with PostgreSQL
-        if: matrix.target.os == 'ubuntu-latest'
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: make test-pgsql-exact no-install INPUT_PHASE=5
 
-      - name: Run exact tests
+      - name: Run tests with PostgreSQL
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.11'
+        run: make test-pgsql no-install coverage-report
+
+      - name: Run tests
         if: matrix.target.os != 'ubuntu-latest'
-        run: make test-coverage-exact no-install
+        run: make test no-install coverage-report
 
       - name: Verify clean generated metadata
         run: git diff --check
