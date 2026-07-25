@@ -350,6 +350,18 @@ class _A2ARequestHandler:
             yield event
 
 
+def _a2a_input_advertised(app: Any) -> bool:
+    service = getattr(
+        getattr(app, "state", None),
+        "interaction_service",
+        None,
+    )
+    return (
+        isinstance(service, ServerInteractionService)
+        and service.configuration.policy.advertise
+    )
+
+
 def install_a2a_routes(
     app: FastAPI,
     *,
@@ -390,6 +402,7 @@ def install_a2a_routes(
         name=name,
         description=description,
         input_extension_required=input_extension_required,
+        advertise_input=True,
     )
     task_store = task_store_module.InMemoryTaskStore()
     executor = AvalanA2AAgentExecutor(app, task_store=task_store)
@@ -414,11 +427,8 @@ def install_a2a_routes(
         ),
         route_class=routing_module.Route,
         jsonrpc=True,
-        required_extensions=(
-            frozenset({A2A_INPUT_EXTENSION_URI})
-            if input_extension_required
-            else frozenset()
-        ),
+        interaction_app=app,
+        input_extension_required=input_extension_required,
     )
     rest_routes = _validated_a2a_routes(
         rest_routes_module.create_rest_routes(
@@ -428,15 +438,13 @@ def install_a2a_routes(
             enable_v0_3_compat=False,
         ),
         route_class=routing_module.Route,
-        required_extensions=(
-            frozenset({A2A_INPUT_EXTENSION_URI})
-            if input_extension_required
-            else frozenset()
-        ),
+        interaction_app=app,
+        input_extension_required=input_extension_required,
     )
     route_module.add_a2a_routes_to_fastapi(
         app,
         agent_card_routes=_agent_card_routes(
+            interaction_app=app,
             agent_card=card,
             interface_url=prefix,
             agent_card_to_dict=response_helpers_module.agent_card_to_dict,
@@ -450,6 +458,7 @@ def install_a2a_routes(
 
 def _agent_card_routes(
     *,
+    interaction_app: Any,
     agent_card: Any,
     interface_url: str,
     agent_card_to_dict: Any,
@@ -466,6 +475,19 @@ def _agent_card_routes(
         if isinstance(capabilities, dict):
             extensions = capabilities.get("extensions")
             if isinstance(extensions, list):
+                if not _a2a_input_advertised(interaction_app):
+                    extensions = [
+                        extension
+                        for extension in extensions
+                        if not (
+                            isinstance(extension, dict)
+                            and extension.get("uri") == A2A_INPUT_EXTENSION_URI
+                        )
+                    ]
+                    if extensions:
+                        capabilities["extensions"] = extensions
+                    else:
+                        capabilities.pop("extensions", None)
                 for extension in extensions:
                     if isinstance(extension, dict):
                         extension.setdefault("required", False)
@@ -512,6 +534,9 @@ def _validated_a2a_routes(
     route_class: Any,
     jsonrpc: bool = False,
     required_extensions: frozenset[str] = frozenset(),
+    supported_extensions: frozenset[str] = frozenset(),
+    interaction_app: Any = None,
+    input_extension_required: bool = False,
 ) -> list[Any]:
     return [
         _validated_a2a_route(
@@ -519,6 +544,9 @@ def _validated_a2a_routes(
             route_class=route_class,
             jsonrpc=jsonrpc,
             required_extensions=required_extensions,
+            supported_extensions=supported_extensions,
+            interaction_app=interaction_app,
+            input_extension_required=input_extension_required,
         )
         for route in routes
     ]
@@ -530,6 +558,9 @@ def _validated_a2a_route(
     route_class: Any,
     jsonrpc: bool = False,
     required_extensions: frozenset[str] = frozenset(),
+    supported_extensions: frozenset[str] = frozenset(),
+    interaction_app: Any = None,
+    input_extension_required: bool = False,
 ) -> Any:
     nested_routes = getattr(route, "routes", None)
     if _is_sequence(nested_routes):
@@ -538,6 +569,9 @@ def _validated_a2a_route(
             route_class=route_class,
             jsonrpc=jsonrpc,
             required_extensions=required_extensions,
+            supported_extensions=supported_extensions,
+            interaction_app=interaction_app,
+            input_extension_required=input_extension_required,
         )
         if isinstance(nested_routes, list):
             nested_routes[:] = wrapped_routes
@@ -556,6 +590,9 @@ def _validated_a2a_route(
             endpoint,
             jsonrpc=jsonrpc,
             required_extensions=required_extensions,
+            supported_extensions=supported_extensions,
+            interaction_app=interaction_app,
+            input_extension_required=input_extension_required,
         ),
         methods=list(methods),
         name=getattr(route, "name", None),
@@ -568,6 +605,9 @@ def _validated_a2a_endpoint(
     *,
     jsonrpc: bool = False,
     required_extensions: frozenset[str] = frozenset(),
+    supported_extensions: frozenset[str] = frozenset(),
+    interaction_app: Any = None,
+    input_extension_required: bool = False,
 ) -> Any:
     async def _endpoint(request: Any) -> Any:
         try:
@@ -581,7 +621,16 @@ def _validated_a2a_endpoint(
         if jsonrpc:
             _inject_a2a_jsonrpc_tenant(request, payload)
         requested = _requested_a2a_extensions(request)
-        missing = required_extensions - requested
+        input_extensions = (
+            frozenset({A2A_INPUT_EXTENSION_URI})
+            if _a2a_input_advertised(interaction_app)
+            else frozenset()
+        )
+        current_supported = supported_extensions | input_extensions
+        current_required = required_extensions | (
+            input_extensions if input_extension_required else frozenset()
+        )
+        missing = current_required - requested
         if missing:
             return _required_extension_response(
                 payload,
@@ -593,9 +642,12 @@ def _validated_a2a_endpoint(
             response.status_code = response_status
             if response_status == 401:
                 response.headers["WWW-Authenticate"] = "Bearer"
-        activated = requested & {A2A_INPUT_EXTENSION_URI}
-        if activated:
-            response.headers["A2A-Extensions"] = ",".join(sorted(activated))
+        activated = requested & current_supported
+        headers = getattr(response, "headers", None)
+        if activated and headers is not None:
+            headers["A2A-Extensions"] = ",".join(sorted(activated))
+        elif headers is not None and "A2A-Extensions" in headers:
+            del headers["A2A-Extensions"]
         return response
 
     return _endpoint
@@ -996,6 +1048,7 @@ def _build_agent_card(
     name: str,
     description: str | None,
     input_extension_required: bool = False,
+    advertise_input: bool = False,
 ) -> Any:
     skill_description = description or "Execute the Avalan agent."
     return a2a_pb2.AgentCard(
@@ -1011,14 +1064,18 @@ def _build_agent_card(
         ],
         capabilities=a2a_pb2.AgentCapabilities(
             streaming=True,
-            extensions=[
-                a2a_pb2.AgentExtension(
-                    uri=A2A_INPUT_EXTENSION_URI,
-                    description=A2A_INPUT_EXTENSION_DESCRIPTION,
-                    required=input_extension_required,
-                    params=A2A_INPUT_EXTENSION_PARAMS,
-                )
-            ],
+            extensions=(
+                [
+                    a2a_pb2.AgentExtension(
+                        uri=A2A_INPUT_EXTENSION_URI,
+                        description=A2A_INPUT_EXTENSION_DESCRIPTION,
+                        required=input_extension_required,
+                        params=A2A_INPUT_EXTENSION_PARAMS,
+                    )
+                ]
+                if advertise_input
+                else []
+            ),
         ),
         default_input_modes=A2A_FILE_MODES,
         default_output_modes=A2A_OUTPUT_MODES,
@@ -2261,6 +2318,7 @@ class AvalanA2AAgentExecutor:
                 broker=service.configuration.broker,
                 actor=actor,
                 handler=handler,
+                policy=service.configuration.policy,
                 task_id=TaskId(task_id),
             ),
             handler,
@@ -2274,6 +2332,8 @@ class AvalanA2AAgentExecutor:
             return None
         service = getattr(self._app.state, "interaction_service", None)
         if not isinstance(service, ServerInteractionService):
+            raise _a2a_unavailable()
+        if not service.configuration.policy.resolve_existing:
             raise _a2a_unavailable()
         actor = await self._actor(context)
         if actor is None:

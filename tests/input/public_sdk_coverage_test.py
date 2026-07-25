@@ -553,7 +553,6 @@ def test_public_controller_aliases_and_bridge_validation() -> None:
                 continuation_id=continuation_id,
             )
         ]
-
         decline = sdk_module.InputDeclineSubmission()
         accepted = sdk_module.InputResolutionAccepted(
             interaction_state="declined",
@@ -673,6 +672,22 @@ def test_owned_runtime_and_policy_factories_validate_callbacks() -> None:
         return ()
 
     async def exercise() -> None:
+        for policy in (False, 0, ""):
+            with pytest.raises(InputValidationError) as invalid_policy:
+                await sdk_module.create_attached_input_runtime(
+                    interaction_policy=cast(Any, policy)
+                )
+            assert invalid_policy.value.path == "interaction_policy"
+            with pytest.raises(InputValidationError) as invalid_policy:
+                sdk_module.create_durable_input_integration(
+                    cast(
+                        sdk_module.DurableInputBridge,
+                        _PersistenceBridge("accepted"),
+                    ),
+                    interaction_policy=cast(Any, policy),
+                )
+            assert invalid_policy.value.path == "interaction_policy"
+
         with pytest.raises(InputValidationError) as invalid_handler:
             await sdk_module.create_attached_input_runtime(
                 cast(sdk_module.AttachedInputHandler, sync_handler)
@@ -1018,6 +1033,12 @@ def test_run_agent_maps_untyped_values_failures_and_input_handoff() -> None:
         assert mapping.value == {"value": 1}
 
         request = sdk_support._created_request()
+        sensitive_request = replace(
+            request,
+            questions=(
+                replace(request.questions[0], prompt="Enter your password."),
+            ),
+        )
         terminated = ExecutionTerminatedError(
             TerminateInputContinuation(
                 request_id=request.request_id,
@@ -1114,7 +1135,6 @@ def test_run_agent_maps_untyped_values_failures_and_input_handoff() -> None:
                 callable_policy_result,
                 sdk_module.AgentRunCompleted,
             )
-
             durable_with_attached = await sdk_module.run_agent(
                 cast(Any, return_string),
                 "durable-with-attached",
@@ -1152,6 +1172,24 @@ def test_run_agent_maps_untyped_values_failures_and_input_handoff() -> None:
             continuation_id=request.continuation_id,
             detached_resumption_available=False,
         )
+
+        async def require_sensitive(
+            value: object,
+            **kwargs: object,
+        ) -> object:
+            del value, kwargs
+            raise ExecutionInputRequiredError(
+                required,
+                request=sensitive_request,
+            )
+
+        sensitive_result = await sdk_module.run_agent(
+            cast(Any, require_sensitive),
+            "sensitive",
+        )
+        assert isinstance(sensitive_result, sdk_module.AgentRunFailed)
+        assert sensitive_result.code == InputErrorCode.PROHIBITED_INPUT.value
+        assert sensitive_request.questions[0].prompt == "Enter your password."
 
         async def require_without_request(
             value: object,

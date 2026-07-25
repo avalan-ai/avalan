@@ -29,10 +29,15 @@ from .entities import (
     TextQuestion,
 )
 from .error import InputErrorCode, InputValidationError
+from .security import (
+    enforce_task_input_questions_policy,
+    enforce_task_input_request_policy,
+)
 
 from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
+from json import dumps
 from typing import cast, final
 
 A2A_INPUT_EXTENSION_URI = "https://avalan.ai/extensions/task-input/v1"
@@ -65,6 +70,13 @@ def encode_a2a_input_request_metadata(
             InputErrorCode.INVALID_TYPE,
             "request",
             "value must be an input request or A2A request metadata",
+        )
+    if isinstance(request, InputRequest):
+        enforce_task_input_request_policy(request, "a2a.request")
+    else:
+        enforce_task_input_questions_policy(
+            request.questions,
+            "a2a.request.questions",
         )
     return {
         "kind": "request",
@@ -105,13 +117,18 @@ def decode_a2a_input_request_metadata(
             "metadata.questions",
             "request must contain one to three questions",
         )
-    return A2AInputRequestMetadata(
+    result = A2AInputRequestMetadata(
         request_id=InputRequestId(
             _string(payload["request_id"], "metadata.request_id")
         ),
         required=required,
         questions=questions,
     )
+    enforce_task_input_questions_policy(
+        result.questions,
+        "metadata.questions",
+    )
+    return result
 
 
 def encode_a2a_input_resolution_metadata(
@@ -223,15 +240,29 @@ def a2a_input_request_text(
     request: InputRequest | A2AInputRequestMetadata,
 ) -> str:
     """Render one readable non-authoritative A2A fallback."""
+    if isinstance(request, InputRequest):
+        enforce_task_input_request_policy(request, "a2a.request")
+    else:
+        enforce_task_input_questions_policy(
+            request.questions,
+            "a2a.request.questions",
+        )
     lines = ["Additional input is required."]
     for index, question in enumerate(request.questions, start=1):
-        lines.append(f"{index}. {question.prompt}")
+        lines.append(f"{index}. {_literal_presentation_text(question.prompt)}")
         if isinstance(
             question,
             SingleSelectionQuestion | MultipleSelectionQuestion,
         ):
-            lines.extend(f"   - {choice.label}" for choice in question.choices)
+            lines.extend(
+                f"   - {_literal_presentation_text(choice.label)}"
+                for choice in question.choices
+            )
     return "\n".join(lines)
+
+
+def _literal_presentation_text(value: str) -> str:
+    return dumps(value, ensure_ascii=True)[1:-1]
 
 
 def _a2a_question_metadata(question: InputQuestion) -> dict[str, object]:

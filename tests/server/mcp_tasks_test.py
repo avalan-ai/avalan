@@ -358,8 +358,23 @@ class MCPTaskControllerTest(IsolatedAsyncioTestCase):
         await sleep(0)
         self.assertFalse(result.done())
         self.clock.advance(1)
+        with self.assertRaisesRegex(
+            TypeError, "request_id must be a non-empty string"
+        ):
+            await creation.handle.transition_input_required("")
         self.assertEqual(
-            (await creation.handle.transition_input_required())["status"],
+            (await creation.handle.transition_input_required("request"))[
+                "_meta"
+            ],
+            {
+                "https://avalan.ai/extensions/task-input/v1": {
+                    "kind": "request",
+                    "request_id": "request",
+                }
+            },
+        )
+        self.assertEqual(
+            (await controller.get("task-a", requestor=self.owner))["status"],
             "input_required",
         )
         await sleep(0)

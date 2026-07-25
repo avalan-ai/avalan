@@ -29,6 +29,7 @@ from ..interaction.entities import (
     RequirementMode,
 )
 from ..interaction.error import InputContractError
+from ..interaction.policy import InteractionPolicy, TaskInputCapabilityState
 from ..interaction.validation import (
     validate_opaque_id,
     validate_presentation_text,
@@ -38,7 +39,7 @@ from ..tool.parser import ToolCallParser
 from ..types import JsonValue
 
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from enum import Enum, StrEnum
 from importlib import import_module
 from json import dumps, loads
@@ -959,6 +960,10 @@ class ModelCapabilityCatalog:
     domain_seed: DomainCapabilitySeed
     support: ProviderCapabilitySupport
     revision_binding: ContinuationRevisionBinding | None = None
+    policy: InteractionPolicy = field(
+        default_factory=InteractionPolicy,
+        repr=False,
+    )
 
     @classmethod
     def create(
@@ -967,6 +972,7 @@ class ModelCapabilityCatalog:
         *,
         support: ProviderCapabilitySupport | None = None,
         revision_binding: ContinuationRevisionBinding | None = None,
+        policy: InteractionPolicy | None = None,
     ) -> "ModelCapabilityCatalog":
         """Create a catalog from a callable-free domain seed."""
         seed = (
@@ -1014,10 +1020,14 @@ class ModelCapabilityCatalog:
                         "duplicate capability name or alias",
                     )
                 names.add(alias)
+        resolved_policy = InteractionPolicy() if policy is None else policy
+        if not isinstance(resolved_policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
         return cls(
             domain_seed=seed,
             support=resolved_support,
             revision_binding=revision_binding,
+            policy=resolved_policy,
         )
 
     def __post_init__(self) -> None:
@@ -1026,6 +1036,7 @@ class ModelCapabilityCatalog:
         assert self.revision_binding is None or (
             type(self.revision_binding) is ContinuationRevisionBinding
         )
+        assert isinstance(self.policy, InteractionPolicy)
 
     @property
     def descriptors(self) -> tuple[ModelCapabilityDescriptor, ...]:
@@ -1053,7 +1064,25 @@ class ModelCapabilityCatalog:
         self,
     ) -> TaskInputCapabilityAdvertisement:
         """Return the reserved capability advertisement state."""
+        if not self.policy.advertise:
+            return TaskInputCapabilityAdvertisement.INCAPABLE
+        return self.task_input_support
+
+    @property
+    def task_input_support(
+        self,
+    ) -> TaskInputCapabilityAdvertisement:
+        """Return task-input support independently of advertisement."""
         return self.support.task_input_advertisement_for(self.revision_binding)
+
+    @property
+    def task_input_resolution(
+        self,
+    ) -> TaskInputCapabilityAdvertisement:
+        """Return support retained for resolving existing requests."""
+        if not self.policy.resolve_existing:
+            return TaskInputCapabilityAdvertisement.INCAPABLE
+        return self.task_input_support
 
     @property
     def tool_format(self) -> ToolFormat | None:
@@ -1237,6 +1266,52 @@ class ModelCapabilityCatalog:
             arguments=cast(dict[str, ToolValue], arguments),
             provider_name=call.provider_name,
             provider_name_encoded=(call.provider_name != canonical_name),
+        )
+
+    def provider_name_for_existing_task_input(
+        self,
+        *,
+        provider_family: Enum | str | None = None,
+    ) -> str:
+        """Return the provider name retained for an existing request."""
+        return self._resolution_catalog().provider_name(
+            RESERVED_INPUT_CAPABILITY_NAME,
+            provider_family=provider_family,
+        )
+
+    def decode_existing_task_input(
+        self,
+        call: ProviderCapabilityCall,
+        *,
+        provider_family: Enum | str | None = None,
+    ) -> TaskInputCapabilityCall:
+        """Decode one previously advertised task-input call for resolution."""
+        decoded = self._resolution_catalog().decode_call(
+            call,
+            provider_family=provider_family,
+        )
+        if not isinstance(decoded, TaskInputCapabilityCall):
+            raise ModelCapabilityValidationError(
+                "capability.unknown",
+                "provider call is not retained task input",
+            )
+        return replace(decoded, advertisement=self.task_input_resolution)
+
+    def _resolution_catalog(self) -> "ModelCapabilityCatalog":
+        if (
+            self.task_input_resolution
+            is TaskInputCapabilityAdvertisement.INCAPABLE
+        ):
+            raise ModelCapabilityValidationError(
+                "capability.unknown",
+                "task-input resolution is unavailable",
+            )
+        return replace(
+            self,
+            policy=replace(
+                self.policy,
+                capability_state=TaskInputCapabilityState.ACTIVE,
+            ),
         )
 
     def classify_batch(

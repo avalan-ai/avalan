@@ -169,6 +169,7 @@ from asyncio import (
     CancelledError,
     Future,
     Lock,
+    Task,
     create_task,
     get_running_loop,
     shield,
@@ -768,13 +769,27 @@ class _PgsqlTaskTransactionStore(Protocol):
 
 
 @dataclass(slots=True)
+class _PgsqlWaitGroup:
+    """Track one request-keyed shared wait broadcast."""
+
+    waiter_count: int
+    durable_revision: int | None
+    revision: int = 0
+    future: Future[None] | None = None
+
+
+@dataclass(slots=True)
 class _PgsqlRuntimeState:
-    """Retain only process-local callbacks and sealed admission bindings."""
+    """Retain callbacks, admission bindings, and one shared wait feed."""
 
     lock: Lock
     mutation_lock: Lock
     resumers: dict[str, InputResumer]
     admissions: dict[_InteractionAdmissionCapability, _MemoryAdmissionBinding]
+    wait_lock: Lock
+    wait_groups: dict[str | None, _PgsqlWaitGroup]
+    wait_task: Task[None] | None
+    wait_metadata: tuple[int, int] | None
 
 
 @final
@@ -1037,6 +1052,10 @@ class PgsqlInteractionStoreFactory:
             mutation_lock=Lock(),
             resumers={},
             admissions={},
+            wait_lock=Lock(),
+            wait_groups={},
+            wait_task=None,
+            wait_metadata=None,
         )
         self._opened = False
 
@@ -1473,7 +1492,7 @@ class PgsqlInteractionStore:
         self,
         command: WaitForInteractionChangeCommand,
     ) -> InteractionDisclosureProjection:
-        """Poll durably for a newer authorized interaction revision."""
+        """Wait durably for a newer authorized interaction revision."""
 
         async def read(
             store: MemoryInteractionStore,
@@ -1499,21 +1518,29 @@ class PgsqlInteractionStore:
             )
             return projection, revision
 
-        while True:
-            self._ensure_open()
-            projection, revision = await self._run_memory_read_snapshot(
-                "interaction_wait",
-                read,
-                selection=_correlation_snapshot(
-                    command.actor,
-                    command.correlation,
-                ),
-            )
-            if projection is None or revision is None:
-                raise InteractionNotFoundError()
-            if revision > command.after_store_revision:
-                return projection
-            await sleep(self._store_policy.poll_interval_seconds)
+        wait_key = str(command.correlation.request_id)
+        feed_revision = await self._subscribe_wait_feed(wait_key)
+        try:
+            while True:
+                self._ensure_open()
+                projection, revision = await self._run_memory_read_snapshot(
+                    "interaction_wait",
+                    read,
+                    selection=_correlation_snapshot(
+                        command.actor,
+                        command.correlation,
+                    ),
+                )
+                if projection is None or revision is None:
+                    raise InteractionNotFoundError()
+                if revision > command.after_store_revision:
+                    return projection
+                feed_revision = await self._wait_for_feed_change(
+                    wait_key,
+                    feed_revision,
+                )
+        finally:
+            await self._unsubscribe_wait_feed(wait_key)
 
     async def next_deadline(self) -> InteractionDeadlineSnapshot:
         """Return the persisted store's earliest deadline."""
@@ -1528,13 +1555,23 @@ class PgsqlInteractionStore:
         self,
         command: WaitForDeadlineChangeCommand,
     ) -> InteractionDeadlineSnapshot:
-        """Poll durably for a newer deadline-schedule revision."""
-        while True:
-            self._ensure_open()
-            snapshot = await self.next_deadline()
-            if snapshot.schedule_revision > command.after_schedule_revision:
-                return snapshot
-            await sleep(self._store_policy.poll_interval_seconds)
+        """Wait durably for a newer deadline-schedule revision."""
+        feed_revision = await self._subscribe_wait_feed(None)
+        try:
+            while True:
+                self._ensure_open()
+                snapshot = await self.next_deadline()
+                if (
+                    snapshot.schedule_revision
+                    > command.after_schedule_revision
+                ):
+                    return snapshot
+                feed_revision = await self._wait_for_feed_change(
+                    None,
+                    feed_revision,
+                )
+        finally:
+            await self._unsubscribe_wait_feed(None)
 
     async def terminalize_due(
         self,
@@ -2296,7 +2333,163 @@ class PgsqlInteractionStore:
 
     async def aclose(self) -> None:
         """Idempotently close only this handle."""
+        if self._closed:
+            return
         self._closed = True
+        await self._publish_wait_feed(wake_all=True)
+
+    async def _subscribe_wait_feed(self, wait_key: str | None) -> int:
+        """Join one keyed factory-shared PostgreSQL change group."""
+        self._ensure_open()
+        async with self._runtime.wait_lock:
+            start_feed = self._runtime.wait_task is None
+            group = self._runtime.wait_groups.get(wait_key)
+            if group is None:
+                if start_feed:
+                    self._runtime.wait_metadata = (
+                        await _read_wait_feed_metadata(self._database)
+                    )
+                metadata = self._runtime.wait_metadata
+                assert metadata is not None
+                durable_revision: int | None = metadata[1]
+                if wait_key is not None:
+                    durable_revision = (
+                        await _read_wait_record_revisions(
+                            self._database,
+                            (wait_key,),
+                        )
+                    )[wait_key]
+                group = _PgsqlWaitGroup(
+                    waiter_count=0,
+                    durable_revision=durable_revision,
+                )
+                self._runtime.wait_groups[wait_key] = group
+            group.waiter_count += 1
+            if start_feed:
+                self._runtime.wait_task = create_task(self._poll_wait_feed())
+        if self._closed:
+            await self._unsubscribe_wait_feed(wait_key)
+            raise InteractionStoreClosedError()
+        return group.revision
+
+    async def _unsubscribe_wait_feed(self, wait_key: str | None) -> None:
+        """Leave one keyed group and stop an unused shared change feed."""
+        task: Task[None] | None = None
+        async with self._runtime.wait_lock:
+            group = self._runtime.wait_groups[wait_key]
+            assert group.waiter_count > 0
+            group.waiter_count -= 1
+            if group.waiter_count == 0:
+                self._runtime.wait_groups.pop(wait_key)
+            if not self._runtime.wait_groups:
+                task = self._runtime.wait_task
+                self._runtime.wait_task = None
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except CancelledError:
+                pass
+
+    async def _wait_for_feed_change(
+        self,
+        wait_key: str | None,
+        after_revision: int,
+    ) -> int:
+        """Await one keyed feed revision without cancelling its broadcast."""
+        while True:
+            self._ensure_open()
+            async with self._runtime.wait_lock:
+                group = self._runtime.wait_groups[wait_key]
+                if group.revision != after_revision:
+                    return group.revision
+                future = group.future
+                if future is None or future.done():
+                    future = get_running_loop().create_future()
+                    group.future = future
+            await shield(future)
+
+    async def _poll_wait_feed(self) -> None:
+        """Poll metadata once for every factory-shared waiter set."""
+        while True:
+            await sleep(self._store_policy.poll_interval_seconds)
+            try:
+                metadata = await _read_wait_feed_metadata(self._database)
+            except (KeyboardInterrupt, SystemExit, CancelledError):
+                raise
+            except BaseException:
+                await self._publish_wait_feed(wake_all=True)
+                continue
+            async with self._runtime.wait_lock:
+                if self._runtime.wait_metadata == metadata:
+                    continue
+                wait_keys = tuple(
+                    key for key in self._runtime.wait_groups if key is not None
+                )
+            try:
+                durable_revisions = await _read_wait_record_revisions(
+                    self._database,
+                    wait_keys,
+                )
+            except (KeyboardInterrupt, SystemExit, CancelledError):
+                raise
+            except BaseException:
+                await self._publish_wait_feed(wake_all=True)
+                continue
+            published_revisions: dict[str | None, int | None] = {}
+            for wait_key, revision in durable_revisions.items():
+                published_revisions[wait_key] = revision
+            published_revisions[None] = metadata[1]
+            await self._publish_wait_feed(
+                metadata,
+                durable_revisions=published_revisions,
+            )
+
+    async def _publish_wait_feed(
+        self,
+        metadata: tuple[int, int] | None = None,
+        *,
+        durable_revisions: Mapping[str | None, int | None] | None = None,
+        wake_all: bool = False,
+    ) -> None:
+        """Publish one exact local change to matching shared wait groups."""
+        futures: list[Future[None]] = []
+        async with self._runtime.wait_lock:
+            previous_metadata = self._runtime.wait_metadata
+            if metadata is not None and (
+                previous_metadata is None
+                or metadata[0] >= previous_metadata[0]
+            ):
+                self._runtime.wait_metadata = metadata
+            revisions = (
+                dict.fromkeys(self._runtime.wait_groups)
+                if wake_all
+                else durable_revisions or {}
+            )
+            for wait_key, durable_revision in revisions.items():
+                group = self._runtime.wait_groups.get(wait_key)
+                if group is None:
+                    continue
+                if not wake_all:
+                    previous_revision = group.durable_revision
+                    if durable_revision is None:
+                        changed = previous_revision is not None
+                    else:
+                        changed = (
+                            previous_revision is None
+                            or durable_revision > previous_revision
+                        )
+                    if not changed:
+                        continue
+                    group.durable_revision = durable_revision
+                group.revision += 1
+                future = group.future
+                group.future = None
+                if future is not None:
+                    futures.append(future)
+        for future in futures:
+            if not future.done():
+                future.set_result(None)
 
     async def _terminal_memory_operation(
         self,
@@ -2550,13 +2743,18 @@ class PgsqlInteractionStore:
             ]
             | None
         ) = None
+        committed_wait_metadata: tuple[int, int] | None = None
+        committed_wait_revisions: dict[str | None, int | None] = {}
         operation_selection = selection
         admission_binding: _MemoryAdmissionBinding | None = None
         deferred_resumer: _DeferredAdmissionResumer | None = None
         temporary_binding: _MemoryAdmissionBinding | None = None
 
         async def execute(unit: PgsqlUnitOfWork) -> object:
-            nonlocal committed_admissions, committed_resumers
+            nonlocal committed_admissions
+            nonlocal committed_resumers
+            nonlocal committed_wait_metadata
+            nonlocal committed_wait_revisions
             metadata = await _lock_store_metadata(unit)
             resolved_selection = await self._resolve_snapshot_selection(
                 unit,
@@ -2640,9 +2838,13 @@ class PgsqlInteractionStore:
                 backing.admissions[admission_capability] = admission_binding
             if mutate:
                 snapshot = _snapshot_interaction_store_backing(backing.backing)
+                changed_records = _changed_records(
+                    records,
+                    snapshot.records,
+                )
                 await self._save_records(
                     unit,
-                    _changed_records(records, snapshot.records),
+                    changed_records,
                 )
                 await self._save_branches(
                     unit,
@@ -2656,6 +2858,15 @@ class PgsqlInteractionStore:
                         backing.schedule_revision,
                     ),
                 )
+                committed_wait_metadata = (
+                    int(snapshot.store_generation),
+                    int(backing.schedule_revision),
+                )
+                committed_wait_revisions = {
+                    str(record.request.request_id): int(record.store_revision)
+                    for record in changed_records
+                }
+                committed_wait_revisions[None] = int(backing.schedule_revision)
             if after_persist is not None:
                 await after_persist(unit, result)
             committed_resumers = dict(backing.resumers)
@@ -2697,6 +2908,11 @@ class PgsqlInteractionStore:
             async with self._runtime.lock:
                 self._runtime.resumers = committed_resumers
                 self._runtime.admissions = committed_admissions
+            if committed_wait_metadata is not None:
+                await self._publish_wait_feed(
+                    committed_wait_metadata,
+                    durable_revisions=committed_wait_revisions,
+                )
             if (
                 admission_binding is not None
                 and deferred_resumer is not None
@@ -5799,6 +6015,71 @@ async def _check_schema(database: PgsqlDatabase) -> None:
         ) from error
 
 
+async def _read_wait_feed_metadata(
+    database: PgsqlDatabase,
+) -> tuple[int, int]:
+    """Read the shared durable revisions with one bounded query."""
+    try:
+        async with database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    await cursor.execute(_SELECT_STORE_METADATA_SQL)
+                    row = await cursor.fetchone()
+    except (KeyboardInterrupt, SystemExit, CancelledError):
+        raise
+    except InputContractError:
+        raise
+    except BaseException as error:
+        failure = classify_pgsql_error(
+            error,
+            operation="interaction_wait_feed",
+        )
+        raise PgsqlOperationError(failure) from None
+    if row is None:
+        raise PgsqlInteractionFeatureUnavailableError(
+            reason="durable interaction schema metadata is missing"
+        )
+    return (
+        _row_int(row, "store_generation"),
+        _row_int(row, "schedule_revision"),
+    )
+
+
+async def _read_wait_record_revisions(
+    database: PgsqlDatabase,
+    request_ids: tuple[str, ...],
+) -> dict[str, int | None]:
+    """Read bounded revisions for the currently active request groups."""
+    revisions = dict.fromkeys(request_ids)
+    if not request_ids:
+        return revisions
+    try:
+        async with database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    await cursor.execute(
+                        _SELECT_WAIT_RECORD_REVISIONS_SQL,
+                        (list(request_ids),),
+                    )
+                    rows = await cursor.fetchall()
+    except (KeyboardInterrupt, SystemExit, CancelledError):
+        raise
+    except InputContractError:
+        raise
+    except BaseException as error:
+        failure = classify_pgsql_error(
+            error,
+            operation="interaction_wait_revisions",
+        )
+        raise PgsqlOperationError(failure) from None
+    for row in rows:
+        request_id = _row_str(row, "request_id")
+        if request_id not in revisions:
+            _invalid_payload("request_id")
+        revisions[request_id] = _row_int(row, "store_revision")
+    return revisions
+
+
 async def _lock_store_metadata(unit: PgsqlUnitOfWork) -> PgsqlRow:
     await unit.cursor.execute(_LOCK_STORE_METADATA_SQL)
     row = await unit.cursor.fetchone()
@@ -6937,6 +7218,13 @@ _SELECT_STORE_METADATA_SQL = """
 SELECT "store_generation", "schedule_revision"
 FROM "interaction_store_metadata"
 WHERE "singleton_id" = 1
+"""
+
+_SELECT_WAIT_RECORD_REVISIONS_SQL = """
+SELECT "request_id", "store_revision"
+FROM "interaction_records"
+WHERE "request_id" = ANY(%s::text[])
+ORDER BY "request_id"
 """
 
 _SET_REPEATABLE_READ_ONLY_SQL = """

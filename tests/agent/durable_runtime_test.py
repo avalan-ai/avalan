@@ -1271,6 +1271,11 @@ class DurableRuntimeTest(IsolatedAsyncioTestCase):
                 continuation_store=_UnusedDurableStore(),
                 clock=_FalsyClock(_OFFSET_NOW),
             )
+            runtime = host.interaction_runtime(
+                _context(_definition(), input_value="clock-probe")
+            )
+            observed_at = await runtime.clock.read()
+            self.assertEqual(observed_at.wall_time, _OFFSET_NOW)
             runner = _CountingAgentRunner(
                 loader,
                 ref_base=root,
@@ -1392,6 +1397,17 @@ class DurableRuntimeTest(IsolatedAsyncioTestCase):
                     allowed_roots=(root,),
                     continuation_store=_UnusedDurableStore(),
                     actor_resolver=cast(Any, object()),
+                )
+            with self.assertRaisesRegex(
+                TypeError,
+                "policy must be an interaction policy",
+            ):
+                DurableAgentTaskHost(
+                    orchestrator_loader=loader,
+                    stack=stack,
+                    allowed_roots=(root,),
+                    continuation_store=_UnusedDurableStore(),
+                    policy=cast(Any, False),
                 )
 
             host = DurableAgentTaskHost(

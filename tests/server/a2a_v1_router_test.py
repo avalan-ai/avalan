@@ -24,12 +24,19 @@ from avalan.interaction.entities import (
     InputRequestId,
     MultilineTextAnswer,
     MultilineTextQuestion,
+    PrincipalScope,
     QuestionId,
     ResolutionStatus,
     TextAnswer,
     TextQuestion,
+    UserId,
 )
 from avalan.interaction.error import InputContractError, InputErrorCode
+from avalan.interaction.policy import (
+    InteractionActor,
+    InteractionPolicy,
+    TaskInputCapabilityState,
+)
 from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
@@ -55,6 +62,11 @@ from avalan.server.entities import (
     OrchestratorContext,
     ServerOutputRedactionSettings,
 )
+from avalan.server.interaction import (
+    ServerInteractionConfiguration,
+    close_server_interactions,
+    configure_server_interactions,
+)
 
 _MODEL_VISIBLE_REDACTION_SETTINGS = ServerOutputRedactionSettings(enabled=True)
 
@@ -62,6 +74,37 @@ _MODEL_VISIBLE_REDACTION_SETTINGS = ServerOutputRedactionSettings(enabled=True)
 @pytest.fixture
 def anyio_backend() -> str:
     return "asyncio"
+
+
+def _interaction_configuration(
+    policy: InteractionPolicy,
+) -> ServerInteractionConfiguration:
+    broker = SimpleNamespace(
+        policy=policy,
+        inspect=AsyncMock(),
+        resolve=AsyncMock(),
+        cancel=AsyncMock(),
+        wait=AsyncMock(),
+    )
+    configuration = ServerInteractionConfiguration(
+        broker=cast(Any, broker),
+        principal_resolver=AsyncMock(),
+        authorizer=cast(
+            Any,
+            SimpleNamespace(authorize=AsyncMock()),
+        ),
+        policy=policy,
+    )
+    return configuration
+
+
+def _active_interaction_configuration(
+    app: FastAPI,
+) -> ServerInteractionConfiguration:
+    """Install one live active interaction configuration on an app."""
+    configuration = _interaction_configuration(InteractionPolicy())
+    configure_server_interactions(app, configuration)
+    return configuration
 
 
 def test_install_a2a_routes_mounts_v1_sdk_routes() -> None:
@@ -81,6 +124,214 @@ def test_install_a2a_routes_mounts_v1_sdk_routes() -> None:
     assert "/{tenant}/a2a" in paths
     assert "/a2a/message:stream" in paths
     assert "/.well-known/a2a-agent.json" not in paths
+
+
+def test_agent_card_requires_live_active_interaction_configuration() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    dormant_app = FastAPI()
+    install_a2a_routes(
+        dormant_app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+    active_app = FastAPI()
+    configuration = _active_interaction_configuration(active_app)
+    install_a2a_routes(
+        active_app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+    )
+
+    dormant = (
+        TestClient(dormant_app).get("/.well-known/agent-card.json").json()
+    )
+    active = TestClient(active_app).get("/.well-known/agent-card.json").json()
+
+    assert active_app.state.interaction_service.configuration is configuration
+    assert "extensions" not in dormant["capabilities"]
+    assert [
+        extension["uri"] for extension in active["capabilities"]["extensions"]
+    ] == [A2A_INPUT_EXTENSION_URI]
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize("deactivation", ("rollback", "removed"))
+async def test_a2a_input_capability_updates_at_request_time(
+    deactivation: str,
+) -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    app = FastAPI()
+    _active_interaction_configuration(app)
+    install_a2a_routes(
+        app,
+        prefix="/a2a",
+        name="run",
+        description="Run the test agent.",
+        input_extension_required=True,
+    )
+    client = TestClient(app)
+    rpc_body = {
+        "jsonrpc": "2.0",
+        "id": "dynamic-capability",
+        "method": "UnknownMethod",
+        "params": {},
+    }
+
+    try:
+        active_card = client.get("/.well-known/agent-card.json").json()
+        active_missing = client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0"},
+            json=rpc_body,
+        )
+        active_echo = client.post(
+            "/a2a",
+            headers={
+                "A2A-Version": "1.0",
+                "A2A-Extensions": A2A_INPUT_EXTENSION_URI,
+            },
+            json=rpc_body,
+        )
+
+        assert active_card["capabilities"]["extensions"][0]["uri"] == (
+            A2A_INPUT_EXTENSION_URI
+        )
+        assert active_missing.status_code == 400
+        assert active_echo.headers["A2A-Extensions"] == (
+            A2A_INPUT_EXTENSION_URI
+        )
+
+        if deactivation == "rollback":
+            configure_server_interactions(
+                app,
+                _interaction_configuration(
+                    InteractionPolicy(
+                        capability_state=TaskInputCapabilityState.ROLLBACK
+                    )
+                ),
+            )
+        else:
+            configure_server_interactions(app, None)
+
+        inactive_card = client.get("/.well-known/agent-card.json").json()
+        inactive_missing = client.post(
+            "/a2a",
+            headers={"A2A-Version": "1.0"},
+            json=rpc_body,
+        )
+        inactive_echo = client.post(
+            "/a2a",
+            headers={
+                "A2A-Version": "1.0",
+                "A2A-Extensions": A2A_INPUT_EXTENSION_URI,
+            },
+            json=rpc_body,
+        )
+
+        assert "extensions" not in inactive_card["capabilities"]
+        assert inactive_missing.status_code == 200
+        assert inactive_missing.json()["error"]["code"] == -32601
+        assert "A2A-Extensions" not in inactive_echo.headers
+    finally:
+        await close_server_interactions(app)
+
+
+@pytest.mark.anyio
+async def test_rollback_keeps_existing_a2a_resolution_enabled() -> None:
+    app = FastAPI()
+    configuration = _interaction_configuration(
+        InteractionPolicy(capability_state=TaskInputCapabilityState.ROLLBACK)
+    )
+    actor = InteractionActor(principal=PrincipalScope(user_id=UserId("owner")))
+    principal_resolver = cast(AsyncMock, configuration.principal_resolver)
+    principal_resolver.return_value = actor
+    configure_server_interactions(app, configuration)
+    executor = AvalanA2AAgentExecutor(app)
+    request = object()
+    context = SimpleNamespace(
+        requested_extensions=(A2A_INPUT_EXTENSION_URI,),
+        state={a2a_router._A2A_HTTP_REQUEST_STATE_KEY: request},
+    )
+
+    try:
+        assert await executor._activated_actor(context) is actor
+        principal_resolver.assert_awaited_once_with(request)
+    finally:
+        await close_server_interactions(app)
+
+
+@pytest.mark.anyio
+async def test_inactive_agent_card_preserves_unrelated_extensions() -> None:
+    routes = a2a_router._agent_card_routes(
+        interaction_app=FastAPI(),
+        agent_card=SimpleNamespace(supported_interfaces=[]),
+        interface_url="/a2a",
+        agent_card_to_dict=lambda _card: {
+            "capabilities": {
+                "extensions": [
+                    {"uri": A2A_INPUT_EXTENSION_URI},
+                    {"uri": "urn:example:other"},
+                ]
+            }
+        },
+        json_response=lambda payload: payload,
+        route_class=lambda **values: SimpleNamespace(**values),
+    )
+
+    payload = await routes[0].endpoint(
+        SimpleNamespace(base_url="https://agents.example")
+    )
+
+    assert payload["capabilities"]["extensions"] == [
+        {"uri": "urn:example:other", "required": False}
+    ]
+
+
+@pytest.mark.anyio
+async def test_inactive_endpoint_removes_stale_extension_echo() -> None:
+    async def endpoint(_request: object) -> JSONResponse:
+        return JSONResponse(
+            {"ok": True},
+            headers={"A2A-Extensions": A2A_INPUT_EXTENSION_URI},
+        )
+
+    response = await a2a_router._validated_a2a_endpoint(endpoint)(
+        _BodyRequest(b"")
+    )
+
+    assert "A2A-Extensions" not in response.headers
+
+
+def test_reconfigure_preserves_exact_live_interaction_service() -> None:
+    app = FastAPI()
+    configuration = _active_interaction_configuration(app)
+    service = app.state.interaction_service
+
+    configure_server_interactions(app, configuration)
+
+    assert app.state.interaction_service is service
+
+
+def test_agent_card_rejects_uninstalled_configuration_shape() -> None:
+    pytest.importorskip("a2a", reason="a2a-sdk is optional locally")
+    configured_app = FastAPI()
+    configuration = _active_interaction_configuration(configured_app)
+    impostor_app = FastAPI()
+    impostor_app.state.interaction_service = SimpleNamespace(
+        configuration=configuration
+    )
+
+    install_a2a_routes(
+        impostor_app,
+        prefix="/a2a",
+        name="run",
+        description=None,
+    )
+
+    card = TestClient(impostor_app).get("/.well-known/agent-card.json").json()
+    assert "extensions" not in card["capabilities"]
 
 
 def test_build_agent_card_keeps_a2a_skills_metadata_separate() -> None:
@@ -3032,6 +3283,13 @@ async def test_interaction_service_negative_branches(
         ("ScopedInteractionLookup", lambda **values: values),
     ):
         monkeypatch.setattr(a2a_router, name, value)
+    service.configuration.policy = InteractionPolicy(
+        capability_state=TaskInputCapabilityState.DORMANT
+    )
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor._activated_actor(
+            SimpleNamespace(requested_extensions=(A2A_INPUT_EXTENSION_URI,))
+        )
     assert await executor._terminal_interaction(cast(Any, pending)) == (
         None,
         ResolutionStatus.EXPIRED,

@@ -1186,16 +1186,17 @@ class MemoryInteractionStore:
         command: WaitForInteractionChangeCommand,
     ) -> InteractionDisclosureProjection:
         """Wait without a registration race for a newer projection."""
+        async with self._state.lock:
+            self._ensure_open_locked()
+            record = self._find_scoped_record_locked(
+                command.actor,
+                command.correlation,
+            )
+            if record is None:
+                raise InteractionNotFoundError()
+            target = _request_target(record)
+
         while True:
-            async with self._state.lock:
-                self._ensure_open_locked()
-                record = self._find_scoped_record_locked(
-                    command.actor,
-                    command.correlation,
-                )
-                if record is None:
-                    raise InteractionNotFoundError()
-                target = _request_target(record)
             decision = await self._authorize(
                 command.actor,
                 InteractionOperation.WAIT,

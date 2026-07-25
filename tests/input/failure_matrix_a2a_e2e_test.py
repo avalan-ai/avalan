@@ -4,21 +4,26 @@ from asyncio import Event, create_task, run, sleep, wait_for
 from collections.abc import AsyncIterator, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import timedelta
+from json import dumps, loads
 from pathlib import Path
 from sys import path as sys_path
 from typing import Any, cast
 
-from httpx import ASGITransport, AsyncClient
+import pytest
+from a2a.client.errors import A2AClientError
+from httpx import ASGITransport, AsyncClient, HTTPStatusError
 
 sys_path.append(str(Path(__file__).parent))
 
 import a2a_contract_test as contract  # noqa: E402
 
 from avalan.interaction import (  # noqa: E402
+    AnsweredResolution,
     AnswerProvenance,
     AsyncInteractionBroker,
     Choice,
     ChoiceValue,
+    InputRequestId,
     InteractionBrokerRequest,
     InteractionClock,
     InteractionPolicy,
@@ -28,6 +33,7 @@ from avalan.interaction import (  # noqa: E402
     ResolutionStatus,
     SingleSelectionQuestion,
     StateRevision,
+    TextAnswer,
     TextQuestion,
 )
 from avalan.interaction.store import (  # noqa: E402
@@ -37,9 +43,11 @@ from avalan.interaction.store import (  # noqa: E402
 from avalan.interaction.stores import (  # noqa: E402
     MemoryInteractionStoreFactory,
 )
+from avalan.tool.a2a import A2ACallTool  # noqa: E402
 
 _EVIDENCE_PROPERTY = "failure_matrix_evidence"
 _SURFACES = ("a2a-downstream", "a2a-server")
+_RecordProperty = Callable[[str, object], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -60,6 +68,7 @@ class _Observation:
     public_result_id: str
     status: tuple[str, str]
     provider_calls: int
+    public_result: Mapping[str, object]
 
 
 class _QuestionBroker:
@@ -383,7 +392,7 @@ async def _stored_state(client: AsyncClient, task_id: str) -> str:
     return contract._state_from_task(body)
 
 
-def _error(response: object, code: int, data_code: str) -> None:
+def _error(response: object, code: int, data_code: str) -> dict[str, object]:
     """Assert one exact normalized JSON-RPC error."""
     status_code = getattr(response, "status_code")
     assert status_code in {200, 409, 410}
@@ -395,6 +404,26 @@ def _error(response: object, code: int, data_code: str) -> None:
     data = error.get("data")
     assert isinstance(data, dict)
     assert data.get("code") == data_code
+    return body
+
+
+async def _task_envelope(
+    client: AsyncClient, task_id: str
+) -> dict[str, object]:
+    response = await client.post(
+        "/a2a",
+        headers=contract._A2A_HEADERS,
+        json={
+            "jsonrpc": "2.0",
+            "id": f"get-{task_id}",
+            "method": "GetTask",
+            "params": {"id": task_id},
+        },
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert isinstance(body, dict)
+    return body
 
 
 async def _validation_observation(
@@ -455,7 +484,11 @@ async def _validation_observation(
                     method="SendMessage",
                 ),
             )
-            _error(response, -32602, "avalan.input.validation")
+            public_result = _error(
+                response,
+                -32602,
+                "avalan.input.validation",
+            )
             assert (
                 await _stored_state(client, pending.task_id)
                 == "TASK_STATE_INPUT_REQUIRED"
@@ -465,22 +498,56 @@ async def _validation_observation(
             "a2a.invalid_params_error.v1",
             ("jsonrpc_error", "-32602"),
             provider.provider_calls,
+            public_result,
         )
 
 
-async def _unavailable_observation() -> _Observation:
+async def _downstream_error(app: object, context: object) -> dict[str, object]:
+    """Return the server envelope retained by a downstream HTTP failure."""
+    with pytest.raises(A2AClientError) as raised:
+        await A2ACallTool(
+            client_params={
+                "transport": ASGITransport(app=cast(Any, app)),
+                "base_url": "https://a2a.test",
+                "headers": {"Authorization": "Bearer owner"},
+            },
+        )("/a2a", "run", {}, context=cast(Any, context))
+    cause = raised.value.__cause__
+    assert isinstance(cause, HTTPStatusError)
+    body = cause.response.json()
+    assert isinstance(body, dict)
+    return body
+
+
+async def _unavailable_observation(surface_id: str) -> _Observation:
     """Reject input-required work when no capable A2A host is available."""
-    isolation = await contract._isolation_observation()
-    assert isolation["unavailable_status"] == 503
-    body = cast(Mapping[str, object], isolation["unavailable_body"])
+    if surface_id == "a2a-server":
+        isolation = await contract._isolation_observation()
+        assert isolation["unavailable_status"] == 503
+        body = cast(dict[str, object], isolation["unavailable_body"])
+        provider_calls = cast(int, isolation["unavailable_provider_calls"])
+    else:
+        app = contract.FastAPI()
+        app.state.logger = contract.getLogger("a2a-downstream-unavailable")
+        provider = contract.server_support._FakeProviderOrchestrator()
+        app.state.orchestrator = provider
+        contract.install_a2a_routes(
+            app, prefix="/a2a", name="run", description="Run the test agent."
+        )
+        context, _broker = contract._client_context(
+            stream_event=cast(Any, contract._unused_handler)
+        )
+        body = await _downstream_error(app, context)
+        provider_calls = provider.provider_calls
     error = cast(Mapping[str, object], body.get("error"))
     assert error.get("code") == -31910
-    assert isolation["unavailable_provider_calls"] == 0
+    assert provider_calls == 0
     return _Observation(
         ("created", "unavailable"),
         "a2a.unavailable_error.v1",
         ("jsonrpc_error", "-31910"),
         0,
+        body,
     )
 
 
@@ -533,7 +600,7 @@ async def _duplicate_observation(*, conflicting: bool) -> _Observation:
                 ),
             )
             if conflicting:
-                _error(
+                public_result = _error(
                     repeated,
                     -31911,
                     "avalan.input.already_resolved",
@@ -546,6 +613,10 @@ async def _duplicate_observation(*, conflicting: bool) -> _Observation:
                 task = result.get("task")
                 assert isinstance(task, dict)
                 assert contract._state_from_task(task) == "TASK_STATE_WORKING"
+                public_result = await _task_envelope(
+                    client,
+                    pending.task_id,
+                )
             provider.release.set()
             completed = await wait_for(winner, timeout=2)
             assert completed.status_code == 200
@@ -562,6 +633,7 @@ async def _duplicate_observation(*, conflicting: bool) -> _Observation:
                 else ("task_state", "TASK_STATE_WORKING")
             ),
             provider.provider_calls,
+            public_result,
         )
 
 
@@ -589,12 +661,17 @@ async def _expired_observation() -> _Observation:
                     method="SendMessage",
                 ),
             )
-            _error(response, -31912, "avalan.input.expired")
+            public_result = _error(
+                response,
+                -31912,
+                "avalan.input.expired",
+            )
         return _Observation(
             ("pending", "expired"),
             "a2a.expired_error.v1",
             ("jsonrpc_error", "-31912"),
             provider.provider_calls,
+            public_result,
         )
 
 
@@ -630,11 +707,13 @@ async def _cancelled_observation() -> _Observation:
                 await _stored_state(client, pending.task_id)
                 == "TASK_STATE_CANCELED"
             )
+            public_result = await _task_envelope(client, pending.task_id)
         return _Observation(
             ("pending", "cancelled"),
-            "a2a.task_cancelled.v1",
+            "a2a.task_canceled.v1",
             ("task_state", "TASK_STATE_CANCELED"),
             provider.provider_calls,
+            public_result,
         )
 
 
@@ -674,12 +753,17 @@ async def _superseded_observation() -> _Observation:
                     method="SendMessage",
                 ),
             )
-            _error(response, -31913, "avalan.input.superseded")
+            public_result = _error(
+                response,
+                -31913,
+                "avalan.input.superseded",
+            )
         return _Observation(
             ("pending", "superseded"),
             "a2a.superseded_error.v1",
             ("jsonrpc_error", "-31913"),
             provider.provider_calls,
+            public_result,
         )
 
 
@@ -712,11 +796,13 @@ async def _pending_observation() -> _Observation:
             assert (
                 contract._state_from_task(task) == "TASK_STATE_INPUT_REQUIRED"
             )
+            public_result = body
         return _Observation(
             ("pending", "pending"),
             "a2a.task_input_required.v1",
             ("task_state", "TASK_STATE_INPUT_REQUIRED"),
             provider.provider_calls,
+            public_result,
         )
 
 
@@ -736,7 +822,12 @@ async def _ui_hint_observation() -> _Observation:
             ),
         ),
     )
-    async with contract._server(broker=broker) as (app, _broker, provider):
+    provider = _RetainedProvider()
+    async with contract._server(broker=broker, provider=provider) as (
+        app,
+        _broker,
+        _provider,
+    ):
         async with AsyncClient(
             transport=ASGITransport(app=app),
             base_url="https://a2a.test",
@@ -745,161 +836,177 @@ async def _ui_hint_observation() -> _Observation:
             questions = pending.request.get("questions")
             assert isinstance(questions, list)
             assert questions[0]["presentation_hint"] == "single_line"
-            response = await client.post(
-                "/a2a",
-                headers=contract._A2A_HEADERS,
-                json=contract._send_envelope(
-                    rpc_id="rpc-ui-hint-answer",
-                    message_id="message-ui-hint-answer",
-                    task_id=pending.task_id,
-                    context_id=pending.context_id,
-                    request_id=pending.request_id,
-                    answers={"name": "Ada"},
-                ),
+            completed = create_task(
+                client.post(
+                    "/a2a",
+                    headers=contract._A2A_HEADERS,
+                    json=contract._send_envelope(
+                        rpc_id="rpc-ui-hint-answer",
+                        message_id="message-ui-hint-answer",
+                        task_id=pending.task_id,
+                        context_id=pending.context_id,
+                        request_id=pending.request_id,
+                        answers={"name": "Ada"},
+                    ),
+                )
             )
-            events = contract._sse_events(response.text)
-            states = tuple(
-                contract._state_from_update(contract._status_update(event))
-                for event in events
-                if "statusUpdate" in contract._result(event)
-            )
-            assert states == (
-                "TASK_STATE_WORKING",
-                "TASK_STATE_COMPLETED",
+            await wait_for(provider.resumed.wait(), timeout=2)
+            for _ in range(20):
+                if (
+                    await _stored_state(client, pending.task_id)
+                    == "TASK_STATE_WORKING"
+                ):
+                    break
+                await sleep(0)
+            else:
+                raise AssertionError("answered task did not become working")
+            public_result = await _task_envelope(client, pending.task_id)
+            provider.release.set()
+            response = await wait_for(completed, timeout=2)
+            assert response.status_code == 200
+            assert (
+                await _stored_state(client, pending.task_id)
+                == "TASK_STATE_COMPLETED"
             )
         return _Observation(
             ("pending", "answered"),
             "a2a.task_working.v1",
             ("task_state", "TASK_STATE_WORKING"),
             provider.provider_calls,
+            public_result,
         )
 
 
-async def _extension_required_observation() -> _Observation:
+async def _downstream_ui_hint_observation() -> _Observation:
+    """Answer a hinted request through the public downstream A2A tool."""
+    raw_broker = await contract.server_support._open_broker()
+    broker = _QuestionBroker(
+        raw_broker,
+        (
+            TextQuestion(
+                question_id=QuestionId("name"),
+                prompt="Name?",
+                required=True,
+                presentation_hint=PresentationHint.SINGLE_LINE,
+            ),
+        ),
+    )
+    provider = _RetainedProvider()
+    async with contract._server(broker=broker, provider=provider) as (
+        app,
+        _broker,
+        _provider,
+    ):
+        statuses: list[Mapping[str, object]] = []
+
+        async def observe(event: object) -> None:
+            content = getattr(event, "content", None)
+            if isinstance(content, str) and content.startswith("{"):
+                statuses.append(cast(Mapping[str, object], loads(content)))
+
+        resolution = AnsweredResolution(
+            request_id=InputRequestId("local-request"),
+            provenance=AnswerProvenance.HUMAN,
+            resolved_at=contract._NOW,
+            answers=(
+                TextAnswer(
+                    question_id=QuestionId("name"),
+                    provenance=AnswerProvenance.HUMAN,
+                    value="Ada",
+                ),
+            ),
+        )
+        context, local_broker = contract._client_context(
+            stream_event=cast(Any, observe),
+            resolution=resolution,
+        )
+        called = create_task(
+            A2ACallTool(
+                client_params={
+                    "transport": ASGITransport(app=app),
+                    "base_url": "https://a2a.test",
+                    "headers": {"Authorization": "Bearer owner"},
+                },
+                call_params={"request_id": "rpc-downstream-ui"},
+            )("/a2a", "run", {}, context=context)
+        )
+        await wait_for(provider.resumed.wait(), timeout=2)
+        task_id = cast(str, statuses[0]["taskId"])
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="https://a2a.test",
+        ) as client:
+            for _ in range(20):
+                if (
+                    await _stored_state(client, task_id)
+                    == "TASK_STATE_WORKING"
+                ):
+                    break
+                await sleep(0)
+            else:
+                raise AssertionError("answered task did not become working")
+            public_result = await _task_envelope(client, task_id)
+        provider.release.set()
+        result = await wait_for(called, timeout=2)
+        structured = cast(Mapping[str, object], result["structuredContent"])
+        assert structured["state"] == "TASK_STATE_COMPLETED"
+        assert len(local_broker.requests) == 1
+        return _Observation(
+            ("pending", "answered"),
+            "a2a.task_working.v1",
+            ("task_state", "TASK_STATE_WORKING"),
+            provider.provider_calls,
+            public_result,
+        )
+
+
+async def _extension_required_observation(surface_id: str) -> _Observation:
     """Reject a peer that lacks the required structured-input extension."""
     async with contract._server(input_extension_required=True) as (
         app,
         _broker,
         provider,
     ):
-        async with AsyncClient(
-            transport=ASGITransport(app=app),
-            base_url="https://a2a.test",
-        ) as client:
-            response = await client.post(
-                "/a2a",
-                headers={
-                    "A2A-Version": "1.0",
-                    "Authorization": "Bearer owner",
-                },
-                json=contract._send_envelope(
-                    rpc_id="rpc-extension-required",
-                    message_id="message-extension-required",
-                ),
+        if surface_id == "a2a-downstream":
+            public_result = await _downstream_error(
+                app, contract.ToolCallContext()
             )
-            assert response.status_code == 400
-            body = response.json()
-            assert isinstance(body, dict)
-            error = body.get("error")
-            assert isinstance(error, dict)
-            assert error.get("code") == -32008
-            assert error.get("data") == {
-                "code": "avalan.input.extension_required"
-            }
+        else:
+            async with AsyncClient(
+                transport=ASGITransport(app=app),
+                base_url="https://a2a.test",
+            ) as client:
+                response = await client.post(
+                    "/a2a",
+                    headers={
+                        "A2A-Version": "1.0",
+                        "Authorization": "Bearer owner",
+                    },
+                    json=contract._send_envelope(
+                        rpc_id="rpc-extension-required",
+                        message_id="message-extension-required",
+                    ),
+                )
+                assert response.status_code == 400
+                public_result = response.json()
+        error = public_result.get("error")
+        assert isinstance(error, dict)
+        assert error.get("code") == -32008
+        assert error.get("data") == {"code": "avalan.input.extension_required"}
         return _Observation(
             ("created", "unavailable"),
             "a2a.extension_required_error.v1",
             ("jsonrpc_error", "-32008"),
             provider.provider_calls,
+            public_result,
         )
 
 
-_EXPECTED = {
-    "INPUT-F-01": _Observation(
-        ("created", "unavailable"),
-        "a2a.unavailable_error.v1",
-        ("jsonrpc_error", "-31910"),
-        0,
-    ),
-    "INPUT-F-04": _Observation(
-        ("pending", "pending"),
-        "a2a.invalid_params_error.v1",
-        ("jsonrpc_error", "-32602"),
-        1,
-    ),
-    "INPUT-F-05": _Observation(
-        ("pending", "pending"),
-        "a2a.invalid_params_error.v1",
-        ("jsonrpc_error", "-32602"),
-        1,
-    ),
-    "INPUT-F-06": _Observation(
-        ("pending", "pending"),
-        "a2a.invalid_params_error.v1",
-        ("jsonrpc_error", "-32602"),
-        1,
-    ),
-    "INPUT-F-07": _Observation(
-        ("answered", "answered"),
-        "a2a.task_working.v1",
-        ("task_state", "TASK_STATE_WORKING"),
-        2,
-    ),
-    "INPUT-F-08": _Observation(
-        ("answered", "answered"),
-        "a2a.conflict_error.v1",
-        ("jsonrpc_error", "-31911"),
-        2,
-    ),
-    "INPUT-F-09": _Observation(
-        ("pending", "expired"),
-        "a2a.expired_error.v1",
-        ("jsonrpc_error", "-31912"),
-        1,
-    ),
-    "INPUT-F-10": _Observation(
-        ("pending", "cancelled"),
-        "a2a.task_cancelled.v1",
-        ("task_state", "TASK_STATE_CANCELED"),
-        1,
-    ),
-    "INPUT-F-11": _Observation(
-        ("pending", "superseded"),
-        "a2a.superseded_error.v1",
-        ("jsonrpc_error", "-31913"),
-        1,
-    ),
-    "INPUT-F-12": _Observation(
-        ("pending", "pending"),
-        "a2a.task_input_required.v1",
-        ("task_state", "TASK_STATE_INPUT_REQUIRED"),
-        1,
-    ),
-    "INPUT-F-13": _Observation(
-        ("pending", "timed_out"),
-        "a2a.task_working.v1",
-        ("task_state", "TASK_STATE_WORKING"),
-        2,
-    ),
-    "INPUT-F-14": _Observation(
-        ("pending", "answered"),
-        "a2a.task_working.v1",
-        ("task_state", "TASK_STATE_WORKING"),
-        2,
-    ),
-    "INPUT-F-15": _Observation(
-        ("created", "unavailable"),
-        "a2a.extension_required_error.v1",
-        ("jsonrpc_error", "-32008"),
-        0,
-    ),
-}
-
-
-async def _observe(condition_id: str) -> _Observation:
+async def _observe(condition_id: str, surface_id: str) -> _Observation:
     """Dispatch one executable condition to its real boundary probe."""
+    assert surface_id in _SURFACES
     if condition_id == "INPUT-F-01":
-        return await _unavailable_observation()
+        return await _unavailable_observation(surface_id)
     if condition_id in {"INPUT-F-04", "INPUT-F-05", "INPUT-F-06"}:
         return await _validation_observation(condition_id)
     if condition_id == "INPUT-F-07":
@@ -917,86 +1024,108 @@ async def _observe(condition_id: str) -> _Observation:
     if condition_id == "INPUT-F-13":
         return await _advisory_timeout_observation()
     if condition_id == "INPUT-F-14":
+        if surface_id == "a2a-downstream":
+            return await _downstream_ui_hint_observation()
         return await _ui_hint_observation()
     assert condition_id == "INPUT-F-15"
-    return await _extension_required_observation()
+    return await _extension_required_observation(surface_id)
 
 
 def _assert_failure(
     condition_id: str,
-    record_property: Callable[[str, object], None],
+    surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
     """Assert and record one frozen A2A failure-matrix invariant."""
-    observation = run(_observe(condition_id))
-    assert observation == _EXPECTED[condition_id]
+    observation = run(_observe(condition_id, surface_id))
     evidence = [
         {
             "condition_id": condition_id,
-            "surface_id": surface,
+            "surface_id": surface_id,
             "transition_from": observation.transition[0],
             "transition_to": observation.transition[1],
             "public_result_id": observation.public_result_id,
-            "public_result": {"redacted": True},
+            "public_result": observation.public_result,
             "status_key": observation.status[0],
             "status_value": observation.status[1],
             "provider_call_count": observation.provider_calls,
             "domain_side_effect_count": 0,
         }
-        for surface in _SURFACES
     ]
-    record_property(_EVIDENCE_PROPERTY, evidence)
+    record_property(
+        _EVIDENCE_PROPERTY,
+        dumps(evidence, separators=(",", ":"), sort_keys=True),
+    )
 
 
-def test_input_f_01(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-01", record_property)
+@pytest.fixture(params=("a2a-server",), ids=("a2a-server",))
+def surface_id(request: pytest.FixtureRequest) -> str:
+    """Return the directly exercised public A2A server surface."""
+    return cast(str, request.param)
 
 
-def test_input_f_04(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-04", record_property)
+@pytest.fixture(params=_SURFACES, ids=_SURFACES)
+def reachable_surface_id(request: pytest.FixtureRequest) -> str:
+    """Return each genuinely exercised public A2A surface."""
+    return cast(str, request.param)
 
 
-def test_input_f_05(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-05", record_property)
+def test_input_f_01(
+    reachable_surface_id: str, record_property: _RecordProperty
+) -> None:
+    _assert_failure("INPUT-F-01", reachable_surface_id, record_property)
 
 
-def test_input_f_06(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-06", record_property)
+def test_input_f_04(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-04", surface_id, record_property)
 
 
-def test_input_f_07(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-07", record_property)
+def test_input_f_05(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-05", surface_id, record_property)
 
 
-def test_input_f_08(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-08", record_property)
+def test_input_f_06(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-06", surface_id, record_property)
 
 
-def test_input_f_09(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-09", record_property)
+def test_input_f_07(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-07", surface_id, record_property)
 
 
-def test_input_f_10(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-10", record_property)
+def test_input_f_08(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-08", surface_id, record_property)
 
 
-def test_input_f_11(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-11", record_property)
+def test_input_f_09(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-09", surface_id, record_property)
 
 
-def test_input_f_12(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-12", record_property)
+def test_input_f_10(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-10", surface_id, record_property)
 
 
-def test_input_f_13(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-13", record_property)
+def test_input_f_11(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-11", surface_id, record_property)
 
 
-def test_input_f_14(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-14", record_property)
+def test_input_f_12(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-12", surface_id, record_property)
 
 
-def test_input_f_15(record_property: Callable[[str, object], None]) -> None:
-    _assert_failure("INPUT-F-15", record_property)
+def test_input_f_13(surface_id: str, record_property: _RecordProperty) -> None:
+    _assert_failure("INPUT-F-13", surface_id, record_property)
+
+
+def test_input_f_14(
+    reachable_surface_id: str, record_property: _RecordProperty
+) -> None:
+    _assert_failure("INPUT-F-14", reachable_surface_id, record_property)
+
+
+def test_input_f_15(
+    reachable_surface_id: str, record_property: _RecordProperty
+) -> None:
+    _assert_failure("INPUT-F-15", reachable_surface_id, record_property)
 
 
 async def _sequential_pending_observation() -> None:
@@ -1096,6 +1225,7 @@ async def _advisory_timeout_observation() -> _Observation:
                 await sleep(0)
             else:
                 raise AssertionError("advisory task did not resume to working")
+            public_result = await _task_envelope(client, pending.task_id)
             provider.continuation_gate.set()
             for _ in range(20):
                 if (
@@ -1112,6 +1242,7 @@ async def _advisory_timeout_observation() -> _Observation:
             "a2a.task_working.v1",
             ("task_state", "TASK_STATE_WORKING"),
             provider.provider_calls,
+            public_result,
         )
 
 

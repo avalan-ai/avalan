@@ -67,24 +67,12 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     manifest = _manifest()
     history = manifest.activation_history()
 
-    assert manifest.current_phase == 11
-    assert len(manifest.nodes) == 944
-    assert len(manifest.active_nodes(manifest.current_phase)) == 878
-    assert len(manifest.planned_nodes()) == 66
-    assert tuple(map(len, history)) == (
-        23,
-        79,
-        86,
-        99,
-        352,
-        788,
-        814,
-        830,
-        834,
-        840,
-        860,
-        878,
-    )
+    assert manifest.current_phase == _VERIFIER._MAX_PHASE
+    assert len(manifest.nodes) == 896
+    assert manifest.active_nodes(manifest.current_phase) == manifest.nodes
+    assert not manifest.planned_nodes()
+    assert len(history) == manifest.current_phase + 1
+    assert history[-1] == tuple(node.node_id for node in manifest.nodes)
     assert all(
         set(history[phase]).issubset(history[phase + 1])
         for phase in range(manifest.current_phase)
@@ -92,10 +80,6 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
     assert all(
         node.active_from_phase <= manifest.current_phase
         for node in manifest.active_nodes(manifest.current_phase)
-    )
-    assert all(
-        node.active_from_phase > manifest.current_phase
-        for node in manifest.planned_nodes()
     )
     requirement_ids = {
         requirement_id
@@ -113,26 +97,12 @@ def test_acceptance_manifest_lifecycle_is_monotonic() -> None:
         }
         assert set(active).isdisjoint(remaining)
         assert set(active) | set(remaining) == expected
-    assert {node.node_id for node in manifest.current_phase_nodes()} == {
-        "tests/input/a2a_contract_test.py::test_requirement_input_n_081",
-        "tests/input/a2a_contract_test.py::test_requirement_input_n_082",
-        "tests/input/a2a_contract_test.py::test_requirement_input_n_083",
-        "tests/input/a2a_contract_test.py::test_requirement_input_n_084",
-        "tests/input/public_interaction_e2e_test.py::test_a2a_projection",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_01",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_04",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_05",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_06",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_07",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_08",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_09",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_10",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_11",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_12",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_13",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_14",
-        "tests/input/failure_matrix_a2a_e2e_test.py::test_input_f_15",
-    }
+    current_nodes = manifest.current_phase_nodes()
+    assert len(current_nodes) == 18
+    assert all(
+        node.active_from_phase == manifest.current_phase
+        for node in current_nodes
+    )
 
 
 def test_failure_matrix_is_complete() -> None:
@@ -154,10 +124,16 @@ def test_failure_matrix_is_complete() -> None:
 
     assert len(matrix.surfaces) == 84
     assert len(matrix.conditions) == 15
-    assert len(matrix.rules) == 169
+    assert len(matrix.rules) == 93
+    assert len(matrix.non_applicability_rules) == 17
     assert len(matrix.all_cells()) == 1260
-    assert len(matrix.applicable_cells()) == 564
-    assert len(matrix.all_cells() - matrix.applicable_cells()) == 696
+    assert len(matrix.applicable_cells()) == 145
+    assert len(matrix.non_applicable_cells()) == 1115
+    assert matrix.applicable_cells().isdisjoint(matrix.non_applicable_cells())
+    assert (
+        matrix.applicable_cells() | matrix.non_applicable_cells()
+        == matrix.all_cells()
+    )
     assert set(matrix.evidence_nodes(6)).issubset(
         {node.node_id for node in manifest.active_nodes(6)}
     )
@@ -230,16 +206,44 @@ def test_baseline_evidence_is_complete() -> None:
     }
 
 
-def test_capability_remains_dormant() -> None:
-    """Keep the production capability absent until atomic activation."""
+def test_capability_activation_is_gated() -> None:
+    """Enable only production surfaces with live capability prerequisites."""
     decisions = _fixture("contract_decisions.json")
+    rows = decisions["capability_matrix"]["rows"]
+    enabled = [row for row in rows if row["production_advertised"]]
+    unadvertised = [row for row in rows if not row["production_advertised"]]
 
-    assert decisions["activation"]["production_default"] == "absent"
-    assert (
-        "activate only after every enabled consumer"
-        in decisions["activation"]["atomic_rule"]
+    assert decisions["activation"]["production_default"] == "capability_gated"
+    assert len(enabled) == 37
+    assert all(
+        row["advertisement_rule"].startswith("advertise only when")
+        for row in enabled
     )
-    assert "retaining resolver capacity" in decisions["activation"]["rollback"]
+    assert all(row["evidence"].startswith("active:") for row in enabled)
+    assert {
+        row["id"]
+        for row in enabled
+        if row["kind"] in {"provider_adapter", "local_model"}
+    } == {"provider-openai"}
+    assert len(unadvertised) == 67
+    assert all(
+        row["advertisement_rule"].startswith("never advertise")
+        or row["kind"] in {"provider_adapter", "local_model"}
+        for row in unadvertised
+    )
+    assert all(row["evidence"].startswith("planned:") for row in unadvertised)
+    assert {
+        row["id"]
+        for row in unadvertised
+        if row["id"].startswith("cli-model-run-")
+        and row["interaction_mode"] != "incapable"
+    } == {
+        "cli-model-run-attached-tty",
+        "cli-model-run-piped-with-tty",
+        "cli-model-run-fully-headless-durable",
+    }
+    assert "live prerequisites" in decisions["activation"]["atomic_rule"]
+    assert "resolution and resumption" in decisions["activation"]["rollback"]
 
 
 @pytest.mark.parametrize(

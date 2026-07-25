@@ -34,7 +34,12 @@ from ..interaction.error import (
     InputErrorCode,
     InputValidationError,
 )
-from ..interaction.policy import InteractionActor
+from ..interaction.policy import (
+    InteractionActor,
+    InteractionClock,
+    InteractionPolicy,
+    RuntimeInteractionClock,
+)
 from ..memory.permanent.codec import decode_message_data
 from ..model.capability import (
     ModelCapabilityCatalog,
@@ -194,6 +199,8 @@ class TrustedAgentContinuationExecutor:
         *,
         stager: PortableAgentContinuationStager,
         ownership: _TrustedContinuationRuntimeOwnership,
+        clock: InteractionClock | None = None,
+        policy: InteractionPolicy | None = None,
     ) -> None:
         if not isinstance(orchestrator, Orchestrator):
             raise TypeError("orchestrator must be a concrete orchestrator")
@@ -201,9 +208,14 @@ class TrustedAgentContinuationExecutor:
             raise TypeError("stager must be a portable continuation stager")
         if type(ownership) is not _TrustedContinuationRuntimeOwnership:
             raise TypeError("ownership must be a shared runtime owner")
+        resolved_policy = InteractionPolicy() if policy is None else policy
+        if not isinstance(resolved_policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
         self._orchestrator = orchestrator
         self._stager = stager
         self._ownership = ownership
+        self._clock = RuntimeInteractionClock() if clock is None else clock
+        self._policy = resolved_policy
 
     def register_event_listener(
         self,
@@ -413,21 +425,11 @@ class TrustedAgentContinuationExecutor:
         call = _a2a_tool_call(checkpoint)
         if resolution is None:
             result_kind = command.model_result.kind.value
-            outcome: ToolCallResult | ToolCallError = ToolCallError(
-                id=checkpoint.call_id,
-                call=call,
-                name=call.name,
-                arguments=call.arguments,
-                provider_name=call.provider_name,
-                provider_name_encoded=call.provider_name_encoded,
-                error={
-                    "type": "A2AInputUnavailable",
-                    "resolution": result_kind,
-                },
-                message=(
-                    "Downstream A2A input was "
-                    f"{result_kind.replace('_', ' ')}."
-                ),
+            outcome: ToolCallResult | ToolCallError = (
+                OrchestratorResponse._a2a_input_unavailable_outcome(
+                    call,
+                    result_kind,
+                )
             )
         else:
             prepared = await self._prepare_a2a_tool(
@@ -445,16 +447,21 @@ class TrustedAgentContinuationExecutor:
                     context=prepared.context,
                 )
             except A2AInputRequiredError as required:
-                await restage(required.continuation)
-            outcome = ToolCallResult(
-                id=checkpoint.call_id,
-                call=prepared.call,
-                name=prepared.call.name,
-                arguments=prepared.call.arguments,
-                provider_name=prepared.call.provider_name,
-                provider_name_encoded=prepared.call.provider_name_encoded,
-                result=payload,
-            )
+                if runtime.policy.accept_new:
+                    await restage(required.continuation)
+                outcome = OrchestratorResponse._a2a_input_unavailable_outcome(
+                    call
+                )
+            else:
+                outcome = ToolCallResult(
+                    id=checkpoint.call_id,
+                    call=prepared.call,
+                    name=prepared.call.name,
+                    arguments=prepared.call.arguments,
+                    provider_name=prepared.call.provider_name,
+                    provider_name_encoded=prepared.call.provider_name_encoded,
+                    result=payload,
+                )
         messages = OrchestratorResponse._tool_observation_messages(
             outcome,
             call=call,
@@ -532,6 +539,8 @@ class TrustedAgentContinuationExecutor:
             interaction_runtime=DurableInteractionRuntime(
                 actor=InteractionActor(principal=origin.principal),
                 stager=self._stager,
+                clock=self._clock,
+                policy=self._policy,
                 id_factory=id_factory,
                 run_id=origin.run_id,
                 task_id=origin.task_id,
@@ -579,6 +588,8 @@ class TrustedAgentContinuationRuntimeLoader:
         tool_settings: ToolSettingsContext | None = None,
         disable_memory: bool = False,
         uri: str | None = None,
+        clock: InteractionClock | None = None,
+        policy: InteractionPolicy | None = None,
     ) -> None:
         if not isinstance(loader, OrchestratorLoader):
             raise TypeError("loader must be an orchestrator loader")
@@ -598,6 +609,9 @@ class TrustedAgentContinuationRuntimeLoader:
             raise TypeError("disable_memory must be a boolean")
         if uri is not None and not isinstance(uri, str):
             raise TypeError("uri must be a string or None")
+        resolved_policy = InteractionPolicy() if policy is None else policy
+        if not isinstance(resolved_policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
         self._loader = loader
         self._stack = stack
         self._allowed_roots = roots
@@ -605,6 +619,8 @@ class TrustedAgentContinuationRuntimeLoader:
         self._tool_settings = tool_settings
         self._disable_memory = disable_memory
         self._uri = uri
+        self._clock = RuntimeInteractionClock() if clock is None else clock
+        self._policy = resolved_policy
 
     async def load_continuation_runtime(
         self,
@@ -641,7 +657,8 @@ class TrustedAgentContinuationRuntimeLoader:
                 resolved_binding,
                 capability,
             ) = orchestrator.continuation_execution_contract(
-                definition.operation_index
+                definition.operation_index,
+                policy=self._policy,
             )
             if resolved_definition != definition:
                 raise InputValidationError(
@@ -672,6 +689,8 @@ class TrustedAgentContinuationRuntimeLoader:
                     orchestrator,
                     stager=self._stager,
                     ownership=ownership,
+                    clock=self._clock,
+                    policy=self._policy,
                 )
                 await self._stack.enter_async_context(ownership)
             except BaseException:

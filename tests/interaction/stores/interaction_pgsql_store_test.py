@@ -3,9 +3,11 @@
 from asyncio import (
     CancelledError,
     Event,
+    Queue,
     create_task,
     gather,
     get_running_loop,
+    sleep,
     wait_for,
 )
 from collections.abc import Awaitable, Callable, Mapping
@@ -159,6 +161,7 @@ from avalan.interaction.stores.pgsql import (
     _SELECT_TASK_BRANCH_CLOSURE_SQL,
     _SELECT_TASK_INTERACTIONS_FOR_UPDATE_SQL,
     _SELECT_TASK_SCOPE_IDENTITIES_FOR_UPDATE_SQL,
+    _SELECT_WAIT_RECORD_REVISIONS_SQL,
     _SET_REPEATABLE_READ_ONLY_SQL,
     _UPSERT_BRANCH_SQL,
     _UPSERT_RECORD_SQL,
@@ -3006,31 +3009,43 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
             ),
         )
         resolutions: list[ResolveInteractionApplied] = []
+        resolution_committed = Event()
 
         async def resolve_during_authorization() -> None:
             result = await resolver_store.resolve(_answer(created))
             assert isinstance(result, ResolveInteractionApplied)
             resolutions.append(result)
+            resolution_committed.set()
 
         poll_calls = 0
+        poll_started = Event()
+        poll_steps: Queue[None] = Queue()
 
         async def poll_outside_transaction(_delay: float) -> None:
             nonlocal poll_calls
             self.assertFalse(database.lock.locked())
             poll_calls += 1
+            poll_started.set()
+            await poll_steps.get()
 
         authorizer.on_inspect = resolve_during_authorization
         with patch(
             "avalan.interaction.stores.pgsql.sleep",
             new=poll_outside_transaction,
         ):
-            projection = await wait_store.wait_for_change(
-                WaitForInteractionChangeCommand(
-                    actor=created.command.actor,
-                    correlation=created.record.correlation,
-                    after_store_revision=created.record.store_revision,
+            waiting = create_task(
+                wait_store.wait_for_change(
+                    WaitForInteractionChangeCommand(
+                        actor=created.command.actor,
+                        correlation=created.record.correlation,
+                        after_store_revision=created.record.store_revision,
+                    )
                 )
             )
+            await resolution_committed.wait()
+            await poll_started.wait()
+            poll_steps.put_nowait(None)
+            projection = await wait_for(waiting, 1)
 
         self.assertEqual(len(resolutions), 1)
         self.assertIsInstance(projection, InteractionRecord)
@@ -3041,7 +3056,200 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
             projection.store_revision,
             created.record.store_revision,
         )
-        self.assertEqual(poll_calls, 1)
+        self.assertGreaterEqual(poll_calls, 1)
+
+    async def test_wait_feed_bounds_idle_queries_for_many_waiters(
+        self,
+    ) -> None:
+        database = FakePgsqlDatabase()
+        store_policy = PgsqlInteractionStorePolicy(
+            poll_interval_seconds=0.001,
+        )
+        policy = InteractionPolicy()
+        factory = PgsqlInteractionStoreFactory(
+            database,
+            policy=policy,
+            clock=_Clock(),
+            authorizer=_Authorizer(),
+            id_factory=_Ids(),
+            cipher=_Cipher(),
+            classifier=_Classifier(policy),
+            store_policy=store_policy,
+        )
+        store = await factory.open()
+        remote_store = await _store(database)
+        created = [
+            await store.create(
+                _create_command(_request(f"wait-feed-bounded-{index}"))
+            )
+            for index in range(17)
+        ]
+        self.assertTrue(
+            all(
+                isinstance(result, CreateInteractionApplied)
+                for result in created
+            )
+        )
+        applied = cast(list[CreateInteractionApplied], created)
+        waiter_count = 16
+        poll_started = Event()
+        poll_steps: Queue[None] = Queue()
+
+        async def controlled_poll(delay: float) -> None:
+            self.assertEqual(delay, store_policy.poll_interval_seconds)
+            poll_started.set()
+            await poll_steps.get()
+
+        def active_waiters() -> int:
+            return sum(
+                group.waiter_count
+                for group in store._runtime.wait_groups.values()
+            )
+
+        commands = tuple(
+            WaitForInteractionChangeCommand(
+                actor=result.command.actor,
+                correlation=result.record.correlation,
+                after_store_revision=result.record.store_revision,
+            )
+            for result in applied[:waiter_count]
+        )
+        initial_snapshot_count = sum(
+            query == _SET_REPEATABLE_READ_ONLY_SQL
+            for query, _parameters in database.executed
+        )
+        waiting = []
+        try:
+            with patch(
+                "avalan.interaction.stores.pgsql.sleep",
+                new=controlled_poll,
+            ):
+                waiting = [
+                    create_task(store.wait_for_change(command))
+                    for command in commands
+                ]
+
+                async def wait_until_idle() -> None:
+                    while True:
+                        snapshot_count = sum(
+                            query == _SET_REPEATABLE_READ_ONLY_SQL
+                            for query, _parameters in database.executed
+                        )
+                        if (
+                            active_waiters() == waiter_count
+                            and len(store._runtime.wait_groups) == waiter_count
+                            and snapshot_count - initial_snapshot_count
+                            == waiter_count
+                        ):
+                            return
+                        await sleep(0)
+
+                await wait_for(wait_until_idle(), 1)
+                await poll_started.wait()
+                await sleep(0)
+                pump = store._runtime.wait_task
+                assert pump is not None
+                database.executed.clear()
+
+                poll_cycles = 2
+                for _ in range(poll_cycles):
+                    poll_started.clear()
+                    poll_steps.put_nowait(None)
+                    await wait_for(poll_started.wait(), 1)
+
+                self.assertEqual(
+                    sum(
+                        query == _SELECT_STORE_METADATA_SQL
+                        for query, _parameters in database.executed
+                    ),
+                    poll_cycles,
+                )
+                self.assertFalse(
+                    any(
+                        query
+                        in {
+                            _SELECT_WAIT_RECORD_REVISIONS_SQL,
+                            _SET_REPEATABLE_READ_ONLY_SQL,
+                        }
+                        for query, _parameters in database.executed
+                    )
+                )
+
+                unrelated = await remote_store.resolve(
+                    _answer(applied[-1], key="unrelated")
+                )
+                assert isinstance(unrelated, ResolveInteractionApplied)
+                database.executed.clear()
+                poll_started.clear()
+                poll_steps.put_nowait(None)
+                await wait_for(poll_started.wait(), 1)
+                await sleep(0)
+                self.assertEqual(
+                    sum(
+                        query == _SELECT_WAIT_RECORD_REVISIONS_SQL
+                        for query, _parameters in database.executed
+                    ),
+                    1,
+                )
+                self.assertFalse(
+                    any(
+                        query == _SET_REPEATABLE_READ_ONLY_SQL
+                        for query, _parameters in database.executed
+                    )
+                )
+
+                matched = await remote_store.resolve(
+                    _answer(applied[0], key="matched")
+                )
+                assert isinstance(matched, ResolveInteractionApplied)
+                database.executed.clear()
+                poll_started.clear()
+                poll_steps.put_nowait(None)
+                await wait_for(poll_started.wait(), 1)
+                matched_wait = waiting.pop(0)
+                self.assertEqual(
+                    await wait_for(matched_wait, 1),
+                    matched.record,
+                )
+                self.assertEqual(
+                    sum(
+                        query == _SET_REPEATABLE_READ_ONLY_SQL
+                        for query, _parameters in database.executed
+                    ),
+                    1,
+                )
+                self.assertFalse(any(task.done() for task in waiting))
+
+                cancelled = waiting.pop()
+                cancelled.cancel()
+                with self.assertRaises(CancelledError):
+                    await cancelled
+                self.assertEqual(
+                    active_waiters(),
+                    waiter_count - 2,
+                )
+                self.assertIs(store._runtime.wait_task, pump)
+
+                await store.aclose()
+                closed_results = await wait_for(
+                    gather(*waiting, return_exceptions=True),
+                    1,
+                )
+                self.assertTrue(
+                    all(
+                        isinstance(result, InteractionStoreClosedError)
+                        for result in closed_results
+                    )
+                )
+                self.assertEqual(store._runtime.wait_groups, {})
+                self.assertIsNone(store._runtime.wait_task)
+                self.assertTrue(pump.cancelled())
+        finally:
+            for task in waiting:
+                if not task.done():
+                    task.cancel()
+            await gather(*waiting, return_exceptions=True)
+            await remote_store.aclose()
 
     async def test_wait_change_cancellation_and_close_release_snapshot(
         self,
@@ -3077,7 +3285,33 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 await waiting
 
         self.assertFalse(database.lock.locked())
-        await store.aclose()
+        self.assertEqual(store._runtime.wait_groups, {})
+        self.assertIsNone(store._runtime.wait_task)
+
+        poll_started.clear()
+        with patch(
+            "avalan.interaction.stores.pgsql.sleep",
+            new=blocked_poll,
+        ):
+            waiting_at_close = create_task(
+                store.wait_for_change(
+                    WaitForInteractionChangeCommand(
+                        actor=created.command.actor,
+                        correlation=created.record.correlation,
+                        after_store_revision=created.record.store_revision,
+                    )
+                )
+            )
+            await poll_started.wait()
+            pump = store._runtime.wait_task
+            assert pump is not None
+            await store.aclose()
+            with self.assertRaises(InteractionStoreClosedError):
+                await waiting_at_close
+            self.assertTrue(pump.cancelled())
+
+        self.assertEqual(store._runtime.wait_groups, {})
+        self.assertIsNone(store._runtime.wait_task)
         with self.assertRaises(InteractionStoreClosedError):
             await store.wait_for_change(
                 WaitForInteractionChangeCommand(
@@ -3086,6 +3320,162 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                     after_store_revision=created.record.store_revision,
                 )
             )
+
+    async def test_wait_feed_closure_and_poll_error_paths(self) -> None:
+        race_store = await _store(FakePgsqlDatabase())
+        metadata_started = Event()
+        release_metadata = Event()
+
+        async def blocked_metadata(
+            _database: PgsqlDatabase,
+        ) -> tuple[int, int]:
+            metadata_started.set()
+            await release_metadata.wait()
+            return 0, 0
+
+        with (
+            patch.object(
+                interaction_pgsql,
+                "_read_wait_feed_metadata",
+                side_effect=blocked_metadata,
+            ),
+            patch.object(
+                race_store,
+                "_poll_wait_feed",
+                new=AsyncMock(),
+            ),
+        ):
+            subscribing = create_task(race_store._subscribe_wait_feed(None))
+            await metadata_started.wait()
+            closing = create_task(race_store.aclose())
+            await sleep(0)
+            release_metadata.set()
+            with self.assertRaises(InteractionStoreClosedError):
+                await subscribing
+            await closing
+        await race_store.aclose()
+
+        publish_store = await _store(FakePgsqlDatabase())
+        group = interaction_pgsql._PgsqlWaitGroup(
+            waiter_count=1,
+            durable_revision=1,
+        )
+        publish_store._runtime.wait_groups["missing"] = group
+        await publish_store._publish_wait_feed(
+            durable_revisions={"missing": None}
+        )
+        self.assertEqual(group.revision, 1)
+        self.assertIsNone(group.durable_revision)
+        publish_store._runtime.wait_groups.clear()
+        await publish_store.aclose()
+
+        poll_store = await _store(FakePgsqlDatabase())
+        with (
+            patch(
+                "avalan.interaction.stores.pgsql.sleep",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                interaction_pgsql,
+                "_read_wait_feed_metadata",
+                new=AsyncMock(
+                    side_effect=(
+                        RuntimeError("metadata failed"),
+                        CancelledError(),
+                    )
+                ),
+            ),
+            self.assertRaises(CancelledError),
+        ):
+            await poll_store._poll_wait_feed()
+
+        poll_store._runtime.wait_metadata = (0, 0)
+        with (
+            patch(
+                "avalan.interaction.stores.pgsql.sleep",
+                new=AsyncMock(),
+            ),
+            patch.object(
+                interaction_pgsql,
+                "_read_wait_feed_metadata",
+                new=AsyncMock(return_value=(1, 1)),
+            ),
+            patch.object(
+                interaction_pgsql,
+                "_read_wait_record_revisions",
+                new=AsyncMock(
+                    side_effect=(
+                        RuntimeError("records failed"),
+                        CancelledError(),
+                    )
+                ),
+            ),
+            self.assertRaises(CancelledError),
+        ):
+            await poll_store._poll_wait_feed()
+        await poll_store.aclose()
+
+    async def test_wait_feed_read_helpers_fail_closed(self) -> None:
+        database = FakePgsqlDatabase()
+        self.assertEqual(
+            await interaction_pgsql._read_wait_record_revisions(database, ()),
+            {},
+        )
+
+        with (
+            patch(
+                "pgsql_support.FakeCursor.fetchone",
+                new=AsyncMock(return_value=None),
+            ),
+            self.assertRaises(PgsqlInteractionFeatureUnavailableError),
+        ):
+            await interaction_pgsql._read_wait_feed_metadata(database)
+
+        with (
+            patch(
+                "pgsql_support.FakeCursor.fetchall",
+                new=AsyncMock(
+                    return_value=(
+                        {
+                            "request_id": "unexpected",
+                            "store_revision": 1,
+                        },
+                    )
+                ),
+            ),
+            self.assertRaises(PgsqlInteractionStoreError) as invalid_row,
+        ):
+            await interaction_pgsql._read_wait_record_revisions(
+                database,
+                ("expected",),
+            )
+        self.assertEqual(
+            invalid_row.exception.code,
+            InputErrorCode.SNAPSHOT_INVALID,
+        )
+
+        contract_error = InputContractError(
+            InputErrorCode.INVALID_FORMAT,
+            "wait",
+            "invalid",
+        )
+        for helper, arguments in (
+            (interaction_pgsql._read_wait_feed_metadata, (database,)),
+            (
+                interaction_pgsql._read_wait_record_revisions,
+                (database, ("request",)),
+            ),
+        ):
+            for error, expected_error in (
+                (CancelledError(), CancelledError),
+                (contract_error, InputContractError),
+                (RuntimeError("database failed"), PgsqlOperationError),
+            ):
+                with (
+                    patch.object(database, "connection", side_effect=error),
+                    self.assertRaises(expected_error),
+                ):
+                    await helper(*arguments)
 
     async def test_task_bound_public_mutations_require_coordinator(
         self,
@@ -10030,10 +10420,10 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 new=next_deadline,
             ),
             patch.object(
-                interaction_pgsql,
-                "sleep",
-                new=AsyncMock(),
-            ) as sleep,
+                store,
+                "_wait_for_feed_change",
+                new=AsyncMock(return_value=1),
+            ) as wait_for_feed_change,
         ):
             self.assertIs(
                 await store.wait_for_deadline_change(
@@ -10041,9 +10431,7 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 ),
                 deadline,
             )
-        sleep.assert_awaited_once_with(
-            store._store_policy.poll_interval_seconds
-        )
+        wait_for_feed_change.assert_awaited_once()
 
         async def invalid_callback(
             _memory: object,

@@ -32,8 +32,10 @@ from ..interaction.policy import (
     InteractionAuthorizer,
     InteractionDisclosure,
     InteractionOperation,
+    InteractionPolicy,
     InteractionRequestAuthorizationTarget,
 )
+from ..interaction.security import enforce_task_input_request_policy
 from ..interaction.store import (
     CancelInteractionApplied,
     CancelInteractionCommand,
@@ -158,8 +160,21 @@ class ServerInteractionConfiguration:
     broker: InteractionBroker = field(repr=False)
     principal_resolver: InteractionPrincipalResolver = field(repr=False)
     authorizer: InteractionAuthorizer = field(repr=False)
+    policy: InteractionPolicy = field(
+        default_factory=InteractionPolicy,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
+        if not isinstance(self.policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
+        broker_policy = getattr(self.broker, "policy", self.policy)
+        if isinstance(broker_policy, InteractionPolicy) and (
+            broker_policy != self.policy
+        ):
+            raise TypeError(
+                "broker and server interaction policies must match"
+            )
         _require_async_method(self.broker, "inspect", "broker")
         _require_async_method(self.broker, "resolve", "broker")
         _require_async_method(self.broker, "cancel", "broker")
@@ -414,6 +429,7 @@ class ServerInteractionRun:
             broker=service.configuration.broker,
             actor=actor,
             handler=_ServerAttachedInputHandler(self),
+            policy=service.configuration.policy,
         )
         self._entries: dict[InputRequestId, _InteractionEntry] = {}
         self._latest_request_id: InputRequestId | None = None
@@ -422,6 +438,10 @@ class ServerInteractionRun:
 
     async def register(self, request: InputRequest) -> _InteractionEntry:
         """Register one broker-created request under its complete scope."""
+        enforce_task_input_request_policy(
+            request,
+            "server_interaction.request",
+        )
         correlation = InteractionCorrelation.from_request(request)
         async with self._lock:
             entry = self._entries.get(request.request_id)
@@ -705,6 +725,7 @@ class ServerInteractionService:
             RequestState.PENDING,
             RequestState.ANSWERED,
             RequestState.DECLINED,
+            RequestState.TIMED_OUT,
         }:
             await self._close_entry_segment(entry)
         return projection
@@ -716,6 +737,11 @@ class ServerInteractionService:
         operation: InteractionOperation,
     ) -> _InteractionEntry:
         """Return one scope-filtered and operation-authorized entry."""
+        if (
+            operation is InteractionOperation.RESOLVE
+            and not self.configuration.policy.resolve_existing
+        ):
+            raise _ServerHTTPError.unavailable()
         if not isinstance(request_id, str) or not request_id:
             raise _ServerHTTPError.not_found()
         opaque_id = InputRequestId(request_id)
@@ -851,6 +877,8 @@ class ServerInteractionService:
             entry,
             InteractionOperation.RESOLVE,
         )
+        if record.request.state is RequestState.EXPIRED:
+            raise _ServerHTTPError.expired()
         try:
             command = _resolution_command(actor, record, payload)
         except InputContractError as error:
@@ -1037,6 +1065,11 @@ def configure_server_interactions(
 ) -> None:
     """Install or remove the configured interaction service on an app."""
     previous = getattr(app.state, "interaction_service", None)
+    if (
+        isinstance(previous, ServerInteractionService)
+        and previous.configuration is configuration
+    ):
+        return
     if isinstance(previous, ServerInteractionService):
         task = get_running_loop().create_task(
             previous.aclose(),
@@ -1105,6 +1138,8 @@ async def prepare_openai_interaction_run(
     if handling is ServerInteractionHandling.UNAVAILABLE:
         return None
     service = server_interaction_service(request)
+    if not service.configuration.policy.advertise:
+        raise _ServerHTTPError.unavailable()
     return await service.start_run(
         request,
         handling=handling,
@@ -1219,7 +1254,11 @@ async def poll_input_request(
         if (
             segment is not None
             and record.request.state
-            in {RequestState.ANSWERED, RequestState.DECLINED}
+            in {
+                RequestState.ANSWERED,
+                RequestState.DECLINED,
+                RequestState.TIMED_OUT,
+            }
             and (
                 transport == "stream"
                 or "text/event-stream"
@@ -1235,7 +1274,11 @@ async def poll_input_request(
         if (
             segment is not None
             and record.request.state
-            in {RequestState.ANSWERED, RequestState.DECLINED}
+            in {
+                RequestState.ANSWERED,
+                RequestState.DECLINED,
+                RequestState.TIMED_OUT,
+            }
             and transport == "json"
         ):
             if segment.completed_json is not None:

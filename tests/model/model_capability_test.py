@@ -30,6 +30,7 @@ from avalan.interaction import (
     ContinuationSnapshot,
     InputDeclinedResult,
     InputRequestId,
+    InteractionPolicy,
     ModelCallId,
     ModelConfigRevision,
     ModelId,
@@ -37,6 +38,7 @@ from avalan.interaction import (
     ProviderFamilyName,
     ProviderIdempotencyKey,
     RequirementMode,
+    TaskInputCapabilityState,
     decode_continuation_snapshot,
     encode_continuation_snapshot,
 )
@@ -441,6 +443,94 @@ def test_support_prerequisites_control_reserved_advertisement() -> None:
     assert attached.descriptors[0].canonical_name == (
         RESERVED_INPUT_CAPABILITY_NAME
     )
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    (
+        (
+            TaskInputCapabilityState.DORMANT,
+            (False, False, False),
+        ),
+        (
+            TaskInputCapabilityState.ROLLBACK,
+            (False, False, True),
+        ),
+        (
+            TaskInputCapabilityState.ACTIVE,
+            (True, True, True),
+        ),
+    ),
+)
+def test_task_input_state_matrix_is_exact(
+    state: TaskInputCapabilityState,
+    expected: tuple[bool, bool, bool],
+) -> None:
+    policy = InteractionPolicy(capability_state=state)
+
+    assert (
+        policy.advertise,
+        policy.accept_new,
+        policy.resolve_existing,
+    ) == expected
+
+
+def test_rollback_hides_new_calls_and_decodes_existing_calls() -> None:
+    rollback = ModelCapabilityCatalog.create(
+        _manager().export_model_capability_seed(),
+        support=_attached_support(),
+        policy=InteractionPolicy(
+            capability_state=TaskInputCapabilityState.ROLLBACK
+        ),
+    )
+    call = ProviderCapabilityCall(
+        call_id="retained-input-call",
+        provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+        arguments=_input_arguments(),
+    )
+
+    assert (
+        rollback.task_input_advertisement
+        is TaskInputCapabilityAdvertisement.INCAPABLE
+    )
+    assert (
+        rollback.task_input_resolution
+        is TaskInputCapabilityAdvertisement.ATTACHED
+    )
+    assert rollback.provider_name_for_existing_task_input() == (
+        RESERVED_INPUT_CAPABILITY_NAME
+    )
+    with pytest.raises(ModelCapabilityValidationError):
+        rollback.decode_call(call)
+
+    decoded = rollback.decode_existing_task_input(call)
+    assert decoded.call_id == "retained-input-call"
+    assert decoded.advertisement is TaskInputCapabilityAdvertisement.ATTACHED
+    with pytest.raises(ModelCapabilityValidationError) as domain:
+        rollback.decode_existing_task_input(
+            ProviderCapabilityCall(
+                call_id="domain-call",
+                provider_name="lookup",
+                arguments='{"query":"value"}',
+            ),
+            provider_family="openai",
+        )
+    assert domain.value.code == "capability.unknown"
+
+    dormant = replace(
+        rollback,
+        policy=InteractionPolicy(
+            capability_state=TaskInputCapabilityState.DORMANT
+        ),
+    )
+    with pytest.raises(ModelCapabilityValidationError):
+        dormant.decode_existing_task_input(call)
+
+
+@pytest.mark.parametrize("policy", (False, 0, ""))
+def test_catalog_rejects_falsy_non_policy_values(policy: object) -> None:
+    with pytest.raises(TypeError, match="interaction policy"):
+        ModelCapabilityCatalog.create(policy=cast(Any, policy))
 
 
 def test_durable_support_requires_registry_validated_codec_evidence() -> None:
@@ -1412,8 +1502,7 @@ def test_catalog_detects_provider_collision_after_policy_binding(
     policy["map"] = {"pkg.lookup": "same", "pkg.other": "same"}
     catalog = ModelCapabilityCatalog.create(seed)
     monkeypatch.setattr(
-        capability_module.ToolNamePolicy,
-        "bind",
+        "avalan.model.capability.ToolNamePolicy.bind",
         lambda self, _names: self,
     )
 
@@ -1701,7 +1790,7 @@ def test_descriptor_json_freezing_accepts_and_rejects_values() -> None:
             ModelCapabilityDescriptor(
                 canonical_name="invalid",
                 description="Reject invalid JSON.",
-                parameter_schema=schema,
+                parameter_schema=cast(Any, schema),
             )
         assert captured.value.code == "capability.non_json"
 
@@ -1712,6 +1801,6 @@ def test_descriptor_json_freezing_accepts_and_rejects_values() -> None:
         ModelCapabilityDescriptor(
             canonical_name="deep",
             description="Reject deep JSON.",
-            parameter_schema={"value": nested_list},
+            parameter_schema=cast(Any, {"value": nested_list}),
         )
     assert depth_error.value.code == "capability.non_json"

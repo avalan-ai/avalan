@@ -1,5 +1,6 @@
 """Render canonical task input through an injected CLI control channel."""
 
+from ..interaction import error
 from ..interaction.entities import (
     AnswerProvenance,
     Choice,
@@ -9,6 +10,7 @@ from ..interaction.entities import (
     FreeFormOther,
     InputAnswer,
     InputQuestion,
+    InputTimedOutResult,
     MultilineTextAnswer,
     MultilineTextQuestion,
     MultipleSelectionAnswer,
@@ -19,18 +21,22 @@ from ..interaction.entities import (
     TextAnswer,
     TextQuestion,
 )
-from ..interaction.error import InputValidationError
 from ..sdk import (
+    AgentRunCancelled,
+    AgentRunCompleted,
+    AgentRunInputRequired,
     AttachedInputContext,
     AttachedInputDisconnected,
     AttachedInputDisconnectReason,
     AttachedInputOutcome,
     InputAnswerSubmission,
     InputDeclineSubmission,
+    InputResolutionAccepted,
 )
 from .display_safety import strip_terminal_controls
 from .interaction_channel import CliInteractionChannelProtocol
 
+from asyncio.exceptions import CancelledError
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Literal, Protocol, TypeAlias, final
@@ -56,6 +62,103 @@ class CliInteractionCommandDisposition(StrEnum):
 
     ACCEPTED = "accepted"
     UNAVAILABLE = "unavailable"
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class CliInteractionResult:
+    """Describe one stable CLI control-channel result."""
+
+    envelope_id: str
+    payload: dict[str, object]
+    exit_code: int | None
+
+
+@final
+class CliInteractionExit(SystemExit):
+    """Terminate the CLI with one typed interaction result."""
+
+    def __init__(self, result: CliInteractionResult) -> None:
+        assert result.exit_code is not None
+        self.result = result
+        super().__init__(result.exit_code)
+
+
+class CliRunCancelled(CancelledError):
+    """Signal explicit structured containing-run cancellation."""
+
+
+def _cli_result(
+    name: str, payload: dict[str, object], exit_code: int | None
+) -> CliInteractionResult:
+    return CliInteractionResult(
+        envelope_id=f"cli.{name}.v1",
+        payload={**payload, "channel": "control"},
+        exit_code=exit_code,
+    )
+
+
+def cli_input_required_result(
+    request_id: str, continuation_id: str
+) -> CliInteractionResult:
+    """Return the frozen resumable CLI input-required result."""
+    return _cli_result(
+        "input_required",
+        {
+            "kind": "input_required",
+            "request_id": request_id,
+            "continuation_id": continuation_id,
+            "detached_resumption_available": True,
+        },
+        75,
+    )
+
+
+def cli_interaction_result(value: object) -> CliInteractionResult:
+    """Project one public interaction outcome onto the CLI control channel."""
+    if isinstance(value, AgentRunCompleted):
+        payload = {"kind": "completed", "value": value.to_json()}
+        return _cli_result("completed", payload, 0)
+    if isinstance(value, AgentRunInputRequired):
+        assert value.request_id and value.continuation_id
+        assert value.detached_resumption_available
+        return cli_input_required_result(
+            str(value.request_id), str(value.continuation_id)
+        )
+    if isinstance(value, AgentRunCancelled):
+        return _cli_result("cancelled", {"kind": "cancelled"}, 130)
+    if isinstance(value, InputResolutionAccepted):
+        assert value.interaction_state == "answered" and value.idempotent
+        payload = dict(
+            kind=value.kind,
+            interaction_state=value.interaction_state,
+            idempotent=value.idempotent,
+        )
+        return _cli_result("resolution_accepted", payload, 0)
+    if isinstance(value, InputTimedOutResult):
+        payload = dict(kind="timed_out", interaction_state="timed_out")
+        return _cli_result("timed_out", payload, 0)
+    if isinstance(value, error.InputValidationError):
+        payload = {"error": "input.validation", "interaction_state": "pending"}
+        return _cli_result("validation_error", payload, None)
+    if isinstance(value, error.InputContractError):
+        code = error.InputErrorCode
+        states = {
+            code.ALREADY_RESOLVED: ("already_resolved", "answered", 73),
+            code.EXPIRED: ("expired", "expired", 74),
+            code.SUPERSEDED: ("superseded", "superseded", 75),
+        }
+        if value.code is code.UNAVAILABLE:
+            payload = dict(
+                kind="unavailable", detached_resumption_available=False
+            )
+            return _cli_result("unavailable", payload, 69)
+        if value.code not in states:
+            raise TypeError("unsupported public interaction failure")
+        name, state, exit_code = states[value.code]
+        payload = {"error": value.code.value, "interaction_state": state}
+        return _cli_result(name, payload, exit_code)
+    raise TypeError("value must be a public interaction outcome")
 
 
 @final
@@ -298,7 +401,7 @@ class CliInteractionRenderer:
                     provenance=AnswerProvenance.HUMAN,
                     value=line,
                 )
-            except InputValidationError as exc:
+            except error.InputValidationError as exc:
                 await self._invalid(exc.safe_message)
 
     async def _ask_multiline(
@@ -349,7 +452,7 @@ class CliInteractionRenderer:
                     provenance=AnswerProvenance.HUMAN,
                     value=value,
                 )
-            except InputValidationError as exc:
+            except error.InputValidationError as exc:
                 await self._invalid(exc.safe_message)
 
     async def _ask_single_selection(
@@ -531,7 +634,7 @@ class CliInteractionRenderer:
                 continue
             try:
                 return FreeFormOther(text=line).text
-            except InputValidationError as exc:
+            except error.InputValidationError as exc:
                 await self._invalid(exc.safe_message)
 
     async def _read_controlled_line(

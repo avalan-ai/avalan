@@ -27,6 +27,7 @@ from ...interaction.entities import (
     ProviderFamilyName,
 )
 from ...interaction.error import InputErrorCode, InputSnapshotError
+from ...interaction.policy import InteractionPolicy
 from ...memory.manager import MemoryManager
 from ...model.call import ModelCallContext
 from ...model.capability import (
@@ -574,6 +575,8 @@ class Orchestrator:
     def continuation_execution_contract(
         self,
         operation_index: int,
+        *,
+        policy: InteractionPolicy | None = None,
     ) -> tuple[
         ExecutionDefinitionRef,
         ContinuationRevisionBinding,
@@ -587,10 +590,11 @@ class Orchestrator:
         definition, capability = self._execution_contract(
             operation_index,
             TaskInputCapabilityAdvertisement.DURABLE,
+            InteractionPolicy() if policy is None else policy,
         )
         binding = capability.revision_binding
         if (
-            capability.task_input_advertisement
+            capability.task_input_resolution
             is not TaskInputCapabilityAdvertisement.DURABLE
             or binding is None
         ):
@@ -700,6 +704,7 @@ class Orchestrator:
         definition, capability = self._execution_contract(
             operation_index,
             requested_advertisement,
+            runtime.policy if runtime is not None else InteractionPolicy(),
         )
         execution = await create_agent_execution(
             definition=definition,
@@ -768,12 +773,15 @@ class Orchestrator:
             definition,
             _revision_binding,
             expected_capability,
-        ) = self.continuation_execution_contract(operation_index)
+        ) = self.continuation_execution_contract(
+            operation_index,
+            policy=capability.policy,
+        )
         if (
             execution.definition != definition
             or capability.revision_binding
             != expected_capability.revision_binding
-            or capability.task_input_advertisement
+            or capability.task_input_resolution
             is not TaskInputCapabilityAdvertisement.DURABLE
         ):
             raise RuntimeError("resumed execution contract has drifted")
@@ -1414,6 +1422,7 @@ class Orchestrator:
         self,
         operation_index: int,
         requested_advertisement: TaskInputCapabilityAdvertisement,
+        policy: InteractionPolicy,
     ) -> tuple[ExecutionDefinitionRef, ModelCapabilityCatalog]:
         """Build one exact definition and host/provider capability catalog."""
         if not isinstance(
@@ -1423,6 +1432,8 @@ class Orchestrator:
             raise TypeError(
                 "requested_advertisement must be a task-input advertisement"
             )
+        if not isinstance(policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
         engine_agent = self.engine_agent_for_operation(operation_index)
         operation = self._operations[operation_index]
         capability_seed = self._tool.export_model_capability_seed()
@@ -1518,15 +1529,16 @@ class Orchestrator:
                 and codec.revision_binding == revision_binding
                 else None
             ),
+            policy=policy,
         )
         definition = self._execution_definition(
             operation,
             operation_index=operation_index,
             capability_seed=capability_seed,
-            interaction_mode=capability.task_input_advertisement.value,
+            interaction_mode=capability.task_input_resolution.value,
         )
         if (
-            capability.task_input_advertisement
+            capability.task_input_resolution
             is TaskInputCapabilityAdvertisement.DURABLE
             and provisional_definition is not None
             and definition != provisional_definition

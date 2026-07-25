@@ -1,672 +1,943 @@
-"""Exercise MCP cells in the structured-input failure matrix."""
+"""Exercise public MCP cells in the structured-input failure matrix."""
 
-from asyncio import CancelledError, create_task, run, wait
-from collections.abc import Callable
-from contextlib import suppress
+from asyncio import (
+    Event,
+    create_task,
+    run,
+    sleep,
+    wait_for,
+)
+from collections.abc import Callable, Mapping
+from dataclasses import dataclass
+from datetime import timedelta
+from json import dumps, loads
+from logging import getLogger
 from pathlib import Path
 from sys import path as sys_path
-from types import SimpleNamespace
-from typing import cast
+from typing import Any, cast
+from unittest.mock import patch
+from uuid import UUID, uuid4
 
 import pytest
-from mcp.types import ErrorData
+from fastapi import FastAPI
+from httpx import AsyncClient, Request, Response
+from mcp import ClientSession
+from mcp import types as mcp_types
+from mcp.client.session import ElicitationFnT
+from mcp.client.streamable_http import streamable_http_client
+from mcp.server.fastmcp import Context, FastMCP
+from pydantic import BaseModel, Field
 
 sys_path.append(str(Path(__file__).parent))
 
+import broker_contract_test as broker_contract  # noqa: E402
 import mcp_contract_test as contract  # noqa: E402
 
+from avalan.agent.execution import (  # noqa: E402
+    AgentExecution,
+    AttachedInteractionRuntime,
+    UuidExecutionIdFactory,
+)
+from avalan.entities import ToolCallContext  # noqa: E402
 from avalan.interaction import (  # noqa: E402
     AnsweredResolution,
     AnswerProvenance,
-    ConfirmationQuestion,
-    ExpiredResolution,
+    AsyncInteractionBroker,
+    InputDisconnectReason,
     InputHandlerContext,
+    InputHandlerDisconnected,
+    InputHandlerOutcome,
     InputHandlerResolution,
-    InputRequestId,
+    InteractionActor,
+    InteractionBrokerRequest,
+    InteractionBrokerResult,
+    InteractionExecutionScope,
+    InteractionRequestResult,
     QuestionId,
-    SingleSelectionQuestion,
-    SupersededResolution,
-    TextQuestion,
-    TimedOutResolution,
+    RequestState,
+    SupersedeInteractionScopeCommand,
+    TextAnswer,
 )
-from avalan.interaction.broker import InteractionRequestResult  # noqa: E402
+from avalan.server.interaction import (  # noqa: E402
+    ServerInteractionConfiguration,
+    ServerInteractionService,
+)
 from avalan.server.mcp_session import (  # noqa: E402
-    MCP_CONFLICT,
-    MCP_INVALID_PARAMS,
-    MCPFormErrorCode,
-    MCPFormSessionError,
-)
-from avalan.server.mcp_tasks import (  # noqa: E402
-    MCPTaskCapabilities,
-    MCPTaskController,
-    MCPTaskRequest,
-    parse_task_request,
+    MCPFormSessionRegistry,
 )
 from avalan.server.routers import mcp as mcp_router  # noqa: E402
-from avalan.tool import mcp_session as downstream_mcp  # noqa: E402
+from avalan.tool.mcp import McpCallTool  # noqa: E402
 
 _EVIDENCE_PROPERTY = "failure_matrix_evidence"
-_FORM_SURFACES = (
-    "mcp-downstream-elicitation",
-    "mcp-inbound-elicitation-form",
-    "mcp-inbound-task",
-)
+_FORM_SURFACE = "mcp-inbound-elicitation-form"
+_TASK_SURFACE = "mcp-inbound-task"
+_DOWNSTREAM_SURFACE = "mcp-downstream-elicitation"
+_CALL_TOOL_RESULT = "mcp.call_tool_result.v1"
+_RecordProperty = Callable[[str, object], None]
 
 
-def _evidence(
-    condition_id: str,
-    *,
-    transition: tuple[str, str],
-    public_result_id: str,
-    status: tuple[str, str],
-    provider_calls: int,
-    surfaces: tuple[str, ...] = _FORM_SURFACES,
-) -> list[dict[str, object]]:
-    return [
-        {
-            "condition_id": condition_id,
-            "surface_id": surface,
-            "transition_from": transition[0],
-            "transition_to": transition[1],
-            "public_result_id": public_result_id,
-            "public_result": {"redacted": True},
-            "status_key": status[0],
-            "status_value": status[1],
-            "provider_call_count": provider_calls,
-            "domain_side_effect_count": 0,
-        }
-        for surface in surfaces
-    ]
+@dataclass(frozen=True, slots=True)
+class _Observation:
+    """Hold evidence obtained from one public boundary invocation."""
+
+    transition: tuple[str, str]
+    public_result_id: str
+    public_result: Mapping[str, object]
+    status: tuple[str, str]
 
 
 def _record(
-    record_property: Callable[[str, object], None],
-    evidence: list[dict[str, object]],
+    record_property: _RecordProperty,
+    condition_id: str,
+    surface_id: str,
+    observation: _Observation,
 ) -> None:
-    assert evidence
-    record_property(_EVIDENCE_PROPERTY, evidence)
-
-
-async def _invalid_form(
-    question: ConfirmationQuestion | SingleSelectionQuestion | TextQuestion,
-    content: dict[str, object],
-) -> MCPFormSessionError:
-    registry = await contract._registry()
-    handled = create_task(
-        registry.handler(
-            session_id="session",
-            owner=contract._OWNER,
-            related_request_id="call",
-        )(InputHandlerContext(request=contract._request(question)))
-    )
-    outbound = await registry.next_outbound("session", contract._OWNER)
-    assert outbound is not None
-    with pytest.raises(MCPFormSessionError) as caught:
-        await registry.dispatch_response(
-            "session",
-            contract._OWNER,
-            {
-                "jsonrpc": "2.0",
-                "id": outbound.jsonrpc_id,
-                "result": {"action": "accept", "content": content},
-            },
-        )
-    assert caught.value.rpc_code == MCP_INVALID_PARAMS
-    assert not handled.done()
-    assert await registry.pending_count("session", contract._OWNER) == 1
-    question_id = str(question.question_id)
-    if isinstance(question, ConfirmationQuestion):
-        corrected: object = True
-    elif isinstance(question, SingleSelectionQuestion):
-        corrected = str(question.choices[0].value)
-    else:
-        corrected = "corrected"
-    await registry.dispatch_response(
-        "session",
-        contract._OWNER,
+    evidence = [
         {
+            "condition_id": condition_id,
+            "surface_id": surface_id,
+            "transition_from": observation.transition[0],
+            "transition_to": observation.transition[1],
+            "public_result_id": observation.public_result_id,
+            "public_result": observation.public_result,
+            "status_key": observation.status[0],
+            "status_value": observation.status[1],
+            "provider_call_count": 0,
+            "domain_side_effect_count": 0,
+        }
+    ]
+    record_property(
+        _EVIDENCE_PROPERTY,
+        dumps(evidence, separators=(",", ":"), sort_keys=True),
+    )
+
+
+def _model_dict(value: BaseModel) -> dict[str, object]:
+    projected = value.model_dump(
+        by_alias=True,
+        mode="json",
+        exclude_none=True,
+    )
+    assert isinstance(projected, dict)
+    return cast(dict[str, object], projected)
+
+
+@dataclass(frozen=True, slots=True)
+class _PostedResponse:
+    """Capture one response POST and its public HTTP outcome."""
+
+    body: dict[str, object]
+    headers: dict[str, str]
+    response_body: dict[str, object] | None
+    status_code: int
+
+
+class _TransportCapture:
+    """Capture public JSON responses without consuming SSE bodies."""
+
+    def __init__(self) -> None:
+        self.callback_posts: list[_PostedResponse] = []
+        self.method_responses: list[tuple[str, dict[str, object]]] = []
+        self.callback_posted = Event()
+        self.callback_error = Event()
+
+    async def response_hook(self, response: Response) -> None:
+        request_body = self._request_body(response.request)
+        response_body: dict[str, object] | None = None
+        content_type = response.headers.get("content-type", "")
+        if content_type.startswith("application/json"):
+            await response.aread()
+            decoded = loads(response.content)
+            if isinstance(decoded, dict):
+                response_body = cast(dict[str, object], decoded)
+        method = request_body.get("method")
+        if isinstance(method, str) and response_body is not None:
+            self.method_responses.append((method, response_body))
+        if (
+            method is None
+            and "id" in request_body
+            and ("result" in request_body or "error" in request_body)
+        ):
+            self.callback_posts.append(
+                _PostedResponse(
+                    body=request_body,
+                    headers=dict(response.request.headers),
+                    response_body=response_body,
+                    status_code=response.status_code,
+                )
+            )
+            self.callback_posted.set()
+            if response_body is not None and "error" in response_body:
+                self.callback_error.set()
+
+    def response_for(self, method: str) -> dict[str, object]:
+        return next(
+            body
+            for candidate, body in reversed(self.method_responses)
+            if candidate == method
+        )
+
+    @staticmethod
+    def _request_body(request: Request) -> dict[str, object]:
+        try:
+            decoded = loads(request.content)
+        except (TypeError, ValueError):
+            return {}
+        return (
+            cast(dict[str, object], decoded)
+            if isinstance(decoded, dict)
+            else {}
+        )
+
+
+def _callback_meta(
+    params: mcp_types.ElicitRequestFormParams,
+) -> dict[str, object] | None:
+    if params.meta is None:
+        return None
+    return cast(
+        dict[str, object],
+        params.meta.model_dump(mode="json", exclude_none=True),
+    )
+
+
+async def _raw_response_post(
+    client: AsyncClient,
+    url: str,
+    posted: _PostedResponse,
+    body: Mapping[str, object],
+) -> dict[str, object] | None:
+    headers = {
+        name: value
+        for name, value in posted.headers.items()
+        if name.lower()
+        in {
+            "accept",
+            "authorization",
+            "content-type",
+            "mcp-protocol-version",
+            "mcp-session-id",
+        }
+    }
+    response = await client.post(url, headers=headers, json=dict(body))
+    if response.status_code == 202:
+        return None
+    decoded = response.json()
+    assert isinstance(decoded, dict)
+    return cast(dict[str, object], decoded)
+
+
+async def _task_create(
+    session: ClientSession,
+    scenario: str,
+) -> mcp_types.CreateTaskResult:
+    return await session.send_request(
+        mcp_types.ClientRequest(
+            mcp_types.CallToolRequest(
+                params=mcp_types.CallToolRequestParams(
+                    name="run",
+                    arguments={"input_string": scenario},
+                    task=mcp_types.TaskMetadata(ttl=60_000),
+                )
+            )
+        ),
+        mcp_types.CreateTaskResult,
+    )
+
+
+async def _task_get(
+    session: ClientSession,
+    task_id: str,
+) -> mcp_types.GetTaskResult:
+    return await session.send_request(
+        mcp_types.ClientRequest(
+            mcp_types.GetTaskRequest(
+                params=mcp_types.GetTaskRequestParams(taskId=task_id)
+            )
+        ),
+        mcp_types.GetTaskResult,
+    )
+
+
+async def _task_cancel(
+    session: ClientSession,
+    task_id: str,
+) -> mcp_types.CancelTaskResult:
+    return await session.send_request(
+        mcp_types.ClientRequest(
+            mcp_types.CancelTaskRequest(
+                params=mcp_types.CancelTaskRequestParams(taskId=task_id)
+            )
+        ),
+        mcp_types.CancelTaskResult,
+    )
+
+
+async def _task_result(
+    session: ClientSession,
+    task_id: str,
+) -> mcp_types.GetTaskPayloadResult:
+    return await session.send_request(
+        mcp_types.ClientRequest(
+            mcp_types.GetTaskPayloadRequest(
+                params=mcp_types.GetTaskPayloadRequestParams(taskId=task_id)
+            )
+        ),
+        mcp_types.GetTaskPayloadResult,
+    )
+
+
+async def _wait_task_status(
+    session: ClientSession,
+    task_id: str,
+    expected: str,
+) -> mcp_types.GetTaskResult:
+    for _ in range(200):
+        task = await _task_get(session, task_id)
+        if task.status == expected:
+            return task
+        await sleep(0)
+    raise AssertionError(f"MCP task did not reach {expected}")
+
+
+def _answered_state(outcome: InputHandlerOutcome) -> str:
+    assert isinstance(outcome, InputHandlerResolution)
+    assert isinstance(outcome.resolution, AnsweredResolution)
+    return RequestState.ANSWERED.value
+
+
+async def _inbound_condition(condition_id: str) -> _Observation:
+    boundary = contract._InboundBoundary()
+    orchestrator = contract._InboundOrchestrator()
+    app = FastAPI()
+    app.state.logger = getLogger("mcp-matrix-public")
+    app.state.orchestrator = orchestrator
+    app.state.interaction_service = ServerInteractionService(
+        ServerInteractionConfiguration(
+            broker=cast(Any, boundary),
+            principal_resolver=boundary,
+            authorizer=cast(Any, boundary),
+        )
+    )
+    app.state.mcp_form_session_registry = MCPFormSessionRegistry(
+        response_wait_seconds=2,
+    )
+    app.include_router(mcp_router.create_router(), prefix="/mcp")
+
+    async def orchestrate(
+        *args: object,
+        **kwargs: object,
+    ) -> tuple[contract._InboundResponse, UUID, int]:
+        del args
+        runtime = cast(
+            AttachedInteractionRuntime | None,
+            kwargs["interaction_runtime"],
+        )
+        return (
+            contract._InboundResponse(runtime, orchestrator),
+            uuid4(),
+            1,
+        )
+
+    scenarios = {
+        "INPUT-F-01": "incapable",
+        "INPUT-F-04": "confirmation",
+        "INPUT-F-05": "selection",
+        "INPUT-F-06": "accept",
+        "INPUT-F-07": "confirmation",
+        "INPUT-F-08": "confirmation",
+        "INPUT-F-10": "accept",
+        "INPUT-F-12": "accept",
+        "INPUT-F-14": "accept",
+        "INPUT-F-15": "ordinary",
+    }
+    scenario = scenarios[condition_id]
+    orchestrator.scenario = scenario
+    if condition_id in {"INPUT-F-07", "INPUT-F-14"}:
+        orchestrator.after_input_gate = Event()
+    invalid_content: dict[str, object] | None = {
+        "INPUT-F-04": {"confirm": "yes"},
+        "INPUT-F-05": {"choice": "unknown"},
+        "INPUT-F-06": {},
+    }.get(condition_id)
+    valid_content: dict[str, object] = {
+        "INPUT-F-04": {"confirm": True},
+        "INPUT-F-05": {"choice": "alpha"},
+        "INPUT-F-06": {"name": "corrected"},
+        "INPUT-F-07": {"confirm": True},
+        "INPUT-F-08": {"confirm": True},
+        "INPUT-F-10": {"name": "Ada"},
+        "INPUT-F-12": {"name": "Ada"},
+        "INPUT-F-14": {"name": "Ada"},
+    }.get(condition_id, {"name": "Ada"})
+
+    async def elicit(
+        _context: object,
+        params: object,
+    ) -> mcp_types.ElicitResult:
+        assert isinstance(params, mcp_types.ElicitRequestFormParams)
+        return mcp_types.ElicitResult.model_validate(
+            {
+                "_meta": _callback_meta(params),
+                "action": "accept",
+                "content": (
+                    cast(dict[str, Any], invalid_content)
+                    if invalid_content is not None
+                    else cast(dict[str, Any], valid_content)
+                ),
+            }
+        )
+
+    capture = _TransportCapture()
+    with (
+        patch.object(
+            mcp_router, "Orchestrator", contract._InboundOrchestrator
+        ),
+        patch.object(mcp_router, "resolve_model_id", return_value="gpt"),
+        patch.object(mcp_router, "orchestrate", orchestrate),
+    ):
+        async with contract._loopback_server(
+            app,
+            lifespan="off",
+        ) as base_url:
+            url = f"{base_url}/mcp"
+            async with AsyncClient(
+                headers={"Authorization": "Bearer mcp-owner"},
+                event_hooks={"response": [capture.response_hook]},
+                timeout=5,
+            ) as client:
+                async with streamable_http_client(
+                    url,
+                    http_client=client,
+                ) as (read_stream, write_stream, _session_id):
+                    callback = (
+                        None
+                        if condition_id in {"INPUT-F-01", "INPUT-F-15"}
+                        else cast(ElicitationFnT, elicit)
+                    )
+                    async with ClientSession(
+                        read_stream,
+                        write_stream,
+                        read_timeout_seconds=timedelta(seconds=5),
+                        elicitation_callback=callback,
+                    ) as session:
+                        initialized = await session.initialize()
+                        assert (
+                            initialized.protocolVersion
+                            == mcp_types.LATEST_PROTOCOL_VERSION
+                        )
+                        observation = await _invoke_inbound(
+                            condition_id,
+                            scenario,
+                            session,
+                            client,
+                            url,
+                            capture,
+                            orchestrator,
+                            invalid_content,
+                            valid_content,
+                        )
+    await mcp_router.close_mcp_state(app)
+    return observation
+
+
+async def _invoke_inbound(
+    condition_id: str,
+    scenario: str,
+    session: ClientSession,
+    client: AsyncClient,
+    url: str,
+    capture: _TransportCapture,
+    orchestrator: contract._InboundOrchestrator,
+    invalid_content: Mapping[str, object] | None,
+    valid_content: Mapping[str, object],
+) -> _Observation:
+    if condition_id in {"INPUT-F-01", "INPUT-F-15"}:
+        result = await session.call_tool(
+            "run",
+            {"input_string": scenario},
+            read_timeout_seconds=timedelta(seconds=5),
+        )
+        public_result = _model_dict(result)
+        text = cast(Any, result.content[0]).text
+        expected = (
+            "unavailable" if condition_id == "INPUT-F-01" else "ordinary"
+        )
+        assert text == expected
+        return _Observation(
+            transition=(
+                ("created", "unavailable")
+                if condition_id == "INPUT-F-01"
+                else ("running", "running")
+            ),
+            public_result_id=_CALL_TOOL_RESULT,
+            public_result=public_result,
+            status=("result", expected),
+        )
+
+    if condition_id in {"INPUT-F-04", "INPUT-F-05", "INPUT-F-06"}:
+        assert invalid_content is not None
+        call = create_task(
+            session.call_tool(
+                "run",
+                {"input_string": scenario},
+                read_timeout_seconds=timedelta(seconds=5),
+            )
+        )
+        await wait_for(capture.callback_error.wait(), timeout=5)
+        assert not call.done()
+        posted = capture.callback_posts[0]
+        assert posted.response_body is not None
+        error = cast(dict[str, object], posted.response_body)
+        assert cast(dict[str, object], error["error"])["code"] == -32602
+        corrected = {
             "jsonrpc": "2.0",
-            "id": outbound.jsonrpc_id,
+            "id": posted.body["id"],
             "result": {
                 "action": "accept",
-                "content": {question_id: corrected},
-            },
-        },
-    )
-    assert isinstance(await handled, InputHandlerResolution)
-    assert await registry.pending_count("session", contract._OWNER) == 0
-    return caught.value
-
-
-async def _duplicate_response(*, conflicting: bool) -> None:
-    registry = await contract._registry()
-    request = contract._request(
-        ConfirmationQuestion(
-            question_id=QuestionId("confirm"),
-            prompt="Continue?",
-            required=True,
-        )
-    )
-    owner = (contract._OWNER, "session")
-    controller = MCPTaskController(id_factory=lambda: "task")
-    creation = await controller.create(
-        MCPTaskRequest(),
-        requestor=owner,
-    )
-    handled = create_task(
-        registry.handler(
-            session_id="session",
-            owner=contract._OWNER,
-            related_request_id="call",
-            related_task_id="task",
-            status_hook=mcp_router._mcp_task_status_hook(creation.handle),
-        )(InputHandlerContext(request=request))
-    )
-    outbound = await registry.next_outbound("session", contract._OWNER)
-    assert outbound is not None
-    assert outbound.related_task_id == "task"
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "input_required"
-    response = {
-        "jsonrpc": "2.0",
-        "id": outbound.jsonrpc_id,
-        "result": {
-            "action": "accept",
-            "content": {"confirm": True},
-            "_meta": {
-                "io.modelcontextprotocol/related-task": {"taskId": "task"}
-            },
-        },
-    }
-    await registry.dispatch_response("session", contract._OWNER, response)
-    outcome = await handled
-    assert isinstance(outcome, InputHandlerResolution)
-    assert isinstance(outcome.resolution, AnsweredResolution)
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "working"
-
-    if not conflicting:
-        await registry.dispatch_response(
-            "session",
-            contract._OWNER,
-            response,
-        )
-        projected = downstream_mcp._broker_result(
-            _terminal_result(outcome.resolution)
-        )
-        assert projected.action == "accept"
-        assert projected.content == {"confirm": True}
-    else:
-        conflict = {
-            **response,
-            "result": {
-                **cast(dict[str, object], response["result"]),
-                "content": {"confirm": False},
+                "content": dict(valid_content),
             },
         }
-        with pytest.raises(MCPFormSessionError) as caught:
-            await registry.dispatch_response(
-                "session",
-                contract._OWNER,
-                conflict,
-            )
-        assert caught.value.code is MCPFormErrorCode.STALE_RESPONSE
-        assert caught.value.rpc_code == MCP_CONFLICT
-        resolution = SupersededResolution(
-            request_id=request.request_id,
-            provenance=AnswerProvenance.POLICY,
-            resolved_at=contract._NOW,
+        assert await _raw_response_post(client, url, posted, corrected) is None
+        await call
+        request = orchestrator.requests[-1]
+        assert request.state is RequestState.PENDING
+        return _Observation(
+            transition=(request.state.value, request.state.value),
+            public_result_id="mcp.invalid_params_error.v1",
+            public_result=error,
+            status=("jsonrpc_error", "-32602"),
         )
-        projected = downstream_mcp._broker_result(_terminal_result(resolution))
-        assert isinstance(projected, ErrorData)
-        assert projected.code == MCP_CONFLICT
-        assert projected.data == {"code": "avalan.input.already_resolved"}
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "working"
+
+    if condition_id == "INPUT-F-08":
+        await session.call_tool(
+            "run",
+            {"input_string": scenario},
+            read_timeout_seconds=timedelta(seconds=5),
+        )
+        posted = capture.callback_posts[0]
+        original = cast(dict[str, object], posted.body["result"])
+        conflict_result = dict(original)
+        conflict_result["content"] = {"confirm": False}
+        conflict = await _raw_response_post(
+            client,
+            url,
+            posted,
+            {
+                "jsonrpc": "2.0",
+                "id": posted.body["id"],
+                "result": conflict_result,
+            },
+        )
+        assert conflict is not None
+        assert cast(dict[str, object], conflict["error"])["code"] == -32009
+        state = _answered_state(orchestrator.outcomes[-1])
+        return _Observation(
+            transition=(state, state),
+            public_result_id="mcp.conflict_error.v1",
+            public_result=conflict,
+            status=("jsonrpc_error", "-32009"),
+        )
+
+    creation = await _task_create(session, scenario)
+    task_id = creation.task.taskId
+    pending = await _wait_task_status(
+        session,
+        task_id,
+        "input_required",
+    )
+    assert pending.status == "input_required"
+
+    if condition_id == "INPUT-F-10":
+        cancelled = await _task_cancel(session, task_id)
+        assert cancelled.status == "cancelled"
+        return _Observation(
+            transition=(RequestState.PENDING.value, cancelled.status),
+            public_result_id="mcp.task_cancelled.v1",
+            public_result=capture.response_for("tasks/cancel"),
+            status=("task_status", cancelled.status),
+        )
+
+    if condition_id == "INPUT-F-12":
+        public_result = capture.response_for("tasks/get")
+        await _task_cancel(session, task_id)
+        return _Observation(
+            transition=(
+                RequestState.PENDING.value,
+                RequestState.PENDING.value,
+            ),
+            public_result_id="mcp.task_input_required.v1",
+            public_result=public_result,
+            status=("task_status", pending.status),
+        )
+
+    result_task = create_task(_task_result(session, task_id))
+    await wait_for(capture.callback_posted.wait(), timeout=5)
+    for _ in range(200):
+        if orchestrator.outcomes:
+            break
+        await sleep(0.01)
+    assert orchestrator.outcomes
+    working = await _wait_task_status(session, task_id, "working")
+    public_result = capture.response_for("tasks/get")
+
+    if condition_id == "INPUT-F-07":
+        posted = capture.callback_posts[0]
+        assert (
+            await _raw_response_post(client, url, posted, posted.body) is None
+        )
+        state = _answered_state(orchestrator.outcomes[-1])
+        observation = _Observation(
+            transition=(state, state),
+            public_result_id="mcp.task_working.v1",
+            public_result=public_result,
+            status=("task_status", working.status),
+        )
+    else:
+        assert condition_id == "INPUT-F-14"
+        request = orchestrator.requests[-1]
+        state = _answered_state(orchestrator.outcomes[-1])
+        observation = _Observation(
+            transition=(request.state.value, state),
+            public_result_id="mcp.task_working.v1",
+            public_result=public_result,
+            status=("task_status", working.status),
+        )
+    assert orchestrator.after_input_gate is not None
+    orchestrator.after_input_gate.set()
+    await wait_for(result_task, timeout=5)
+    return observation
 
 
-async def _terminal_task_error(
-    resolution: ExpiredResolution | SupersededResolution,
-    expected: dict[str, object],
-) -> None:
-    registry = await contract._registry()
-    owner = (contract._OWNER, "session")
-    controller = MCPTaskController(id_factory=lambda: "task")
-    creation = await controller.create(MCPTaskRequest(), requestor=owner)
-    handled = create_task(
-        registry.handler(
-            session_id="session",
-            owner=contract._OWNER,
-            related_request_id="call",
-            related_task_id="task",
-            status_hook=mcp_router._mcp_task_status_hook(creation.handle),
-        )(
-            InputHandlerContext(
-                request=contract._request(
-                    TextQuestion(
-                        question_id=QuestionId("name"),
-                        prompt="Name?",
-                        required=True,
+class _BrokerProbe:
+    """Retain results while delegating every operation to the real broker."""
+
+    def __init__(self, broker: AsyncInteractionBroker) -> None:
+        self._broker = broker
+        self.policy = broker.policy
+        self.results: list[InteractionRequestResult] = []
+
+    async def request(
+        self,
+        request: InteractionBrokerRequest,
+    ) -> InteractionRequestResult:
+        result = await self._broker.request(request)
+        self.results.append(result)
+        return result
+
+    async def cancel_scope(self, command: object) -> InteractionBrokerResult:
+        return await self._broker.cancel_scope(cast(Any, command))
+
+    async def supersede(self, command: object) -> InteractionBrokerResult:
+        return await self._broker.supersede(cast(Any, command))
+
+
+class _DownstreamHandler:
+    """Drive one typed broker outcome for a public reverse elicitation."""
+
+    def __init__(
+        self,
+        condition_id: str,
+        clock: broker_contract._Clock,
+    ) -> None:
+        self.condition_id = condition_id
+        self.clock = clock
+        self.started = Event()
+        self.contexts: list[InputHandlerContext] = []
+        self.blocked = Event()
+
+    async def __call__(
+        self,
+        context: InputHandlerContext,
+    ) -> InputHandlerOutcome:
+        self.contexts.append(context)
+        self.started.set()
+        if self.condition_id == "INPUT-F-14":
+            return InputHandlerResolution(
+                resolution=AnsweredResolution(
+                    request_id=context.request.request_id,
+                    provenance=AnswerProvenance.HUMAN,
+                    resolved_at=self.clock.wall_time,
+                    answers=(
+                        TextAnswer(
+                            question_id=QuestionId("name"),
+                            provenance=AnswerProvenance.HUMAN,
+                            value="Ada",
+                        ),
                     ),
-                    request_id=str(resolution.request_id),
                 )
             )
+        if self.condition_id == "INPUT-F-10":
+            return InputHandlerDisconnected(
+                reason=InputDisconnectReason.HANDLER_CANCELLED
+            )
+        if self.condition_id == "INPUT-F-01":
+            return InputHandlerDisconnected(
+                reason=InputDisconnectReason.HANDLER_UNAVAILABLE
+            )
+        await self.blocked.wait()
+        raise AssertionError("terminal broker transition did not stop handler")
+
+
+class _NameForm(BaseModel):
+    """Describe the real downstream MCP form."""
+
+    name: str = Field(title="Name", min_length=1, max_length=20)
+
+
+async def _downstream_condition(condition_id: str) -> _Observation:
+    harness = await broker_contract._harness()
+    broker = harness.broker
+    clock = harness.clock
+    probe = _BrokerProbe(broker)
+    handler = _DownstreamHandler(condition_id, clock)
+    origin = contract._origin(task_id=f"downstream-{condition_id}")
+    execution_ids = UuidExecutionIdFactory()
+    runtime = AttachedInteractionRuntime(
+        broker=cast(Any, probe),
+        actor=InteractionActor(principal=origin.principal),
+        handler=handler,
+        policy=broker.policy,
+        id_factory=execution_ids,
+        run_id=origin.run_id,
+        task_id=origin.task_id,
+        branch_id=origin.branch_id,
+    )
+    execution = AgentExecution(
+        origin=origin,
+        id_factory=execution_ids,
+        initial_messages=(),
+        interaction_runtime=runtime,
+    )
+    branch_broker = execution.interaction_broker
+    assert branch_broker is not None
+    context = ToolCallContext(
+        agent_id=UUID(str(origin.agent_id)),
+        execution=execution,
+        execution_origin=origin,
+        interaction_broker=branch_broker,
+    )
+    server = FastMCP(
+        "mcp-matrix-downstream",
+        log_level="CRITICAL",
+    )
+
+    @server.tool()
+    async def ask(ctx: Context) -> dict[str, object]:
+        elicited = await ctx.elicit(
+            message="Who should be greeted?",
+            schema=_NameForm,
         )
-    )
-    outbound = await registry.next_outbound("session", contract._OWNER)
-    assert outbound is not None
-    assert outbound.related_task_id == "task"
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "input_required"
+        data = getattr(elicited, "data", None)
+        content = data.model_dump(mode="json") if data is not None else None
+        return {"action": elicited.action, "content": content}
 
-    handled.cancel()
-    with suppress(CancelledError):
-        await handled
-    assert await registry.pending_count("session", contract._OWNER) == 0
-
-    projected = downstream_mcp._broker_result(_terminal_result(resolution))
-    assert isinstance(projected, ErrorData)
-    projected_error: dict[str, object] = {
-        "code": projected.code,
-        "message": projected.message,
-    }
-    if projected.data is not None:
-        projected_error["data"] = projected.data
-    assert projected_error == expected
-    assert (await creation.handle.fail(projected_error))["status"] == "failed"
-    outcome = await controller.result("task", requestor=owner)
-    assert outcome.error == expected
-
-
-async def _expired_resolution() -> None:
-    resolution = ExpiredResolution(
-        request_id=InputRequestId("expired"),
-        provenance=AnswerProvenance.POLICY,
-        resolved_at=contract._NOW,
-    )
-    await _terminal_task_error(
-        resolution,
-        {
-            "code": -32010,
-            "message": "Avalan input request expired",
-            "data": {"code": "avalan.input.expired"},
-        },
-    )
-
-
-async def _cancelled_task() -> None:
-    owner = (contract._OWNER, "session")
-    controller = MCPTaskController(id_factory=lambda: "task")
-    creation = await controller.create(MCPTaskRequest(), requestor=owner)
-    await creation.handle.transition_input_required()
-    assert (await controller.cancel("task", requestor=owner))[
-        "status"
-    ] == "cancelled"
-    assert (await creation.handle.complete({"content": []}))[
-        "status"
-    ] == "cancelled"
-    outcome = await controller.result("task", requestor=owner)
-    assert outcome.error == {
-        "code": -32000,
-        "message": "Request cancelled",
-    }
-
-
-async def _superseded_resolution() -> None:
-    resolution = SupersededResolution(
-        request_id=InputRequestId("superseded"),
-        provenance=AnswerProvenance.POLICY,
-        resolved_at=contract._NOW,
-    )
-    await _terminal_task_error(
-        resolution,
-        {
-            "code": -32009,
-            "message": "Avalan input request was superseded",
-            "data": {"code": "avalan.input.already_resolved"},
-        },
-    )
-
-
-async def _pending_result_budget() -> None:
-    owner = (contract._OWNER, "session")
-    controller = MCPTaskController(id_factory=lambda: "task")
-    creation = await controller.create(MCPTaskRequest(), requestor=owner)
-    await creation.handle.transition_input_required()
-    result = create_task(controller.result("task", requestor=owner))
-    done, _ = await wait({result}, timeout=0.01)
-    assert not done
-    assert (await controller.get("task", requestor=owner))[
-        "status"
-    ] == "input_required"
-    await controller.cancel("task", requestor=owner)
-    assert (await result).error is not None
-
-
-def _terminal_result(resolution: object) -> InteractionRequestResult:
-    return cast(
-        InteractionRequestResult,
-        SimpleNamespace(
-            delivery=SimpleNamespace(
-                record=SimpleNamespace(
-                    request=SimpleNamespace(resolution=resolution)
+    app = server.streamable_http_app()
+    tool = McpCallTool(call_params={"timeout": 5})
+    try:
+        async with contract._loopback_server(
+            app,
+            lifespan="on",
+        ) as base_url:
+            call = create_task(
+                tool(
+                    uri=f"{base_url}/mcp",
+                    name="ask",
+                    arguments={},
+                    context=context,
                 )
             )
-        ),
+            if condition_id == "INPUT-F-09":
+                await wait_for(handler.started.wait(), timeout=5)
+                await broker_contract._wait_until(
+                    lambda: bool(clock.wait_calls)
+                )
+                clock.advance(max(clock.wait_calls) - clock.monotonic_seconds)
+            elif condition_id == "INPUT-F-11":
+                await wait_for(handler.started.wait(), timeout=5)
+                await branch_broker.supersede(
+                    SupersedeInteractionScopeCommand(
+                        actor=runtime.actor,
+                        scope=InteractionExecutionScope(
+                            run_id=origin.run_id,
+                            branch_id=origin.branch_id,
+                        ),
+                        provenance=AnswerProvenance.EXTERNAL_CONTROLLER,
+                    )
+                )
+            public_result = await wait_for(call, timeout=5)
+    finally:
+        await broker.aclose()
+
+    assert len(probe.results) == 1
+    result = probe.results[0]
+    assert result.delivery is not None
+    terminal = result.delivery.record.request
+    expected_state = {
+        "INPUT-F-01": RequestState.UNAVAILABLE,
+        "INPUT-F-09": RequestState.EXPIRED,
+        "INPUT-F-10": RequestState.CANCELLED,
+        "INPUT-F-11": RequestState.SUPERSEDED,
+        "INPUT-F-14": RequestState.ANSWERED,
+    }[condition_id]
+    assert terminal.state is expected_state
+    transition_from = (
+        result.create_result.command.request.state.value
+        if condition_id == "INPUT-F-01"
+        else handler.contexts[0].request.state.value
     )
-
-
-async def _advisory_timeout() -> None:
-    resolution = TimedOutResolution(
-        request_id=InputRequestId("timed-out"),
-        provenance=AnswerProvenance.POLICY,
-        resolved_at=contract._NOW,
-    )
-    projected = downstream_mcp._broker_result(_terminal_result(resolution))
-    assert projected.action == "cancel"
-    task = await MCPTaskController(id_factory=lambda: "task").create(
-        MCPTaskRequest(),
-        requestor=(contract._OWNER, "session"),
-    )
-    assert task.task["status"] == "working"
-
-
-async def _ignored_ui_hint() -> None:
-    registry = await contract._registry()
-    _, outcome = await contract._round_trip(
-        registry,
-        contract._request(
-            TextQuestion(
-                question_id=QuestionId("name"),
-                prompt="Name?",
-                required=True,
-                header="Preferred rendering",
-                help_text="A single-line control is ideal.",
+    if condition_id in {"INPUT-F-10", "INPUT-F-14"}:
+        raw_structured = public_result.get("structuredContent")
+        if isinstance(raw_structured, dict):
+            structured = cast(dict[str, object], raw_structured)
+        else:
+            content_items = cast(
+                list[dict[str, object]],
+                public_result["content"],
             )
-        ),
-        {"action": "accept", "content": {"name": "Ada"}},
-    )
-    assert isinstance(outcome, InputHandlerResolution)
-    assert isinstance(outcome.resolution, AnsweredResolution)
-
-    owner = (contract._OWNER, "session")
-    task = await MCPTaskController(id_factory=lambda: "task").create(
-        MCPTaskRequest(),
-        requestor=owner,
-    )
-    await task.handle.transition_input_required()
-    assert (await task.handle.transition_working())["status"] == "working"
-
-
-async def _missing_capability() -> None:
-    await contract._incapable_fallback()
-    assert (
-        parse_task_request(
-            {"task": {"ttl": 20}},
-            request_type="tools/call",
-            capabilities=MCPTaskCapabilities(),
-            execution_task_support="optional",
+            structured = cast(
+                dict[str, object],
+                loads(cast(str, content_items[0]["text"])),
+            )
+        action = cast(str, structured["action"])
+        assert action == (
+            "cancel" if condition_id == "INPUT-F-10" else "accept"
         )
-        is None
+        status = ("elicitation_action", action)
+    else:
+        assert public_result["isError"] is True
+        status = ("tool_error", "true")
+    return _Observation(
+        transition=(transition_from, terminal.state.value),
+        public_result_id=_CALL_TOOL_RESULT,
+        public_result=public_result,
+        status=status,
     )
+
+
+def _assert_condition(
+    condition_id: str,
+    surface_id: str,
+    record_property: _RecordProperty,
+) -> None:
+    observation = run(
+        _downstream_condition(condition_id)
+        if surface_id == _DOWNSTREAM_SURFACE
+        else _inbound_condition(condition_id)
+    )
+    _record(record_property, condition_id, surface_id, observation)
+
+
+@pytest.fixture(params=(_FORM_SURFACE,), ids=(_FORM_SURFACE,))
+def form_surface_id(request: pytest.FixtureRequest) -> str:
+    return cast(str, request.param)
+
+
+@pytest.fixture(params=(_TASK_SURFACE,), ids=(_TASK_SURFACE,))
+def task_surface_id(request: pytest.FixtureRequest) -> str:
+    return cast(str, request.param)
+
+
+@pytest.fixture(params=(_DOWNSTREAM_SURFACE,), ids=(_DOWNSTREAM_SURFACE,))
+def downstream_surface_id(request: pytest.FixtureRequest) -> str:
+    return cast(str, request.param)
+
+
+@pytest.fixture(
+    params=(_FORM_SURFACE, _DOWNSTREAM_SURFACE),
+    ids=(_FORM_SURFACE, _DOWNSTREAM_SURFACE),
+)
+def form_or_downstream(request: pytest.FixtureRequest) -> str:
+    return cast(str, request.param)
+
+
+@pytest.fixture(
+    params=(_TASK_SURFACE, _DOWNSTREAM_SURFACE),
+    ids=(_TASK_SURFACE, _DOWNSTREAM_SURFACE),
+)
+def task_or_downstream(request: pytest.FixtureRequest) -> str:
+    return cast(str, request.param)
 
 
 def test_input_f_01(
-    record_property: Callable[[str, object], None],
+    form_or_downstream: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(contract._incapable_fallback())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-01",
-            transition=("created", "unavailable"),
-            public_result_id="mcp.unavailable_error.v1",
-            status=("jsonrpc_error", "-32001"),
-            provider_calls=0,
-            surfaces=(
-                "mcp-downstream-elicitation",
-                "mcp-inbound-elicitation-form",
-                "mcp-inbound-elicitation-url-auth",
-                "mcp-inbound-task",
-            ),
-        ),
-    )
+    _assert_condition("INPUT-F-01", form_or_downstream, record_property)
 
 
 def test_input_f_04(
-    record_property: Callable[[str, object], None],
+    form_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    error = run(
-        _invalid_form(
-            ConfirmationQuestion(
-                question_id=QuestionId("confirm"),
-                prompt="Continue?",
-                required=True,
-            ),
-            {"confirm": "yes"},
-        )
-    )
-    assert error.code is MCPFormErrorCode.INVALID_RESPONSE
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-04",
-            transition=("pending", "pending"),
-            public_result_id="mcp.invalid_params_error.v1",
-            status=("jsonrpc_error", "-32602"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-04", form_surface_id, record_property)
 
 
 def test_input_f_05(
-    record_property: Callable[[str, object], None],
+    form_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    error = run(
-        _invalid_form(
-            SingleSelectionQuestion(
-                question_id=QuestionId("choice"),
-                prompt="Choose.",
-                required=True,
-                choices=contract._CHOICES,
-            ),
-            {"choice": "unknown"},
-        )
-    )
-    assert error.code is MCPFormErrorCode.INVALID_RESPONSE
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-05",
-            transition=("pending", "pending"),
-            public_result_id="mcp.invalid_params_error.v1",
-            status=("jsonrpc_error", "-32602"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-05", form_surface_id, record_property)
 
 
 def test_input_f_06(
-    record_property: Callable[[str, object], None],
+    form_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    error = run(
-        _invalid_form(
-            TextQuestion(
-                question_id=QuestionId("required"),
-                prompt="Required.",
-                required=True,
-            ),
-            {},
-        )
-    )
-    assert error.code is MCPFormErrorCode.INVALID_RESPONSE
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-06",
-            transition=("pending", "pending"),
-            public_result_id="mcp.invalid_params_error.v1",
-            status=("jsonrpc_error", "-32602"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-06", form_surface_id, record_property)
 
 
 def test_input_f_07(
-    record_property: Callable[[str, object], None],
+    task_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_duplicate_response(conflicting=False))
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-07",
-            transition=("answered", "answered"),
-            public_result_id="mcp.task_working.v1",
-            status=("task_status", "working"),
-            provider_calls=2,
-        ),
-    )
+    _assert_condition("INPUT-F-07", task_surface_id, record_property)
 
 
 def test_input_f_08(
-    record_property: Callable[[str, object], None],
+    form_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_duplicate_response(conflicting=True))
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-08",
-            transition=("answered", "answered"),
-            public_result_id="mcp.conflict_error.v1",
-            status=("jsonrpc_error", "-32009"),
-            provider_calls=2,
-        ),
-    )
+    _assert_condition("INPUT-F-08", form_surface_id, record_property)
 
 
 def test_input_f_09(
-    record_property: Callable[[str, object], None],
+    downstream_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_expired_resolution())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-09",
-            transition=("pending", "expired"),
-            public_result_id="mcp.expired_error.v1",
-            status=("jsonrpc_error", "-32010"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-09", downstream_surface_id, record_property)
 
 
 def test_input_f_10(
-    record_property: Callable[[str, object], None],
+    task_or_downstream: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_cancelled_task())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-10",
-            transition=("pending", "cancelled"),
-            public_result_id="mcp.task_cancelled.v1",
-            status=("task_status", "cancelled"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-10", task_or_downstream, record_property)
 
 
 def test_input_f_11(
-    record_property: Callable[[str, object], None],
+    downstream_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_superseded_resolution())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-11",
-            transition=("pending", "superseded"),
-            public_result_id="mcp.conflict_error.v1",
-            status=("jsonrpc_error", "-32009"),
-            provider_calls=1,
-        ),
-    )
+    _assert_condition("INPUT-F-11", downstream_surface_id, record_property)
 
 
 def test_input_f_12(
-    record_property: Callable[[str, object], None],
+    task_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_pending_result_budget())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-12",
-            transition=("pending", "pending"),
-            public_result_id="mcp.task_input_required.v1",
-            status=("task_status", "input_required"),
-            provider_calls=1,
-        ),
-    )
-
-
-def test_input_f_13(
-    record_property: Callable[[str, object], None],
-) -> None:
-    run(_advisory_timeout())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-13",
-            transition=("pending", "timed_out"),
-            public_result_id="mcp.task_working.v1",
-            status=("task_status", "working"),
-            provider_calls=2,
-        ),
-    )
+    _assert_condition("INPUT-F-12", task_surface_id, record_property)
 
 
 def test_input_f_14(
-    record_property: Callable[[str, object], None],
+    task_or_downstream: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_ignored_ui_hint())
-    _record(
-        record_property,
-        _evidence(
-            "INPUT-F-14",
-            transition=("pending", "answered"),
-            public_result_id="mcp.task_working.v1",
-            status=("task_status", "working"),
-            provider_calls=2,
-        ),
-    )
+    _assert_condition("INPUT-F-14", task_or_downstream, record_property)
 
 
 def test_input_f_15(
-    record_property: Callable[[str, object], None],
+    task_surface_id: str,
+    record_property: _RecordProperty,
 ) -> None:
-    run(_missing_capability())
-    evidence = _evidence(
-        "INPUT-F-15",
-        transition=("created", "unavailable"),
-        public_result_id="mcp.unavailable_error.v1",
-        status=("jsonrpc_error", "-32001"),
-        provider_calls=0,
-        surfaces=(
-            "mcp-downstream-elicitation",
-            "mcp-inbound-elicitation-form",
-        ),
-    )
-    evidence.extend(
-        _evidence(
-            "INPUT-F-15",
-            transition=("running", "running"),
-            public_result_id="mcp.ordinary_result.v1",
-            status=("result", "ordinary"),
-            provider_calls=1,
-            surfaces=("mcp-inbound-task",),
-        )
-    )
-    _record(record_property, evidence)
+    _assert_condition("INPUT-F-15", task_surface_id, record_property)

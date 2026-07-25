@@ -569,6 +569,9 @@ from .policy import (
     SequencedControllerActivity as SequencedControllerActivity,
 )
 from .policy import (
+    TaskInputCapabilityState as TaskInputCapabilityState,
+)
+from .policy import (
     TaskInputClassification as TaskInputClassification,
 )
 from .policy import (

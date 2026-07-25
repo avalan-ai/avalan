@@ -139,7 +139,11 @@ from avalan.interaction.entities import (
     UserId,
 )
 from avalan.interaction.error import InputErrorCode, InputValidationError
-from avalan.interaction.policy import InteractionActor
+from avalan.interaction.policy import (
+    InteractionActor,
+    InteractionPolicy,
+    TaskInputCapabilityState,
+)
 from avalan.interaction.store import (
     InteractionPresentationState,
     InteractionRecord,
@@ -2935,7 +2939,7 @@ def test_runtime_catalog_snapshot_and_reserved_call_checks_fail_closed() -> (
 
     with patch.object(
         ModelCapabilityCatalog,
-        "decode_call",
+        "decode_existing_task_input",
         return_value=object(),
     ):
         with pytest.raises(InputValidationError) as raised:
@@ -3288,6 +3292,15 @@ async def test_trusted_executor_rejects_runtime_and_replay_corruption() -> (
                 "ownership": object(),
             },
         ),
+        (
+            "policy must be an interaction policy",
+            {
+                "orchestrator": orchestrator,
+                "stager": stager,
+                "ownership": ownership,
+                "policy": False,
+            },
+        ),
     )
     for message, values in constructor_cases:
         with pytest.raises(TypeError, match=message):
@@ -3295,6 +3308,7 @@ async def test_trusted_executor_rejects_runtime_and_replay_corruption() -> (
                 cast(Any, values["orchestrator"]),
                 stager=cast(Any, values["stager"]),
                 ownership=cast(Any, values["ownership"]),
+                policy=cast(Any, values.get("policy")),
             )
 
     executor = durable_runtime_module.TrustedAgentContinuationExecutor(
@@ -3745,6 +3759,65 @@ async def test_persisted_a2a_resume_restages_then_continues_provider() -> None:
     assert reconstructed.abandon_interaction.await_count == 3
     callable_a2a.cancel_input.assert_awaited_once()
 
+    rollback_policy = InteractionPolicy(
+        capability_state=TaskInputCapabilityState.ROLLBACK
+    )
+    rollback_executor = (
+        durable_runtime_module.TrustedAgentContinuationExecutor(
+            orchestrator,
+            stager=stager,
+            ownership=ownership,
+            policy=rollback_policy,
+        )
+    )
+    reconstructed.interaction_runtime = DurableInteractionRuntime(
+        actor=InteractionActor(principal=terminal.origin.principal),
+        stager=stager,
+        policy=rollback_policy,
+    )
+    reconstructed.begin_interaction.reset_mock()
+    reconstructed.abandon_interaction.reset_mock()
+    reconstructed.record_messages.reset_mock()
+    callable_a2a.resume_input.reset_mock()
+    restage = AsyncMock()
+    rollback_command = replace(
+        successor_admission.command,
+        resolved_runtime=replace(
+            successor_admission.command.resolved_runtime,
+            runtime=rollback_executor,
+        ),
+    )
+    with (
+        patch.object(
+            rollback_executor,
+            "_reconstruct_execution",
+            return_value=reconstructed,
+        ),
+        patch.object(
+            rollback_executor,
+            "_prepare_a2a_tool",
+            AsyncMock(return_value=prepared),
+        ),
+        patch.object(stager, "stage_a2a_successor", restage),
+    ):
+        assert (
+            await rollback_executor.resume_agent_continuation(rollback_command)
+            is provider_result
+        )
+    replay_count = sum(
+        count for _, count in restored.interaction_fingerprint_counts
+    )
+    assert reconstructed.begin_interaction.await_count == replay_count
+    assert reconstructed.abandon_interaction.await_count == replay_count
+    restage.assert_not_awaited()
+    recorded = reconstructed.record_messages.await_args.args[0]
+    successor_error = recorded[-1].tool_call_error
+    assert successor_error is not None
+    assert successor_error.error == {
+        "type": "A2AInputUnavailable",
+        "resolution": "unavailable",
+    }
+
     for continuation_value, checkpoint_value, message in (
         (object(), restored, "portable continuation"),
         (
@@ -3823,6 +3896,7 @@ async def test_trusted_runtime_loader_validates_configuration_and_loads() -> (
                 {"disable_memory": 1},
             ),
             ("uri must be a string or None", {"uri": 1}),
+            ("policy must be an interaction policy", {"policy": False}),
         )
         for message, changes in constructor_cases:
             arguments = {**valid, **changes}

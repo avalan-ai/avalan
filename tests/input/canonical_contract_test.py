@@ -340,6 +340,7 @@ def test_requirement_input_n_003() -> None:
         "..interaction.codec",
         "..interaction.entities",
         "..interaction.error",
+        "..interaction.policy",
         "..interaction.validation",
         "..tool.name_policy",
         "..tool.parser",

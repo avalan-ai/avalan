@@ -33,6 +33,7 @@ from ..interaction.handler import (
     InputHandlerOutcome,
     InputHandlerResolution,
 )
+from ..interaction.security import task_input_requires_sensitive_flow
 from ..interaction.validation import validate_opaque_id
 from ..types import JsonObject, MutableJsonValue
 
@@ -57,7 +58,6 @@ from hashlib import blake2b
 from hmac import compare_digest
 from json import dumps
 from math import isfinite
-from re import compile as compile_pattern
 from secrets import token_bytes
 from typing import Literal, Protocol, TypeAlias, cast, final
 
@@ -73,66 +73,6 @@ MCP_CONFLICT = -32009
 
 MCPRequestId: TypeAlias = str | int
 _JSON_SCHEMA_DIALECT = "https://json-schema.org/draft/2020-12/schema"
-_SENSITIVE_FORM_PATTERN = compile_pattern(
-    r"(?:\bpasswords?\b|\bpasscodes?\b|\bsecrets?\b|\bcredentials?\b|"
-    r"\bapi[\s._-]*(?:keys?|tokens?)\b|"
-    r"\b(?:access|refresh|bearer|session|identity)[\s._-]*tokens?\b|"
-    r"\bauth(?:entication|orization|orisation)?[\s._-]*tokens?\b|"
-    r"\bprivate[\s._-]*keys?\b|\bpayments?\b|"
-    r"\b(?:credit|payment)[\s._-]*cards?\b|"
-    r"\bcard[\s._-]*(?:numbers?|security[\s._-]*codes?|"
-    r"details?|credentials?|materials?)\b|"
-    r"\bpayment[\s._-]*(?:details?|credentials?|materials?)\b|"
-    r"\b(?:cvvs?|cvcs?|ibans?)\b|"
-    r"\bbank[\s._-]*(?:accounts?|credentials?)\b|"
-    r"\baccount[\s._-]*(?:numbers?|credentials?|details?|materials?)\b|"
-    r"\brouting[\s._-]*(?:numbers?|codes?|details?|materials?)\b|"
-    r"\b(?:mfa|2fa|otp|totp|hotp)s?\b|"
-    r"\bpin[\s._-]*(?:codes?|numbers?|values?)\b|"
-    r"\bone[\s._-]*time[\s._-]*(?:codes?|passwords?)\b|"
-    r"\b(?:recovery|security|verification)[\s._-]*codes?\b|"
-    r"\bauth(?:entication|orization|orisation)?\b|"
-    r"\bauthentication[\s._-]*challenges?\b|\boauth\b)"
-)
-_SENSITIVE_ACRONYM_PATTERN = compile_pattern(r"\bPIN(?:s|S)?\b")
-_PIN_WORD_PATTERN = compile_pattern(r"\bpins?\b")
-_PIN_REQUEST_PATTERN = compile_pattern(
-    r"\b(?:change|choose|confirm|create|disclose|enter|give|input|pick|"
-    r"provide|re[\s._-]*enter|re[\s._-]*type|repeat|reset|reveal|select|"
-    r"send|set|share|submit|supply|tell|type|update|validate|verify)\b"
-    r"[^.!?\n]{0,120}\bpins?\b"
-)
-_PIN_POSSESSIVE_QUESTION_PATTERN = compile_pattern(
-    r"\b(?:what|which)\s+(?:are|is|was|were)\b[^.!?\n]{0,120}"
-    r"\b(?:my|our|their|your)\b[^.!?\n]{0,120}\bpins?\b"
-)
-_PIN_POSSESSIVE_PLEASE_PATTERN = compile_pattern(
-    r"\b(?:my|our|their|your)\b[^.!?\n]{0,120}\bpins?\b\s*,?\s+please\b"
-)
-_PIN_AUTH_QUALIFIER = (
-    r"(?:access|account|auth(?:entication|orization|orisation)?|"
-    r"credentials?|identity|log[\s._-]*in|security|sign[\s._-]*in|"
-    r"unlock|verification)"
-)
-_PIN_AUTH_CONTEXT_PATTERN = compile_pattern(
-    rf"(?:\b{_PIN_AUTH_QUALIFIER}\b[^.!?\n]{{0,80}}\bpins?\b|"
-    rf"\bpins?\b[^.!?\n]{{0,80}}\b{_PIN_AUTH_QUALIFIER}\b)"
-)
-_SECRET_VALUE_PATTERN = compile_pattern(
-    r"(?<![A-Za-z0-9])(?:"
-    r"sk-(?:proj-)?[A-Za-z0-9_-]{16,}|"
-    r"(?:sk|pk)_(?:live|test)_[A-Za-z0-9]{12,}|"
-    r"AIza[A-Za-z0-9_-]{20,}|"
-    r"(?:AKIA|ASIA)[A-Z0-9]{16}|"
-    r"github_pat_[A-Za-z0-9_]{20,}|"
-    r"gh[pousr]_[A-Za-z0-9]{20,}|"
-    r"xox[baprs]-[A-Za-z0-9-]{10,}|"
-    r"api[_-]?key[:=._-][A-Za-z0-9_./+=-]{12,}"
-    r")(?![A-Za-z0-9])"
-)
-_CARD_NUMBER_CANDIDATE_PATTERN = compile_pattern(
-    r"(?<!\d)(?:\d[ -]?){12,18}\d(?!\d)"
-)
 
 
 class MCPFormErrorCode(StrEnum):
@@ -1282,98 +1222,12 @@ def _response_fingerprint(
 
 
 def _reject_sensitive_request(request: InputRequest) -> None:
-    values = [request.reason, request.context_label or ""]
-    serialized_values: list[str] = []
-    for question in request.questions:
-        values.extend(
-            (
-                str(question.question_id),
-                question.prompt,
-                question.header or "",
-                question.help_text or "",
-            )
-        )
-        projected_question = cast(
-            ConfirmationQuestion
-            | TextQuestion
-            | MultilineTextQuestion
-            | SingleSelectionQuestion
-            | MultipleSelectionQuestion,
-            question,
-        )
-        default_value = projected_question.default_value
-        if isinstance(default_value, str):
-            values.append(default_value)
-            serialized_values.append(default_value)
-        elif isinstance(default_value, tuple):
-            defaults = [str(value) for value in default_value]
-            values.extend(defaults)
-            serialized_values.extend(defaults)
-        if isinstance(
-            question,
-            (SingleSelectionQuestion, MultipleSelectionQuestion),
-        ):
-            for choice in question.choices:
-                serialized_value = str(choice.value)
-                values.extend(
-                    (
-                        serialized_value,
-                        choice.label,
-                        choice.description or "",
-                    )
-                )
-                serialized_values.append(serialized_value)
-    if any(
-        _SENSITIVE_FORM_PATTERN.search(value.casefold())
-        or _SENSITIVE_ACRONYM_PATTERN.search(value)
-        or _contains_sensitive_pin_context(value)
-        for value in values
-    ) or any(_looks_like_secret_value(value) for value in serialized_values):
+    if task_input_requires_sensitive_flow(request):
         raise _error(
             MCPFormErrorCode.UNSAFE_REQUEST,
             MCP_INVALID_PARAMS,
             "sensitive or authentication input requires a separate flow",
         )
-
-
-def _contains_sensitive_pin_context(value: str) -> bool:
-    normalized = value.casefold()
-    if _PIN_WORD_PATTERN.search(normalized) is None:
-        return False
-    return any(
-        pattern.search(normalized)
-        for pattern in (
-            _PIN_REQUEST_PATTERN,
-            _PIN_POSSESSIVE_QUESTION_PATTERN,
-            _PIN_POSSESSIVE_PLEASE_PATTERN,
-            _PIN_AUTH_CONTEXT_PATTERN,
-        )
-    )
-
-
-def _looks_like_secret_value(value: str) -> bool:
-    if _SECRET_VALUE_PATTERN.search(value):
-        return True
-    for candidate in _CARD_NUMBER_CANDIDATE_PATTERN.finditer(value):
-        digits = "".join(
-            character for character in candidate.group() if character.isdigit()
-        )
-        if _passes_luhn_check(digits):
-            return True
-    return False
-
-
-def _passes_luhn_check(value: str) -> bool:
-    total = 0
-    parity = len(value) % 2
-    for index, character in enumerate(value):
-        digit = int(character)
-        if index % 2 == parity:
-            digit *= 2
-            if digit > 9:
-                digit -= 9
-        total += digit
-    return total % 10 == 0
 
 
 async def _await_shielded_cleanup(cleanup: Future[None]) -> bool:

@@ -77,7 +77,10 @@ from avalan.interaction.handler import (
     InputHandlerDetached,
     InputHandlerOutcome,
 )
-from avalan.interaction.policy import InteractionActor
+from avalan.interaction.policy import (
+    InteractionActor,
+    InteractionTime,
+)
 from avalan.interaction.state import project_resolution_to_model
 from avalan.interaction.store import (
     InteractionExecutionScope,
@@ -691,6 +694,39 @@ class ExecutionCreationTest(IsolatedAsyncioTestCase):
                     **common,
                     synced_message_prefix=value,
                 )
+
+    async def test_branch_broker_validates_trusted_time(self) -> None:
+        """Return only a genuine observation from the attached broker."""
+
+        class TimeBroker(_Broker):
+            def __init__(self, value: object) -> None:
+                self.value = value
+
+            async def read_time(self) -> InteractionTime:
+                """Return the configured clock-boundary value."""
+                return cast(InteractionTime, self.value)
+
+        observed_at = InteractionTime.from_clock(
+            wall_time=_NOW,
+            monotonic_seconds=1,
+        )
+        for value in (observed_at, object()):
+            factory = _IdFactory()
+            runtime = AttachedInteractionRuntime(
+                broker=cast(InteractionBroker, TimeBroker(value)),
+                actor=InteractionActor(principal=_principal()),
+                handler=cast(InputHandler, _handler),
+                id_factory=factory,
+            )
+            execution = await _execution(factory=factory, runtime=runtime)
+            broker = execution.interaction_broker
+            assert broker is not None
+
+            if value is observed_at:
+                self.assertIs(await broker.read_time(), observed_at)
+            else:
+                with self.assertRaises(ExecutionCorrelationError):
+                    await broker.read_time()
 
     async def test_attached_runtime_preserves_real_task_and_branch_ids(
         self,
@@ -2391,6 +2427,7 @@ class RuntimeValidationTest(TestCase):
             {"actor": object()},
             {"broker": object()},
             {"handler": lambda _context: None},
+            {"policy": object()},
             {"id_factory": object()},
             {"task_id": ""},
         )
@@ -2411,6 +2448,12 @@ class RuntimeValidationTest(TestCase):
                 **base,
                 branch_id=BranchId("same"),
                 parent_branch_id=BranchId("same"),
+            )
+        with self.assertRaises(TypeError):
+            cast(Any, DurableInteractionRuntime)(
+                actor=InteractionActor(principal=_principal()),
+                stager=_handler,
+                policy=object(),
             )
 
     def test_runtime_accepts_an_async_callable_object(self) -> None:

@@ -2,11 +2,13 @@
 """Validate and execute structured-input acceptance tests."""
 
 from argparse import ArgumentParser, Namespace
+from ast import AST, AsyncFunctionDef, ClassDef, FunctionDef
+from ast import parse as parse_python
 from collections.abc import Iterable
 from dataclasses import dataclass
 from hashlib import sha256
 from importlib import import_module
-from json import dumps
+from json import JSONDecodeError, dumps, loads
 from os import environ
 from pathlib import Path, PurePosixPath
 from re import compile as compile_regex
@@ -34,7 +36,7 @@ from verify_src_coverage import (
 _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
-_CURRENT_PHASE = 11
+_CURRENT_PHASE = _MAX_PHASE
 _CATEGORIES = frozenset(
     (
         "unit",
@@ -54,6 +56,36 @@ _PUBLIC_RESULT_PATTERN = compile_regex(
     r"^envelope=([a-z][a-z0-9_.-]*\.v[1-9][0-9]*)$"
 )
 _STATUS_PATTERN = compile_regex(r"^[a-z][a-z_]*=[^\s=]+$")
+_ACTIVE_CAPABILITY_EVIDENCE_PREFIX = "active:"
+_CAPABILITY_PROVIDER_KINDS = frozenset(("local_model", "provider_adapter"))
+_CAPABILITY_ROW_FIELDS = frozenset(
+    (
+        "active_from_phase",
+        "advertisement_rule",
+        "attached_prerequisite",
+        "durable_prerequisite",
+        "evidence",
+        "fallback",
+        "id",
+        "kind",
+        "path",
+        "production_advertised",
+        "public_failure_surface",
+        "snapshot_resumability",
+    )
+)
+_NATIVE_PRODUCTION_PROVIDER_ID = "provider-openai"
+_FAILURE_MATCH_FIELDS = (
+    "condition_id transition_from transition_to public_result_id status_key "
+    "status_value provider_call_count domain_side_effect_count"
+).split()
+_FAILURE_EVIDENCE_FIELDS = frozenset(
+    (
+        *_FAILURE_MATCH_FIELDS,
+        "surface_id",
+        "public_result",
+    )
+)
 _FAILURE_TRANSITIONS = {
     "INPUT-F-01": "created->unavailable",
     "INPUT-F-02": "pending->answered",
@@ -72,6 +104,7 @@ _FAILURE_TRANSITIONS = {
     "INPUT-F-15": "created->unavailable",
 }
 _FAILURE_TRANSITION_OVERRIDES = {
+    ("INPUT-F-03", "cli-agent-run-piped-with-tty"): "pending->unavailable",
     ("INPUT-F-15", "mcp-inbound-task"): "running->running",
 }
 
@@ -193,7 +226,20 @@ class ApplicabilityRule:
     condition_id: str
     surface_ids: tuple[str, ...]
     active_from_phase: int
+    evidence_claim: tuple[str | int, ...]
     negative_e2e_node: str
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class NonApplicabilityRule:
+    """Store one explicit fail-closed non-applicability rectangle."""
+
+    condition_ids: tuple[str, ...]
+    surface_ids: tuple[str, ...]
+    active_from_phase: int
+    reason: str
+    owner: str
+    evidence: str
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -203,6 +249,7 @@ class FailureMatrix:
     surfaces: tuple[FailureSurface, ...]
     conditions: tuple[FailureCondition, ...]
     rules: tuple[ApplicabilityRule, ...]
+    non_applicability_rules: tuple[NonApplicabilityRule, ...] = ()
 
     def applicable_cells(self) -> frozenset[tuple[str, str]]:
         """Derive every applicable condition/surface pair."""
@@ -218,6 +265,15 @@ class FailureMatrix:
             (condition.id, surface.id)
             for condition in self.conditions
             for surface in self.surfaces
+        )
+
+    def non_applicable_cells(self) -> frozenset[tuple[str, str]]:
+        """Derive every explicitly non-applicable failure cell."""
+        return frozenset(
+            (condition_id, surface_id)
+            for rule in self.non_applicability_rules
+            for condition_id in rule.condition_ids
+            for surface_id in rule.surface_ids
         )
 
     def evidence_nodes(self, through_phase: int) -> tuple[str, ...]:
@@ -288,11 +344,10 @@ def load_manifest(path: Path) -> AcceptanceManifest:
             raise AcceptanceVerificationError(
                 f"active_from_phase inventory has a gap at phase {phase}"
             )
-    if current_phase < _MAX_PHASE and not any(
-        node.lifecycle == "planned" for node in nodes
-    ):
+    has_planned_nodes = any(node.lifecycle == "planned" for node in nodes)
+    if has_planned_nodes != (current_phase < _MAX_PHASE):
         raise AcceptanceVerificationError(
-            "future phases must remain explicitly planned"
+            "planned-node inventory must match remaining future phases"
         )
     _validate_replacements(payload.get("replacements"), nodes, current_phase)
     manifest = AcceptanceManifest(
@@ -331,11 +386,12 @@ def load_failure_matrix(
             "surfaces",
             "conditions",
             "applicability_rules",
+            "non_applicability_rules",
             "matrix_sha256",
         },
         "failure matrix",
     )
-    _header(payload, "failure matrix", schema_version=2)
+    _header(payload, "failure matrix", schema_version=3)
     for field in ("observation_window", "domain_side_effect_scope"):
         _nonempty_string(payload.get(field), f"failure {field}")
     surfaces = tuple(
@@ -368,24 +424,54 @@ def load_failure_matrix(
         raise AcceptanceVerificationError(
             "applicability rules must be non-empty"
         )
+    non_applicability_rules = tuple(
+        _non_applicability_rule(raw, surface_by_id, condition_by_id)
+        for raw in _list(
+            payload.get("non_applicability_rules"),
+            "non-applicability rules",
+        )
+    )
+    if not non_applicability_rules:
+        raise AcceptanceVerificationError(
+            "non-applicability rules must be non-empty"
+        )
     cells = [
         (rule.condition_id, surface_id)
         for rule in rules
         for surface_id in rule.surface_ids
     ]
     _unique(cells, "applicable failure cell")
+    non_applicable_cells = [
+        (condition_id, surface_id)
+        for rule in non_applicability_rules
+        for condition_id in rule.condition_ids
+        for surface_id in rule.surface_ids
+    ]
+    _unique(non_applicable_cells, "non-applicable failure cell")
     matrix = FailureMatrix(
         surfaces=surfaces,
         conditions=conditions,
         rules=rules,
+        non_applicability_rules=non_applicability_rules,
     )
-    if not matrix.applicable_cells() < matrix.all_cells():
+    applicable = matrix.applicable_cells()
+    non_applicable = matrix.non_applicable_cells()
+    overlap = applicable & non_applicable
+    if overlap:
         raise AcceptanceVerificationError(
-            "failure rules must derive applicable and non-applicable cells"
+            "applicable and non-applicable failure cells overlap: "
+            f"{sorted(overlap)[:3]}"
         )
-    applicable_conditions = {
-        condition_id for condition_id, _ in matrix.applicable_cells()
-    }
+    unexplained = matrix.all_cells() - applicable - non_applicable
+    if unexplained:
+        raise AcceptanceVerificationError(
+            f"failure matrix has unexplained cells: {sorted(unexplained)[:3]}"
+        )
+    if applicable | non_applicable != matrix.all_cells():
+        raise AcceptanceVerificationError(
+            "failure matrix contains cells outside its declared inventory"
+        )
+    applicable_conditions = {condition_id for condition_id, _ in applicable}
     if applicable_conditions != set(condition_by_id):
         raise AcceptanceVerificationError(
             "every failure condition must have an applicable surface"
@@ -434,6 +520,19 @@ def load_failure_matrix(
                 raise AcceptanceVerificationError(
                     "current failure evidence must be active"
                 )
+    current_phase = (
+        manifest.current_phase if manifest is not None else _CURRENT_PHASE
+    )
+    if any(
+        rule.active_from_phase <= current_phase
+        and rule.evidence.casefold().startswith("planned:")
+        for rule in non_applicability_rules
+    ):
+        raise AcceptanceVerificationError(
+            "active non-applicability evidence cannot be planned"
+        )
+    for non_applicability_rule in non_applicability_rules:
+        _validate_non_applicability_evidence(non_applicability_rule.evidence)
     canonical = {
         key: value for key, value in payload.items() if key != "matrix_sha256"
     }
@@ -630,9 +729,10 @@ def _validate_decisions(
                 f"contract decision {key} must be populated"
             )
     activation = _mapping(payload.get("activation"), "activation")
-    if activation.get("production_default") != "absent":
+    if activation.get("production_default") != "capability_gated":
         raise AcceptanceVerificationError(
-            "structured input must remain absent in production"
+            "structured input production activation must remain "
+            "capability-gated"
         )
     canonical = {
         key: value
@@ -651,6 +751,7 @@ def _validate_decisions(
         "public failure surface IDs",
     )
     _unique(surfaces, "public failure surface ID")
+    _validate_capability_rows(capability, frozenset(surfaces))
     error_status = _mapping(payload.get("error_status"), "error status")
     catalog = _mapping(
         error_status.get("public_envelope_catalog"),
@@ -673,6 +774,108 @@ def _validate_decisions(
             )
     _validate_known_schemas(payload)
     return frozenset(surfaces), frozenset(catalog)
+
+
+def _validate_capability_rows(
+    capability: dict[str, object],
+    public_failure_surfaces: frozenset[str],
+) -> None:
+    """Validate production activation against exact consumer evidence."""
+    row_ids: list[str] = []
+    for raw in _list(capability.get("rows"), "capability rows"):
+        row = _mapping(raw, "capability row")
+        kind = _nonempty_string(row.get("kind"), "capability row kind")
+        provider_surface = kind in _CAPABILITY_PROVIDER_KINDS
+        expected_fields = set(_CAPABILITY_ROW_FIELDS)
+        if not provider_surface:
+            expected_fields.add("interaction_mode")
+        _exact_keys(row, expected_fields, "capability row")
+
+        row_id = _nonempty_string(row.get("id"), "capability row ID")
+        row_ids.append(row_id)
+        for field in (
+            "advertisement_rule",
+            "attached_prerequisite",
+            "durable_prerequisite",
+            "evidence",
+            "fallback",
+            "path",
+            "snapshot_resumability",
+        ):
+            _nonempty_string(row.get(field), f"capability row {field}")
+        if not provider_surface:
+            _nonempty_string(
+                row.get("interaction_mode"),
+                "capability row interaction mode",
+            )
+        _phase(row.get("active_from_phase"), "capability row phase")
+
+        advertised = row.get("production_advertised")
+        if type(advertised) is not bool:
+            raise AcceptanceVerificationError(
+                "capability production advertisement must be boolean"
+            )
+        public_surface = row.get("public_failure_surface")
+        if provider_surface:
+            if public_surface is not None:
+                raise AcceptanceVerificationError(
+                    "provider capability rows cannot claim a public surface"
+                )
+        elif (
+            not isinstance(public_surface, str)
+            or public_surface not in public_failure_surfaces
+        ):
+            raise AcceptanceVerificationError(
+                "consumer capability row has an unknown public surface"
+            )
+
+        rule = cast(str, row["advertisement_rule"])
+        gated = rule.startswith("advertise only when ")
+        never = rule.startswith("never advertise")
+        if gated == never:
+            raise AcceptanceVerificationError(
+                "capability advertisement rule must be gated or never"
+            )
+        evidence = cast(str, row["evidence"])
+        if provider_surface and not gated:
+            raise AcceptanceVerificationError(
+                "provider capability rows must retain prerequisite gating"
+            )
+        if advertised:
+            if not gated:
+                raise AcceptanceVerificationError(
+                    "advertised capability row must retain prerequisite gating"
+                )
+            if provider_surface and row_id != _NATIVE_PRODUCTION_PROVIDER_ID:
+                raise AcceptanceVerificationError(
+                    "unsupported provider or local capability cannot activate"
+                )
+            if not evidence.startswith(_ACTIVE_CAPABILITY_EVIDENCE_PREFIX):
+                raise AcceptanceVerificationError(
+                    "enabled capability evidence must use the active prefix"
+                )
+            _validate_evidence_references(
+                evidence.removeprefix(_ACTIVE_CAPABILITY_EVIDENCE_PREFIX),
+                "enabled capability",
+            )
+        elif provider_surface:
+            if row_id == _NATIVE_PRODUCTION_PROVIDER_ID:
+                raise AcceptanceVerificationError(
+                    "native OpenAI capability must remain production enabled"
+                )
+        elif gated:
+            raise AcceptanceVerificationError(
+                "capability-gated consumer must remain production enabled"
+            )
+        elif not never:
+            raise AcceptanceVerificationError(
+                "unadvertised consumer must explicitly never advertise"
+            )
+        if not advertised and not evidence.startswith("planned:"):
+            raise AcceptanceVerificationError(
+                "unadvertised capability evidence must remain planned"
+            )
+    _unique(row_ids, "capability row ID")
 
 
 def _validate_known_schemas(payload: dict[str, object]) -> None:
@@ -808,7 +1011,10 @@ def _validate_evidence(path: Path, manifest: AcceptanceManifest) -> None:
         )
     gate = _mapping(payload.get("authoritative_gate"), "authoritative gate")
     expected_gate = {
-        "command": "make test-pgsql-exact no-install INPUT_PHASE=11",
+        "command": (
+            "make test-pgsql-exact no-install "
+            f"INPUT_PHASE={manifest.current_phase}"
+        ),
         "database_dsn_env": "AVALAN_TASK_TEST_POSTGRESQL_DSN",
         "coverage_report": "coverage.json",
         "coverage_scope": "src/",
@@ -903,7 +1109,9 @@ def _verify_nodes(
     )
     if collection.returncode != 0:
         raise AcceptanceVerificationError(
-            "pytest collection failed:\n" + collection.stdout[-4000:]
+            "pytest collection failed:"
+            f"\nstdout:\n{collection.stdout[-4000:]}"
+            f"\nstderr:\n{collection.stderr[-4000:]}"
         )
     collected = tuple(
         line.strip()
@@ -961,11 +1169,10 @@ def _verify_nodes(
             key: sum(int(suite.attrib.get(key, "0")) for suite in suites)
             for key in ("tests", "failures", "errors", "skipped")
         }
-        executed = tuple(
-            _junit_testcase_id(testcase)
-            for suite in suites
-            for testcase in suite.iter("testcase")
+        testcases = tuple(
+            testcase for suite in suites for testcase in suite.iter("testcase")
         )
+        executed = tuple(map(_junit_testcase_id, testcases))
         if (
             totals["tests"] < len(collected)
             or len(executed) != len(set(executed))
@@ -976,7 +1183,130 @@ def _verify_nodes(
                 "pytest execution evidence does not match collected instance "
                 f"IDs: {totals}"
             )
+        matrix_path = root / "tests/fixtures/input/failure_matrix.json"
+        decisions_path = root / "tests/fixtures/input/contract_decisions.json"
+        if matrix_path.is_file() and decisions_path.is_file():
+            _verify_failure_matrix_evidence(
+                testcases,
+                load_failure_matrix(matrix_path),
+                _failure_envelope_schemas(decisions_path),
+            )
     return collected
+
+
+def _failure_envelope_schemas(
+    path: Path,
+) -> dict[str, dict[str, object]]:
+    """Return frozen public failure envelope schemas by identifier."""
+    payload = _strict_mapping(path, "contract decisions")
+    error_status = _mapping(payload.get("error_status"), "error status")
+    catalog = _mapping(
+        error_status.get("public_envelope_catalog"),
+        "public envelope catalog",
+    )
+    return {
+        envelope_id: _mapping(schema, f"public envelope {envelope_id}")
+        for envelope_id, schema in catalog.items()
+    }
+
+
+def _verify_failure_matrix_evidence(
+    testcases: tuple[Element, ...],
+    matrix: FailureMatrix,
+    schemas: dict[str, dict[str, object]],
+) -> None:
+    """Reject missing, aliased, duplicated, or inaccurate matrix evidence."""
+    expected_by_node: dict[str, dict[tuple[str, str], ApplicabilityRule]] = {}
+    for rule in matrix.rules:
+        expected = expected_by_node.setdefault(rule.negative_e2e_node, {})
+        for surface_id in rule.surface_ids:
+            expected[(rule.condition_id, surface_id)] = rule
+    observed_by_node: dict[str, set[tuple[str, str]]] = {}
+    for testcase in testcases:
+        node_id = _junit_testcase_id(testcase)
+        base_node = node_id.split("[", 1)[0]
+        properties = tuple(
+            property_element
+            for property_element in testcase.findall("./properties/property")
+            if property_element.attrib.get("name") == "failure_matrix_evidence"
+        )
+        expected_rules = expected_by_node.get(base_node)
+        if expected_rules is None:
+            if properties:
+                raise AcceptanceVerificationError(
+                    f"unassigned failure evidence: {node_id}"
+                )
+            continue
+        if len(properties) != 1:
+            raise AcceptanceVerificationError(
+                f"failure node needs one evidence property: {node_id}"
+            )
+        raw_value = properties[0].attrib.get("value")
+        try:
+            raw_observations = loads(
+                _nonempty_string(raw_value, "failure evidence property")
+            )
+        except JSONDecodeError as exc:
+            raise AcceptanceVerificationError(
+                f"failure evidence is not strict JSON: {node_id}"
+            ) from exc
+        observations = _list(raw_observations, "failure evidence")
+        if len(observations) != 1:
+            raise AcceptanceVerificationError(
+                f"failure evidence must own one surface: {node_id}"
+            )
+        observation = _mapping(observations[0], "failure observation")
+        _exact_keys(
+            observation, _FAILURE_EVIDENCE_FIELDS, "failure observation"
+        )
+        for field in _FAILURE_EVIDENCE_FIELDS - {
+            "public_result",
+            "provider_call_count",
+            "domain_side_effect_count",
+        }:
+            _nonempty_string(observation.get(field), f"failure {field}")
+        public_result_id = cast(str, observation["public_result_id"])
+        schema = schemas.get(public_result_id)
+        if schema is None or not _draft_validator()(schema).is_valid(
+            _mapping(observation.get("public_result"), "failure public result")
+        ):
+            raise AcceptanceVerificationError(
+                f"failure result violates frozen schema: {public_result_id}"
+            )
+        for field in ("provider_call_count", "domain_side_effect_count"):
+            _nonnegative_int(observation.get(field), f"failure {field}")
+        surface_id = cast(str, observation["surface_id"])
+        instance_ids = (
+            surface_id,
+            f"{observation['condition_id']}|{surface_id}",
+        )
+        if not node_id.endswith(tuple(f"[{value}]" for value in instance_ids)):
+            raise AcceptanceVerificationError(
+                f"failure evidence surface differs from instance: {node_id}"
+            )
+        key = (cast(str, observation["condition_id"]), surface_id)
+        matched_rule = expected_rules.get(key)
+        values = (
+            matched_rule.evidence_claim if matched_rule is not None else ()
+        )
+        if (
+            tuple(observation[name] for name in _FAILURE_MATCH_FIELDS)
+            != values
+        ):
+            raise AcceptanceVerificationError(
+                f"failure evidence differs from rule: {key}"
+            )
+        observed = observed_by_node.setdefault(base_node, set())
+        if key in observed:
+            raise AcceptanceVerificationError(
+                f"duplicate dynamic failure evidence: {key}"
+            )
+        observed.add(key)
+    for node_id, observed in observed_by_node.items():
+        if observed != set(expected_by_node[node_id]):
+            raise AcceptanceVerificationError(
+                f"failure evidence cells differ from rules: {node_id}"
+            )
 
 
 def _junit_testcase_id(testcase: Element) -> str:
@@ -1243,35 +1573,212 @@ def _applicability_rule(
                 "failure expected_transition does not match condition and "
                 f"surface semantics: {condition_id}/{surface_id}"
             )
-    if (
-        _PUBLIC_RESULT_PATTERN.fullmatch(
-            _nonempty_string(
-                item.get("public_result"), "failure public_result"
-            )
-        )
-        is None
-    ):
+    public_result = _nonempty_string(
+        item.get("public_result"), "failure public_result"
+    )
+    public_result_match = _PUBLIC_RESULT_PATTERN.fullmatch(public_result)
+    if public_result_match is None:
         raise AcceptanceVerificationError(
             "failure public_result must name one envelope"
         )
-    if (
-        _STATUS_PATTERN.fullmatch(
-            _nonempty_string(item.get("status_or_exit"), "status_or_exit")
-        )
-        is None
-    ):
+    status_or_exit = _nonempty_string(
+        item.get("status_or_exit"), "status_or_exit"
+    )
+    if _STATUS_PATTERN.fullmatch(status_or_exit) is None:
         raise AcceptanceVerificationError(
             "failure status_or_exit must be one machine literal"
         )
-    _nonnegative_int(item.get("provider_call_count"), "provider call count")
-    _nonnegative_int(
+    status_key, status_value = status_or_exit.split("=", 1)
+    provider_call_count = _nonnegative_int(
+        item.get("provider_call_count"), "provider call count"
+    )
+    domain_side_effect_count = _nonnegative_int(
         item.get("domain_side_effect_count"), "domain side-effect count"
     )
     return ApplicabilityRule(
         condition_id=condition_id,
         surface_ids=surface_ids,
         active_from_phase=phase,
+        evidence_claim=(
+            condition_id,
+            *expected_transition.split("->", 1),
+            public_result_match.group(1),
+            status_key,
+            status_value,
+            provider_call_count,
+            domain_side_effect_count,
+        ),
         negative_e2e_node=_test_node(item.get("negative_e2e_node")),
+    )
+
+
+def _non_applicability_rule(
+    raw: object,
+    surfaces: dict[str, FailureSurface],
+    conditions: dict[str, FailureCondition],
+) -> NonApplicabilityRule:
+    item = _mapping(raw, "non-applicability rule")
+    _exact_keys(
+        item,
+        {
+            "condition_ids",
+            "surface_ids",
+            "reason",
+            "owner",
+            "evidence",
+        },
+        "non-applicability rule",
+    )
+    condition_ids = _string_list(
+        item.get("condition_ids"), "non-applicable condition IDs"
+    )
+    surface_ids = _string_list(
+        item.get("surface_ids"), "non-applicable surface IDs"
+    )
+    if not condition_ids or not surface_ids:
+        raise AcceptanceVerificationError(
+            "non-applicability rule must cover conditions and surfaces"
+        )
+    _unique(condition_ids, "non-applicable condition ID")
+    _unique(surface_ids, "non-applicable surface ID")
+    if any(condition_id not in conditions for condition_id in condition_ids):
+        raise AcceptanceVerificationError(
+            "non-applicability rule has an unknown condition"
+        )
+    if any(surface_id not in surfaces for surface_id in surface_ids):
+        raise AcceptanceVerificationError(
+            "non-applicability rule has an unknown surface"
+        )
+    active_from_phase = max(
+        *(
+            conditions[condition_id].active_from_phase
+            for condition_id in condition_ids
+        ),
+        *(
+            surfaces[surface_id].active_from_phase
+            for surface_id in surface_ids
+        ),
+    )
+    return NonApplicabilityRule(
+        condition_ids=condition_ids,
+        surface_ids=surface_ids,
+        active_from_phase=active_from_phase,
+        reason=_nonempty_string(
+            item.get("reason"), "non-applicability reason"
+        ),
+        owner=_nonempty_string(item.get("owner"), "non-applicability owner"),
+        evidence=_nonempty_string(
+            item.get("evidence"), "non-applicability evidence"
+        ),
+    )
+
+
+def _validate_non_applicability_evidence(evidence: str) -> None:
+    """Require every non-applicability evidence reference to resolve."""
+    _validate_evidence_references(evidence, "non-applicability")
+
+
+def _validate_evidence_references(evidence: str, label: str) -> None:
+    """Require every semicolon-delimited evidence reference to resolve."""
+    references = tuple(reference.strip() for reference in evidence.split(";"))
+    if not references or any(not reference for reference in references):
+        raise AcceptanceVerificationError(
+            f"{label} evidence has an empty reference"
+        )
+    root = repository_root()
+    for reference in references:
+        if "::" in reference:
+            relative, symbol = reference.split("::", 1)
+            separator = "::"
+        elif "#" in reference:
+            relative, symbol = reference.split("#", 1)
+            separator = "#"
+        else:
+            relative, symbol, separator = reference, "", ""
+        path = PurePosixPath(relative)
+        if (
+            path.is_absolute()
+            or "\\" in relative
+            or ".." in path.parts
+            or not relative
+        ):
+            raise AcceptanceVerificationError(
+                f"invalid {label} evidence path: {relative}"
+            )
+        resolved = root.joinpath(*path.parts)
+        if not resolved.is_file():
+            raise AcceptanceVerificationError(
+                f"{label} evidence path is missing: {relative}"
+            )
+        if not separator:
+            continue
+        if not symbol:
+            raise AcceptanceVerificationError(
+                f"{label} evidence symbol is empty: {reference}"
+            )
+        if separator == "::":
+            if resolved.suffix != ".py" or not _python_symbol_exists(
+                resolved, tuple(symbol.split("::"))
+            ):
+                raise AcceptanceVerificationError(
+                    f"{label} evidence test is missing: {reference}"
+                )
+        elif resolved.suffix == ".json":
+            payload = strict_json_path(resolved)
+            if not _json_fragment_exists(payload, symbol):
+                raise AcceptanceVerificationError(
+                    f"{label} evidence JSON fragment is missing: {reference}"
+                )
+        elif resolved.suffix != ".py" or not _python_symbol_exists(
+            resolved, tuple(symbol.split("."))
+        ):
+            raise AcceptanceVerificationError(
+                f"{label} evidence symbol is missing: {reference}"
+            )
+
+
+def _python_symbol_exists(path: Path, parts: tuple[str, ...]) -> bool:
+    """Return whether a dotted Python definition path exists."""
+    if not parts or any(not part for part in parts):
+        return False
+    try:
+        tree = parse_python(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError):
+        return False
+    children: tuple[AST, ...] = tuple(tree.body)
+    for part in parts:
+        match = next(
+            (
+                node
+                for node in children
+                if isinstance(
+                    node,
+                    (AsyncFunctionDef, ClassDef, FunctionDef),
+                )
+                and node.name == part
+            ),
+            None,
+        )
+        if match is None:
+            return False
+        children = tuple(match.body)
+    return True
+
+
+def _json_fragment_exists(value: object, fragment: str) -> bool:
+    """Return whether a dot-delimited fragment resolves through JSON keys."""
+    if not fragment or not isinstance(value, dict):
+        return False
+    mapping = cast(dict[str, object], value)
+    if fragment in mapping:
+        return True
+    return any(
+        fragment.startswith(f"{key}.")
+        and _json_fragment_exists(
+            child,
+            fragment[len(key) + 1 :],
+        )
+        for key, child in mapping.items()
     )
 
 
@@ -1400,12 +1907,13 @@ def _unique(values: Iterable[object], label: str) -> None:
 
 def _exact_keys(
     value: dict[str, object],
-    expected: set[str],
+    expected: Iterable[str],
     label: str,
 ) -> None:
-    if set(value) != expected:
+    expected_keys = set(expected)
+    if set(value) != expected_keys:
         raise AcceptanceVerificationError(
-            f"{label} has invalid keys: {sorted(set(value) ^ expected)}"
+            f"{label} has invalid keys: {sorted(set(value) ^ expected_keys)}"
         )
 
 

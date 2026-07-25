@@ -95,6 +95,9 @@ def test_trusted_time_and_fixed_runtime_policy() -> None:
         InteractionPolicy(
             attached_loss_without_resumer=HandlerLossDisposition.DETACH
         )
+    with pytest.raises(InputValidationError) as capability_state:
+        InteractionPolicy(capability_state="active")  # type: ignore[arg-type]
+    assert capability_state.value.path == "policy.capability_state"
 
 
 def test_idempotency_keys_have_character_and_utf8_bounds() -> None:

@@ -43,6 +43,7 @@ from avalan.interaction.stores.pgsql import (
     _SELECT_TASK_INTERACTIONS_FOR_UPDATE_SQL,
     _SELECT_TASK_RUN_CONTINUATION_FOR_UPDATE_SQL,
     _SELECT_TASK_SCOPE_IDENTITIES_FOR_UPDATE_SQL,
+    _SELECT_WAIT_RECORD_REVISIONS_SQL,
     _SET_REPEATABLE_READ_ONLY_SQL,
     _UPDATE_CONTINUATION_SQL,
     _UPDATE_STORE_METADATA_SQL,
@@ -365,6 +366,19 @@ class FakeCursor:
             self.row = dict(self.database.metadata)
         elif query == _SELECT_STORE_METADATA_SQL:
             self.row = dict(self.database.metadata)
+        elif query == _SELECT_WAIT_RECORD_REVISIONS_SQL:
+            request_ids = params[0]
+            assert isinstance(request_ids, list)
+            self.rows = tuple(
+                {
+                    "request_id": request_id,
+                    "store_revision": self.database.records[request_id][
+                        "store_revision"
+                    ],
+                }
+                for request_id in request_ids
+                if request_id in self.database.records
+            )
         elif query == _UPDATE_STORE_METADATA_SQL:
             self.database.metadata.update(
                 store_generation=params[0],

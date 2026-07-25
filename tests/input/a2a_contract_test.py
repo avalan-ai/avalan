@@ -904,66 +904,73 @@ def test_requirement_input_n_082() -> None:
 
 def test_requirement_input_n_083() -> None:
     """Negotiate structured input while preserving readable fallback."""
-    app = FastAPI()
-    install_a2a_routes(
-        app,
-        prefix="/a2a",
-        name="run",
-        description="Run the test agent.",
-    )
-    card = TestClient(app).get("/.well-known/agent-card.json").json()
-    assert card["version"] == "1.0.0"
-    assert card["capabilities"]["extensions"] == [
-        {
-            "uri": A2A_INPUT_EXTENSION_URI,
-            "description": A2A_INPUT_EXTENSION_DESCRIPTION,
-            "required": False,
-            "params": A2A_INPUT_EXTENSION_PARAMS,
+    broker = run(server_support._open_broker())
+    provider = server_support._FakeProviderOrchestrator()
+    app = server_support._app(broker, provider)
+    required_app = server_support._app(broker, provider)
+    try:
+        install_a2a_routes(
+            app,
+            prefix="/a2a",
+            name="run",
+            description="Run the test agent.",
+        )
+        card = TestClient(app).get("/.well-known/agent-card.json").json()
+        assert card["version"] == "1.0.0"
+        assert card["capabilities"]["extensions"] == [
+            {
+                "uri": A2A_INPUT_EXTENSION_URI,
+                "description": A2A_INPUT_EXTENSION_DESCRIPTION,
+                "required": False,
+                "params": A2A_INPUT_EXTENSION_PARAMS,
+            }
+        ]
+        rpc_body = {
+            "jsonrpc": "2.0",
+            "id": "rpc-negotiation",
+            "method": "UnknownMethod",
+            "params": {},
         }
-    ]
-    rpc_body = {
-        "jsonrpc": "2.0",
-        "id": "rpc-negotiation",
-        "method": "UnknownMethod",
-        "params": {},
-    }
-    activated = TestClient(app).post(
-        "/a2a",
-        headers={
-            "A2A-Version": "1.0",
-            "A2A-Extensions": A2A_INPUT_EXTENSION_URI,
-        },
-        json=rpc_body,
-    )
-    assert activated.headers["A2A-Extensions"] == A2A_INPUT_EXTENSION_URI
-    optional = TestClient(app).post(
-        "/a2a",
-        headers={
-            "A2A-Version": "1.0",
-            "A2A-Extensions": "urn:example:unsupported",
-        },
-        json=rpc_body,
-    )
-    assert "A2A-Extensions" not in optional.headers
-    required_app = FastAPI()
-    install_a2a_routes(
-        required_app,
-        prefix="/a2a",
-        name="run",
-        description="Run the test agent.",
-        input_extension_required=True,
-    )
-    required = TestClient(required_app).post(
-        "/a2a",
-        headers={"A2A-Version": "1.0"},
-        json=rpc_body,
-    )
-    assert required.status_code == 400
-    assert required.json()["error"] == {
-        "code": -32008,
-        "message": "Structured input contract result.",
-        "data": {"code": "avalan.input.extension_required"},
-    }
+        activated = TestClient(app).post(
+            "/a2a",
+            headers={
+                "A2A-Version": "1.0",
+                "A2A-Extensions": A2A_INPUT_EXTENSION_URI,
+            },
+            json=rpc_body,
+        )
+        assert activated.headers["A2A-Extensions"] == A2A_INPUT_EXTENSION_URI
+        optional = TestClient(app).post(
+            "/a2a",
+            headers={
+                "A2A-Version": "1.0",
+                "A2A-Extensions": "urn:example:unsupported",
+            },
+            json=rpc_body,
+        )
+        assert "A2A-Extensions" not in optional.headers
+        install_a2a_routes(
+            required_app,
+            prefix="/a2a",
+            name="run",
+            description="Run the test agent.",
+            input_extension_required=True,
+        )
+        required = TestClient(required_app).post(
+            "/a2a",
+            headers={"A2A-Version": "1.0"},
+            json=rpc_body,
+        )
+        assert required.status_code == 400
+        assert required.json()["error"] == {
+            "code": -32008,
+            "message": "Structured input contract result.",
+            "data": {"code": "avalan.input.extension_required"},
+        }
+    finally:
+        run(server_support.close_server_interactions(app))
+        run(server_support.close_server_interactions(required_app))
+        run(broker.aclose())
     pending = run(_raw_continuation()).first_events[-1]
     message = _input_message(_status_update(pending))
     parts = message.get("parts")

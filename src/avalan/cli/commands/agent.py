@@ -12,6 +12,7 @@ from ...cli.interaction_renderer import (
     CliInteractionCommandDisposition,
     CliInteractionRenderer,
     CliRunCancellationCommand,
+    CliRunCancelled,
     CliSteeringCommand,
 )
 from ...cli.stream_coordinator import CliStreamCoordinator
@@ -104,7 +105,6 @@ from ...tool_cycles import MaximumToolCycles
 
 from argparse import Namespace
 from asyncio import Event
-from asyncio.exceptions import CancelledError
 from collections.abc import Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import fields, replace
@@ -2676,7 +2676,7 @@ async def agent_run(
 
                 async def check_run_cancellation() -> None:
                     if run_cancellation.is_set():
-                        raise CancelledError()
+                        raise CliRunCancelled()
 
                 output.set_cancellation_checker(check_run_cancellation)
             assert orchestrator.engine is not None

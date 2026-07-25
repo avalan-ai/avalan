@@ -14,6 +14,8 @@ from dataclasses import dataclass, fields, replace
 from datetime import UTC, datetime, timedelta
 from typing import cast
 
+import pytest
+
 from avalan.interaction import (
     AcquireControllerActivity,
     ActiveControlLeaseNonce,
@@ -46,6 +48,7 @@ from avalan.interaction import (
     InputResumer,
     InputResumptionNotification,
     InputUnavailableResult,
+    InputValidationError,
     InteractionActor,
     InteractionAuthorizationDecision,
     InteractionAuthorizationTarget,
@@ -558,6 +561,49 @@ def _answer(
             ),
         ),
     )
+
+
+@pytest.mark.parametrize(
+    "reason",
+    (
+        "Provide your login code.",
+        "Enter your p4ssword.",
+        "Enter your passphrase.",
+        "Provide your SSH passphrase.",
+        "Enter your PIN.",
+    ),
+)
+def test_security_admission_precedes_canonical_persistence(
+    reason: str,
+) -> None:
+    """Reject prohibited input before minting or storing a request."""
+
+    async def exercise() -> None:
+        harness = await _harness()
+        request = _request(
+            None,
+            run_id="security-admission",
+            reason=reason,
+        )
+        try:
+            with pytest.raises(InputValidationError) as error:
+                await harness.broker.request(request)
+            assert error.value.code is InputErrorCode.PROHIBITED_INPUT
+            assert harness.ids.request_ids == []
+            assert harness.ids.continuation_ids == []
+            records = await harness.broker.list(
+                ListInteractionsCommand(
+                    actor=_actor(),
+                    scope=InteractionExecutionScope(
+                        run_id=request.origin.run_id,
+                    ),
+                )
+            )
+            assert records == ()
+        finally:
+            await harness.broker.aclose()
+
+    run(exercise())
 
 
 def test_requirement_input_n_019() -> None:

@@ -3,6 +3,7 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime
+from fcntl import ioctl
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from logging import getLogger
@@ -16,8 +17,10 @@ from os import (
     pipe,
     read,
     set_blocking,
+    setsid,
     ttyname,
     waitpid,
+    waitstatus_to_exitcode,
     write,
 )
 from pathlib import Path
@@ -25,6 +28,7 @@ from pty import openpty
 from select import select
 from signal import SIGKILL
 from sys import modules as system_modules
+from termios import TIOCSCTTY
 from time import monotonic
 from traceback import print_exc
 from tty import setraw
@@ -102,6 +106,11 @@ def _load_boundary_fixture() -> Any:
 
 boundary_fixture = _load_boundary_fixture()
 
+_CANCELLED_STDERR = (
+    b'{"envelope_id": "cli.cancelled.v1", "payload": '
+    b'{"channel": "control", "kind": "cancelled"}}\n'
+)
+
 
 class _Response:
     input_token_count = 1
@@ -131,56 +140,67 @@ class _Response:
         turn_id: str,
     ) -> AsyncIterator[StreamConsumerProjection]:
         async def generate() -> AsyncIterator[StreamConsumerProjection]:
-            self.owner.provider_calls += 1
-            yield _projection(
-                stream_session_id,
-                run_id,
-                turn_id,
-                0,
-                StreamItemKind.STREAM_STARTED,
-            )
-            outcome = await self.runtime.handler(
-                InputHandlerContext(request=_request(self.owner.case))
-            )
-            if self.cancellation_checker is not None:
-                await self.cancellation_checker()
-            if self.owner.case == "cancel_then_text":
-                assert isinstance(outcome, InputHandlerDisconnected)
-                assert (
-                    outcome.reason is InputDisconnectReason.HANDLER_CANCELLED
+            try:
+                self.owner.provider_calls += 1
+                yield _projection(
+                    stream_session_id,
+                    run_id,
+                    turn_id,
+                    0,
+                    StreamItemKind.STREAM_STARTED,
                 )
                 outcome = await self.runtime.handler(
-                    InputHandlerContext(
-                        request=_request("text", suffix="second")
-                    )
+                    InputHandlerContext(request=_request(self.owner.case))
                 )
-            assert isinstance(
-                outcome,
-                (InputHandlerResolution, InputHandlerDisconnected),
-            )
-            answer_text = _outcome_text(outcome)
-            yield _projection(
-                stream_session_id,
-                run_id,
-                turn_id,
-                1,
-                StreamItemKind.ANSWER_DELTA,
-                text=answer_text,
-            )
-            yield _projection(
-                stream_session_id,
-                run_id,
-                turn_id,
-                2,
-                StreamItemKind.ANSWER_DONE,
-            )
-            yield _projection(
-                stream_session_id,
-                run_id,
-                turn_id,
-                3,
-                StreamItemKind.STREAM_COMPLETED,
-            )
+                assert isinstance(
+                    outcome,
+                    (InputHandlerResolution, InputHandlerDisconnected),
+                )
+                self.owner.handler_outcomes.append(_outcome_text(outcome))
+                if self.cancellation_checker is not None:
+                    await self.cancellation_checker()
+                if self.owner.case == "cancel_then_text":
+                    assert isinstance(outcome, InputHandlerDisconnected)
+                    assert (
+                        outcome.reason
+                        is InputDisconnectReason.HANDLER_CANCELLED
+                    )
+                    outcome = await self.runtime.handler(
+                        InputHandlerContext(
+                            request=_request("text", suffix="second")
+                        )
+                    )
+                    assert isinstance(
+                        outcome,
+                        (InputHandlerResolution, InputHandlerDisconnected),
+                    )
+                    self.owner.handler_outcomes.append(_outcome_text(outcome))
+                answer_text = _outcome_text(outcome)
+                yield _projection(
+                    stream_session_id,
+                    run_id,
+                    turn_id,
+                    1,
+                    StreamItemKind.ANSWER_DELTA,
+                    text=answer_text,
+                )
+                yield _projection(
+                    stream_session_id,
+                    run_id,
+                    turn_id,
+                    2,
+                    StreamItemKind.ANSWER_DONE,
+                )
+                yield _projection(
+                    stream_session_id,
+                    run_id,
+                    turn_id,
+                    3,
+                    StreamItemKind.STREAM_COMPLETED,
+                )
+                self.owner.stream_completed = True
+            finally:
+                self.owner.stream_cleanup_count += 1
 
         return generate()
 
@@ -195,6 +215,9 @@ class _Orchestrator:
         self.case = case
         self.calls: list[str] = []
         self.provider_calls = 0
+        self.handler_outcomes: list[str] = []
+        self.stream_cleanup_count = 0
+        self.stream_completed = False
         self.event_manager = SimpleNamespace(
             add_ui_listener=lambda _listener: None,
             remove_listener=lambda _listener: None,
@@ -239,6 +262,7 @@ def _request(case: str, *, suffix: str = "first") -> InputRequest:
         "decline",
         "cancel_input",
         "cancel_run",
+        "steer",
         "disappear",
         "cancel_then_text",
     }:
@@ -425,7 +449,25 @@ def _child(
             manager=manager,
         )
         orchestrator = harness.orchestrator
-        response_patch = nullcontext()
+        responses: list[Any] = []
+        orchestrator_call = boundary_fixture.Orchestrator.__call__
+
+        async def capture_response(
+            loaded_orchestrator: object,
+            *args: object,
+            **kwargs: object,
+        ) -> object:
+            response = await orchestrator_call(
+                loaded_orchestrator, *args, **kwargs
+            )
+            responses.append(response)
+            return response
+
+        response_patch = patch.object(
+            boundary_fixture.Orchestrator,
+            "__call__",
+            capture_response,
+        )
         real_enter = boundary_fixture.Orchestrator.__aenter__
 
         async def enter_loaded_orchestrator(
@@ -473,6 +515,55 @@ def _child(
         "--tty",
         tty_path,
     ]
+
+    def execution_result() -> dict[str, object]:
+        if real_orchestrator:
+            initial_sources = tuple(manager.initial_sources.values())
+            real_result = {
+                "initial_prompt": boundary_fixture._user_prompt(
+                    manager.calls[0].context.input
+                ),
+                "provider_calls": len(manager.calls),
+                "initial_source_aclose_calls": sum(
+                    source.aclose_calls for source in initial_sources
+                ),
+            }
+            assert responses
+            response = responses[-1]
+            execution = response.execution
+            assert execution is not None
+            real_result.update(
+                execution_status=execution.status.value,
+                interaction_states=[
+                    entry.request.state.value
+                    for entry in execution.ledger
+                    if entry.request is not None
+                ],
+                pending_request=execution.snapshot.pending_request is not None,
+                cleanup_started=execution.snapshot.cleanup_started,
+                interaction_cleanup_complete=(
+                    response._interaction_cleanup_complete
+                ),
+                pending_interaction_task=(
+                    response._pending_interaction_task is not None
+                ),
+                pending_tool_batch_task=(
+                    response._pending_tool_batch_task is not None
+                ),
+            )
+            return real_result
+        fake_result: dict[str, object] = {
+            "calls": smoke_orchestrator.calls,
+            "provider_calls": smoke_orchestrator.provider_calls,
+        }
+        if case == "cancel_run":
+            fake_result.update(
+                handler_outcomes=smoke_orchestrator.handler_outcomes,
+                stream_cleanup_count=(smoke_orchestrator.stream_cleanup_count),
+                stream_completed=smoke_orchestrator.stream_completed,
+            )
+        return fake_result
+
     try:
         with (
             patch.object(
@@ -500,20 +591,11 @@ def _child(
             ),
         ):
             cli_main.main()
-        result = (
-            {
-                "initial_prompt": boundary_fixture._user_prompt(
-                    manager.calls[0].context.input
-                ),
-                "provider_calls": len(manager.calls),
-            }
-            if real_orchestrator
-            else {
-                "calls": smoke_orchestrator.calls,
-                "provider_calls": smoke_orchestrator.provider_calls,
-            }
-        )
-        write(result_fd, dumps(result).encode())
+        write(result_fd, dumps(execution_result()).encode())
+    except SystemExit as error:
+        write(result_fd, dumps(execution_result()).encode())
+        child_stderr.flush()
+        _exit(error.code if isinstance(error.code, int) else 1)
     except BaseException:
         print_exc(file=child_stderr)
         child_stderr.flush()
@@ -528,6 +610,7 @@ def _run_pty_case(
     case: str = "confirmation",
     control_input: bytes | None = b"yes\n",
     prompt_marker: bytes = b"Answer yes or no:\n",
+    attached_stdin: bool = False,
 ) -> tuple[int | None, dict[int, bytes], bytes]:
     master, slave = openpty()
     setraw(slave)
@@ -538,18 +621,23 @@ def _run_pty_case(
     result_read, result_write = pipe()
     child = fork()
     if child == 0:
+        child_stdin = slave if attached_stdin else stdin_read
+        if attached_stdin:
+            setsid()
+            ioctl(slave, TIOCSCTTY, 0)
         for descriptor in (
             master,
-            slave,
             stdin_write,
             stdout_read,
             stderr_read,
             result_read,
         ):
             close(descriptor)
+        if slave != child_stdin:
+            close(slave)
         _child(
             tty_path,
-            stdin_read,
+            child_stdin,
             stdout_write,
             stderr_write,
             result_write,
@@ -568,10 +656,33 @@ def _run_pty_case(
             result_write,
         ):
             close(descriptor)
-        write(stdin_write, b"initial prompt\n")
-        close(stdin_write)
+        if attached_stdin:
+            close(stdin_write)
+        else:
+            write(stdin_write, b"initial prompt\n")
+            close(stdin_write)
         for descriptor in streams:
             set_blocking(descriptor, False)
+        if attached_stdin:
+            deadline = monotonic() + 5
+            while not streams[stdout_read] and monotonic() < deadline:
+                readable, _, _ = select(
+                    [master, *streams],
+                    [],
+                    [],
+                    0.05,
+                )
+                for descriptor in readable:
+                    chunk = read(descriptor, 4096)
+                    if descriptor == master:
+                        control += chunk
+                    else:
+                        streams[descriptor] += chunk
+                waited, status = waitpid(child, WNOHANG)
+                if waited:
+                    break
+            assert streams[stdout_read], streams[stderr_read].decode()
+            write(master, b"initial prompt\n")
         deadline = monotonic() + 5
         while prompt_marker not in control and monotonic() < deadline:
             readable, _, _ = select([master, *streams], [], [], 0.05)
@@ -584,7 +695,11 @@ def _run_pty_case(
             waited, status = waitpid(child, WNOHANG)
             if waited:
                 break
-        assert prompt_marker in control, streams[stderr_read].decode()
+        assert prompt_marker in control, {
+            "stdout": streams[stdout_read].decode(),
+            "stderr": streams[stderr_read].decode(),
+            "control": control.decode(),
+        }
         if control_input is None:
             close(master)
             master = -1
@@ -643,6 +758,22 @@ def test_piped_prompt_and_pty_clarification_complete_one_run() -> None:
     )
 
 
+def test_attached_tty_prompt_and_clarification_complete_one_run() -> None:
+    status, streams, control = _run_pty_case(
+        real_orchestrator=False,
+        attached_stdin=True,
+    )
+    stdout, stderr, result = streams.values()
+    assert status == 0, stderr.decode()
+    assert stdout.decode().endswith("completed:yes\n")
+    assert stderr == b""
+    assert loads(result) == {
+        "calls": ["initial prompt"],
+        "provider_calls": 1,
+    }
+    assert control.endswith(b"Answer yes or no:\n")
+
+
 def test_semantic_text_multiline_and_multiple_other_rows() -> None:
     rows = (
         ("text", b"Ada\n", b"Enter one line:\n", "completed:Ada\n"),
@@ -685,29 +816,69 @@ def test_decline_input_cancel_run_cancel_and_disappearance_are_distinct() -> (
     None
 ):
     rows = (
-        ("decline", b":decline\n", "declined\n"),
+        ("decline", b":decline\n", "declined\n", 0, b""),
         (
             "cancel_input",
             b":cancel\n",
             "disconnected:handler_cancelled\n",
+            0,
+            b"",
         ),
-        ("cancel_run", b":cancel-run\n", ""),
+        (
+            "steer",
+            b":steer redirect\nyes\n",
+            "completed:yes\n",
+            0,
+            b"",
+        ),
+        (
+            "cancel_run",
+            b":cancel-run\n",
+            "",
+            130,
+            _CANCELLED_STDERR,
+        ),
     )
-    for case, control_input, expected_stdout in rows:
+    for (
+        case,
+        control_input,
+        expected_stdout,
+        expected_exit,
+        expected_stderr,
+    ) in rows:
         status, streams, control = _run_pty_case(
             real_orchestrator=False,
             case=case,
             control_input=control_input,
         )
         stdout, stderr, result = streams.values()
-        assert status == 0, f"{case}: {stderr.decode()}"
+        assert status is not None
+        assert (
+            waitstatus_to_exitcode(status) == expected_exit
+        ), f"{case}: {stderr.decode()}"
         assert stdout.decode() == expected_stdout, case
-        assert stderr == b"", case
-        assert loads(result) == {
+        assert stderr == expected_stderr, case
+        observed_result = loads(result)
+        expected_result: dict[str, object] = {
             "calls": ["initial prompt"],
             "provider_calls": 1,
         }
-        assert control.endswith(b"Answer yes or no:\n"), case
+        if case == "cancel_run":
+            expected_result.update(
+                handler_outcomes=["disconnected:handler_cancelled"],
+                stream_cleanup_count=1,
+                stream_completed=False,
+            )
+        assert observed_result == expected_result
+        if case == "steer":
+            assert (
+                b"Invalid input: Steering is unavailable in this CLI "
+                b"session.\n"
+                in control
+            )
+            assert stdout == b"completed:yes\n"
+        else:
+            assert control.endswith(b"Answer yes or no:\n"), case
 
 
 def test_terminal_disappearance_is_bounded_and_next_run_receives_bytes() -> (
@@ -766,6 +937,14 @@ def test_real_orchestrator_engine_agent_resumes_same_run() -> None:
     assert loads(result) == {
         "initial_prompt": "initial prompt",
         "provider_calls": 2,
+        "initial_source_aclose_calls": 1,
+        "execution_status": "completed",
+        "interaction_states": ["pending", "answered"],
+        "pending_request": False,
+        "cleanup_started": False,
+        "interaction_cleanup_complete": False,
+        "pending_interaction_task": False,
+        "pending_tool_batch_task": False,
     }
     assert (
         control.decode()
@@ -788,11 +967,20 @@ def test_real_orchestrator_run_cancel_owns_containing_run_cleanup() -> None:
         control_input=b":cancel-run\n",
     )
     stdout, stderr, result = streams.values()
-    assert status == 0, stderr.decode()
+    assert status is not None
+    assert waitstatus_to_exitcode(status) == 130, stderr.decode()
     assert stdout == b""
-    assert stderr == b""
+    assert stderr == _CANCELLED_STDERR
     assert loads(result) == {
         "initial_prompt": "initial prompt",
         "provider_calls": 1,
+        "initial_source_aclose_calls": 1,
+        "execution_status": "cancelled",
+        "interaction_states": ["pending"],
+        "pending_request": False,
+        "cleanup_started": True,
+        "interaction_cleanup_complete": True,
+        "pending_interaction_task": False,
+        "pending_tool_batch_task": False,
     }
     assert control.endswith(b"Answer yes or no:\n")

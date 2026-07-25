@@ -28,8 +28,10 @@ from ..entities import (
     WeightType,
 )
 from ..filesystem import read_text
+from ..interaction.error import InputContractError
 from ..model.manager import ModelManager
 from ..model.reasoning import ReasoningSummaryCapabilityError
+from ..sdk import AgentRunCancelled
 from ..server_output_redaction import (
     SERVER_OUTPUT_REDACTION_CHANNELS,
     SERVER_OUTPUT_REDACTION_PROTOCOLS,
@@ -51,6 +53,7 @@ from ..types import (
     assert_positive_number,
 )
 from ..utils import logger_replace
+from . import interaction_renderer
 
 import gettext
 import sys
@@ -80,6 +83,7 @@ from enum import StrEnum
 from gettext import translation
 from importlib import import_module
 from importlib.util import find_spec
+from json import dumps
 from locale import getlocale
 from logging import (
     DEBUG,
@@ -4902,6 +4906,20 @@ class CLI:
                 except ReasoningSummaryCapabilityError as error:
                     print(str(error), file=sys.stderr)
                     raise SystemExit(1) from error
+                except InputContractError as error:
+                    result = interaction_renderer.cli_interaction_result(error)
+                    if result.exit_code is None:
+                        raise
+                    raise interaction_renderer.CliInteractionExit(
+                        result
+                    ) from error
+                except interaction_renderer.CliRunCancelled as error:
+                    result = interaction_renderer.cli_interaction_result(
+                        AgentRunCancelled()
+                    )
+                    raise interaction_renderer.CliInteractionExit(
+                        result
+                    ) from error
                 except (
                     CancelledError,
                     KeyboardInterrupt,
@@ -5236,6 +5254,11 @@ def main() -> None:
     cli = CLI(logger)
     try:
         run_in_loop(cli())
+    except interaction_renderer.CliInteractionExit as error:
+        envelope: dict[str, object] = {"envelope_id": error.result.envelope_id}
+        envelope["payload"] = error.result.payload
+        print(dumps(envelope, sort_keys=True), file=sys.stderr)
+        raise
     except (CancelledError, KeyboardInterrupt, CommandAbortException):
         cli._print_bye()
 

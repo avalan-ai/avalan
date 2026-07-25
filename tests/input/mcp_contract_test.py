@@ -1,7 +1,8 @@
 """Exercise the cross-boundary MCP input contract."""
 
-from asyncio import CancelledError, create_task, run, sleep, wait_for
-from contextlib import suppress
+from asyncio import CancelledError, Event, create_task, run, sleep, wait_for
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager, suppress
 from datetime import UTC, datetime, timedelta
 from logging import getLogger
 from socket import AF_INET, SO_REUSEADDR, SOCK_STREAM, SOL_SOCKET, socket
@@ -43,6 +44,7 @@ from avalan.interaction import (
     FreeFormOther,
     InputHandlerContext,
     InputHandlerDisconnected,
+    InputHandlerOutcome,
     InputHandlerResolution,
     InputQuestion,
     InputRequest,
@@ -110,6 +112,33 @@ _CHOICES = (
     Choice(value=ChoiceValue("alpha"), label="Alpha"),
     Choice(value=ChoiceValue("beta"), label="Beta"),
 )
+
+
+@asynccontextmanager
+async def _loopback_server(
+    app: object,
+    *,
+    lifespan: str,
+) -> AsyncIterator[str]:
+    listener = socket(AF_INET, SOCK_STREAM)
+    listener.setsockopt(SOL_SOCKET, SO_REUSEADDR, 1)
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(128)
+    listener.setblocking(False)
+    port = cast(tuple[str, int], listener.getsockname())[1]
+    server = Server(Config(app, log_level="critical", lifespan=lifespan))
+    task = create_task(server.serve(sockets=[listener]))
+    try:
+        for _ in range(200):
+            if server.started:
+                break
+            await sleep(0.01)
+        assert server.started
+        yield f"http://127.0.0.1:{port}"
+    finally:
+        server.should_exit = True
+        await wait_for(task, timeout=5)
+        listener.close()
 
 
 class _NameForm(BaseModel):
@@ -579,6 +608,8 @@ class _InboundOrchestrator:
         self.scenario = ""
         self.continuations: list[tuple[str, ContinuationId]] = []
         self.requests: list[InputRequest] = []
+        self.outcomes: list[InputHandlerOutcome] = []
+        self.after_input_gate: Event | None = None
 
     async def sync_messages(self, response: object) -> None:
         del response
@@ -613,7 +644,9 @@ class _InboundResponse:
             channel=StreamChannel.CONTROL,
         )
         scenario = self.orchestrator.scenario
-        if self.runtime is None:
+        if scenario == "ordinary":
+            answer = "ordinary"
+        elif self.runtime is None:
             answer = "unavailable"
         else:
             question: InputQuestion
@@ -622,6 +655,19 @@ class _InboundResponse:
                     question_id=QuestionId("api-key"),
                     prompt="Enter an API key.",
                     required=True,
+                )
+            elif scenario == "confirmation":
+                question = ConfirmationQuestion(
+                    question_id=QuestionId("confirm"),
+                    prompt="Continue?",
+                    required=True,
+                )
+            elif scenario == "selection":
+                question = SingleSelectionQuestion(
+                    question_id=QuestionId("choice"),
+                    prompt="Choose.",
+                    required=True,
+                    choices=_CHOICES,
                 )
             else:
                 question = TextQuestion(
@@ -643,15 +689,18 @@ class _InboundResponse:
             outcome = await self.runtime.handler(
                 InputHandlerContext(request=request)
             )
+            self.orchestrator.outcomes.append(outcome)
             self.orchestrator.continuations.append(
                 (
                     "resumed",
                     request.continuation_id,
                 )
             )
+            if self.orchestrator.after_input_gate is not None:
+                await self.orchestrator.after_input_gate.wait()
             if isinstance(outcome, InputHandlerResolution):
                 if isinstance(outcome.resolution, AnsweredResolution):
-                    value = cast(TextAnswer, outcome.resolution.answers[0])
+                    value = outcome.resolution.answers[0]
                     answer = f"continued:{value.value}"
                 else:
                     assert isinstance(outcome.resolution, DeclinedResolution)

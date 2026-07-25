@@ -1,6 +1,6 @@
 from ...agent import Specification
 from ...agent.orchestrator import Orchestrator
-from ...cli import confirm, get_input, has_input
+from ...cli import confirm, get_input, has_input, interaction_renderer
 from ...cli.commands.cache import cache_delete, cache_download
 from ...cli.display import CliStreamDisplayConfig, cli_stream_display_config
 from ...cli.display_reducer import (
@@ -1104,8 +1104,18 @@ async def token_generation(
                     projection.terminal_outcome
                     is StreamTerminalOutcome.INPUT_REQUIRED
                 ):
-                    raise StreamValidationError(
-                        "CLI input-required projection is unavailable"
+                    correlation = projection.correlation
+                    if not (
+                        correlation.request_id and correlation.continuation_id
+                    ):
+                        raise StreamValidationError(
+                            "CLI input-required projection lacks correlation"
+                        )
+                    raise interaction_renderer.CliInteractionExit(
+                        interaction_renderer.cli_input_required_result(
+                            str(correlation.request_id),
+                            str(correlation.continuation_id),
+                        )
                     )
         except BaseException:
             stop_signal.set()

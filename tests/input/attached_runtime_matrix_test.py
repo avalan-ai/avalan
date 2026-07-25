@@ -647,6 +647,7 @@ class _Harness:
             broker=broker,
             actor=self.actor,
             handler=cast(Any, handler),
+            policy=broker.policy,
             id_factory=_ExecutionIds(),
         )
         self.operation = _operation()

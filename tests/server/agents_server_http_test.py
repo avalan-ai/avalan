@@ -106,7 +106,10 @@ class AgentsServerHttpTestCase(TestCase):
         app.include_router.assert_any_call(self.responses_router, prefix="/o")
         app.include_router.assert_any_call(self.engine_router)
         self.install_a2a_routes.assert_called_once_with(
-            app, prefix="/a2a", name="run", description=None
+            app,
+            prefix="/a2a",
+            name="run",
+            description=None,
         )
         app.include_router.assert_any_call(mcp_router, prefix="/m")
         self.Config.assert_called_once_with(
@@ -128,6 +131,11 @@ class AgentsServerHttpTestCase(TestCase):
         self.FastAPI.return_value = app
 
         mcp_router = MagicMock(name="mcp_router")
+        interaction_configuration = MagicMock(name="interaction_configuration")
+        interaction_events: list[str] = []
+        self.install_a2a_routes.side_effect = lambda *_args, **_kwargs: (
+            interaction_events.append("routes")
+        )
 
         with patch.dict(sys.modules, modules):
             with (
@@ -136,6 +144,12 @@ class AgentsServerHttpTestCase(TestCase):
                     "avalan.server.mcp_router.create_router",
                     return_value=mcp_router,
                 ),
+                patch(
+                    "avalan.server.configure_server_interactions",
+                    side_effect=lambda target, configuration: (
+                        interaction_events.append("configured")
+                    ),
+                ) as configure_interactions,
                 patch("avalan.server.logger_replace"),
             ):
                 agents_server(
@@ -153,11 +167,20 @@ class AgentsServerHttpTestCase(TestCase):
                     a2a_prefix="/custom",
                     mcp_name="run",
                     mcp_description=None,
+                    interaction_configuration=interaction_configuration,
                     logger=logger,
                 )
 
+        configure_interactions.assert_called_once_with(
+            app,
+            interaction_configuration,
+        )
+        self.assertEqual(interaction_events, ["configured", "routes"])
         self.install_a2a_routes.assert_called_once_with(
-            app, prefix="/custom", name="run", description=None
+            app,
+            prefix="/custom",
+            name="run",
+            description=None,
         )
 
     def test_agents_server_cors_options(self) -> None:

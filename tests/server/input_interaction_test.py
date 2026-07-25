@@ -65,6 +65,7 @@ from avalan.interaction import (
     SessionId,
     StreamSessionId,
     TaskId,
+    TaskInputCapabilityState,
     TaskInputClassification,
     TaskInputClassificationDecision,
     TaskInputClassificationRequest,
@@ -710,13 +711,15 @@ def _projection(
     )
 
 
-async def _open_broker() -> AsyncInteractionBroker:
-    policy = InteractionPolicy()
+async def _open_broker(
+    policy: InteractionPolicy | None = None,
+) -> AsyncInteractionBroker:
+    selected_policy = policy or InteractionPolicy()
     clock = _Clock()
     identifiers = _Ids()
-    classifier = _Classifier(policy)
+    classifier = _Classifier(selected_policy)
     store = await MemoryInteractionStoreFactory(
-        policy=policy,
+        policy=selected_policy,
         clock=clock,
         authorizer=_Authorizer(),
         id_factory=identifiers,
@@ -726,7 +729,7 @@ async def _open_broker() -> AsyncInteractionBroker:
         store=store,
         clock=clock,
         id_factory=identifiers,
-        policy=policy,
+        policy=selected_policy,
         classifier=classifier,
     )
 
@@ -736,6 +739,7 @@ def _app(
     orchestrator: _FakeProviderOrchestrator,
     *,
     authorizer: _Authorizer | None = None,
+    policy: InteractionPolicy | None = None,
 ) -> FastAPI:
     app = FastAPI()
     app.state.logger = getLogger("server-input-test")
@@ -746,6 +750,7 @@ def _app(
             broker=broker,
             principal_resolver=_PrincipalResolver(),
             authorizer=authorizer or _Authorizer(),
+            policy=policy or InteractionPolicy(),
         ),
     )
     app.include_router(chat_router, prefix="/v1")
@@ -1571,6 +1576,39 @@ async def _negotiation_scenario() -> None:
     finally:
         await close_server_interactions(app)
         await broker.aclose()
+
+
+async def _policy_negotiation_scenario() -> None:
+    for capability_state, expected_status, provider_calls in (
+        (TaskInputCapabilityState.DORMANT, 503, 0),
+        (TaskInputCapabilityState.ROLLBACK, 503, 0),
+        (TaskInputCapabilityState.ACTIVE, 200, 1),
+    ):
+        policy = InteractionPolicy(capability_state=capability_state)
+        broker = await _open_broker(policy)
+        orchestrator = _FakeProviderOrchestrator()
+        app = _app(broker, orchestrator, policy=policy)
+        transport = ASGITransport(app=app)
+        try:
+            async with AsyncClient(
+                transport=transport,
+                base_url="http://server.test",
+            ) as client:
+                response = await client.post(
+                    "/v1/chat/completions",
+                    headers=_EXTENSION_HEADERS,
+                    json=_completion_payload(
+                        stream=True,
+                        handling="detached",
+                    ),
+                )
+                assert response.status_code == expected_status
+                assert orchestrator.provider_calls == provider_calls
+                if capability_state is TaskInputCapabilityState.ROLLBACK:
+                    assert policy.resolve_existing
+        finally:
+            await close_server_interactions(app)
+            await broker.aclose()
 
 
 async def _cancel_scenario() -> None:
@@ -2414,6 +2452,12 @@ async def _defensive_service_scenario() -> None:
 
             for invalid_configuration in (
                 {
+                    "broker": broker,
+                    "principal_resolver": _PrincipalResolver(),
+                    "authorizer": _Authorizer(),
+                    "policy": object(),
+                },
+                {
                     "broker": object(),
                     "principal_resolver": _PrincipalResolver(),
                     "authorizer": _Authorizer(),
@@ -2438,6 +2482,31 @@ async def _defensive_service_scenario() -> None:
                     ServerInteractionConfiguration(
                         **cast(Any, invalid_configuration)
                     )
+            with raises(TypeError):
+                ServerInteractionConfiguration(
+                    broker=broker,
+                    principal_resolver=_PrincipalResolver(),
+                    authorizer=_Authorizer(),
+                    policy=InteractionPolicy(
+                        capability_state=TaskInputCapabilityState.ROLLBACK
+                    ),
+                )
+            unavailable_service = ServerInteractionService(
+                ServerInteractionConfiguration(
+                    broker=cast(InteractionBroker, fault_broker),
+                    principal_resolver=_PrincipalResolver(),
+                    authorizer=_Authorizer(),
+                    policy=InteractionPolicy(
+                        capability_state=TaskInputCapabilityState.DORMANT
+                    ),
+                )
+            )
+            with raises(_ServerHTTPError):
+                await unavailable_service.entry(
+                    _OWNER,
+                    str(request.request_id),
+                    InteractionOperation.RESOLVE,
+                )
             with raises(TypeError):
                 ServerInteractionService(
                     cast(ServerInteractionConfiguration, object())
@@ -2939,6 +3008,11 @@ def test_server_input_extension_envelopes() -> None:
     run(_attached_non_streaming_scenario())
     run(_responses_non_streaming_scenario())
     run(_negotiation_scenario())
+
+
+def test_server_input_policy_negotiation() -> None:
+    """Reject new HTTP negotiation unless task input is active."""
+    run(_policy_negotiation_scenario())
 
 
 def test_server_input_readable_fallback() -> None:

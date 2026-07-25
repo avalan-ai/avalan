@@ -262,6 +262,7 @@ def _include_protocol_routers(
     a2a_prefix: str,
     a2a_tool_name: str,
     a2a_tool_description: str | None,
+    interaction_configuration: ServerInteractionConfiguration | None,
 ) -> None:
     openai_endpoints = selected_protocols.get("openai")
     if openai_endpoints:
@@ -281,6 +282,8 @@ def _include_protocol_routers(
         app.include_router(engine_router_module.router)
 
     if "a2a" in selected_protocols:
+        if interaction_configuration is not None:
+            configure_server_interactions(app, interaction_configuration)
         a2a_module = import_module("avalan.server.a2a")
         a2a_module.install_a2a_routes(
             app,
@@ -388,6 +391,7 @@ def register_agent_endpoints(
         a2a_prefix=a2a_prefix,
         a2a_tool_name=a2a_tool_name,
         a2a_tool_description=a2a_tool_description,
+        interaction_configuration=interaction_configuration,
     )
 
 
@@ -470,6 +474,7 @@ def agents_server(
         a2a_prefix=a2a_prefix,
         a2a_tool_name=a2a_tool_name,
         a2a_tool_description=a2a_tool_description,
+        interaction_configuration=interaction_configuration,
     )
 
     logger.debug("Starting %s server at %s:%d", name, host, port)

@@ -53,6 +53,10 @@ from .interaction.error import (
     InputSupersededError as InputSupersededError,
 )
 from .interaction.error import InputValidationError as InputValidationError
+from .interaction.policy import InteractionPolicy as InteractionPolicy
+from .interaction.policy import (
+    TaskInputCapabilityState as TaskInputCapabilityState,
+)
 
 from importlib.metadata import metadata
 from importlib.metadata import version as metadata_version

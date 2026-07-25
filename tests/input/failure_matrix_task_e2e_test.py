@@ -22,6 +22,8 @@ from typing import Any, Literal, cast
 from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
+import pytest
+
 sys_path.append(str(Path(__file__).parents[1] / "interaction" / "stores"))
 
 from pgsql_support import (  # noqa: E402
@@ -173,6 +175,27 @@ from avalan.types import LooseJsonValue
 
 _NOW = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
 _FAILURE_MATRIX_EVIDENCE_PROPERTY = "failure_matrix_evidence"
+_AGENT_SURFACES = (
+    "task-target-agent-direct",
+    "task-target-agent-queue",
+    "task-client-events",
+    "task-client-inspect",
+)
+_TASK_SURFACES = {
+    "INPUT-F-01": _AGENT_SURFACES[:2],
+    "INPUT-F-10": ("task-client-cancel", *_AGENT_SURFACES),
+}
+
+
+def pytest_generate_tests(metafunc: pytest.Metafunc) -> None:
+    """Bind each task observation to one immutable public surface instance."""
+    if "surface_id" not in metafunc.fixturenames:
+        return
+    condition_id = metafunc.function.__name__.replace(
+        "test_input_f_", "INPUT-F-"
+    )
+    surfaces = _TASK_SURFACES.get(condition_id, _AGENT_SURFACES)
+    metafunc.parametrize("surface_id", surfaces, ids=surfaces)
 
 
 class _TestClock(InteractionClock):
@@ -1285,10 +1308,15 @@ def _client_cancel_evidence(
 def _record_failure_matrix_evidence(
     record_property: Callable[[str, object], None],
     evidence: list[dict[str, object]],
+    surface_id: str,
 ) -> None:
     """Attach dynamic cell evidence to the pytest call report."""
-    assert evidence
-    record_property(_FAILURE_MATRIX_EVIDENCE_PROPERTY, evidence)
+    owned = [item for item in evidence if item["surface_id"] == surface_id]
+    assert len(owned) == 1
+    record_property(
+        _FAILURE_MATRIX_EVIDENCE_PROPERTY,
+        dumps(owned, sort_keys=True),
+    )
 
 
 async def _validation_failure_evidence(
@@ -1332,11 +1360,12 @@ async def _validation_failure_evidence(
 
 def test_input_f_01(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Keep the task running when no input-capable host is available."""
     evidence = run_async(_test_input_f_01())
     assert len(evidence) == 2
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_01() -> list[dict[str, object]]:
@@ -1590,11 +1619,12 @@ async def _test_input_f_01() -> list[dict[str, object]]:
 
 def test_input_f_04(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject a wrong answer type without resuming the task."""
     evidence = run_async(_test_input_f_04())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_04() -> list[dict[str, object]]:
@@ -1681,11 +1711,12 @@ async def _test_input_f_04() -> list[dict[str, object]]:
 
 def test_input_f_05(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject an unknown choice without resuming the task."""
     evidence = run_async(_test_input_f_05())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_05() -> list[dict[str, object]]:
@@ -1781,11 +1812,12 @@ async def _test_input_f_05() -> list[dict[str, object]]:
 
 def test_input_f_06(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject a missing required answer without resuming the task."""
     evidence = run_async(_test_input_f_06())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_06() -> list[dict[str, object]]:
@@ -1866,11 +1898,12 @@ async def _test_input_f_06() -> list[dict[str, object]]:
 
 def test_input_f_07(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Treat an identical answer replay as one accepted resolution."""
     evidence = run_async(_test_input_f_07())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_07() -> list[dict[str, object]]:
@@ -2050,11 +2083,12 @@ async def _test_input_f_07() -> list[dict[str, object]]:
 
 def test_input_f_08(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Reject a conflicting answer after the winning resolution."""
     evidence = run_async(_test_input_f_08())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_08() -> list[dict[str, object]]:
@@ -2222,11 +2256,12 @@ async def _test_input_f_08() -> list[dict[str, object]]:
 
 def test_input_f_09(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Expire the suspended task when its continuation expires."""
     evidence = run_async(_test_input_f_09())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_09() -> list[dict[str, object]]:
@@ -2391,11 +2426,12 @@ async def _test_input_f_09() -> list[dict[str, object]]:
 
 def test_input_f_10(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Cancel both the pending interaction and containing task."""
     evidence = run_async(_test_input_f_10())
     assert len(evidence) == 5
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_10() -> list[dict[str, object]]:
@@ -2544,11 +2580,12 @@ async def _test_input_f_10() -> list[dict[str, object]]:
 
 def test_input_f_11(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Supersede pending input and terminalize its containing task."""
     evidence = run_async(_test_input_f_11())
     assert len(evidence) == 4
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_11() -> list[dict[str, object]]:
@@ -2704,11 +2741,12 @@ async def _test_input_f_11() -> list[dict[str, object]]:
 
 def test_input_f_12(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Persist required input after the finite caller handoff budget."""
     evidence = run_async(_test_input_f_12())
     assert len(evidence) == 6
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_12() -> list[dict[str, object]]:
@@ -2789,11 +2827,12 @@ async def _test_input_f_12() -> list[dict[str, object]]:
 
 def test_input_f_13(
     record_property: Callable[[str, object], None],
+    surface_id: str,
 ) -> None:
     """Continue advisory input with policy timeout provenance."""
     evidence = run_async(_test_input_f_13())
     assert len(evidence) == 6
-    _record_failure_matrix_evidence(record_property, evidence)
+    _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
 async def _test_input_f_13() -> list[dict[str, object]]:

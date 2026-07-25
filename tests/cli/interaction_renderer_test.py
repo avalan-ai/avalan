@@ -20,6 +20,7 @@ from avalan.cli.interaction_renderer import (
     _length_message,
     _literal_text,
     _selection_count_message,
+    cli_interaction_result,
 )
 from avalan.interaction import (
     AnswerProvenance,
@@ -28,8 +29,12 @@ from avalan.interaction import (
     ConfirmationAnswer,
     ConfirmationQuestion,
     FreeFormOther,
+    InputContractError,
     InputErrorCode,
     InputQuestion,
+    InputRequestId,
+    InputTimedOutResult,
+    InputValidationError,
     MultilineTextAnswer,
     MultilineTextQuestion,
     MultipleSelectionAnswer,
@@ -49,11 +54,16 @@ from avalan.interaction import (
     TextValidationConstraints,
 )
 from avalan.sdk import (
+    AgentRunCancelled,
+    AgentRunCompleted,
+    AgentRunInputRequired,
     AttachedInputContext,
     AttachedInputDisconnected,
     AttachedInputDisconnectReason,
     InputAnswerSubmission,
+    InputContinuationRef,
     InputDeclineSubmission,
+    InputRequestRef,
     InputRequestView,
     InputValidationFeedback,
 )
@@ -1068,6 +1078,122 @@ class CliInteractionRendererTestCase(IsolatedAsyncioTestCase):
 
 
 class CliInteractionRendererHelperTestCase(TestCase):
+    def test_public_interaction_results_are_exact(self) -> None:
+        request = _context(_confirmation()).request
+        input_required = AgentRunInputRequired(
+            request=request,
+            request_id=InputRequestRef("request"),
+            continuation_id=InputContinuationRef("continuation"),
+            detached_resumption_available=True,
+        )
+        timed_out = InputTimedOutResult(
+            request_id=InputRequestId("request"),
+            provenance=AnswerProvenance.POLICY,
+            resolved_at=_CREATED_AT,
+        )
+        cases = (
+            (
+                AgentRunCompleted(value={"ok": True}),
+                "completed",
+                {"kind": "completed", "value": {"ok": True}},
+                0,
+            ),
+            (
+                input_required,
+                "input_required",
+                {
+                    "kind": "input_required",
+                    "request_id": "request",
+                    "continuation_id": "continuation",
+                    "detached_resumption_available": True,
+                },
+                75,
+            ),
+            (
+                AgentRunCancelled(),
+                "cancelled",
+                {"kind": "cancelled"},
+                130,
+            ),
+            (
+                timed_out,
+                "timed_out",
+                {"interaction_state": "timed_out", "kind": "timed_out"},
+                0,
+            ),
+            (
+                InputValidationError(
+                    InputErrorCode.INVALID_FORMAT,
+                    "answer",
+                    "answer is invalid",
+                ),
+                "validation_error",
+                {
+                    "error": "input.validation",
+                    "interaction_state": "pending",
+                },
+                None,
+            ),
+            (
+                InputContractError(
+                    InputErrorCode.UNAVAILABLE,
+                    "interaction",
+                    "input is unavailable",
+                ),
+                "unavailable",
+                {
+                    "detached_resumption_available": False,
+                    "kind": "unavailable",
+                },
+                69,
+            ),
+        )
+        for value, name, payload, exit_code in cases:
+            with self.subTest(name=name):
+                result = cli_interaction_result(value)
+                self.assertEqual(result.envelope_id, f"cli.{name}.v1")
+                self.assertEqual(
+                    result.payload,
+                    {**payload, "channel": "control"},
+                )
+                self.assertEqual(result.exit_code, exit_code)
+
+        for code, name, state, exit_code in (
+            (
+                InputErrorCode.ALREADY_RESOLVED,
+                "already_resolved",
+                "answered",
+                73,
+            ),
+            (InputErrorCode.EXPIRED, "expired", "expired", 74),
+            (InputErrorCode.SUPERSEDED, "superseded", "superseded", 75),
+        ):
+            with self.subTest(code=code):
+                result = cli_interaction_result(
+                    InputContractError(code, "interaction", "terminal")
+                )
+                self.assertEqual(result.envelope_id, f"cli.{name}.v1")
+                self.assertEqual(
+                    result.payload,
+                    {
+                        "channel": "control",
+                        "error": code.value,
+                        "interaction_state": state,
+                    },
+                )
+                self.assertEqual(result.exit_code, exit_code)
+
+        with self.assertRaisesRegex(TypeError, "unsupported public"):
+            cli_interaction_result(
+                InputContractError(
+                    InputErrorCode.INVALID_FORMAT,
+                    "interaction",
+                    "invalid",
+                )
+            )
+        with self.assertRaisesRegex(TypeError, "public interaction outcome"):
+            cli_interaction_result(object())
+
     def test_commands_and_messages_are_typed(self) -> None:
         input_cancel: CliInteractionCommand = CliInputCancellationCommand()
         run_cancel: CliInteractionCommand = CliRunCancellationCommand()

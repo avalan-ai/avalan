@@ -52,7 +52,13 @@ from ..interaction.entities import (
 )
 from ..interaction.error import InputValidationError
 from ..interaction.handler import _InputHandler
-from ..interaction.policy import InteractionActor
+from ..interaction.policy import (
+    InteractionActor,
+    InteractionClock,
+    InteractionPolicy,
+    InteractionTime,
+    RuntimeInteractionClock,
+)
 from ..interaction.state import project_resolution_to_model
 from ..interaction.store import (
     CreateInteractionApplied,
@@ -1082,6 +1088,10 @@ class BranchInteractionBroker(Protocol):
         """Supersede only the bound execution branch."""
         ...
 
+    async def read_time(self) -> InteractionTime:
+        """Return one observation from the attached trusted clock."""
+        ...
+
 
 @final
 class UuidExecutionIdFactory:
@@ -1120,6 +1130,10 @@ class AttachedInteractionRuntime:
     broker: InteractionBroker = field(repr=False)
     actor: InteractionActor
     handler: _InputHandler = field(repr=False)
+    policy: InteractionPolicy = field(
+        default_factory=InteractionPolicy,
+        repr=False,
+    )
     id_factory: ExecutionIdFactory = field(
         default_factory=UuidExecutionIdFactory,
         repr=False,
@@ -1148,6 +1162,13 @@ class AttachedInteractionRuntime:
     def __post_init__(self) -> None:
         if not isinstance(self.actor, InteractionActor):
             raise TypeError("actor must be an interaction actor")
+        if not isinstance(self.policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
+        broker_policy = getattr(self.broker, "policy", self.policy)
+        if isinstance(broker_policy, InteractionPolicy) and (
+            broker_policy != self.policy
+        ):
+            raise TypeError("broker and interaction policies must match")
         _assert_async_methods(
             self.broker,
             ("request", "cancel_scope"),
@@ -1342,6 +1363,14 @@ class DurableInteractionRuntime:
 
     actor: InteractionActor
     stager: DurableInteractionStager = field(repr=False)
+    clock: InteractionClock = field(
+        default_factory=RuntimeInteractionClock,
+        repr=False,
+    )
+    policy: InteractionPolicy = field(
+        default_factory=InteractionPolicy,
+        repr=False,
+    )
     id_factory: ExecutionIdFactory = field(
         default_factory=UuidExecutionIdFactory,
         repr=False,
@@ -1355,7 +1384,14 @@ class DurableInteractionRuntime:
     def __post_init__(self) -> None:
         if not isinstance(self.actor, InteractionActor):
             raise TypeError("actor must be an interaction actor")
+        if not isinstance(self.policy, InteractionPolicy):
+            raise TypeError("policy must be an interaction policy")
         _assert_async_callable(self.stager, "durable_runtime.stager")
+        _assert_async_methods(
+            self.clock,
+            ("read", "wait_until"),
+            "durable_runtime.clock",
+        )
         _assert_execution_id_factory(self.id_factory, "durable_runtime")
         if self.run_id is not None:
             object.__setattr__(
@@ -1474,6 +1510,7 @@ async def create_child_interaction_runtime(
             broker=runtime.broker,
             actor=runtime.actor,
             handler=runtime.handler,
+            policy=runtime.policy,
             id_factory=runtime.id_factory,
             run_id=parent_run_id,
             task_id=parent_task_id,
@@ -1488,6 +1525,8 @@ async def create_child_interaction_runtime(
     return DurableInteractionRuntime(
         actor=runtime.actor,
         stager=runtime.stager,
+        clock=runtime.clock,
+        policy=runtime.policy,
         id_factory=runtime.id_factory,
         run_id=parent_run_id,
         task_id=parent_task_id,
@@ -1596,6 +1635,15 @@ class ExecutionBranchInteractionBroker:
             await admission.close()
         _validate_broker_request_result(request, result)
         return result
+
+    async def read_time(self) -> InteractionTime:
+        """Return one observation from the attached trusted clock."""
+        observed_at = await self._broker.read_time()
+        if type(observed_at) is not InteractionTime:
+            raise ExecutionCorrelationError(
+                "interaction broker returned invalid time"
+            )
+        return observed_at
 
     async def cancel_scope(
         self,
@@ -1936,6 +1984,16 @@ class AgentExecution:
     def interaction_broker(self) -> BranchInteractionBroker | None:
         """Return the branch-scoped broker facade or absence."""
         return self._interaction_broker
+
+    @property
+    def interaction_clock(self) -> InteractionClock | None:
+        """Return the durable host clock or absence."""
+        runtime = self._interaction_runtime
+        return (
+            runtime.clock
+            if isinstance(runtime, DurableInteractionRuntime)
+            else None
+        )
 
     @property
     def status(self) -> AgentExecutionStatus:
