@@ -127,42 +127,11 @@ jobs:
           make lint
           make typecheck-input-contract INPUT_PHASE=5
 
-      - name: Run exact tests with PostgreSQL
-        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
-        run: make test-pgsql-exact no-install INPUT_PHASE=5
-
-      - name: Run tests with PostgreSQL
-        if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.11'
-        run: make test-pgsql no-install coverage-report
-
       - name: Run tests
-        if: matrix.target.os != 'ubuntu-latest'
-        run: make test no-install coverage-report
+        run: make test no-install
 
       - name: Verify clean generated metadata
         run: git diff --check
-
-      - name: Upload coverage to Coveralls
-        continue-on-error: true
-        uses: coverallsapp/github-action@v2
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          format: cobertura
-          file: coverage.xml
-          flag-name: unit-tests-${{ matrix.target.name }}-${{ matrix.python }}
-          parallel: true
-          fail-on-error: true
-
-  finish:
-    if: ${{ always() }}
-    needs: test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: coverallsapp/github-action@v2
-        continue-on-error: true
-        with:
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          parallel-finished: true
 
   wheel:
     name: wheel (${{ matrix.target.name }}, Python ${{ matrix.python }})

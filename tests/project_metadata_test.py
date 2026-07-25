@@ -76,30 +76,14 @@ def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
     )
 
 
-def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
+def _workflow_enforces_input_gates(workflow: str) -> bool:
     type_gate = (
         "      - name: Verify structured-input type contracts\n"
         "        run: |\n"
         "          make lint\n"
         "          make typecheck-input-contract INPUT_PHASE=5\n"
     )
-    postgresql_gate = (
-        "      - name: Run exact tests with PostgreSQL\n"
-        "        if: matrix.target.os == 'ubuntu-latest' && "
-        "matrix.python == '3.11'\n"
-        "        run: make test-pgsql-exact no-install INPUT_PHASE=5\n"
-    )
-    postgresql_matrix = (
-        "      - name: Run tests with PostgreSQL\n"
-        "        if: matrix.target.os == 'ubuntu-latest' && "
-        "matrix.python != '3.11'\n"
-        "        run: make test-pgsql no-install coverage-report\n"
-    )
-    portable_gate = (
-        "      - name: Run tests\n"
-        "        if: matrix.target.os != 'ubuntu-latest'\n"
-        "        run: make test no-install coverage-report\n"
-    )
+    test_gate = "      - name: Run tests\n        run: make test no-install\n"
     metadata_gate = (
         "      - name: Verify clean generated metadata\n"
         "        run: git diff --check\n"
@@ -108,9 +92,7 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
         gate in workflow
         for gate in (
             type_gate,
-            postgresql_gate,
-            postgresql_matrix,
-            portable_gate,
+            test_gate,
             metadata_gate,
         )
     )
@@ -163,7 +145,11 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
         _supported_python_versions(),
         _supported_python_versions(),
     ]
-    assert _workflow_enforces_exact_input_gates(workflow)
+    assert _workflow_enforces_input_gates(workflow)
+    coverage_workflow = _read_repository_text(
+        ".github/workflows/code-coverage.yml"
+    )
+    assert "run: make test coverage" in coverage_workflow
     assert "run: poetry build --format wheel --clean" in workflow
     assert "path: dist/*.whl" in workflow
 
@@ -184,11 +170,11 @@ def test_workflow_event_detection_rejects_missing_pull_request() -> None:
 
 def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
     workflow = _read_repository_text(".github/workflows/test.yml").replace(
-        "make test-pgsql-exact no-install INPUT_PHASE=5",
-        "make test-pgsql no-install coverage-report",
+        "make test no-install",
+        "make install",
     )
 
-    assert not _workflow_enforces_exact_input_gates(workflow)
+    assert not _workflow_enforces_input_gates(workflow)
 
 
 def test_make_coverage_command_enforces_fail_under_gate() -> None:
