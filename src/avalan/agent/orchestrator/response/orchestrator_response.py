@@ -3215,6 +3215,7 @@ class OrchestratorResponse(
         raise_on_noncompletion: bool,
     ) -> TextGenerationResponse | None:
         """Apply exactly one authoritative broker delivery."""
+        await self._raise_if_cancelled(finish_stream=False)
         task = self._pending_interaction_task
         call = self._pending_interaction_call
         assistant_text = self._pending_interaction_assistant_text

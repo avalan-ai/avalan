@@ -689,6 +689,34 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
         self.assertFalse(pending.done())
         pending.cancel()
 
+    async def test_finish_task_input_prioritizes_run_cancellation(
+        self,
+    ) -> None:
+        response = _response()
+        pending_task = cast(Task[Any], object())
+        pending_call = _task_input_call()
+        response._pending_interaction_task = pending_task
+        response._pending_interaction_call = pending_call
+        response._pending_interaction_assistant_text = "preface"
+        response._pending_interaction_published = True
+        checker = AsyncMock(side_effect=CancelledError())
+        response._cancellation_checker = checker
+
+        with self.assertRaises(CancelledError):
+            await response._finish_task_input(
+                cast(InteractionRequestResult, object()),
+                raise_on_noncompletion=False,
+            )
+
+        checker.assert_awaited_once_with()
+        self.assertIs(response._pending_interaction_task, pending_task)
+        self.assertIs(response._pending_interaction_call, pending_call)
+        self.assertEqual(
+            response._pending_interaction_assistant_text,
+            "preface",
+        )
+        self.assertTrue(response._pending_interaction_published)
+
     async def test_finish_task_input_rejects_failed_admission(self) -> None:
         response = _response()
         execution = MagicMock(spec=AgentExecution)
