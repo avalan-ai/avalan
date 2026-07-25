@@ -124,7 +124,19 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     )
     assert "make lint" in workflow
     assert "make typecheck-input-contract INPUT_PHASE=5" in workflow
+    assert "sudo systemctl start postgresql.service" in workflow
+    assert (
+        "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
+        in workflow
+    )
+    assert (
+        "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
+        "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
+        in workflow
+    )
     assert "run: make test no-install" in workflow
+    assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
+    assert "make test-pgsql" not in workflow
     assert "run: make test coverage" in coverage_workflow
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow

@@ -83,7 +83,7 @@ def _workflow_enforces_input_gates(workflow: str) -> bool:
         "          make lint\n"
         "          make typecheck-input-contract INPUT_PHASE=5\n"
     )
-    test_gate = "      - name: Run tests\n        run: make test no-install\n"
+    test_gate = "        run: make test no-install\n"
     metadata_gate = (
         "      - name: Verify clean generated metadata\n"
         "        run: git diff --check\n"
@@ -95,6 +95,31 @@ def _workflow_enforces_input_gates(workflow: str) -> bool:
             test_gate,
             metadata_gate,
         )
+    )
+
+
+def _workflow_enforces_single_postgresql_lane(workflow: str) -> bool:
+    condition = (
+        "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
+    )
+    return (
+        workflow.count(f"        if: {condition}\n") == 2
+        and "      - name: Start PostgreSQL\n" in workflow
+        and "sudo systemctl start postgresql.service" in workflow
+        and "      - name: Run tests with PostgreSQL\n" in workflow
+        and (
+            "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
+            "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
+            in workflow
+        )
+        and (
+            "if: matrix.target.os != 'ubuntu-latest' || "
+            "matrix.python != '3.11'"
+            in workflow
+        )
+        and workflow.count("AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN") == 1
+        and "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
+        and "make test-pgsql" not in workflow
     )
 
 
@@ -146,6 +171,7 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
         _supported_python_versions(),
     ]
     assert _workflow_enforces_input_gates(workflow)
+    assert _workflow_enforces_single_postgresql_lane(workflow)
     coverage_workflow = _read_repository_text(
         ".github/workflows/code-coverage.yml"
     )
@@ -175,6 +201,24 @@ def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
     )
 
     assert not _workflow_enforces_input_gates(workflow)
+
+
+def test_workflow_postgresql_gate_detection_rejects_matrix_fanout() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'",
+        "matrix.target.os == 'ubuntu-latest'",
+    )
+
+    assert not _workflow_enforces_single_postgresql_lane(workflow)
+
+
+def test_workflow_postgresql_gate_detection_rejects_docker() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN",
+        "AVALAN_TASK_TEST_POSTGRESQL_DOCKER",
+    )
+
+    assert not _workflow_enforces_single_postgresql_lane(workflow)
 
 
 def test_make_coverage_command_enforces_fail_under_gate() -> None:

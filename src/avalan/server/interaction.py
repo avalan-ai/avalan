@@ -96,6 +96,7 @@ _CACHE_CONTROL_HEADERS = {
     TASK_INPUT_EXTENSION_HEADER: TASK_INPUT_EXTENSION,
 }
 _MAX_JSON_SAFE_INTEGER = 9_007_199_254_740_991
+_TERMINAL_ENTRY_RETENTION_LIMIT = 128
 
 
 class ServerInteractionHandling(StrEnum):
@@ -614,6 +615,10 @@ class ServerInteractionService:
             tuple[PrincipalScope, InputRequestId],
             _InteractionEntry,
         ] = {}
+        self._terminal_entries: dict[
+            tuple[PrincipalScope, InputRequestId],
+            _InteractionEntry,
+        ] = {}
         self._provisional_segments: dict[int, ServerDetachedSegment] = {}
         self._lock = Lock()
         self._closed = False
@@ -685,6 +690,7 @@ class ServerInteractionService:
             entries = tuple(self._entries.values())
             provisional_segments = tuple(self._provisional_segments.values())
             self._entries.clear()
+            self._terminal_entries.clear()
             self._provisional_segments.clear()
         await gather(
             *(self._close_entry_segment(entry) for entry in entries),
@@ -709,7 +715,33 @@ class ServerInteractionService:
         async with self._lock:
             if self._entries.get(key) is entry:
                 del self._entries[key]
+            if self._terminal_entries.get(key) is entry:
+                del self._terminal_entries[key]
         await self._close_entry_segment(entry)
+
+    async def _retain_terminal_entry(
+        self,
+        entry: _InteractionEntry,
+    ) -> None:
+        """Retain one recent terminal entry within the replay bound."""
+        key = (entry.principal, entry.request.request_id)
+        evicted: list[_InteractionEntry] = []
+        retention_limit = _TERMINAL_ENTRY_RETENTION_LIMIT
+        async with self._lock:
+            if self._entries.get(key) is not entry:
+                return
+            self._terminal_entries.pop(key, None)
+            self._terminal_entries[key] = entry
+            while len(self._terminal_entries) > retention_limit:
+                oldest_key = next(iter(self._terminal_entries))
+                oldest_entry = self._terminal_entries.pop(oldest_key)
+                if self._entries.get(oldest_key) is oldest_entry:
+                    del self._entries[oldest_key]
+                    evicted.append(oldest_entry)
+        if evicted:
+            await gather(
+                *(self._close_entry_segment(item) for item in evicted)
+            )
 
     async def _accept_record(
         self,
@@ -728,6 +760,8 @@ class ServerInteractionService:
             RequestState.TIMED_OUT,
         }:
             await self._close_entry_segment(entry)
+        if projection.request.state is not RequestState.PENDING:
+            await self._retain_terminal_entry(entry)
         return projection
 
     async def entry(
@@ -920,6 +954,7 @@ class ServerInteractionService:
             surface=ServerInteractionSurface.SERVER.value,
             idempotent=idempotent,
         )
+        await self._retain_terminal_entry(entry)
         return entry, resolved, idempotent
 
     async def cancel(
@@ -994,6 +1029,7 @@ class ServerInteractionService:
                 surface=ServerInteractionSurface.SERVER.value,
             )
         await self._close_entry_segment(entry)
+        await self._retain_terminal_entry(entry)
         return entry, store_result.record, False
 
 
@@ -1476,9 +1512,13 @@ async def _resume_segment(
             if completed:
                 await segment.aclose(cancelled=False)
         finally:
-            segment.release_resume(
-                exhausted=source_ended or terminal is not None,
-            )
+            try:
+                segment.release_resume(
+                    exhausted=source_ended or terminal is not None,
+                )
+            finally:
+                if terminal is not None:
+                    await entry.run._service._retain_terminal_entry(entry)
 
 
 async def _resume_segment_json(
@@ -1565,9 +1605,13 @@ async def _resume_segment_json(
             segment.completed_json = body
         return JSONResponse(body, headers=_CACHE_CONTROL_HEADERS)
     finally:
-        segment.release_resume(
-            exhausted=source_ended or terminal is not None,
-        )
+        try:
+            segment.release_resume(
+                exhausted=source_ended or terminal is not None,
+            )
+        finally:
+            if terminal is not None:
+                await entry.run._service._retain_terminal_entry(entry)
 
 
 def _resume_text_message(
