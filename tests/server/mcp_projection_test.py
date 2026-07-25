@@ -684,7 +684,8 @@ async def test_router_dispatches_session_tasks_errors_and_close() -> None:
         )
     ).status_code == 204
     close = _route_endpoint(path="", method="DELETE")
-    assert (await close(_Request(app=app, headers=headers))).status_code == 204
+    closed = await close(_Request(app=app, headers=headers))
+    assert closed.status_code == 204
 
 
 @pytest.mark.anyio
@@ -825,9 +826,10 @@ async def test_router_accepts_separate_cancellation_notification() -> None:
         ) not in cancellations
 
         close = _route_endpoint(path="", method="DELETE")
-        assert (
-            await close(_Request(app=request.app, headers=request.headers))
-        ).status_code == 204
+        closed = await close(
+            _Request(app=request.app, headers=request.headers),
+        )
+        assert closed.status_code == 204
         assert await second_consumer
         assert not hasattr(
             request.app.state,
