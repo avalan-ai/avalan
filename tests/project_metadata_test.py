@@ -85,13 +85,20 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
     )
     postgresql_gate = (
         "      - name: Run exact tests with PostgreSQL\n"
-        "        if: matrix.target.os == 'ubuntu-latest'\n"
+        "        if: matrix.target.os == 'ubuntu-latest' && "
+        "matrix.python == '3.11'\n"
         "        run: make test-pgsql-exact no-install INPUT_PHASE=5\n"
     )
+    postgresql_matrix = (
+        "      - name: Run tests with PostgreSQL\n"
+        "        if: matrix.target.os == 'ubuntu-latest' && "
+        "matrix.python != '3.11'\n"
+        "        run: make test-pgsql no-install coverage-report\n"
+    )
     portable_gate = (
-        "      - name: Run exact tests\n"
+        "      - name: Run tests\n"
         "        if: matrix.target.os != 'ubuntu-latest'\n"
-        "        run: make test-coverage-exact no-install\n"
+        "        run: make test no-install coverage-report\n"
     )
     metadata_gate = (
         "      - name: Verify clean generated metadata\n"
@@ -99,7 +106,13 @@ def _workflow_enforces_exact_input_gates(workflow: str) -> bool:
     )
     return all(
         gate in workflow
-        for gate in (type_gate, postgresql_gate, portable_gate, metadata_gate)
+        for gate in (
+            type_gate,
+            postgresql_gate,
+            postgresql_matrix,
+            portable_gate,
+            metadata_gate,
+        )
     )
 
 
@@ -171,8 +184,8 @@ def test_workflow_event_detection_rejects_missing_pull_request() -> None:
 
 def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
     workflow = _read_repository_text(".github/workflows/test.yml").replace(
-        "make test-coverage-exact no-install",
-        "make test coverage no-install",
+        "make test-pgsql-exact no-install INPUT_PHASE=5",
+        "make test-pgsql no-install coverage-report",
     )
 
     assert not _workflow_enforces_exact_input_gates(workflow)

@@ -122,6 +122,11 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     assert "make lint" in workflow
     assert "make typecheck-input-contract INPUT_PHASE=5" in workflow
     assert "make test-pgsql-exact no-install INPUT_PHASE=5" in workflow
-    assert "make test-coverage-exact no-install" in workflow
+    assert (
+        "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
+        in workflow
+    )
+    assert "make test-pgsql no-install coverage-report" in workflow
+    assert "make test no-install coverage-report" in workflow
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow

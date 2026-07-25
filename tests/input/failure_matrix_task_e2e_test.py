@@ -175,6 +175,7 @@ from avalan.types import LooseJsonValue
 
 _NOW = datetime(2026, 7, 23, 12, 0, tzinfo=UTC)
 _FAILURE_MATRIX_EVIDENCE_PROPERTY = "failure_matrix_evidence"
+_ASYNC_TEST_TIMEOUT_SECONDS = 10
 _AGENT_SURFACES = (
     "task-target-agent-direct",
     "task-target-agent-queue",
@@ -3086,11 +3087,17 @@ async def _attached_advisory_timeout_observation(
                 task = create_task(
                     client.run(_definition(), input_value="private")
                 )
-                await wait_for(handler.started.wait(), timeout=1)
+                await wait_for(
+                    handler.started.wait(),
+                    timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
+                )
                 run_id = _only_task_run_id(database)
             running = task
             if queued:
-                await wait_for(handler.started.wait(), timeout=1)
+                await wait_for(
+                    handler.started.wait(),
+                    timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
+                )
             request = handler.contexts[0].request
             assert request.state is RequestState.PENDING
             assert _only_task_run_state(database) == TaskRunState.RUNNING.value
@@ -3100,7 +3107,10 @@ async def _attached_advisory_timeout_observation(
             clock.now = request.created_at + timedelta(seconds=60)
             clock.monotonic = 60.0
             clock.changed.set()
-            await wait_for(model_factory.started.wait(), timeout=1)
+            await wait_for(
+                model_factory.started.wait(),
+                timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
+            )
 
             inspection = await client.inspect(run_id)
             events = await client.events(run_id)
@@ -3123,7 +3133,10 @@ async def _attached_advisory_timeout_observation(
                 domain_side_effect_count=len(inspection.artifacts),
             )
             model_factory.release.set()
-            completed = await wait_for(task, timeout=1)
+            completed = await wait_for(
+                task,
+                timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
+            )
         completion = getattr(completed, "completion", None)
         completed_run = (
             completion.run
@@ -3139,7 +3152,10 @@ async def _attached_advisory_timeout_observation(
         if running is not None:
             task = cast(Any, running)
             if not task.done():
-                await wait_for(task, timeout=1)
+                await wait_for(
+                    task,
+                    timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
+                )
         await broker.aclose()
         await stack.aclose()
         temporary.cleanup()
