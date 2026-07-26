@@ -10,7 +10,7 @@ from sys import executable
 from textwrap import dedent
 from types import SimpleNamespace
 from typing import Any, cast, overload
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
@@ -196,11 +196,16 @@ def _client(
     *,
     policy: StreamRetentionPolicy | None = None,
     base_url: str | None = "https://api.openai.com/v1",
+    azure_api_version: str | None = None,
 ) -> OpenAIClient:
     client = object.__new__(OpenAIClient)
     client._base_url = base_url  # noqa: SLF001
     client._is_azure = OpenAIClient._is_azure_base_url(  # noqa: SLF001
         base_url
+    )
+    client._extra_query = OpenAIClient._azure_extra_query(  # noqa: SLF001
+        base_url,
+        azure_api_version,
     )
     client._stream_retention_policy = (  # noqa: SLF001
         policy or StreamRetentionPolicy()
@@ -664,6 +669,182 @@ def test_native_openai_model_registers_exact_durable_revision() -> None:
     assert registry.is_registered(codec)
 
 
+def test_native_azure_model_registers_exact_durable_revision() -> None:
+    client = _client(
+        base_url="https://tenant.openai.azure.com/openai/v1/",
+        azure_api_version="preview",
+    )
+    model = _model(client=client, model_id="deployment")
+    binding = _binding(
+        provider_family=ProviderFamilyName("azure_openai"),
+        model_id=ModelId("deployment"),
+    )
+
+    initial = model.provider_capability_support
+    registered = model.register_continuation_snapshot_codec(binding)
+
+    assert initial.provider_family == "azure_openai"
+    assert initial.structured_invocation
+    assert registered.provider_family == "azure_openai"
+    registry = registered.continuation_snapshot_codec_registry
+    codec = registered.continuation_snapshot_codec
+    assert registry is not None
+    assert codec is not None
+    assert codec.registry_id.startswith("azure-openai-responses-")
+    assert codec.codec_id.startswith("azure-openai-responses-v1-")
+    assert codec.revision_binding == binding
+    assert registry.is_registered(codec)
+
+
+def test_azure_snapshot_restores_exact_provider_replay_state() -> None:
+    binding = _binding(
+        provider_family=ProviderFamilyName("azure_openai"),
+        model_id=ModelId("deployment"),
+    )
+    source = _client(
+        base_url="https://tenant.openai.azure.com/openai/v1/",
+        azure_api_version="preview",
+    )
+    source_support = _model(
+        client=source,
+        model_id="deployment",
+    ).register_continuation_snapshot_codec(binding)
+    source_registry = source_support.continuation_snapshot_codec_registry
+    source_codec = source_support.continuation_snapshot_codec
+    assert source_registry is not None
+    assert source_codec is not None
+    _retain(source)
+    snapshot = source.export_continuation_snapshot(
+        revision_binding=binding,
+        model_call_id=ModelCallId("model-call"),
+        provider_idempotency_key=_PROVIDER_IDEMPOTENCY_KEY,
+        provider_call_correlation_id=_CALL_ID,
+    )
+    encoded = source_registry.export_snapshot(source_codec, snapshot)
+    fresh = _client(
+        base_url="https://tenant.openai.azure.com/openai/v1/",
+        azure_api_version="preview",
+    )
+    fresh_support = _model(
+        client=fresh,
+        model_id="deployment",
+    ).register_continuation_snapshot_codec(binding)
+    fresh_registry = fresh_support.continuation_snapshot_codec_registry
+    fresh_codec = fresh_support.continuation_snapshot_codec
+    assert fresh_registry is not None
+    assert fresh_codec is not None
+    assert fresh_codec.registry_id == source_codec.registry_id
+    assert fresh_codec.codec_id == source_codec.codec_id
+
+    fresh.import_continuation_snapshot(
+        fresh_registry.restore_snapshot(
+            fresh_codec,
+            encoded,
+            binding,
+        ),
+        expected_binding=binding,
+        provider_call_correlation_id=_CALL_ID,
+    )
+
+    restored = fresh._replay_owners_by_call_id[_CALL_ID]  # noqa: SLF001
+    restored_items = restored.replay_items()
+    expected_items = _replay_items()
+    assert restored_items[0] == expected_items[0]
+    assert restored_items[1] == {
+        key: value for key, value in expected_items[1].items() if key != "id"
+    }
+    assert (
+        restored.take_provider_idempotency_key() == _PROVIDER_IDEMPOTENCY_KEY
+    )
+
+
+@pytest.mark.parametrize(
+    ("base_url", "azure_api_version", "binding"),
+    (
+        (
+            "https://api.openai.com/v1",
+            None,
+            _binding(
+                provider_family=ProviderFamilyName("azure_openai"),
+                model_id=ModelId("deployment"),
+            ),
+        ),
+        (
+            "https://tenant.openai.azure.com/openai/v1/",
+            "preview",
+            _binding(),
+        ),
+    ),
+)
+def test_snapshot_restore_rejects_cross_provider_client(
+    base_url: str,
+    azure_api_version: str | None,
+    binding: ContinuationRevisionBinding,
+) -> None:
+    client = _client(
+        base_url=base_url,
+        azure_api_version=azure_api_version,
+    )
+
+    with pytest.raises(InputSnapshotError) as raised:
+        client.import_continuation_snapshot(
+            _snapshot(binding),
+            expected_binding=binding,
+            provider_call_correlation_id=_CALL_ID,
+        )
+
+    assert raised.value.code is InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE
+
+
+def test_azure_resumed_dispatch_disables_every_automatic_retry() -> None:
+    binding = _binding(
+        provider_family=ProviderFamilyName("azure_openai"),
+        model_id=ModelId("deployment"),
+    )
+    base_url = "https://tenant.openai.azure.com/openai/v1/"
+    client = _client(
+        base_url=base_url,
+        azure_api_version="preview",
+    )
+    sdk_client = MagicMock()
+    sdk_client.base_url = base_url
+    request_client = MagicMock()
+    request_client.responses.create = AsyncMock(return_value=object())
+    sdk_client.with_options.return_value = request_client
+    client._client = sdk_client  # noqa: SLF001
+    client._stream_response_failed_retries = 24  # noqa: SLF001
+    client._stream_response_failed_retry_delay_seconds = 1.0  # noqa: SLF001
+    client.import_continuation_snapshot(
+        _snapshot(binding),
+        expected_binding=binding,
+        provider_call_correlation_id=_CALL_ID,
+    )
+    settings = GenerationSettings(
+        openai_max_retries=9,
+        openai_response_failed_retries=9,
+    )
+
+    async def run_resumed_dispatch() -> None:
+        with patch.object(openai_module, "OpenAIStream") as stream_type:
+            await client(
+                "deployment",
+                [_resolved_input_message()],
+                settings,
+            )
+
+        sdk_client.with_options.assert_called_once_with(max_retries=0)
+        request_client.responses.create.assert_awaited_once()
+        stream_kwargs = stream_type.call_args.kwargs
+        assert stream_kwargs["request_has_replay_items"] is True
+        assert stream_kwargs["stream_retries"] == 0
+        request_kwargs = request_client.responses.create.await_args.kwargs
+        assert request_kwargs["extra_headers"]["Idempotency-Key"] == str(
+            _PROVIDER_IDEMPOTENCY_KEY
+        )
+
+    asyncio_run(run_resumed_dispatch())
+
+
 @pytest.mark.parametrize(
     ("base_url", "native"),
     (
@@ -720,12 +901,17 @@ def test_durable_registration_fails_closed_for_sdk_endpoint(
 
 
 def test_durable_registration_requires_an_effective_endpoint() -> None:
-    model = _model(client=_client(base_url=None))
+    clients = (_client(base_url=None), _client())
+    clients[1]._base_url = cast(Any, object())  # noqa: SLF001
 
-    with pytest.raises(InputSnapshotError) as raised:
-        model.register_continuation_snapshot_codec(_binding())
+    for client in clients:
+        model = _model(client=client)
+        with pytest.raises(InputSnapshotError) as raised:
+            model.register_continuation_snapshot_codec(_binding())
 
-    assert raised.value.code is InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE
+        assert (
+            raised.value.code is InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE
+        )
 
 
 def test_native_openai_model_registration_rejects_revision_drift() -> None:
@@ -882,6 +1068,225 @@ def test_openai_snapshot_restores_in_fresh_process() -> None:
         "encrypted_content": "ciphertext",
         "reasoning_id": "rs_1",
         "reserved_call_id": _CALL_ID,
+    }
+
+
+def test_azure_snapshot_restores_and_dispatches_once_in_fresh_process() -> (
+    None
+):
+    binding = _binding(
+        provider_family=ProviderFamilyName("azure_openai"),
+        model_id=ModelId("deployment"),
+    )
+    source = _client(
+        base_url="https://tenant.openai.azure.com/openai/v1/",
+        azure_api_version="preview",
+    )
+    _retain(source)
+    snapshot = source.export_continuation_snapshot(
+        revision_binding=binding,
+        model_call_id=ModelCallId("model-call"),
+        provider_idempotency_key=_PROVIDER_IDEMPOTENCY_KEY,
+        provider_call_correlation_id=_CALL_ID,
+    )
+    encoded = encode_continuation_snapshot(snapshot)
+    script = dedent("""
+        import asyncio
+        import json
+        import sys
+
+        import openai
+        from httpx import AsyncClient, MockTransport, Response
+
+        from avalan.entities import (
+            GenerationSettings,
+            Message,
+            MessageRole,
+            ToolCall,
+            ToolCallResult,
+        )
+        from avalan.interaction import (
+            RESERVED_INPUT_CAPABILITY_NAME,
+            CapabilityRevision,
+            ContinuationRevisionBinding,
+            ModelConfigRevision,
+            ModelId,
+            ProviderConfigRevision,
+            ProviderFamilyName,
+        )
+        from avalan.model.nlp.text.vendor.openai import (
+            OpenAIClient,
+            OpenAIModel,
+        )
+
+        async def main():
+            binding = ContinuationRevisionBinding(
+                provider_family=ProviderFamilyName("azure_openai"),
+                model_id=ModelId("deployment"),
+                provider_config_revision=ProviderConfigRevision(
+                    "provider-r1"
+                ),
+                model_config_revision=ModelConfigRevision("model-r1"),
+                capability_revision=CapabilityRevision("capability-r1"),
+            )
+            base_url = "https://tenant.openai.azure.com/openai/v1/"
+            requests = []
+
+            async def handle(request):
+                requests.append(
+                    {
+                        "api_version": request.url.params.get("api-version"),
+                        "body": json.loads(request.content),
+                        "idempotency_key": request.headers.get(
+                            "Idempotency-Key"
+                        ),
+                    }
+                )
+                return Response(
+                    200,
+                    json={
+                        "id": "response-1",
+                        "created_at": 0.0,
+                        "model": "deployment",
+                        "object": "response",
+                        "output": [],
+                        "parallel_tool_calls": True,
+                        "status": "completed",
+                        "tool_choice": "auto",
+                        "tools": [],
+                        "usage": {
+                            "input_tokens": 1,
+                            "input_tokens_details": {"cached_tokens": 0},
+                            "output_tokens": 0,
+                            "output_tokens_details": {
+                                "reasoning_tokens": 0
+                            },
+                            "total_tokens": 1,
+                        },
+                    },
+                )
+
+            client = OpenAIClient(
+                api_key="fresh-process-test-key",
+                base_url=base_url,
+                azure_api_version="preview",
+                max_retries=7,
+                stream_response_failed_retries=7,
+            )
+            model = object.__new__(OpenAIModel)
+            model._model = client
+            model._model_id = "deployment"
+            model._continuation_capability_support = None
+            support = model.register_continuation_snapshot_codec(binding)
+            registry = support.continuation_snapshot_codec_registry
+            codec = support.continuation_snapshot_codec
+            assert registry is not None
+            assert codec is not None
+            restored = registry.restore_snapshot(
+                codec,
+                sys.argv[1],
+                binding,
+            )
+
+            await client._client.close()
+            http_client = AsyncClient(transport=MockTransport(handle))
+            client._client = openai.AsyncOpenAI(
+                api_key="fresh-process-test-key",
+                base_url=base_url,
+                http_client=http_client,
+                max_retries=7,
+            )
+            client.import_continuation_snapshot(
+                restored,
+                expected_binding=binding,
+                provider_call_correlation_id="call-input",
+            )
+            call = ToolCall(
+                id="call-input",
+                name=RESERVED_INPUT_CAPABILITY_NAME,
+                arguments={},
+                provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+            )
+            result = ToolCallResult(
+                id="call-input",
+                name=RESERVED_INPUT_CAPABILITY_NAME,
+                call=call,
+                result={"accepted": True},
+                provider_name=RESERVED_INPUT_CAPABILITY_NAME,
+            )
+            message = Message(
+                role=MessageRole.TOOL,
+                tool_call_result=result,
+            )
+            try:
+                await client(
+                    "deployment",
+                    [message],
+                    GenerationSettings(
+                        openai_max_retries=9,
+                        openai_response_failed_retries=9,
+                    ),
+                    use_async_generator=False,
+                )
+            finally:
+                await client.aclose()
+
+            assert len(requests) == 1
+            request = requests[0]
+            body = request["body"]
+            replay = body["input"]
+            reasoning = [
+                item for item in replay if item["type"] == "reasoning"
+            ]
+            calls = [
+                item for item in replay if item["type"] == "function_call"
+            ]
+            outputs = [
+                item
+                for item in replay
+                if item["type"] == "function_call_output"
+            ]
+            print(
+                json.dumps(
+                    {
+                        "api_version": request["api_version"],
+                        "call_id": calls[0]["call_id"],
+                        "codec_prefix": codec.codec_id.split(
+                            "responses-v1-", 1
+                        )[0],
+                        "encrypted_content": reasoning[0][
+                            "encrypted_content"
+                        ],
+                        "idempotency_key": request["idempotency_key"],
+                        "output_call_id": outputs[0]["call_id"],
+                        "provider_family": str(support.provider_family),
+                        "request_count": len(requests),
+                    },
+                    sort_keys=True,
+                )
+            )
+
+        asyncio.run(main())
+        """)
+
+    result = run(
+        [executable, "-c", script, encoded],
+        capture_output=True,
+        check=False,
+        cwd=".",
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert loads(result.stdout) == {
+        "api_version": "preview",
+        "call_id": _CALL_ID,
+        "codec_prefix": "azure-openai-",
+        "encrypted_content": "ciphertext",
+        "idempotency_key": str(_PROVIDER_IDEMPOTENCY_KEY),
+        "output_call_id": _CALL_ID,
+        "provider_family": "azure_openai",
+        "request_count": 1,
     }
 
 
@@ -1896,6 +2301,10 @@ def test_openai_helpers_reject_invalid_json_and_reasoning_correlation() -> (
 
     assert OpenAIClient._is_native_openai_responses_base_url(None)
     assert not OpenAIClient._is_native_openai_responses_base_url(cast(Any, 1))
+    assert not OpenAIClient._is_native_azure_openai_responses_base_url(None)
+    assert not OpenAIClient._is_native_azure_openai_responses_base_url(
+        "https://tenant.openai.azure.com:invalid/openai/v1/"
+    )
 
 
 def test_openai_client_and_model_capability_fallbacks_are_exact() -> None:

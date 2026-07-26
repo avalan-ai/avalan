@@ -1476,6 +1476,7 @@ class Orchestrator:
                 revision_binding = self._continuation_revision_binding(
                     operation,
                     provisional_definition,
+                    provider_family=provider_support.provider_family,
                 )
                 register_codec = getattr(
                     engine_agent.engine,
@@ -1506,6 +1507,7 @@ class Orchestrator:
             requested_advertisement is TaskInputCapabilityAdvertisement.DURABLE
         )
         support = ProviderCapabilitySupport(
+            provider_family=provider_support.provider_family,
             structured_invocation=provider_support.structured_invocation,
             stable_call_ids=provider_support.stable_call_ids,
             correlated_results=provider_support.correlated_results,
@@ -1552,12 +1554,18 @@ class Orchestrator:
     def _continuation_revision_binding(
         operation: AgentOperation,
         definition: ExecutionDefinitionRef,
+        *,
+        provider_family: ProviderFamilyName | None = None,
     ) -> ContinuationRevisionBinding:
         """Derive content-safe exact provider and model revision identity."""
         engine_uri = operation.environment.engine_uri
         model_id = engine_uri.model_id
-        provider_family = engine_uri.vendor
-        if not provider_family or not model_id:
+        resolved_provider_family = (
+            engine_uri.vendor
+            if provider_family is None
+            else str(provider_family)
+        )
+        if not resolved_provider_family or not model_id:
             raise InputSnapshotError(
                 InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
                 "continuation_snapshot.provider",
@@ -1565,7 +1573,7 @@ class Orchestrator:
             )
         provider_payload = dumps(
             {
-                "vendor": provider_family,
+                "vendor": resolved_provider_family,
                 "host": engine_uri.host,
                 "port": engine_uri.port,
                 "params": engine_uri.params,
@@ -1577,7 +1585,7 @@ class Orchestrator:
             sort_keys=True,
         )
         return ContinuationRevisionBinding(
-            provider_family=ProviderFamilyName(provider_family),
+            provider_family=ProviderFamilyName(resolved_provider_family),
             model_id=ModelId(model_id),
             provider_config_revision=ProviderConfigRevision(
                 "provider-config:"

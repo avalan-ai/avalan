@@ -1346,6 +1346,27 @@ def test_durable_binding_mismatch_falls_back_to_attached_resolution() -> None:
     )
 
 
+@pytest.mark.parametrize("provider_family", ("", " ", 1))
+def test_provider_support_rejects_invalid_provider_family(
+    provider_family: object,
+) -> None:
+    with pytest.raises(AssertionError, match="provider_family"):
+        ProviderCapabilitySupport(
+            provider_family=cast(Any, provider_family),
+        )
+
+
+def test_provider_support_rejects_codec_from_another_provider_family() -> None:
+    registry, codec = _registered_codec()
+
+    with pytest.raises(AssertionError, match="provider_family"):
+        ProviderCapabilitySupport(
+            provider_family=ProviderFamilyName("azure_openai"),
+            continuation_snapshot_codec_registry=registry,
+            continuation_snapshot_codec=codec,
+        )
+
+
 @pytest.mark.parametrize(
     ("case", "expected_code"),
     (
