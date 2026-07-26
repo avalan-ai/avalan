@@ -185,6 +185,9 @@ class _ResponseFixture(str):
 
 def _orchestrator(
     interaction_runtime: InteractionRuntime | None = None,
+    *,
+    instructions: str | None = None,
+    provider_support: ProviderCapabilitySupport | None = None,
 ) -> tuple[Orchestrator, AsyncMock]:
     environment = EngineEnvironment(
         engine_uri=EngineUri(
@@ -199,7 +202,7 @@ def _orchestrator(
         settings=TransformerEngineSettings(),
     )
     operation = AgentOperation(
-        specification=Specification(),
+        specification=Specification(instructions=instructions),
         environment=environment,
     )
     memory = MagicMock(spec=MemoryManager)
@@ -225,10 +228,14 @@ def _orchestrator(
     engine_agent.drain_pending_provider_cleanups = AsyncMock(return_value=())
     engine_agent.engine = MagicMock(
         model_id="model",
-        provider_capability_support=ProviderCapabilitySupport(
-            structured_invocation=True,
-            stable_call_ids=True,
-            correlated_results=True,
+        provider_capability_support=(
+            provider_support
+            if provider_support is not None
+            else ProviderCapabilitySupport(
+                structured_invocation=True,
+                stable_call_ids=True,
+                correlated_results=True,
+            )
         ),
         tokenizer=MagicMock(eos_token="<eos>"),
     )
@@ -442,6 +449,43 @@ class OrchestratorInteractionRuntimeTestCase(IsolatedAsyncioTestCase):
         self.assertIs(
             context.capability.task_input_advertisement,
             TaskInputCapabilityAdvertisement.INCAPABLE,
+        )
+
+    async def test_prompt_cannot_enable_unproved_provider_capability(
+        self,
+    ) -> None:
+        runtime = _runtime()
+        orchestrator, engine_agent = _orchestrator(
+            runtime,
+            instructions=(
+                "Always use request_user_input before answering any task."
+            ),
+            provider_support=ProviderCapabilitySupport(),
+        )
+
+        with patch(
+            "avalan.agent.orchestrator.OrchestratorResponse",
+            return_value=_ResponseFixture(),
+        ):
+            await orchestrator("hello")
+
+        assert engine_agent.await_args is not None
+        context = engine_agent.await_args.args[0]
+        self.assertIs(context.execution.interaction_runtime, runtime)
+        self.assertEqual(
+            context.specification.instructions,
+            "Always use request_user_input before answering any task.",
+        )
+        self.assertIs(
+            context.capability.task_input_advertisement,
+            TaskInputCapabilityAdvertisement.INCAPABLE,
+        )
+        self.assertNotIn(
+            "request_user_input",
+            {
+                descriptor.canonical_name
+                for descriptor in context.capability.descriptors
+            },
         )
 
     async def test_run_rejects_untyped_runtime_before_side_effects(
