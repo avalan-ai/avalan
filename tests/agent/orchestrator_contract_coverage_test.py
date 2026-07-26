@@ -13,6 +13,7 @@ from avalan.interaction import (
     InputErrorCode,
     InputSnapshotError,
     InteractionPolicy,
+    ProviderFamilyName,
 )
 from avalan.model.capability import (
     ModelCapabilityCatalog,
@@ -50,11 +51,12 @@ def _orchestrator() -> Orchestrator:
 def _engine_agent(
     *,
     register_codec: object | None = None,
+    support: ProviderCapabilitySupport | None = None,
 ) -> object:
     """Return one engine-agent contract double."""
     engine = SimpleNamespace(
         tokenizer=None,
-        provider_capability_support=ProviderCapabilitySupport(),
+        provider_capability_support=support or ProviderCapabilitySupport(),
     )
     if register_codec is not None:
         engine.register_continuation_snapshot_codec = register_codec
@@ -252,6 +254,51 @@ class OrchestratorContractCoverageTest(TestCase):
                 InteractionPolicy(),
             )
 
+    def test_durable_binding_uses_trusted_provider_family(self) -> None:
+        orchestrator = _orchestrator()
+        orchestrator._execution_definition_locator = "file://agent.toml"
+        definition = object()
+        binding = object()
+        support = ProviderCapabilitySupport(
+            provider_family=ProviderFamilyName("azure_openai"),
+            structured_invocation=True,
+            stable_call_ids=True,
+            correlated_results=True,
+        )
+        binding_factory = Mock(return_value=binding)
+
+        with (
+            patch.object(
+                Orchestrator,
+                "engine_agent_for_operation",
+                return_value=_engine_agent(
+                    register_codec=Mock(return_value=None),
+                    support=support,
+                ),
+            ),
+            patch.object(
+                Orchestrator,
+                "_execution_definition",
+                return_value=definition,
+            ),
+            patch.object(
+                Orchestrator,
+                "_continuation_revision_binding",
+                binding_factory,
+            ),
+        ):
+            orchestrator._execution_contract(
+                0,
+                TaskInputCapabilityAdvertisement.DURABLE,
+                InteractionPolicy(),
+            )
+
+        binding_factory.assert_called_once_with(
+            orchestrator._operations[0],
+            definition,
+            provider_family=ProviderFamilyName("azure_openai"),
+        )
+
     def test_revision_binding_requires_versioned_provider_model(self) -> None:
         operation = SimpleNamespace(
             environment=SimpleNamespace(
@@ -266,6 +313,48 @@ class OrchestratorContractCoverageTest(TestCase):
                 cast(Any, operation),
                 cast(Any, object()),
             )
+
+    def test_revision_binding_preserves_openai_identity_and_splits_azure(
+        self,
+    ) -> None:
+        operation = SimpleNamespace(
+            environment=SimpleNamespace(
+                engine_uri=SimpleNamespace(
+                    vendor="openai",
+                    model_id="deployment",
+                    host=None,
+                    port=None,
+                    params={"azure_api_version": "preview"},
+                ),
+                settings=_Environment(),
+            )
+        )
+        definition = SimpleNamespace(
+            model_config_reference="model-r1",
+            capability_revision="capability-r1",
+        )
+
+        legacy = Orchestrator._continuation_revision_binding(
+            cast(Any, operation),
+            cast(Any, definition),
+        )
+        explicit_openai = Orchestrator._continuation_revision_binding(
+            cast(Any, operation),
+            cast(Any, definition),
+            provider_family=ProviderFamilyName("openai"),
+        )
+        azure = Orchestrator._continuation_revision_binding(
+            cast(Any, operation),
+            cast(Any, definition),
+            provider_family=ProviderFamilyName("azure_openai"),
+        )
+
+        self.assertEqual(explicit_openai, legacy)
+        self.assertEqual(azure.provider_family, "azure_openai")
+        self.assertNotEqual(
+            azure.provider_config_revision,
+            legacy.provider_config_revision,
+        )
 
 
 class OrchestratorResumeContractCoverageTest(IsolatedAsyncioTestCase):

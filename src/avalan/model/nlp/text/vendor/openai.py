@@ -19,6 +19,7 @@ from .....interaction.entities import (
     ContinuationRevisionBinding,
     ContinuationSnapshot,
     ModelCallId,
+    ProviderFamilyName,
     ProviderIdempotencyKey,
     RequirementMode,
 )
@@ -5936,7 +5937,9 @@ class OpenAIClient(TextGenerationVendor):
     ) -> ContinuationSnapshot:
         """Export retained OpenAI Responses replay state as strict JSON."""
         self._raise_if_closed()
-        self._validate_continuation_revision_binding(revision_binding)
+        self._validate_continuation_revision_binding_for_client(
+            revision_binding
+        )
         call_id = self._validate_continuation_call_id(
             provider_call_correlation_id
         )
@@ -6120,7 +6123,9 @@ class OpenAIClient(TextGenerationVendor):
     ]:
         """Return copied replay items after strict snapshot validation."""
         self._raise_if_closed()
-        self._validate_continuation_revision_binding(expected_binding)
+        self._validate_continuation_revision_binding_for_client(
+            expected_binding
+        )
         if type(snapshot) is not ContinuationSnapshot:
             raise InputSnapshotError(
                 InputErrorCode.SNAPSHOT_INVALID,
@@ -6255,7 +6260,21 @@ class OpenAIClient(TextGenerationVendor):
             raise InputSnapshotError(
                 InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
                 "continuation_snapshot.revision_binding",
-                "snapshot provider is not OpenAI Responses",
+                "snapshot provider is not OpenAI or Azure Responses",
+            )
+
+    def _validate_continuation_revision_binding_for_client(
+        self,
+        value: object,
+    ) -> None:
+        self._validate_continuation_revision_binding(value)
+        assert type(value) is ContinuationRevisionBinding
+        provider_family = self._native_responses_provider_family()
+        if provider_family is None or value.provider_family != provider_family:
+            raise InputSnapshotError(
+                InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
+                "continuation_snapshot.revision_binding",
+                "snapshot provider does not match the Responses client",
             )
 
     @staticmethod
@@ -6835,9 +6854,14 @@ class OpenAIClient(TextGenerationVendor):
                     )
             if request_timeout is not None:
                 kwargs["timeout"] = request_timeout
-            if request_max_retries is not None:
+            single_attempt_replay = self._is_azure and request_has_replay_items
+            if request_max_retries is not None or single_attempt_replay:
+                effective_max_retries = (
+                    0 if single_attempt_replay else request_max_retries
+                )
+                assert effective_max_retries is not None
                 request_client = self._client.with_options(
-                    max_retries=request_max_retries
+                    max_retries=effective_max_retries
                 )
             stream_response_failed_retries = (
                 OpenAIClient._response_failed_retries(
@@ -6851,6 +6875,8 @@ class OpenAIClient(TextGenerationVendor):
                     default=(self._stream_response_failed_retry_delay_seconds),
                 )
             )
+            if single_attempt_replay:
+                stream_response_failed_retries = 0
             if capability:
                 schemas = OpenAIClient._tool_schemas(
                     capability,
@@ -7748,6 +7774,74 @@ class OpenAIClient(TextGenerationVendor):
         )
 
     @staticmethod
+    def _is_native_azure_openai_responses_base_url(
+        base_url: str | None,
+    ) -> bool:
+        if not isinstance(base_url, str):
+            return False
+        parsed = urlparse(base_url)
+        try:
+            port = parsed.port
+        except ValueError:
+            return False
+        return (
+            parsed.scheme == "https"
+            and OpenAIClient._is_azure_base_url(base_url)
+            and parsed.path.rstrip("/") == "/openai/v1"
+            and port in {None, 443}
+            and parsed.username is None
+            and parsed.password is None
+            and not parsed.params
+            and not parsed.query
+            and not parsed.fragment
+        )
+
+    @staticmethod
+    def _is_native_azure_openai_responses_api_version(
+        extra_query: object,
+    ) -> bool:
+        return extra_query is None or (
+            type(extra_query) is dict
+            and extra_query == {"api-version": "preview"}
+        )
+
+    def _native_responses_provider_family(
+        self,
+    ) -> ProviderFamilyName | None:
+        if not _is_exact_native_openai_type(self, "OpenAIClient"):
+            return None
+        sdk_client = getattr(self, "_client", None)
+        if sdk_client is None:
+            base_url = getattr(self, "_base_url", None)
+            if base_url is None:
+                return None
+        else:
+            sdk_base_url = getattr(sdk_client, "base_url", None)
+            if isinstance(sdk_base_url, str):
+                base_url = sdk_base_url
+            elif (
+                type(sdk_base_url).__module__.split(".", maxsplit=1)[0]
+                == "httpx"
+                and type(sdk_base_url).__name__ == "URL"
+            ):
+                base_url = str(sdk_base_url)
+            else:
+                return None
+        if not isinstance(base_url, str):
+            return None
+        if self._is_native_openai_responses_base_url(base_url):
+            return ProviderFamilyName(ProviderFamily.OPENAI.value)
+        if (
+            getattr(self, "_is_azure", False) is True
+            and self._is_native_azure_openai_responses_base_url(base_url)
+            and self._is_native_azure_openai_responses_api_version(
+                getattr(self, "_extra_query", None)
+            )
+        ):
+            return ProviderFamilyName(ProviderFamily.AZURE_OPENAI.value)
+        return None
+
+    @staticmethod
     def _azure_extra_query(
         base_url: str | None,
         azure_api_version: str | None,
@@ -8587,13 +8681,18 @@ class OpenAIModel(TextGenerationVendorModel):
 
     @property
     def provider_capability_support(self) -> ProviderCapabilitySupport:
-        """Return exact native OpenAI Responses capability proof."""
-        if not self._has_native_openai_responses_client():
+        """Return exact native OpenAI or Azure Responses capability proof."""
+        provider_family = self._task_input_provider_family()
+        if provider_family is None:
             return ProviderCapabilitySupport()
         registered = self._continuation_capability_support
-        if registered is not None:
+        if (
+            registered is not None
+            and registered.provider_family == provider_family
+        ):
             return registered
         return ProviderCapabilitySupport(
+            provider_family=provider_family,
             structured_invocation=True,
             stable_call_ids=True,
             correlated_results=True,
@@ -8603,27 +8702,29 @@ class OpenAIModel(TextGenerationVendorModel):
         self,
         revision_binding: ContinuationRevisionBinding,
     ) -> ProviderCapabilitySupport:
-        """Register durable replay for one exact native model revision."""
-        if not self._has_native_openai_responses_client():
+        """Register durable replay for one exact native Responses revision."""
+        provider_family = self._task_input_provider_family()
+        if provider_family is None:
             raise InputSnapshotError(
                 InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
                 "continuation_snapshot.provider",
-                "durable replay requires native OpenAI Responses",
+                "durable replay requires native OpenAI or Azure Responses",
             )
         client = cast(OpenAIClient, self._model)
-        OpenAIClient._validate_continuation_revision_binding(revision_binding)
+        client._validate_continuation_revision_binding_for_client(
+            revision_binding
+        )
         model_id = self._model_id
         if (
             type(model_id) is not str
-            or str(revision_binding.provider_family)
-            != ProviderFamily.OPENAI.value
+            or str(revision_binding.provider_family) != str(provider_family)
             or str(revision_binding.model_id) != model_id
             or not client._uses_reasoning_profile(model_id)
         ):
             raise InputSnapshotError(
                 InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE,
                 "continuation_snapshot.revision_binding",
-                "model revision lacks native OpenAI reasoning replay",
+                "model revision lacks native Responses reasoning replay",
             )
         registered = self._continuation_capability_support
         if registered is not None:
@@ -8633,7 +8734,7 @@ class OpenAIModel(TextGenerationVendorModel):
                 raise InputSnapshotError(
                     InputErrorCode.SNAPSHOT_REVISION_DRIFT,
                     "continuation_snapshot.revision_binding",
-                    "registered OpenAI continuation revision has drifted",
+                    "registered Responses continuation revision has drifted",
                 )
             return registered
         identity = "\x1f".join(
@@ -8646,15 +8747,17 @@ class OpenAIModel(TextGenerationVendorModel):
             )
         )
         identity_digest = sha256(identity.encode("utf-8")).hexdigest()
+        provider_slug = str(provider_family).replace("_", "-")
         registry = ContinuationSnapshotCodecRegistry(
-            f"openai-responses-{identity_digest}"
+            f"{provider_slug}-responses-{identity_digest}"
         )
         reference = OpenAIClient.register_continuation_snapshot_codec(
             registry,
-            codec_id=f"openai-responses-v1-{identity_digest}",
+            codec_id=f"{provider_slug}-responses-v1-{identity_digest}",
             revision_binding=revision_binding,
         )
         support = ProviderCapabilitySupport(
+            provider_family=provider_family,
             structured_invocation=True,
             stable_call_ids=True,
             correlated_results=True,
@@ -8664,30 +8767,13 @@ class OpenAIModel(TextGenerationVendorModel):
         self._continuation_capability_support = support
         return support
 
-    def _has_native_openai_responses_client(self) -> bool:
+    def _task_input_provider_family(self) -> ProviderFamilyName | None:
         if not _is_exact_native_openai_type(self, "OpenAIModel"):
-            return False
+            return None
         client = getattr(self, "_model", None)
         if not _is_exact_native_openai_type(client, "OpenAIClient"):
-            return False
-        sdk_client = getattr(client, "_client", None)
-        if sdk_client is None:
-            base_url = getattr(client, "_base_url", None)
-            if base_url is None:
-                return False
-        else:
-            sdk_base_url = getattr(sdk_client, "base_url", None)
-            if isinstance(sdk_base_url, str):
-                base_url = sdk_base_url
-            elif (
-                type(sdk_base_url).__module__.split(".", maxsplit=1)[0]
-                == "httpx"
-                and type(sdk_base_url).__name__ == "URL"
-            ):
-                base_url = str(sdk_base_url)
-            else:
-                return False
-        return OpenAIClient._is_native_openai_responses_base_url(base_url)
+            return None
+        return cast(OpenAIClient, client)._native_responses_provider_family()
 
     @property
     def reasoning_summary_request_capability(

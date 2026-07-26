@@ -88,6 +88,21 @@ payload, continuation payload, and persistence digest in one host
 transaction before acknowledging `persist_input()`. Use a unique
 `ResolutionIdempotencyKey` for each logical resolution attempt.
 
+The built-in durable provider snapshot is registered for the exact native
+OpenAI Responses path and the exact native Azure OpenAI v1 Responses path.
+For Azure, the snapshot binds the `azure_openai` provider family, deployment,
+configuration revision, original function-call correlation, and encrypted
+reasoning replay state. A fresh worker can therefore restore the portable
+continuation without retaining the original client or orchestrator.
+
+Avalan does not treat Azure's `Idempotency-Key` header as a provider-side
+deduplication guarantee. A persisted continuation that has not reached
+provider dispatch can be reclaimed and resumed normally. A crash that makes
+the result of an Azure provider dispatch ambiguous remains fenced and is not
+automatically replayed. Each claimed Azure continuation uses one provider
+attempt: SDK retries and `response.failed` stream retries are disabled after
+replay state is restored.
+
 Opaque SDK references are correlation handles, not bearer credentials.
 Authenticate the caller in the bridge and authorize the complete execution
 scope before inspection or resolution.
@@ -113,17 +128,21 @@ deliberately narrow. It requires all of the following:
 
 - `avalan agent run` or `avl agent run`, not the standalone model runner;
 - the exact native `OpenAIModel` and `OpenAIClient` Responses path;
-- an effective HTTPS endpoint on `api.openai.com` (the normal OpenAI SDK
-  default satisfies this); and
+- either an effective HTTPS endpoint on `api.openai.com` (the normal OpenAI
+  SDK default satisfies this), or an explicitly configured Azure OpenAI
+  resource endpoint on `*.openai.azure.com` or
+  `*.cognitiveservices.azure.com` with the exact `/openai/v1/` path, the
+  default HTTPS port, no URL query or user information, and either no
+  `azure_api_version` option or `azure_api_version=preview`; and
 - a usable controlling terminal at `--tty`.
 
-Anthropic, Google, Azure OpenAI, OpenAI-compatible services or custom base
-URLs, and local backends such as transformers, vLLM, MLX-LM, and DS4 do not
-currently receive `request_user_input` automatically. Their schema
-projection or parsing support does not constitute trusted production
-advertisement. Pointing a compatible adapter at `api.openai.com` does not
-make it native, and pointing the native adapter at another endpoint disables
-the capability.
+Anthropic, Google, OpenAI-compatible services or other custom base URLs, and
+local backends such as transformers, vLLM, MLX-LM, and DS4 do not currently
+receive `request_user_input` automatically. Their schema projection or
+parsing support does not constitute trusted production advertisement.
+Pointing a compatible adapter at `api.openai.com` or an Azure resource does
+not make it native, and pointing the native adapter at another endpoint
+disables the capability.
 
 Agent instructions can teach a capable model when to use the capability, but
 instructions cannot enable it. If the runtime does not advertise
@@ -148,6 +167,18 @@ available, ask the user in ordinary prose instead of inventing a tool call.
 [engine]
 uri = "ai://env:OPENAI_API_KEY@openai/gpt-5"
 ```
+
+The equivalent Azure engine uses the deployment name as the model identifier:
+
+```toml
+[engine]
+uri = "ai://env:AZURE_OPENAI_API_KEY@openai/gpt-5-mini?azure_api_version=preview"
+base_url = "https://tenant.openai.azure.com/openai/v1/"
+```
+
+The Azure deployment and region must support the Responses API. The current
+native Azure integration uses API-key authentication; it does not infer
+capability from an arbitrary OpenAI-compatible endpoint.
 
 With a piped initial task, keep clarification on the separate terminal:
 

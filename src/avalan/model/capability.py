@@ -25,6 +25,7 @@ from ..interaction.entities import (
     InputModelResult,
     InputQuestion,
     ModelCallId,
+    ProviderFamilyName,
     ProviderIdempotencyKey,
     RequirementMode,
 )
@@ -368,6 +369,7 @@ class ContinuationSnapshotCodecRegistry:
 class ProviderCapabilitySupport:
     """Declare trusted prerequisites for structured task input."""
 
+    provider_family: ProviderFamilyName | None = None
     structured_invocation: bool = False
     stable_call_ids: bool = False
     correlated_results: bool = False
@@ -382,6 +384,10 @@ class ProviderCapabilitySupport:
     )
 
     def __post_init__(self) -> None:
+        assert self.provider_family is None or (
+            type(self.provider_family) is str
+            and bool(self.provider_family.strip())
+        ), "provider_family must be a non-empty provider family"
         for name in (
             "structured_invocation",
             "stable_call_ids",
@@ -391,11 +397,16 @@ class ProviderCapabilitySupport:
             "registered_resumer",
         ):
             assert type(getattr(self, name)) is bool, f"{name} must be boolean"
-        assert self.continuation_snapshot_codec is None or (
-            type(self.continuation_snapshot_codec)
-            is RegisteredContinuationSnapshotCodec
-            and self.continuation_snapshot_codec.is_registry_minted
+        codec = self.continuation_snapshot_codec
+        assert codec is None or (
+            type(codec) is RegisteredContinuationSnapshotCodec
+            and codec.is_registry_minted
         ), "continuation_snapshot_codec must be a registered codec reference"
+        assert (
+            self.provider_family is None
+            or codec is None
+            or codec.revision_binding.provider_family == self.provider_family
+        ), "provider_family must match the continuation snapshot codec"
         assert self.continuation_snapshot_codec_registry is None or (
             type(self.continuation_snapshot_codec_registry)
             is ContinuationSnapshotCodecRegistry
