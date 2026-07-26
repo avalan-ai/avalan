@@ -97,8 +97,64 @@ scope before inspection or resolution.
 `avalan agent run` and the equivalent `avl` command use `--tty` (default
 `/dev/tty`) as a separate interactive control channel. Model output can
 continue on stdout while questions and answers stay on the control terminal.
-If no usable control terminal exists, the runtime reports the channel as
-unavailable instead of reading task answers from an unrelated stream.
+If no usable control terminal exists when the run starts, the CLI does not
+advertise the capability. If the channel is lost after advertisement, the
+runtime returns a typed unavailable outcome instead of reading task answers
+from an unrelated stream.
+
+The model-facing capability is named `request_user_input`. When it is
+available, the model can call it with one to three typed, non-secret
+questions. Avalan then pauses the same logical run, renders those questions
+on the control terminal, validates the answers, and returns one correlated
+result to the model.
+
+Automatic capability advertisement in the current agent-run wiring is
+deliberately narrow. It requires all of the following:
+
+- `avalan agent run` or `avl agent run`, not the standalone model runner;
+- the exact native `OpenAIModel` and `OpenAIClient` Responses path;
+- an effective HTTPS endpoint on `api.openai.com` (the normal OpenAI SDK
+  default satisfies this); and
+- a usable controlling terminal at `--tty`.
+
+Anthropic, Google, Azure OpenAI, OpenAI-compatible services or custom base
+URLs, and local backends such as transformers, vLLM, MLX-LM, and DS4 do not
+currently receive `request_user_input` automatically. Their schema
+projection or parsing support does not constitute trusted production
+advertisement. Pointing a compatible adapter at `api.openai.com` does not
+make it native, and pointing the native adapter at another endpoint disables
+the capability.
+
+Agent instructions can teach a capable model when to use the capability, but
+instructions cannot enable it. If the runtime does not advertise
+`request_user_input`, merely naming it in a prompt does not install a tool or
+turn prose into a trusted input request.
+
+For example:
+
+```toml
+[agent]
+name = "deployment-planner"
+role = "Plan safe application deployments."
+instructions = """
+Use request_user_input when missing information would materially change the
+plan. Ask one to three concise questions, prefer typed choices with stable
+values, and explain why the answer is needed. Do not request credentials,
+authentication values, secrets, or approval for an action. Do not ask when a
+safe answer can be inferred from the task. If request_user_input is not
+available, ask the user in ordinary prose instead of inventing a tool call.
+"""
+
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-5"
+```
+
+With a piped initial task, keep clarification on the separate terminal:
+
+```sh
+printf '%s\n' 'Plan a deployment for this service.' \
+    | avalan agent run deployment-planner.toml --tty /dev/tty
+```
 
 The renderer:
 
