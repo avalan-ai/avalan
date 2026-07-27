@@ -40,6 +40,7 @@ from avalan.interaction import (
     InputContractError,
     InputErrorCode,
     InputValidationError,
+    InteractionStoreClosedError,
 )
 from avalan.model.reasoning import ReasoningSummaryCapabilityError
 from avalan.tool.database import DatabaseToolSettings
@@ -1754,6 +1755,12 @@ class CliCallTestCase(IsolatedAsyncioTestCase):
             "answer is invalid",
         )
         self.assertIs(await self._call_with_failure(invalid), invalid)
+
+        store_closed = InteractionStoreClosedError()
+        self.assertIs(
+            await self._call_with_failure(store_closed),
+            store_closed,
+        )
 
         cancelled = await self._call_with_failure(CliRunCancelled())
         self.assertIsInstance(cancelled, CliInteractionExit)

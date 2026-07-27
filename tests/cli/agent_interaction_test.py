@@ -262,10 +262,25 @@ class AgentRunInteractionInjectionTestCase(IsolatedAsyncioTestCase):
         stack = AsyncMock()
         stack.__aenter__.return_value = stack
         stack.__aexit__.return_value = False
-        stack.enter_async_context = AsyncMock(return_value=orchestrator)
+        ownership_events: list[str] = []
+
+        async def enter_async_context(resource: object) -> object:
+            self.assertIs(resource, orchestrator)
+            ownership_events.append("orchestrator")
+            return orchestrator
+
+        stack.enter_async_context = AsyncMock(side_effect=enter_async_context)
         stack.callback = MagicMock()
         input_reader = MagicMock(return_value="initial prompt")
-        interaction_factory = AsyncMock(return_value=runtime)
+
+        async def create_interaction_runtime(
+            *_args: object,
+            **_kwargs: object,
+        ) -> InteractionRuntime:
+            ownership_events.append("interaction_runtime")
+            return runtime
+
+        interaction_factory = AsyncMock(side_effect=create_interaction_runtime)
 
         with (
             patch.object(agent_cmds, "AsyncExitStack", return_value=stack),
@@ -316,6 +331,10 @@ class AgentRunInteractionInjectionTestCase(IsolatedAsyncioTestCase):
             )
 
         interaction_factory.assert_awaited_once()
+        self.assertEqual(
+            ownership_events,
+            ["interaction_runtime", "orchestrator"],
+        )
         interaction_call = interaction_factory.await_args
         assert interaction_call is not None
         interaction_kwargs = interaction_call.kwargs

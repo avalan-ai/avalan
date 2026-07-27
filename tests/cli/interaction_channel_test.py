@@ -2,25 +2,38 @@ from asyncio import (
     CancelledError,
     Event,
     create_task,
+    run,
     sleep,
     wait_for,
 )
 from errno import EIO
+from fcntl import ioctl
+from os import (
+    _exit,
+    dup2,
+    fork,
+    pipe,
+    set_blocking,
+    setsid,
+    ttyname,
+    waitpid,
+    waitstatus_to_exitcode,
+)
 from os import (
     close as close_fd,
 )
 from os import (
-    read as read_fd,
+    open as open_fd,
 )
 from os import (
-    set_blocking,
-    ttyname,
+    read as read_fd,
 )
 from os import (
     write as write_fd,
 )
 from pty import openpty
 from tempfile import NamedTemporaryFile
+from termios import TIOCSCTTY
 from tty import setraw
 from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import MagicMock, patch
@@ -346,6 +359,43 @@ class CliInteractionChannelTestCase(IsolatedAsyncioTestCase):
             self.assertIsNone(CliInteractionChannel.open(ttyname(self.slave)))
         close_mock.assert_called_once()
 
+    async def test_default_alias_falls_back_to_concrete_terminal(self) -> None:
+        first_descriptor = open_fd(
+            ttyname(self.slave),
+            channel_module._OPEN_FLAGS,
+        )
+        second_descriptor = open_fd(
+            ttyname(self.slave), channel_module._OPEN_FLAGS
+        )
+        with (
+            patch.object(
+                channel_module,
+                "_control_terminal_paths",
+                return_value=("/dev/tty", ttyname(self.slave)),
+            ),
+            patch.object(
+                channel_module,
+                "open_fd",
+                side_effect=(first_descriptor, second_descriptor),
+            ),
+            patch.object(
+                channel_module,
+                "_supports_fd_readiness",
+                side_effect=(False, True),
+            ),
+            patch.object(
+                channel_module,
+                "close_fd",
+                wraps=close_fd,
+            ) as close_mock,
+        ):
+            opened = CliInteractionChannel.open()
+            self.assertIsNotNone(opened)
+            assert opened is not None
+            self.assertEqual(opened._descriptor, second_descriptor)
+            close_mock.assert_called_once_with(first_descriptor)
+            await opened.aclose()
+
     async def test_open_uses_locale_encoding_fallback(self) -> None:
         with (
             patch.object(channel_module, "device_encoding", return_value=None),
@@ -372,6 +422,62 @@ class CliInteractionChannelTestCase(IsolatedAsyncioTestCase):
 
 
 class CliInteractionChannelOpenTestCase(TestCase):
+    def test_default_path_opens_with_piped_stdin_and_controlling_pty(
+        self,
+    ) -> None:
+        master, slave = openpty()
+        stdin_read, stdin_write = pipe()
+        result_read, result_write = pipe()
+        child = fork()
+        if child == 0:
+            exit_code = 1
+            try:
+                close_fd(master)
+                close_fd(stdin_write)
+                close_fd(result_read)
+                setsid()
+                ioctl(slave, TIOCSCTTY, 0)
+                dup2(stdin_read, 0)
+                dup2(slave, 1)
+                dup2(slave, 2)
+                close_fd(stdin_read)
+                close_fd(slave)
+
+                async def open_default() -> bool:
+                    channel = CliInteractionChannel.open()
+                    if channel is None:
+                        return False
+                    await channel.aclose()
+                    return True
+
+                opened = run(open_default())
+                write_fd(result_write, b"opened" if opened else b"unavailable")
+                exit_code = 0 if opened else 2
+            except BaseException as error:
+                write_fd(
+                    result_write,
+                    f"{type(error).__name__}: {error}".encode(),
+                )
+            finally:
+                close_fd(result_write)
+                _exit(exit_code)
+
+        try:
+            close_fd(slave)
+            close_fd(stdin_read)
+            close_fd(stdin_write)
+            close_fd(result_write)
+            waited, status = waitpid(child, 0)
+            result = read_fd(result_read, 4096)
+            self.assertEqual(waited, child)
+            self.assertEqual(
+                waitstatus_to_exitcode(status), 0, result.decode()
+            )
+            self.assertEqual(result, b"opened")
+        finally:
+            close_fd(master)
+            close_fd(result_read)
+
     def test_open_without_running_loop_is_unavailable_and_closes_fd(
         self,
     ) -> None:
@@ -385,13 +491,101 @@ class CliInteractionChannelOpenTestCase(TestCase):
     def test_default_path_uses_platform_equivalent_on_windows(self) -> None:
         with patch.object(channel_module, "platform_name", "nt"):
             self.assertEqual(
-                channel_module._control_terminal_path("/dev/tty"),
-                "CON",
+                channel_module._control_terminal_paths("/dev/tty"),
+                ("CON",),
             )
             self.assertEqual(
-                channel_module._control_terminal_path("custom"),
-                "custom",
+                channel_module._control_terminal_paths("custom"),
+                ("custom",),
             )
+
+    def test_posix_default_adds_concrete_standard_terminal_paths(self) -> None:
+        with (
+            patch.object(channel_module, "platform_name", "posix"),
+            patch.object(
+                channel_module,
+                "_controlling_terminal_name",
+                side_effect=(None, "/dev/pts/7", "/dev/pts/7"),
+            ),
+        ):
+            self.assertEqual(
+                channel_module._control_terminal_paths("/dev/tty"),
+                ("/dev/tty", "/dev/pts/7"),
+            )
+
+    def test_posix_default_ignores_unresolvable_standard_terminal(
+        self,
+    ) -> None:
+        with (
+            patch.object(channel_module, "platform_name", "posix"),
+            patch.object(
+                channel_module,
+                "_controlling_terminal_name",
+                side_effect=(None, None, "/dev/tty"),
+            ),
+        ):
+            self.assertEqual(
+                channel_module._control_terminal_paths("/dev/tty"),
+                ("/dev/tty",),
+            )
+
+    def test_standard_terminal_name_requires_controlling_terminal(
+        self,
+    ) -> None:
+        os_module = channel_module.modules["os"]
+        with (
+            patch.object(channel_module, "isatty", return_value=True),
+            patch.object(os_module, "tcgetpgrp", return_value=41) as process,
+            patch.object(
+                os_module,
+                "ttyname",
+                return_value="/dev/pts/7",
+            ) as name,
+        ):
+            self.assertEqual(
+                channel_module._controlling_terminal_name(2),
+                "/dev/pts/7",
+            )
+        process.assert_called_once_with(2)
+        name.assert_called_once_with(2)
+
+        with (
+            patch.object(channel_module, "isatty", return_value=False),
+            patch.object(os_module, "tcgetpgrp") as process,
+            patch.object(os_module, "ttyname") as name,
+        ):
+            self.assertIsNone(channel_module._controlling_terminal_name(1))
+        process.assert_not_called()
+        name.assert_not_called()
+
+    def test_standard_terminal_name_fails_closed(self) -> None:
+        os_module = channel_module.modules["os"]
+        for error in (NotImplementedError(), OSError(), ValueError()):
+            with (
+                self.subTest(error=type(error).__name__),
+                patch.object(channel_module, "isatty", return_value=True),
+                patch.object(os_module, "tcgetpgrp", side_effect=error),
+                patch.object(
+                    os_module,
+                    "ttyname",
+                    return_value="/dev/pts/7",
+                ),
+            ):
+                self.assertIsNone(channel_module._controlling_terminal_name(0))
+
+        with (
+            patch.object(channel_module, "isatty", return_value=True),
+            patch.object(os_module, "tcgetpgrp", return_value=41),
+            patch.object(os_module, "ttyname", return_value=""),
+        ):
+            self.assertIsNone(channel_module._controlling_terminal_name(0))
+
+        with (
+            patch.object(channel_module, "isatty", return_value=True),
+            patch.object(os_module, "tcgetpgrp", None),
+            patch.object(os_module, "ttyname", None),
+        ):
+            self.assertIsNone(channel_module._controlling_terminal_name(0))
 
     def test_fd_readiness_probe_fails_closed(self) -> None:
         fake_loop = MagicMock()

@@ -1,5 +1,6 @@
 """Exercise attached CLI input through real parser, pipes, and a PTY."""
 
+from asyncio import sleep as async_sleep
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import nullcontext
 from datetime import UTC, datetime
@@ -85,7 +86,9 @@ from avalan.model.stream import (
     StreamConsumerProjection,
     StreamItemCorrelation,
     StreamItemKind,
+    StreamReasoningRepresentation,
     StreamTerminalOutcome,
+    StreamVisibility,
     stream_channel_for_kind,
 )
 
@@ -114,8 +117,8 @@ _CANCELLED_STDERR = (
 
 class _Response:
     input_token_count = 1
-    can_think = False
-    is_thinking = False
+    can_think: bool
+    is_thinking: bool
 
     def __init__(
         self,
@@ -124,6 +127,8 @@ class _Response:
     ) -> None:
         self.runtime = runtime
         self.owner = owner
+        self.can_think = owner.case == "live_text"
+        self.is_thinking = self.can_think
         self.cancellation_checker: Callable[[], Awaitable[None]] | None = None
 
     def set_cancellation_checker(
@@ -149,6 +154,18 @@ class _Response:
                     0,
                     StreamItemKind.STREAM_STARTED,
                 )
+                sequence = 1
+                if self.owner.case == "live_text":
+                    yield _projection(
+                        stream_session_id,
+                        run_id,
+                        turn_id,
+                        sequence,
+                        StreamItemKind.REASONING_DELTA,
+                        text="REASONING_ONCE",
+                    )
+                    sequence += 1
+                    await async_sleep(0.25)
                 outcome = await self.runtime.handler(
                     InputHandlerContext(request=_request(self.owner.case))
                 )
@@ -175,27 +192,47 @@ class _Response:
                         (InputHandlerResolution, InputHandlerDisconnected),
                     )
                     self.owner.handler_outcomes.append(_outcome_text(outcome))
+                if self.owner.case == "live_text":
+                    yield _projection(
+                        stream_session_id,
+                        run_id,
+                        turn_id,
+                        sequence,
+                        StreamItemKind.REASONING_DELTA,
+                        text="REASONING_AFTER",
+                    )
+                    sequence += 1
+                    yield _projection(
+                        stream_session_id,
+                        run_id,
+                        turn_id,
+                        sequence,
+                        StreamItemKind.REASONING_DONE,
+                    )
+                    sequence += 1
                 answer_text = _outcome_text(outcome)
                 yield _projection(
                     stream_session_id,
                     run_id,
                     turn_id,
-                    1,
+                    sequence,
                     StreamItemKind.ANSWER_DELTA,
                     text=answer_text,
                 )
+                sequence += 1
                 yield _projection(
                     stream_session_id,
                     run_id,
                     turn_id,
-                    2,
+                    sequence,
                     StreamItemKind.ANSWER_DONE,
                 )
+                sequence += 1
                 yield _projection(
                     stream_session_id,
                     run_id,
                     turn_id,
-                    3,
+                    sequence,
                     StreamItemKind.STREAM_COMPLETED,
                 )
                 self.owner.stream_completed = True
@@ -271,7 +308,7 @@ def _request(case: str, *, suffix: str = "first") -> InputRequest:
             prompt="Proceed?",
             required=True,
         )
-    elif case == "text":
+    elif case in {"live_text", "text"}:
         question = TextQuestion(
             question_id=QuestionId("text"),
             prompt="Name?",
@@ -373,6 +410,19 @@ def _projection(
         channel=stream_channel_for_kind(kind),
         correlation=StreamItemCorrelation(),
         text_delta=text,
+        visibility=(
+            StreamVisibility.PRIVATE
+            if kind is StreamItemKind.REASONING_DELTA
+            else StreamVisibility.PUBLIC
+        ),
+        reasoning_representation=(
+            StreamReasoningRepresentation.SUMMARY
+            if kind is StreamItemKind.REASONING_DELTA
+            else None
+        ),
+        segment_instance_ordinal=(
+            0 if kind is StreamItemKind.REASONING_DELTA else None
+        ),
         terminal_outcome=(
             StreamTerminalOutcome.COMPLETED
             if kind is StreamItemKind.STREAM_COMPLETED
@@ -506,7 +556,6 @@ def _child(
         "run",
         "--engine-uri",
         "fake-model",
-        "--quiet",
         "--no-repl",
         "--no-session",
         "--skip-hub-access-check",
@@ -515,6 +564,10 @@ def _child(
         "--tty",
         tty_path,
     ]
+    if case == "live_text":
+        child_argv.append("--display-reasoning")
+    else:
+        child_argv.append("--quiet")
 
     def execution_result() -> dict[str, object]:
         if real_orchestrator:
@@ -589,6 +642,13 @@ def _child(
                 "_huggingface_hub_class",
                 return_value=lambda *_args: object(),
             ),
+            patch.object(cli_main, "_is_cuda_available", return_value=False),
+            patch.object(cli_main, "_is_mps_available", return_value=False),
+            patch.object(
+                agent_cmds,
+                "_agent_display_models",
+                return_value=["fake-model"],
+            ),
         ):
             cli_main.main()
         write(result_fd, dumps(execution_result()).encode())
@@ -609,11 +669,16 @@ def _run_pty_case(
     real_orchestrator: bool,
     case: str = "confirmation",
     control_input: bytes | None = b"yes\n",
+    control_input_chunks: tuple[bytes, ...] = (),
     prompt_marker: bytes = b"Answer yes or no:\n",
     attached_stdin: bool = False,
+    control_observations: list[bytes] | None = None,
+    raw_tty: bool = True,
+    terminal_stdout: bool = False,
 ) -> tuple[int | None, dict[int, bytes], bytes]:
     master, slave = openpty()
-    setraw(slave)
+    if raw_tty:
+        setraw(slave)
     tty_path = ttyname(slave)
     stdin_read, stdin_write = pipe()
     stdout_read, stdout_write = pipe()
@@ -622,6 +687,7 @@ def _run_pty_case(
     child = fork()
     if child == 0:
         child_stdin = slave if attached_stdin else stdin_read
+        child_stdout = slave if terminal_stdout else stdout_write
         if attached_stdin:
             setsid()
             ioctl(slave, TIOCSCTTY, 0)
@@ -633,12 +699,12 @@ def _run_pty_case(
             result_read,
         ):
             close(descriptor)
-        if slave != child_stdin:
+        if slave not in {child_stdin, child_stdout}:
             close(slave)
         _child(
             tty_path,
             child_stdin,
-            stdout_write,
+            child_stdout,
             stderr_write,
             result_write,
             real_orchestrator=real_orchestrator,
@@ -678,8 +744,9 @@ def _run_pty_case(
                         control += chunk
                     else:
                         streams[descriptor] += chunk
-                waited, status = waitpid(child, WNOHANG)
+                waited, child_status = waitpid(child, WNOHANG)
                 if waited:
+                    status = child_status
                     break
             assert streams[stdout_read], streams[stderr_read].decode()
             write(master, b"initial prompt\n")
@@ -692,22 +759,50 @@ def _run_pty_case(
                     control += chunk
                 else:
                     streams[descriptor] += chunk
-            waited, status = waitpid(child, WNOHANG)
+            waited, child_status = waitpid(child, WNOHANG)
             if waited:
+                status = child_status
                 break
         assert prompt_marker in control, {
             "stdout": streams[stdout_read].decode(),
             "stderr": streams[stderr_read].decode(),
             "control": control.decode(),
         }
-        if control_input is None:
+        if control_input_chunks:
+            for chunk in control_input_chunks:
+                write(master, chunk)
+                chunk_deadline = monotonic() + 0.25
+                child_exited = False
+                while monotonic() < chunk_deadline:
+                    readable, _, _ = select(
+                        [master, *streams],
+                        [],
+                        [],
+                        0.05,
+                    )
+                    for descriptor in readable:
+                        data = read(descriptor, 4096)
+                        if descriptor == master:
+                            control += data
+                        else:
+                            streams[descriptor] += data
+                    waited, child_status = waitpid(child, WNOHANG)
+                    if waited:
+                        status = child_status
+                        child_exited = True
+                        break
+                if child_exited:
+                    break
+                if control_observations is not None:
+                    control_observations.append(control)
+        elif control_input is None:
             close(master)
             master = -1
         else:
             write(master, control_input)
 
         deadline = monotonic() + 5
-        while monotonic() < deadline:
+        while status is None and monotonic() < deadline:
             monitored = [*streams]
             if master >= 0:
                 monitored.append(master)
@@ -718,8 +813,9 @@ def _run_pty_case(
                     control += chunk
                 else:
                     streams[descriptor] += chunk
-            waited, status = waitpid(child, WNOHANG)
+            waited, child_status = waitpid(child, WNOHANG)
             if waited:
+                status = child_status
                 break
     finally:
         if status is None:
@@ -772,6 +868,50 @@ def test_attached_tty_prompt_and_clarification_complete_one_run() -> None:
         "provider_calls": 1,
     }
     assert control.endswith(b"Answer yes or no:\n")
+
+
+def test_live_reasoning_releases_terminal_while_text_is_typed() -> None:
+    observations: list[bytes] = []
+    status, streams, control = _run_pty_case(
+        real_orchestrator=False,
+        case="live_text",
+        control_input_chunks=(b"A", b"d", b"a", b"\n"),
+        prompt_marker=b"Enter one line:\r\n",
+        control_observations=observations,
+        raw_tty=False,
+        terminal_stdout=True,
+    )
+    stdout, stderr, result = streams.values()
+    assert status == 0, stderr.decode()
+    assert stdout == b""
+    assert stderr == b""
+    assert loads(result) == {
+        "calls": ["initial prompt"],
+        "provider_calls": 1,
+    }
+    assert b"REASONING_ONCE" in control
+    assert len(observations) >= 3
+    pre_prompt_reasoning_count = observations[0].count(b"REASONING_ONCE")
+    assert pre_prompt_reasoning_count > 0
+    assert (
+        len(
+            {
+                observation.count(b"REASONING_ONCE")
+                for observation in observations[:3]
+            }
+        )
+        == 1
+    )
+    assert control.count(b"REASONING_ONCE") == pre_prompt_reasoning_count
+    assert all(
+        b"REASONING_AFTER" not in observation
+        for observation in observations[:3]
+    )
+    assert b"REASONING_AFTER" in control
+    assert b"Enter one line:\r\nA" in observations[0]
+    assert b"Enter one line:\r\nAd" in observations[1]
+    assert b"Enter one line:\r\nAda" in observations[2]
+    assert b"Enter one line:\r\nAda\r\n" in control
 
 
 def test_semantic_text_multiline_and_multiple_other_rows() -> None:

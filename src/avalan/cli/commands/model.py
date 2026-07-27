@@ -11,7 +11,9 @@ from ...cli.stream_coordinator import CliStreamCoordinator
 from ...cli.stream_presenter import (
     CliStreamPresenterContext,
     CliStreamPresenterRequest,
+    CliStreamRenderableFrame,
     StreamPresenterMode,
+    reasoning_end_cursor,
 )
 from ...cli.theme import (
     Theme,
@@ -935,7 +937,24 @@ async def token_generation(
         listen = getattr(event_manager, "listen", None)
         if callable(listen):
             event_listen = listen
-    coordinator = CliStreamCoordinator(console, display_config)
+    last_presented_reasoning_cursor = 0
+    committed_reasoning_cursor = 0
+    active_presented_reasoning_cursor: int | None = None
+
+    def commit_presented_reasoning() -> None:
+        nonlocal committed_reasoning_cursor
+        committed_reasoning_cursor = (
+            active_presented_reasoning_cursor
+            if active_presented_reasoning_cursor is not None
+            else last_presented_reasoning_cursor
+        )
+
+    coordinator = CliStreamCoordinator(
+        console,
+        display_config,
+        presentation_lock=render_lock,
+        live_commit_callback=commit_presented_reasoning,
+    )
     side_channel_events_enabled = True
     snapshot_revision = 0
     presented_snapshot_revision = -1
@@ -1017,6 +1036,8 @@ async def token_generation(
         force: bool = False,
         flush: bool = False,
     ) -> None:
+        nonlocal active_presented_reasoning_cursor
+        nonlocal last_presented_reasoning_cursor
         nonlocal presented_snapshot_revision
         raise_presentation_retry_failure()
         if presented_snapshot_revision == snapshot_revision:
@@ -1032,11 +1053,28 @@ async def token_generation(
             display_config=display_config,
             context=presenter_context,
             mode=presenter_mode,
+            reasoning_cursor=committed_reasoning_cursor,
         )
-        async for item in presenter.present(request):
-            await coordinator.handle_item(item)
+        snapshot_reasoning_cursor = (
+            reasoning_end_cursor(snapshot)
+            if snapshot.display.show_reasoning and snapshot.reasoning_segments
+            else None
+        )
+        try:
+            async for item in presenter.present(request):
+                await coordinator.handle_item(item)
+                if snapshot_reasoning_cursor is not None and isinstance(
+                    item, CliStreamRenderableFrame
+                ):
+                    active_presented_reasoning_cursor = (
+                        snapshot_reasoning_cursor
+                    )
+        finally:
+            active_presented_reasoning_cursor = None
         if flush:
             await coordinator.flush()
+        if snapshot_reasoning_cursor is not None:
+            last_presented_reasoning_cursor = snapshot_reasoning_cursor
         presented_snapshot_revision = snapshot_revision
 
     async def reduce_projection(

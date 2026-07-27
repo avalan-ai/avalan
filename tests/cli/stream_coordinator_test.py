@@ -1,4 +1,4 @@
-from asyncio import CancelledError, create_task, sleep
+from asyncio import CancelledError, Lock, create_task, sleep
 from asyncio import Event as AsyncEvent
 from datetime import datetime, timezone
 from io import StringIO
@@ -63,6 +63,43 @@ class _FakeLive:
             self._events.append(("update", renderable))
 
 
+class _FailingExitLive(_FakeLive):
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: object | None,
+    ) -> bool:
+        super().__exit__(exc_type, exc_value, traceback)
+        raise RuntimeError("live exit failed")
+
+
+class _FailingPendingUpdateLive(_FakeLive):
+    def update(self, renderable: object) -> None:
+        if self.updates:
+            raise RuntimeError("live update failed")
+        super().update(renderable)
+
+
+class _CompatiblePresentationLock:
+    def __init__(self) -> None:
+        self._lock = Lock()
+
+    async def __aenter__(self) -> "_CompatiblePresentationLock":
+        await self._lock.acquire()
+        return self
+
+    async def __aexit__(self, *_exc_info: object) -> bool:
+        self._lock.release()
+        return False
+
+    async def acquire(self) -> None:
+        await self._lock.acquire()
+
+    def release(self) -> None:
+        self._lock.release()
+
+
 def _display_config(
     *,
     quiet: bool = False,
@@ -116,7 +153,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         )
         started = Event()
         release = Event()
-        seen_auto_refresh: list[bool] = []
+        seen_live_ownership: list[tuple[int, int]] = []
 
         def prompt(
             console: object,
@@ -127,7 +164,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             _ = console
             self.assertEqual(call.name, "calc")
             self.assertEqual(tty_path, "/tmp/tty")
-            seen_auto_refresh.append(fake_live.auto_refresh)
+            seen_live_ownership.append((fake_live.entered, fake_live.exited))
             started.set()
             self.assertTrue(release.wait(2.0))
             return choice
@@ -152,16 +189,24 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         )
         await coordinator.flush()
 
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
         console.save_svg.assert_not_called()
 
         release.set()
         self.assertEqual(await task, choice)
 
-        self.assertEqual(fake_live.updates, ["initial", "latest"])
-        self.assertEqual(seen_auto_refresh, [False])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial", "latest"],
+        )
+        self.assertEqual(seen_live_ownership, [(1, 1)])
+        self.assertEqual(fake_live.entered, 2)
+        self.assertEqual(fake_live.exited, 1)
         self.assertTrue(fake_live.auto_refresh)
-        self.assertEqual(fake_live.refreshed, 2)
+        self.assertEqual(fake_live.refreshed, 1)
         await coordinator.aclose()
 
     async def test_live_roles_share_one_owner(self) -> None:
@@ -379,6 +424,45 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 ("print", ("a", "")),
             ],
         )
+
+    async def test_answer_close_checkpoints_persisted_live_output(
+        self,
+    ) -> None:
+        events: list[tuple[str, object]] = []
+        fake_live = _FakeLive(events)
+        console = MagicMock()
+
+        def commit() -> None:
+            events.append(("commit", None))
+
+        coordinator = CliStreamCoordinator(
+            console,
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            live_commit_callback=commit,
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(
+                renderable="reasoning",
+                role="reasoning",
+            )
+        )
+        await coordinator.print_answer_chunk(
+            CliStreamAnswerTextChunk(text="answer")
+        )
+
+        self.assertEqual(
+            events,
+            [
+                ("update", "reasoning"),
+                ("exit", None),
+                ("commit", None),
+            ],
+        )
+        console.print.assert_called_once_with("answer", end="")
+        await coordinator.aclose()
+        self.assertEqual(events.count(("commit", None)), 1)
 
     async def test_stderr_diagnostics_use_separate_console_without_live(
         self,
@@ -800,7 +884,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(fake_live.updates, ["queued"])
         await coordinator.aclose()
 
-    async def test_confirm_tool_call_pauses_live_refresh(self) -> None:
+    async def test_confirm_tool_call_withdraws_live_owner(self) -> None:
         fake_live = _FakeLive()
         coordinator = CliStreamCoordinator(
             MagicMock(),
@@ -810,7 +894,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         await coordinator.render_frame(
             CliStreamRenderableFrame(renderable="x")
         )
-        seen_paused: list[bool] = []
+        seen_live_ownership: list[tuple[int, int]] = []
 
         def prompt(
             console: object,
@@ -819,7 +903,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             tty_path: str,
         ) -> str:
             _ = (console, call)
-            seen_paused.append(not fake_live.auto_refresh)
+            seen_live_ownership.append((fake_live.entered, fake_live.exited))
             self.assertEqual(tty_path, "/tmp/tty")
             return "y"
 
@@ -830,9 +914,299 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(result, "y")
-        self.assertEqual(seen_paused, [True])
+        self.assertEqual(seen_live_ownership, [(1, 1)])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["x"],
+        )
+        self.assertEqual(fake_live.entered, 1)
+        self.assertEqual(fake_live.exited, 1)
         self.assertTrue(fake_live.auto_refresh)
-        self.assertEqual(fake_live.refreshed, 2)
+        self.assertEqual(fake_live.refreshed, 0)
+        await coordinator.aclose()
+
+    async def test_confirm_tool_call_exit_error_closes_before_prompt(
+        self,
+    ) -> None:
+        fake_live = _FailingExitLive()
+        prompt = MagicMock()
+        commit = MagicMock()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            live_commit_callback=commit,
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "live exit failed"):
+            await coordinator.confirm_tool_call(
+                ToolCall(id=uuid4(), name="calc", arguments={}),
+                prompt=prompt,
+            )
+
+        prompt.assert_not_called()
+        commit.assert_not_called()
+        self.assertEqual(fake_live.exited, 1)
+        with self.assertRaises(AssertionError):
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="later")
+            )
+
+    async def test_pause_commits_latest_pending_frame_before_exit(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            clock=MagicMock(return_value=0.0),
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="latest")
+        )
+        await coordinator.pause()
+
+        self.assertEqual(fake_live.updates, ["initial", "latest"])
+        self.assertEqual(fake_live.exited, 1)
+        await coordinator.resume()
+        await coordinator.aclose()
+
+    async def test_pause_checkpoints_after_successful_live_exit(
+        self,
+    ) -> None:
+        events: list[tuple[str, object]] = []
+        fake_live = _FakeLive(events)
+
+        def commit() -> None:
+            events.append(("commit", None))
+
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            live_commit_callback=commit,
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+        await coordinator.pause()
+
+        self.assertEqual(
+            events,
+            [
+                ("update", "initial"),
+                ("exit", None),
+                ("commit", None),
+            ],
+        )
+        await coordinator.resume()
+        await coordinator.aclose()
+
+    async def test_pause_waits_for_presentation_boundary_before_checkpoint(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        presentation_lock = _CompatiblePresentationLock()
+        commit = MagicMock()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            presentation_lock=presentation_lock,
+            live_commit_callback=commit,
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+        await presentation_lock.acquire()
+
+        pause_task = create_task(coordinator.pause())
+        await sleep(0)
+
+        self.assertFalse(pause_task.done())
+        self.assertEqual(fake_live.exited, 0)
+        commit.assert_not_called()
+
+        render_task = create_task(
+            coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="boundary-safe")
+            )
+        )
+        await sleep(0)
+        render_finished_before_boundary = render_task.done()
+        presentation_lock.release()
+        await render_task
+        await pause_task
+
+        self.assertTrue(render_finished_before_boundary)
+        self.assertEqual(fake_live.exited, 1)
+        commit.assert_called_once_with()
+        await coordinator.resume()
+        await coordinator.aclose()
+
+    async def test_pause_exit_error_closes_coordinator(self) -> None:
+        fake_live = _FailingExitLive()
+        commit = MagicMock()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            live_commit_callback=commit,
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "live exit failed"):
+            await coordinator.pause()
+
+        self.assertEqual(fake_live.exited, 1)
+        commit.assert_not_called()
+        with self.assertRaises(AssertionError):
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="later")
+            )
+
+    async def test_pause_update_error_does_not_checkpoint(self) -> None:
+        fake_live = _FailingPendingUpdateLive()
+        commit = MagicMock()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            clock=MagicMock(return_value=0.0),
+            live_commit_callback=commit,
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="latest")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "live update failed"):
+            await coordinator.pause()
+
+        self.assertEqual(fake_live.exited, 1)
+        commit.assert_not_called()
+        with self.assertRaises(AssertionError):
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="later")
+            )
+
+    async def test_pause_commit_error_closes_coordinator(self) -> None:
+        fake_live = _FakeLive()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+            live_commit_callback=MagicMock(
+                side_effect=RuntimeError("commit failed")
+            ),
+        )
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "commit failed"):
+            await coordinator.pause()
+
+        self.assertEqual(fake_live.exited, 1)
+        with self.assertRaises(AssertionError):
+            await coordinator.render_frame(
+                CliStreamRenderableFrame(renderable="later")
+            )
+
+    async def test_resume_renders_only_roles_queued_while_paused(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(display_reasoning=True),
+            live_factory=MagicMock(return_value=fake_live),
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(
+                renderable="existing reasoning",
+                role="reasoning",
+            )
+        )
+        await coordinator.pause()
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(
+                renderable="new stats",
+                role="stats",
+            )
+        )
+        await coordinator.resume()
+
+        self.assertEqual(
+            fake_live.updates,
+            ["existing reasoning", "new stats"],
+        )
+        await coordinator.aclose()
+
+    async def test_resume_without_frame_retains_disabled_auto_refresh(
+        self,
+    ) -> None:
+        fake_live = _FakeLive()
+        fake_live.auto_refresh = False
+        coordinator = CliStreamCoordinator(
+            MagicMock(),
+            _display_config(),
+            live_factory=MagicMock(return_value=fake_live),
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="initial")
+        )
+        await coordinator.pause()
+        await coordinator.resume()
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(renderable="later")
+        )
+
+        self.assertEqual(fake_live.updates, ["initial", "later"])
+        self.assertEqual(fake_live.entered, 2)
+        self.assertFalse(fake_live.auto_refresh)
+        await coordinator.aclose()
+        self.assertEqual(fake_live.exit_auto_refreshes, [False, False])
+
+    async def test_pause_preserves_live_frame_as_static_output(self) -> None:
+        output = StringIO()
+        coordinator = CliStreamCoordinator(
+            Console(
+                file=output,
+                force_terminal=True,
+                width=80,
+            ),
+            _display_config(display_reasoning=True),
+        )
+
+        await coordinator.render_frame(
+            CliStreamRenderableFrame(
+                renderable=Text("Reasoning: keep this visible"),
+                role="reasoning",
+            )
+        )
+        await coordinator.pause()
+        await coordinator.resume()
+
+        self.assertEqual(
+            output.getvalue().count("Reasoning: keep this visible"),
+            1,
+        )
         await coordinator.aclose()
 
     async def test_confirm_tool_call_accept_flushes_latest_frame(self) -> None:
@@ -852,10 +1226,12 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         live_factory = MagicMock()
+        commit = MagicMock()
         coordinator = CliStreamCoordinator(
             MagicMock(),
             _display_config(),
             live_factory=live_factory,
+            live_commit_callback=commit,
         )
 
         def prompt(
@@ -874,6 +1250,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(result, "y")
         live_factory.assert_not_called()
+        commit.assert_not_called()
 
     async def test_confirm_tool_call_respects_active_manual_pause(
         self,
@@ -1013,7 +1390,10 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         release.set()
 
         self.assertEqual(await task, "y")
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
         self.assertEqual(fake_live.exited, 1)
 
     async def test_confirm_tool_call_prompt_error_closes_without_flush(
@@ -1053,13 +1433,19 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             CliStreamRenderableFrame(renderable="queued")
         )
 
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
 
         release.set()
         with self.assertRaisesRegex(RuntimeError, "prompt failed"):
             await task
 
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
         self.assertEqual(fake_live.exited, 1)
         self.assertTrue(fake_live.auto_refresh)
         self.assertEqual(fake_live.exit_auto_refreshes, [True])
@@ -1181,7 +1567,10 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         await coordinator.render_frame(
             CliStreamRenderableFrame(renderable="queued")
         )
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
 
         task.cancel()
         try:
@@ -1190,7 +1579,10 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         finally:
             release.set()
 
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
         self.assertEqual(fake_live.exited, 1)
         self.assertTrue(fake_live.auto_refresh)
         self.assertEqual(fake_live.exit_auto_refreshes, [True])
@@ -1254,7 +1646,10 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         finally:
             resume_release.set()
 
-        self.assertEqual(fake_live.updates, ["initial"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial"],
+        )
         self.assertEqual(fake_live.exited, 1)
         self.assertTrue(fake_live.auto_refresh)
         self.assertEqual(fake_live.exit_auto_refreshes, [True])
@@ -1270,7 +1665,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             _display_config(),
             live_factory=MagicMock(return_value=fake_live),
         )
-        seen_auto_refresh: list[bool] = []
+        seen_exit_counts: list[int] = []
 
         async def confirm_with_queued_frame(
             choice: str,
@@ -1286,7 +1681,7 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
                 tty_path: str,
             ) -> str:
                 _ = (console, call, tty_path)
-                seen_auto_refresh.append(fake_live.auto_refresh)
+                seen_exit_counts.append(fake_live.exited)
                 started.set()
                 self.assertTrue(release.wait(2.0))
                 return choice
@@ -1312,7 +1707,10 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
             await confirm_with_queued_frame("y", "first"),
             "y",
         )
-        self.assertEqual(fake_live.updates, ["initial", "first"])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial", "first"],
+        )
         self.assertTrue(fake_live.auto_refresh)
 
         self.assertEqual(
@@ -1321,10 +1719,13 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
         )
         await coordinator.flush()
 
-        self.assertEqual(fake_live.updates, ["initial", "first", "second"])
-        self.assertEqual(seen_auto_refresh, [False, False])
+        self.assertEqual(
+            [str(update) for update in fake_live.updates],
+            ["initial", "first", "second"],
+        )
+        self.assertEqual(seen_exit_counts, [1, 2])
         self.assertTrue(fake_live.auto_refresh)
-        self.assertEqual(fake_live.refreshed, 4)
+        self.assertEqual(fake_live.refreshed, 2)
         await coordinator.aclose()
 
     async def test_cancelled_error_closes_live_without_final_flush(
@@ -1414,6 +1815,43 @@ class CliStreamCoordinatorTestCase(IsolatedAsyncioTestCase):
 
 
 class CliStreamCoordinatorHelperTestCase(TestCase):
+    def test_coordinator_rejects_invalid_boundary_dependencies(self) -> None:
+        class IncompletePresentationLock:
+            async def __aenter__(self) -> object:
+                return self
+
+        class SynchronousPresentationLock:
+            def __aenter__(self) -> object:
+                return self
+
+            def __aexit__(self, *_exc_info: object) -> bool:
+                return False
+
+        with self.assertRaises(AssertionError):
+            CliStreamCoordinator(
+                MagicMock(),
+                _display_config(),
+                presentation_lock=cast(Any, object()),
+            )
+        with self.assertRaises(AssertionError):
+            CliStreamCoordinator(
+                MagicMock(),
+                _display_config(),
+                presentation_lock=cast(Any, IncompletePresentationLock()),
+            )
+        with self.assertRaises(AssertionError):
+            CliStreamCoordinator(
+                MagicMock(),
+                _display_config(),
+                presentation_lock=cast(Any, SynchronousPresentationLock()),
+            )
+        with self.assertRaises(AssertionError):
+            CliStreamCoordinator(
+                MagicMock(),
+                _display_config(),
+                live_commit_callback=cast(Any, object()),
+            )
+
     def test_tail_overflow_renderable_keeps_latest_rows(self) -> None:
         output = StringIO()
         console = Console(

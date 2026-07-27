@@ -9,6 +9,7 @@ from ..display_safety import safe_text as _safe_text
 from ..stream_presenter import (
     pretty_json_answer_text,
     reasoning_display_label,
+    reasoning_segments_after,
     structured_answer_started,
 )
 from . import Theme
@@ -900,7 +901,10 @@ def _basic_reasoning_activity_entries(
     if not request.snapshot.display.show_reasoning:
         return ()
     blocks = _basic_reasoning_activity_blocks(
-        request.snapshot.reasoning_segments
+        reasoning_segments_after(
+            request.snapshot,
+            cursor=request.reasoning_cursor,
+        )
     )
     entries: list[_BasicActivityEntry] = []
     for block_index, block in enumerate(blocks):

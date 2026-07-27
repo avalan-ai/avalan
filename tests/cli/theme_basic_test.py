@@ -26,6 +26,7 @@ from avalan.cli.display_snapshot import (
     CliToolExecutionSummarySnapshot,
 )
 from avalan.cli.download import tqdm_rich_progress
+from avalan.cli.stream_presenter import reasoning_end_cursor
 from avalan.cli.theme import Theme
 from avalan.cli.theme.basic import (
     BasicStreamPresenter,
@@ -148,12 +149,14 @@ def _stream_request(
     snapshot: CliStreamSnapshot,
     *,
     mode: str = "live",
+    reasoning_cursor: int = 0,
 ) -> CliStreamPresenterRequest:
     return CliStreamPresenterRequest(
         snapshot=snapshot,
         display_config=config,
         context=_stream_context(),
         mode=mode,  # type: ignore[arg-type]
+        reasoning_cursor=reasoning_cursor,
     )
 
 
@@ -504,6 +507,76 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("\x1b[2m", ansi)
         for background_escape in ("\x1b[4", "\x1b[48;", "\x1b[10"):
             self.assertNotIn(background_escape, ansi)
+
+    async def test_live_reasoning_filters_only_committed_prefix(
+        self,
+    ) -> None:
+        config = _stream_config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old reasoning")
+        old_snapshot = builder.snapshot()
+        cursor = reasoning_end_cursor(old_snapshot)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, old_snapshot),
+        )
+        builder.append_reasoning_text(" new reasoning")
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                builder.snapshot(),
+                reasoning_cursor=cursor,
+            ),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["reasoning"])
+        output = _render_text(frames[0].renderable)
+        self.assertIn("new reasoning", output)
+        self.assertNotIn("old reasoning", output)
+
+    async def test_live_tools_keep_new_reasoning_and_non_reasoning_state(
+        self,
+    ) -> None:
+        config = _stream_config(
+            display_reasoning=True,
+            display_tools=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old reasoning", sequence=1)
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+            sequence=2,
+        )
+        old_snapshot = builder.snapshot()
+        cursor = reasoning_end_cursor(old_snapshot)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, old_snapshot),
+        )
+        builder.append_reasoning_text(" new reasoning", sequence=3)
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                builder.snapshot(),
+                reasoning_cursor=cursor,
+            ),
+        )
+
+        frames = _frames(items)
+        self.assertEqual([frame.role for frame in frames], ["tools"])
+        output = _render_text(frames[0].renderable)
+        self.assertIn("new reasoning", output)
+        self.assertIn("calc", output)
+        self.assertNotIn("old reasoning", output)
 
     async def test_live_reasoning_raw_preserves_markdown_source_between_tools(
         self,

@@ -138,27 +138,27 @@ def cli_interaction_result(value: object) -> CliInteractionResult:
     if isinstance(value, InputTimedOutResult):
         payload = dict(kind="timed_out", interaction_state="timed_out")
         return _cli_result("timed_out", payload, 0)
+    if isinstance(value, error.InputContractError):
+        result = cli_input_error_result(value)
+        if result is None:
+            raise TypeError("unsupported public interaction failure")
+        return result
+    raise TypeError("value must be a public interaction outcome")
+
+
+def cli_input_error_result(
+    value: error.InputContractError,
+) -> CliInteractionResult | None:
+    """Project a supported public input failure, or return no result."""
+    payload: dict[str, object]
     if isinstance(value, error.InputValidationError):
         payload = {"error": "input.validation", "interaction_state": "pending"}
         return _cli_result("validation_error", payload, None)
-    if isinstance(value, error.InputContractError):
-        code = error.InputErrorCode
-        states = {
-            code.ALREADY_RESOLVED: ("already_resolved", "answered", 73),
-            code.EXPIRED: ("expired", "expired", 74),
-            code.SUPERSEDED: ("superseded", "superseded", 75),
-        }
-        if value.code is code.UNAVAILABLE:
-            payload = dict(
-                kind="unavailable", detached_resumption_available=False
-            )
-            return _cli_result("unavailable", payload, 69)
-        if value.code not in states:
-            raise TypeError("unsupported public interaction failure")
-        name, state, exit_code = states[value.code]
-        payload = {"error": value.code.value, "interaction_state": state}
-        return _cli_result(name, payload, exit_code)
-    raise TypeError("value must be a public interaction outcome")
+    result = _CLI_INPUT_ERROR_RESULTS.get(value.code)
+    if result is None:
+        return None
+    name, payload, exit_code = result
+    return _cli_result(name, payload, exit_code)
 
 
 @final
@@ -216,6 +216,33 @@ class CliInteractionCommandHandler(Protocol):
     ) -> CliInteractionCommandDisposition:
         """Return whether one non-input command was accepted."""
         ...
+
+
+_CLI_INPUT_ERROR_RESULTS: dict[
+    error.InputErrorCode,
+    tuple[str, dict[str, object], int],
+] = {
+    error.InputErrorCode.UNAVAILABLE: (
+        "unavailable",
+        {"kind": "unavailable", "detached_resumption_available": False},
+        69,
+    ),
+    error.InputErrorCode.ALREADY_RESOLVED: (
+        "already_resolved",
+        {"error": "input.already_resolved", "interaction_state": "answered"},
+        73,
+    ),
+    error.InputErrorCode.EXPIRED: (
+        "expired",
+        {"error": "input.expired", "interaction_state": "expired"},
+        74,
+    ),
+    error.InputErrorCode.SUPERSEDED: (
+        "superseded",
+        {"error": "input.superseded", "interaction_state": "superseded"},
+        75,
+    ),
+}
 
 
 _EarlyOutcome: TypeAlias = InputDeclineSubmission | AttachedInputDisconnected

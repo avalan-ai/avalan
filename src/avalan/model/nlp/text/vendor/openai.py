@@ -66,6 +66,7 @@ from ....capability import (
     ContinuationSnapshotCodecRegistry,
     CorrelatedCapabilityResult,
     ModelCapabilityCatalog,
+    ModelCapabilityValidationError,
     ProviderCapabilityCall,
     ProviderCapabilitySupport,
     RegisteredContinuationSnapshotCodec,
@@ -3258,6 +3259,7 @@ class OpenAIStream(TextGenerationVendorStream):
         try:
             try:
                 attempts = 0
+                reasoning_output_seen = False
                 if self._provider_terminal_prepared:
                     assert self._provider_terminal_event is not None
                     stored_event = self._provider_terminal_event
@@ -3270,7 +3272,8 @@ class OpenAIStream(TextGenerationVendorStream):
                     )
                 while terminal is None:
                     retry = False
-                    output_seen = False
+                    non_reasoning_output_seen = False
+                    retryable_capability_failure = False
                     self._raise_if_provider_interrupted()
                     assert self._stream is not None
                     provider_iterator = self._stream.__aiter__()
@@ -3285,6 +3288,7 @@ class OpenAIStream(TextGenerationVendorStream):
                             break
                         self._raise_if_provider_interrupted()
                         provider_event_type: str | None = None
+                        retryable_capability_failure = False
                         try:
                             provider_events = self._provider_events_from_event(
                                 event
@@ -3326,6 +3330,15 @@ class OpenAIStream(TextGenerationVendorStream):
                                 self._request_has_replay_items
                                 or self._private_output_seen
                             ):
+                                retryable_capability_failure = isinstance(
+                                    exc,
+                                    ModelCapabilityValidationError,
+                                ) and (
+                                    exc.code == "capability.arguments"
+                                    and (
+                                        self._has_buffered_task_input_arguments()
+                                    )
+                                )
                                 provider_events = (
                                     self._private_replay_provider_failure_event(),
                                 )
@@ -3367,15 +3380,28 @@ class OpenAIStream(TextGenerationVendorStream):
                         if self._should_retry_stream_failure(
                             event,
                             provider_events,
-                            output_seen=output_seen,
+                            non_reasoning_output_seen=(
+                                non_reasoning_output_seen
+                            ),
+                            reasoning_output_seen=reasoning_output_seen,
+                            retryable_capability_failure=(
+                                retryable_capability_failure
+                            ),
                             attempts=attempts,
                         ):
                             retry = True
                             break
                         for provider_event in provider_events:
                             self._raise_if_provider_interrupted()
-                            if self._is_model_output_event(provider_event):
-                                output_seen = True
+                            if (
+                                provider_event.kind
+                                is StreamItemKind.REASONING_DELTA
+                            ):
+                                reasoning_output_seen = True
+                            if self._is_retry_blocking_output_event(
+                                provider_event
+                            ):
+                                non_reasoning_output_seen = True
                             if provider_event.kind in {
                                 StreamItemKind.STREAM_CANCELLED,
                                 StreamItemKind.STREAM_COMPLETED,
@@ -3443,7 +3469,9 @@ class OpenAIStream(TextGenerationVendorStream):
                             cleanup_failed=True,
                         )
                         break
-                    self._reset_response_attempt_state()
+                    self._reset_response_attempt_state(
+                        preserve_reasoning_segments=reasoning_output_seen
+                    )
                     await self._raise_if_retry_interrupted()
                     assert self._stream_factory is not None
                     delay = min(
@@ -3776,17 +3804,29 @@ class OpenAIStream(TextGenerationVendorStream):
         event: object,
         provider_events: tuple[StreamProviderEvent, ...],
         *,
-        output_seen: bool,
+        non_reasoning_output_seen: bool,
+        reasoning_output_seen: bool,
+        retryable_capability_failure: bool,
         attempts: int,
     ) -> bool:
         if (
             self._stream_factory is None
             or attempts >= self._stream_retries
-            or output_seen
+            or non_reasoning_output_seen
             or any(
-                self._is_model_output_event(provider_event)
+                self._is_retry_blocking_output_event(provider_event)
                 for provider_event in provider_events
             )
+        ):
+            return False
+        if retryable_capability_failure:
+            return any(
+                provider_event.kind is StreamItemKind.STREAM_ERRORED
+                for provider_event in provider_events
+            )
+        if reasoning_output_seen or any(
+            provider_event.kind is StreamItemKind.REASONING_DELTA
+            for provider_event in provider_events
         ):
             return False
         if not any(
@@ -3825,11 +3865,12 @@ class OpenAIStream(TextGenerationVendorStream):
         )
 
     @staticmethod
-    def _is_model_output_event(event: StreamProviderEvent) -> bool:
+    def _is_retry_blocking_output_event(
+        event: StreamProviderEvent,
+    ) -> bool:
         return event.kind in {
             StreamItemKind.ANSWER_DELTA,
             StreamItemKind.ANSWER_DONE,
-            StreamItemKind.REASONING_DELTA,
             StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
             StreamItemKind.TOOL_CALL_READY,
             StreamItemKind.TOOL_CALL_DONE,
@@ -3858,7 +3899,12 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_event_type = event_type
         return duplicate
 
-    def _reset_response_attempt_state(self) -> None:
+    def _reset_response_attempt_state(
+        self,
+        *,
+        preserve_reasoning_segments: bool = False,
+    ) -> None:
+        assert isinstance(preserve_reasoning_segments, bool)
         self._canonical_tool_calls = {}
         self._tool_call_ids_by_item_id = {}
         self._canonical_ready_tool_call_ids = set()
@@ -3868,7 +3914,10 @@ class OpenAIStream(TextGenerationVendorStream):
         self._last_text_delta_alias_key = None
         self._last_text_delta_alias_event_type = None
         self._attempt_output_item_count = 0
-        self._reasoning_segments = StreamReasoningSegmentState()
+        if preserve_reasoning_segments:
+            self._reasoning_segments.complete_segment()
+        else:
+            self._reasoning_segments = StreamReasoningSegmentState()
         self._reasoning_summary_state = _OpenAIReasoningSummaryState()
         if (
             not self._provider_terminal_prepared
@@ -5166,6 +5215,9 @@ class OpenAIStream(TextGenerationVendorStream):
         current_arguments = state.get("arguments")
         assert isinstance(current_arguments, str)
         state["arguments"] = current_arguments + delta
+        if self._buffers_task_input_arguments(state):
+            state["arguments_buffered"] = True
+            return ()
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
@@ -5193,19 +5245,88 @@ class OpenAIStream(TextGenerationVendorStream):
         if arguments is not None and not state["arguments_seen"]:
             state["arguments_seen"] = True
             state["arguments"] = arguments
-            result.append(
-                StreamProviderEvent(
-                    kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
-                    correlation=self._tool_call_correlation(event, call_id),
-                    text_delta=arguments,
-                    provider_payload=provider_payload,
-                    provider_event_type=event_type,
+            if self._buffers_task_input_arguments(state):
+                state["arguments_buffered"] = True
+            else:
+                result.append(
+                    StreamProviderEvent(
+                        kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                        correlation=self._tool_call_correlation(
+                            event, call_id
+                        ),
+                        text_delta=arguments,
+                        provider_payload=provider_payload,
+                        provider_event_type=event_type,
+                    )
                 )
-            )
-        result.extend(
-            self._mark_tool_ready(call_id, provider_payload, event_type)
+        ready = self._mark_tool_ready(
+            call_id,
+            provider_payload,
+            event_type,
         )
+        result.extend(
+            self._release_buffered_task_input_arguments(
+                event,
+                provider_payload,
+                event_type,
+                call_id=call_id,
+            )
+        )
+        result.extend(ready)
         return tuple(result)
+
+    def _buffers_task_input_arguments(
+        self,
+        state: dict[str, str | bool | None],
+    ) -> bool:
+        if state.get("arguments_buffered") is True:
+            return True
+        catalog = self._capability_catalog
+        name = state.get("name")
+        if catalog is None or not isinstance(name, str):
+            return False
+        try:
+            canonical_name = catalog.canonical_name(
+                name,
+                provider_family=(
+                    self._provider_family or ProviderFamily.OPENAI
+                ),
+            )
+        except ModelCapabilityValidationError:
+            return False
+        return canonical_name == RESERVED_INPUT_CAPABILITY_NAME
+
+    def _has_buffered_task_input_arguments(self) -> bool:
+        return any(
+            state.get("arguments_buffered") is True
+            for state in self._canonical_tool_calls.values()
+        )
+
+    def _release_buffered_task_input_arguments(
+        self,
+        event: object,
+        provider_payload: LooseJsonValue | None,
+        event_type: str,
+        *,
+        call_id: str,
+    ) -> tuple[StreamProviderEvent, ...]:
+        state = self._canonical_tool_calls[call_id]
+        if state.get("arguments_buffered") is not True:
+            return ()
+        state["arguments_buffered"] = False
+        arguments = state.get("arguments")
+        assert isinstance(arguments, str)
+        if not arguments:
+            return ()
+        return (
+            StreamProviderEvent(
+                kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                correlation=self._tool_call_correlation(event, call_id),
+                text_delta=arguments,
+                provider_payload=provider_payload,
+                provider_event_type=event_type,
+            ),
+        )
 
     def _tool_done_events(
         self,
@@ -5256,9 +5377,16 @@ class OpenAIStream(TextGenerationVendorStream):
                 item, call_id, provider_payload, event_type
             )
         )
+        ready = self._mark_tool_ready(call_id, provider_payload, event_type)
         result.extend(
-            self._mark_tool_ready(call_id, provider_payload, event_type)
+            self._release_buffered_task_input_arguments(
+                item,
+                provider_payload,
+                event_type,
+                call_id=call_id,
+            )
         )
+        result.extend(ready)
         result.append(
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_DONE,
@@ -5447,6 +5575,9 @@ class OpenAIStream(TextGenerationVendorStream):
             return ()
         state["arguments_seen"] = True
         state["arguments"] = arguments
+        if self._buffers_task_input_arguments(state):
+            state["arguments_buffered"] = True
+            return ()
         return (
             StreamProviderEvent(
                 kind=StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,

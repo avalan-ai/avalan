@@ -13,9 +13,10 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from inspect import iscoroutinefunction
 from time import perf_counter
 from types import TracebackType
-from typing import Protocol, TypeAlias
+from typing import Protocol, TypeAlias, TypeGuard
 
 from rich.console import (
     Console,
@@ -53,20 +54,20 @@ _PromptPauseState: TypeAlias = _PromptPauseIdle | _PromptPauseActive
 
 
 @dataclass(frozen=True, slots=True)
-class _LiveRefreshRunning:
-    """Represent live refresh running with no saved state."""
+class _LiveRunning:
+    """Represent an active or not-yet-created live display."""
 
 
 @dataclass(frozen=True, slots=True)
-class _LiveRefreshPaused:
-    """Represent live refresh paused with its previous setting."""
+class _LiveSuspended:
+    """Retain live configuration until a new terminal owner is created."""
 
     auto_refresh: bool
 
 
-_LiveRefreshState: TypeAlias = _LiveRefreshRunning | _LiveRefreshPaused
+_LiveState: TypeAlias = _LiveRunning | _LiveSuspended
 _PROMPT_PAUSE_IDLE = _PromptPauseIdle()
-_LIVE_REFRESH_RUNNING = _LiveRefreshRunning()
+_LIVE_RUNNING = _LiveRunning()
 
 
 class CliStreamLive(Protocol):
@@ -99,6 +100,19 @@ class CliStreamLiveFactory(Protocol):
         refresh_per_second: int,
         screen: bool,
     ) -> CliStreamLive: ...
+
+
+class CliStreamPresentationLock(Protocol):
+    """Provide exclusive async context-manager presentation access."""
+
+    async def __aenter__(self) -> object: ...
+
+    async def __aexit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc_value: BaseException | None,
+        traceback: TracebackType | None,
+    ) -> bool | None: ...
 
 
 class _TailOverflowRenderable(Group):
@@ -195,6 +209,7 @@ class _TailOverflowLive:
 
 RecordFilenameFactory = Callable[[], str]
 CliStreamClock = Callable[[], float]
+CliStreamLiveCommitCallback = Callable[[], None]
 
 
 class ToolConfirmationPrompt(Protocol):
@@ -221,12 +236,18 @@ class CliStreamCoordinator:
         live_factory: CliStreamLiveFactory | None = None,
         record_filename_factory: RecordFilenameFactory | None = None,
         clock: CliStreamClock | None = None,
+        presentation_lock: CliStreamPresentationLock | None = None,
+        live_commit_callback: CliStreamLiveCommitCallback | None = None,
     ) -> None:
         assert isinstance(display_config, CliStreamDisplayConfig)
         assert diagnostic_console is None or callable(
             getattr(diagnostic_console, "print", None)
         )
         assert clock is None or callable(clock)
+        assert presentation_lock is None or _is_presentation_lock(
+            presentation_lock
+        )
+        assert live_commit_callback is None or callable(live_commit_callback)
         self._console = console
         self._diagnostic_console = diagnostic_console
         self._display_config = display_config
@@ -235,10 +256,12 @@ class CliStreamCoordinator:
             record_filename_factory or stream_recording_filename
         )
         self._clock = clock or perf_counter
+        self._presentation_lock = presentation_lock
+        self._live_commit_callback = live_commit_callback
         self._flush_interval = 1 / display_config.refresh_per_second
         self._last_flush_at: float | None = None
         self._live: CliStreamLive | None = None
-        self._live_refresh: _LiveRefreshState = _LIVE_REFRESH_RUNNING
+        self._live_state: _LiveState = _LIVE_RUNNING
         self._role_renderables: dict[StreamFrameRole, RenderableType] = {}
         self._stderr_role_renderables: dict[StreamFrameRole, str] = {}
         self._pending_flush = False
@@ -314,24 +337,30 @@ class CliStreamCoordinator:
         assert not self._closed
         if self._pending_flush and not self._is_paused():
             await self._flush_pending(force=True)
-        self._close_live()
+        self._close_live(commit=True)
         self._role_renderables.clear()
         self._pending_flush = False
         self._console.print(chunk.text, end="")
 
     async def pause(self) -> None:
         """Pause live rendering manually."""
-        async with self._lock:
-            assert not self._closed
-            was_paused = self._is_paused()
-            self._manual_pause_depth += 1
-            if not was_paused:
-                self._pause_live_refresh()
+        async with self._presentation_boundary():
+            async with self._lock:
+                assert not self._closed
+                was_paused = self._is_paused()
+                self._manual_pause_depth += 1
+                if not was_paused:
+                    try:
+                        self._suspend_live()
+                    except BaseException:
+                        await self._aclose(flush=False)
+                        raise
 
     async def resume(self) -> None:
         """Resume live rendering and flush queued frames."""
-        async with self._lock:
-            await self._resume()
+        async with self._presentation_boundary():
+            async with self._lock:
+                await self._resume()
 
     async def flush(self) -> None:
         """Flush the latest queued live frame."""
@@ -349,9 +378,10 @@ class CliStreamCoordinator:
         if self._is_paused():
             return
 
-        self._resume_live_refresh()
         try:
             await self._flush_pending(force=True)
+            if self._live is not None:
+                self._live.refresh()
         except BaseException:
             await self._aclose(flush=False)
             raise
@@ -403,11 +433,10 @@ class CliStreamCoordinator:
             if should_flush:
                 self._manual_pause_depth = 0
                 self._prompt_pause = _PROMPT_PAUSE_IDLE
-                self._resume_live_refresh()
                 await self._flush_pending(force=True)
+                self._live_state = _LIVE_RUNNING
         finally:
             self._closed = True
-            self._restore_live_refresh(refresh=False)
             self._clear_pause_state()
             self._close_live()
 
@@ -455,7 +484,11 @@ class CliStreamCoordinator:
             refresh_per_second=self._display_config.refresh_per_second,
             screen=self._display_config.record_enabled,
         )
+        state = self._live_state
+        if isinstance(state, _LiveSuspended):
+            live.auto_refresh = state.auto_refresh
         self._live = live.__enter__()
+        self._live_state = _LIVE_RUNNING
         return self._live
 
     def _render_stderr_frame(self, frame: CliStreamRenderableFrame) -> None:
@@ -507,32 +540,39 @@ class CliStreamCoordinator:
                 raise
 
     async def _pause_for_prompt(self) -> None:
-        async with self._lock:
-            assert not self._closed
-            self._start_prompt_pause()
+        async with self._presentation_boundary():
+            async with self._lock:
+                assert not self._closed
+                try:
+                    self._start_prompt_pause()
+                except BaseException:
+                    await self._aclose(flush=False)
+                    raise
 
     async def _resume_prompt(self) -> None:
-        async with self._lock:
-            if self._closed:
-                return
-            assert isinstance(self._prompt_pause, _PromptPauseActive)
-            self._prompt_pause = _PROMPT_PAUSE_IDLE
-            if self._is_paused():
-                return
+        async with self._presentation_boundary():
+            async with self._lock:
+                if self._closed:
+                    return
+                assert isinstance(self._prompt_pause, _PromptPauseActive)
+                self._prompt_pause = _PROMPT_PAUSE_IDLE
+                if self._is_paused():
+                    return
 
-            self._resume_live_refresh()
-            try:
-                await self._flush_pending(force=True)
-            except BaseException:
-                await self._aclose(flush=False)
-                raise
+                try:
+                    await self._flush_pending(force=True)
+                    if self._live is not None:
+                        self._live.refresh()
+                except BaseException:
+                    await self._aclose(flush=False)
+                    raise
 
     def _start_prompt_pause(self) -> None:
         assert isinstance(self._prompt_pause, _PromptPauseIdle)
         was_paused = self._is_paused()
         self._prompt_pause = _PromptPauseActive()
         if not was_paused:
-            self._pause_live_refresh()
+            self._suspend_live()
 
     def _is_paused(self) -> bool:
         return self._manual_pause_depth > 0 or self._is_prompt_paused()
@@ -540,46 +580,66 @@ class CliStreamCoordinator:
     def _is_prompt_paused(self) -> bool:
         return isinstance(self._prompt_pause, _PromptPauseActive)
 
-    def _pause_live_refresh(self) -> None:
-        assert isinstance(self._live_refresh, _LiveRefreshRunning)
+    def _suspend_live(self) -> None:
+        """Withdraw Rich terminal ownership while a prompt reads input."""
         if self._live is None:
             return
 
-        self._live_refresh = _LiveRefreshPaused(
-            auto_refresh=self._live.auto_refresh
-        )
-        self._live.auto_refresh = False
-        self._live.refresh()
+        assert isinstance(self._live_state, _LiveRunning)
+        live = self._live
+        self._live = None
+        self._live_state = _LiveSuspended(auto_refresh=live.auto_refresh)
+        update_succeeded = False
+        try:
+            if self._pending_flush and self._role_renderables:
+                live.update(self._current_renderable())
+            update_succeeded = True
+        finally:
+            try:
+                live.__exit__(None, None, None)
+                if update_succeeded and self._live_commit_callback is not None:
+                    self._live_commit_callback()
+            finally:
+                self._role_renderables.clear()
+                self._pending_flush = False
+                self._last_flush_at = None
 
-    def _resume_live_refresh(self) -> None:
-        self._restore_live_refresh(refresh=True)
-
-    def _restore_live_refresh(self, *, refresh: bool) -> None:
-        state = self._live_refresh
-        if isinstance(state, _LiveRefreshRunning):
+    @asynccontextmanager
+    async def _presentation_boundary(self) -> AsyncIterator[None]:
+        lock = self._presentation_lock
+        if lock is None:
+            yield
             return
-
-        if self._live is not None:
-            self._live.auto_refresh = state.auto_refresh
-            if refresh:
-                self._live.refresh()
-        self._live_refresh = _LIVE_REFRESH_RUNNING
+        async with lock:
+            yield
 
     def _clear_pause_state(self) -> None:
         self._manual_pause_depth = 0
         self._prompt_pause = _PROMPT_PAUSE_IDLE
-        self._live_refresh = _LIVE_REFRESH_RUNNING
+        self._live_state = _LIVE_RUNNING
 
-    def _close_live(self) -> None:
+    def _close_live(self, *, commit: bool = False) -> None:
+        assert isinstance(commit, bool)
         live = self._live
         if live is None:
             return
 
         self._live = None
         live.__exit__(None, None, None)
+        if commit and self._live_commit_callback is not None:
+            self._live_commit_callback()
 
 
 CliStreamOutputCoordinator = CliStreamCoordinator
+
+
+def _is_presentation_lock(
+    value: object,
+) -> TypeGuard[CliStreamPresentationLock]:
+    value_type = type(value)
+    return iscoroutinefunction(
+        getattr(value_type, "__aenter__", None)
+    ) and iscoroutinefunction(getattr(value_type, "__aexit__", None))
 
 
 def stream_recording_filename() -> str:
