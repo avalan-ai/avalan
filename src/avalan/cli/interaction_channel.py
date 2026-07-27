@@ -93,28 +93,28 @@ class CliInteractionChannel:
     ) -> "CliInteractionChannel | None":
         """Open a controlling terminal with async FD readiness."""
         assert isinstance(tty_path, str)
-        path = _control_terminal_path(tty_path)
-        try:
-            descriptor = open_fd(path, _OPEN_FLAGS)
-        except OSError:
-            return None
+        for path in _control_terminal_paths(tty_path):
+            try:
+                descriptor = open_fd(path, _OPEN_FLAGS)
+            except OSError:
+                continue
 
-        try:
-            if not isatty(descriptor):
+            try:
+                if not isatty(descriptor):
+                    close_fd(descriptor)
+                    continue
+                set_blocking(descriptor, False)
+                loop = get_running_loop()
+                if not _supports_fd_readiness(loop, descriptor):
+                    close_fd(descriptor)
+                    continue
+                encoding = device_encoding(descriptor) or getpreferredencoding(
+                    False
+                )
+                return cls(descriptor, loop, encoding)
+            except (NotImplementedError, OSError, RuntimeError, ValueError):
                 close_fd(descriptor)
-                return None
-            set_blocking(descriptor, False)
-            loop = get_running_loop()
-            if not _supports_fd_readiness(loop, descriptor):
-                close_fd(descriptor)
-                return None
-            encoding = device_encoding(descriptor) or getpreferredencoding(
-                False
-            )
-            return cls(descriptor, loop, encoding)
-        except (NotImplementedError, OSError, RuntimeError, ValueError):
-            close_fd(descriptor)
-            return None
+        return None
 
     @property
     def closed(self) -> bool:
@@ -311,10 +311,38 @@ class CliInteractionChannel:
             )
 
 
-def _control_terminal_path(tty_path: str) -> str:
+def _control_terminal_paths(tty_path: str) -> tuple[str, ...]:
     if platform_name == "nt" and tty_path == _DEFAULT_TTY_PATH:
-        return "CON"
-    return tty_path
+        return ("CON",)
+    if tty_path != _DEFAULT_TTY_PATH:
+        return (tty_path,)
+
+    paths = [tty_path]
+    for descriptor in (0, 1, 2):
+        path = _controlling_terminal_name(descriptor)
+        if path is not None and path not in paths:
+            paths.append(path)
+    return tuple(paths)
+
+
+def _controlling_terminal_name(descriptor: int) -> str | None:
+    if not isatty(descriptor):
+        return None
+    os_module = modules["os"]
+    terminal_process_group: object = getattr(
+        os_module,
+        "tcgetpgrp",
+        None,
+    )
+    terminal_name: object = getattr(os_module, "ttyname", None)
+    if not callable(terminal_process_group) or not callable(terminal_name):
+        return None
+    try:
+        terminal_process_group(descriptor)
+        path: object = terminal_name(descriptor)
+    except (NotImplementedError, OSError, ValueError):
+        return None
+    return path if isinstance(path, str) and path else None
 
 
 def _supports_fd_readiness(

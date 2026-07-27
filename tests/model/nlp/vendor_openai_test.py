@@ -40,7 +40,11 @@ from avalan.entities import (
     ToolNamePolicySettings,
     TransformerEngineSettings,
 )
-from avalan.model.capability import ModelCapabilityCatalog
+from avalan.interaction.entities import RESERVED_INPUT_CAPABILITY_NAME
+from avalan.model.capability import (
+    ModelCapabilityCatalog,
+    ModelCapabilityValidationError,
+)
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
@@ -1727,6 +1731,598 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
         self.assertEqual(
             accumulate_canonical_stream_items(items).answer_text,
             "ok",
+        )
+
+    async def test_stream_retries_capability_validation_after_reasoning(
+        self,
+    ):
+        retry_streams = []
+        collected: list[dict[str, Any]] = []
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = RESERVED_INPUT_CAPABILITY_NAME
+        capability.decode_call.side_effect = ModelCapabilityValidationError(
+            "capability.arguments",
+            "capability arguments are invalid",
+        )
+
+        async def retry_stream():
+            retry_streams.append("retry")
+            return AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_2",
+                        output_index=0,
+                        content_index=0,
+                        delta="retrying",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_text.delta", delta="ok"
+                    ),
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage={}),
+                    ),
+                ]
+            )
+
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item={
+                            "type": "reasoning",
+                            "id": "rs_1",
+                            "encrypted_content": "ciphertext",
+                            "content": [],
+                        },
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            id="call-1",
+                            custom_tool_call=SimpleNamespace(
+                                id="call-1",
+                                name="request_user_input",
+                            ),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.delta",
+                        id="call-1",
+                        delta='{"mode":"required",',
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.delta",
+                        id="call-1",
+                        delta='"reason":"invalid","questions":[]}',
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        id="call-1",
+                        arguments='{"mode":"required","reason":"invalid","questions":[]}',
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+            capability=capability,
+            output_item_sink=collected.append,
+            output_item_rollback=lambda count: collected.__delitem__(
+                slice(-count, None)
+            ),
+        )
+
+        items = await _stream_items(stream)
+
+        self.assertEqual(retry_streams, ["retry"])
+        self.assertEqual(collected, [])
+        self.assertEqual(
+            accumulate_canonical_stream_items(items).answer_text,
+            "ok",
+        )
+        self.assertNotIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+        self.assertFalse(
+            any(
+                item.kind
+                in {
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                }
+                for item in items
+            )
+        )
+        reasoning = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.REASONING_DELTA
+        ]
+        self.assertEqual(
+            [item.text_delta for item in reasoning],
+            ["thinking", "retrying"],
+        )
+        self.assertEqual(
+            [item.segment_instance_ordinal for item in reasoning],
+            [0, 1],
+        )
+        self.assertEqual(reasoning[0].metadata, {})
+        self.assertEqual(
+            reasoning[1].metadata,
+            {REASONING_SEGMENT_BOUNDARY_METADATA_KEY: "completed"},
+        )
+
+    async def test_stream_retries_done_only_task_input_without_leak(self):
+        invalid_arguments = '{"private":"INVALID_ARGUMENT_SENTINEL"}'
+        valid_arguments = '{"mode":"required","reason":"name","questions":[]}'
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = RESERVED_INPUT_CAPABILITY_NAME
+        capability.decode_call.side_effect = [
+            ModelCapabilityValidationError(
+                "capability.arguments",
+                "capability arguments are invalid",
+            ),
+            SimpleNamespace(name=RESERVED_INPUT_CAPABILITY_NAME),
+        ]
+        owner = self.mod._OpenAIReplayOwner(StreamRetentionPolicy())
+        retained: list[tuple[tuple[dict[str, Any], ...], tuple[str, ...]]] = []
+
+        def retain_replay_owner(replay_owner, call_ids):
+            retained.append((replay_owner.replay_items(), call_ids))
+
+        async def retry_stream():
+            return AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item={
+                            "type": "function_call",
+                            "id": "item-2",
+                            "call_id": "call-2",
+                            "name": "request_user_input",
+                            "arguments": valid_arguments,
+                        },
+                    ),
+                    SimpleNamespace(
+                        type="response.completed",
+                        response=SimpleNamespace(usage={}),
+                    ),
+                ]
+            )
+
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.done",
+                        item={
+                            "type": "reasoning",
+                            "id": "rs_1",
+                            "encrypted_content": "ciphertext",
+                            "content": [],
+                        },
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            type="function_call",
+                            id="item-1",
+                            call_id="call-1",
+                            name="request_user_input",
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        item_id="item-1",
+                        arguments=invalid_arguments,
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+            capability=capability,
+            replay_owner=owner,
+            replay_owner_retainer=retain_replay_owner,
+        )
+
+        items = await _stream_items(stream)
+
+        argument_deltas = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+        ]
+        self.assertEqual(
+            [item.text_delta for item in argument_deltas],
+            [valid_arguments],
+        )
+        self.assertEqual(
+            [
+                item.correlation.tool_call_id
+                for item in items
+                if item.kind
+                in {
+                    StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                    StreamItemKind.TOOL_CALL_READY,
+                    StreamItemKind.TOOL_CALL_DONE,
+                }
+            ],
+            ["call-2", "call-2", "call-2"],
+        )
+        self.assertNotIn("INVALID_ARGUMENT_SENTINEL", repr(items))
+        self.assertNotIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+        self.assertEqual(len(retained), 1)
+        replay_items, call_ids = retained[0]
+        self.assertEqual(call_ids, ("call-2",))
+        self.assertEqual(len(replay_items), 1)
+        self.assertEqual(replay_items[0]["type"], "function_call")
+        self.assertEqual(replay_items[0]["call_id"], "call-2")
+
+    async def test_stream_does_not_retry_domain_argument_validation(self):
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = "domain.lookup"
+        capability.decode_call.side_effect = ModelCapabilityValidationError(
+            "capability.arguments",
+            "capability arguments are invalid",
+        )
+        retry_stream = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            type="function_call",
+                            id="item-1",
+                            call_id="call-1",
+                            name="domain.lookup",
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        item_id="item-1",
+                        arguments="{}",
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+            capability=capability,
+        )
+
+        items = await _stream_items(stream)
+
+        retry_stream.assert_not_awaited()
+        self.assertIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+
+    async def test_stream_does_not_retry_response_failed_after_reasoning(
+        self,
+    ):
+        retry_stream = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.failed",
+                        response=SimpleNamespace(
+                            status="failed",
+                            error=None,
+                            output=[],
+                        ),
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+        )
+
+        items = await _stream_items(stream)
+
+        retry_stream.assert_not_awaited()
+        self.assertEqual(
+            [
+                item.text_delta
+                for item in items
+                if item.kind is StreamItemKind.REASONING_DELTA
+            ],
+            ["thinking"],
+        )
+        self.assertIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+
+    async def test_stream_does_not_retry_capability_validation_after_output(
+        self,
+    ):
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = RESERVED_INPUT_CAPABILITY_NAME
+        capability.decode_call.side_effect = ModelCapabilityValidationError(
+            "capability.arguments",
+            "capability arguments are invalid",
+        )
+        retry_stream = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_text.delta",
+                        delta="partial",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            id="call-1",
+                            custom_tool_call=SimpleNamespace(
+                                id="call-1",
+                                name="request_user_input",
+                            ),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        id="call-1",
+                        arguments="{}",
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+            capability=capability,
+        )
+
+        items = await _stream_items(stream)
+
+        retry_stream.assert_not_awaited()
+        self.assertIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+
+    async def test_stream_does_not_retry_local_capability_failure(self):
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = RESERVED_INPUT_CAPABILITY_NAME
+        capability.decode_call.side_effect = ModelCapabilityValidationError(
+            "capability.schema_unavailable",
+            "strict capability schema validation is unavailable",
+        )
+        retry_stream = AsyncMock()
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.reasoning_text.delta",
+                        item_id="rs_1",
+                        output_index=0,
+                        content_index=0,
+                        delta="thinking",
+                    ),
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            id="call-1",
+                            custom_tool_call=SimpleNamespace(
+                                id="call-1",
+                                name="request_user_input",
+                            ),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        id="call-1",
+                        arguments="{}",
+                    ),
+                ]
+            ),
+            stream_factory=retry_stream,
+            stream_retries=1,
+            capability=capability,
+        )
+
+        items = await _stream_items(stream)
+
+        retry_stream.assert_not_awaited()
+        self.assertIn(
+            StreamItemKind.STREAM_ERRORED,
+            [item.kind for item in items],
+        )
+
+    async def test_stream_buffers_task_input_arguments_until_validation(self):
+        capability = _mock_capability([])
+        capability.canonical_name.return_value = RESERVED_INPUT_CAPABILITY_NAME
+        capability.decode_call.return_value = SimpleNamespace(
+            name=RESERVED_INPUT_CAPABILITY_NAME
+        )
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    SimpleNamespace(
+                        type="response.output_item.added",
+                        item=SimpleNamespace(
+                            id="call-1",
+                            custom_tool_call=SimpleNamespace(
+                                id="call-1",
+                                name="request_user_input",
+                            ),
+                        ),
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.delta",
+                        id="call-1",
+                        delta='{"mode":"required",',
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.delta",
+                        id="call-1",
+                        delta='"reason":"name","questions":[]}',
+                    ),
+                    SimpleNamespace(
+                        type="response.function_call_arguments.done",
+                        id="call-1",
+                        arguments='{"mode":"required","reason":"name","questions":[]}',
+                    ),
+                ]
+            ),
+            capability=capability,
+        )
+
+        items = await _stream_items(stream)
+
+        argument_deltas = [
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA
+        ]
+        self.assertEqual(len(argument_deltas), 1)
+        self.assertEqual(
+            argument_deltas[0].text_delta,
+            '{"mode":"required","reason":"name","questions":[]}',
+        )
+        ready = next(
+            item
+            for item in items
+            if item.kind is StreamItemKind.TOOL_CALL_READY
+        )
+        self.assertEqual(
+            ready.data,
+            {"name": RESERVED_INPUT_CAPABILITY_NAME},
+        )
+        capability.canonical_name.assert_called_once()
+
+    def test_stream_classifies_task_input_argument_buffering(self):
+        stream = self.mod.OpenAIStream(AsyncIter([]))
+        self.assertFalse(
+            stream._buffers_task_input_arguments({"name": "tool"})
+        )
+
+        capability = _mock_capability([])
+        stream = self.mod.OpenAIStream(
+            AsyncIter([]),
+            capability=capability,
+        )
+        self.assertFalse(stream._buffers_task_input_arguments({"name": None}))
+        capability.canonical_name.side_effect = ModelCapabilityValidationError(
+            "capability.unknown",
+            "capability is not advertised",
+        )
+        self.assertFalse(
+            stream._buffers_task_input_arguments({"name": "unknown"})
+        )
+        capability.canonical_name.side_effect = None
+        capability.canonical_name.return_value = "domain.tool"
+        self.assertFalse(
+            stream._buffers_task_input_arguments({"name": "domain_tool"})
+        )
+        self.assertTrue(
+            stream._buffers_task_input_arguments(
+                {
+                    "name": "request_user_input",
+                    "arguments_buffered": True,
+                }
+            )
+        )
+        self.assertFalse(stream._has_buffered_task_input_arguments())
+        stream._canonical_tool_calls["call-1"] = {
+            "name": "request_user_input",
+            "arguments_seen": True,
+            "arguments": "{}",
+            "arguments_buffered": True,
+        }
+        self.assertTrue(stream._has_buffered_task_input_arguments())
+
+    def test_stream_releases_no_empty_buffered_task_input_arguments(self):
+        stream = self.mod.OpenAIStream(AsyncIter([]))
+        state = {
+            "name": RESERVED_INPUT_CAPABILITY_NAME,
+            "arguments_seen": True,
+            "arguments": "",
+            "arguments_buffered": True,
+        }
+        stream._canonical_tool_calls["call-1"] = state
+
+        events = stream._release_buffered_task_input_arguments(
+            SimpleNamespace(),
+            None,
+            "response.function_call_arguments.done",
+            call_id="call-1",
+        )
+
+        self.assertEqual(events, ())
+        self.assertFalse(state["arguments_buffered"])
+
+    def test_stream_retry_blocks_answer_and_tool_output(self):
+        blocking_kinds = (
+            StreamItemKind.ANSWER_DELTA,
+            StreamItemKind.ANSWER_DONE,
+            StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+            StreamItemKind.TOOL_CALL_READY,
+            StreamItemKind.TOOL_CALL_DONE,
+        )
+
+        for kind in blocking_kinds:
+            with self.subTest(kind=kind):
+                self.assertTrue(
+                    self.mod.OpenAIStream._is_retry_blocking_output_event(
+                        self.mod.StreamProviderEvent(kind=kind)
+                    )
+                )
+        self.assertFalse(
+            self.mod.OpenAIStream._is_retry_blocking_output_event(
+                self.mod.StreamProviderEvent(
+                    kind=StreamItemKind.REASONING_DELTA,
+                    text_delta="thinking",
+                    visibility=StreamVisibility.PRIVATE,
+                    reasoning_representation=(
+                        StreamReasoningRepresentation.NATIVE_TEXT
+                    ),
+                    segment_instance_ordinal=0,
+                )
+            )
         )
 
     async def test_stream_retry_keeps_output_items_without_rollback(self):

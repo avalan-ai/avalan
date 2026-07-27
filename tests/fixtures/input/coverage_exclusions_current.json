@@ -29,7 +29,7 @@
     },
     {
       "path": "src/avalan/cli/commands/model.py",
-      "line": 336,
+      "line": 338,
       "text": "                )  # pragma: no cover - unreachable"
     },
     {
@@ -491,9 +491,9 @@
       2676
     ],
     "src/avalan/cli/commands/model.py": [
-      94,
-      95,
-      334
+      96,
+      97,
+      336
     ],
     "src/avalan/cli/download.py": [
       95,
@@ -525,7 +525,6 @@
       220
     ],
     "src/avalan/cli/stream_coordinator.py": [
-      76,
       77,
       78,
       79,
@@ -540,7 +539,7 @@
       88,
       89,
       90,
-      94,
+      91,
       95,
       96,
       97,
@@ -550,23 +549,35 @@
       101,
       102,
       103,
-      203,
-      204,
-      205,
-      206,
-      207,
+      104,
+      107,
+      108,
+      109,
+      110,
+      111,
+      112,
+      113,
+      114,
+      115,
+      116,
+      117,
+      218,
+      219,
+      220,
+      221,
+      222,
+      223,
+      224,
+      225,
+      226
+    ],
+    "src/avalan/cli/stream_presenter.py": [
       208,
       209,
       210,
-      211
-    ],
-    "src/avalan/cli/stream_presenter.py": [
-      204,
-      205,
-      206,
-      207,
-      208,
-      209
+      211,
+      212,
+      213
     ],
     "src/avalan/cli/theme/__init__.py": [
       54,
@@ -574,8 +585,8 @@
       57
     ],
     "src/avalan/cli/theme/basic.py": [
-      64,
-      65
+      65,
+      66
     ],
     "src/avalan/cli/theme/fancy.py": [
       116,
@@ -2424,5 +2435,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "78ea13feeeddb769bcc671b09fd581649c11a0f2efefd9cd8a885946195cdc8b"
+  "snapshot_sha256": "e77869f2d3936879509c270ea672955aacc05fd463df4eae504122553892a05d"
 }

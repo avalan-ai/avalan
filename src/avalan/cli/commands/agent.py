@@ -2579,6 +2579,15 @@ async def agent_run(
         return orchestrator
 
     async with AsyncExitStack() as stack:
+        run_cancellation = Event()
+        interaction_runtime = await _cli_interaction_runtime(
+            stack,
+            tty_path,
+            coordinator_container,
+            run_cancellation,
+            participant_id=participant_id,
+            session_id=session_id,
+        )
         if display_config.answer_stdout_only:
             orchestrator = await _init_orchestrator()
         else:
@@ -2589,15 +2598,6 @@ async def agent_run(
             ):
                 orchestrator = await _init_orchestrator()
 
-        run_cancellation = Event()
-        interaction_runtime = await _cli_interaction_runtime(
-            stack,
-            tty_path,
-            coordinator_container,
-            run_cancellation,
-            participant_id=participant_id,
-            session_id=session_id,
-        )
         watch_spec = bool(specs_path and args.conversation and args.watch)
         if watch_spec:
             specs_mtime = getmtime(specs_path)

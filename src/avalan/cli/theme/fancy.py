@@ -3257,7 +3257,10 @@ class FancyStreamPresenter:
         snapshot = request.snapshot
         if not snapshot.display.show_reasoning:
             return None
-        blocks = reasoning_display_blocks(snapshot)
+        blocks = reasoning_display_blocks(
+            snapshot,
+            cursor=request.reasoning_cursor,
+        )
         if not blocks:
             return None
         max_width = max(1, request.context.console_width - 4)

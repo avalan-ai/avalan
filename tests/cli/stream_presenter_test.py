@@ -24,6 +24,9 @@ from avalan.cli.stream_presenter import (
     LegacyThemeStreamPresenter,
     reasoning_display_blocks,
     reasoning_display_text,
+    reasoning_end_cursor,
+    reasoning_segments_after,
+    reasoning_text_after,
     stream_terminal_completed,
 )
 from avalan.cli.theme import (
@@ -40,6 +43,7 @@ from avalan.model.stream import (
     StreamItemCorrelation,
     StreamItemKind,
     StreamReasoningRepresentation,
+    StreamReasoningTruncation,
     StreamTerminalOutcome,
     canonical_item_from_consumer_projection,
 )
@@ -122,12 +126,14 @@ def _request(
     *,
     mode: str = "live",
     context: CliStreamPresenterContext | None = None,
+    reasoning_cursor: int = 0,
 ) -> CliStreamPresenterRequest:
     return CliStreamPresenterRequest(
         snapshot=snapshot,
         display_config=config,
         context=_context() if context is None else context,
         mode=mode,  # type: ignore[arg-type]
+        reasoning_cursor=reasoning_cursor,
     )
 
 
@@ -389,6 +395,8 @@ class StreamPresenterContractTestCase(TestCase):
                 mode="other",  # type: ignore[arg-type]
             )
         with self.assertRaises(AssertionError):
+            _request(config, snapshot, reasoning_cursor=-1)
+        with self.assertRaises(AssertionError):
             CliStreamRenderableFrame(
                 renderable="frame",
                 role="invalid",  # type: ignore[arg-type]
@@ -461,6 +469,108 @@ class StreamPresenterContractTestCase(TestCase):
 
         self.assertEqual(len(blocks), 1)
         self.assertEqual(blocks[0].text, "left\n\nright")
+
+    def test_reasoning_cursor_slices_growing_segment_with_metadata(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        correlation = StreamItemCorrelation(
+            model_continuation_id="continuation-1"
+        )
+        builder.append_reasoning_text(
+            "old",
+            sequence=4,
+            representation=StreamReasoningRepresentation.SUMMARY,
+            correlation=correlation,
+        )
+        cursor = reasoning_end_cursor(builder.snapshot())
+        builder.append_reasoning_text(
+            " new",
+            sequence=5,
+            representation=StreamReasoningRepresentation.SUMMARY,
+            correlation=correlation,
+        )
+        snapshot = builder.snapshot()
+
+        segments = reasoning_segments_after(snapshot, cursor=cursor)
+
+        self.assertEqual(reasoning_text_after(snapshot, cursor=cursor), " new")
+        self.assertEqual(len(segments), 1)
+        self.assertEqual(segments[0].text, " new")
+        self.assertEqual(
+            replace(segments[0], text=snapshot.reasoning_segments[0].text),
+            snapshot.reasoning_segments[0],
+        )
+        self.assertEqual(
+            reasoning_display_text(snapshot, cursor=cursor),
+            "Reasoning summary:\n new",
+        )
+
+    def test_reasoning_cursor_skips_historical_segment_separator(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old", segment_instance_ordinal=0)
+        cursor = reasoning_end_cursor(builder.snapshot())
+        builder.append_reasoning_text(
+            "new",
+            representation=StreamReasoningRepresentation.SUMMARY,
+            segment_instance_ordinal=1,
+            follows_completion=True,
+        )
+        snapshot = builder.snapshot()
+
+        at_separator = reasoning_segments_after(snapshot, cursor=cursor)
+        inside_separator = reasoning_segments_after(
+            snapshot,
+            cursor=cursor + 1,
+        )
+
+        self.assertEqual([segment.text for segment in at_separator], ["new"])
+        self.assertEqual(
+            [segment.text for segment in inside_separator],
+            ["new"],
+        )
+        self.assertEqual(reasoning_text_after(snapshot, cursor=cursor), "new")
+
+    def test_reasoning_cursor_handles_retention_and_fails_open(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("abcdef")
+        snapshot = builder.snapshot()
+        retained_segment = replace(
+            snapshot.reasoning_segments[0],
+            text="cdef",
+        )
+        retained_snapshot = replace(
+            snapshot,
+            reasoning_text="cdef",
+            reasoning_segments=(retained_segment,),
+            reasoning_truncation=StreamReasoningTruncation(
+                truncated=True,
+                dropped_characters=2,
+                dropped_utf8_bytes=2,
+                leading_segment_partial=True,
+            ),
+        )
+
+        self.assertEqual(reasoning_end_cursor(retained_snapshot), 6)
+        self.assertEqual(
+            reasoning_text_after(retained_snapshot, cursor=3),
+            "def",
+        )
+        self.assertEqual(
+            reasoning_text_after(retained_snapshot, cursor=1),
+            "cdef",
+        )
+        self.assertEqual(
+            reasoning_text_after(retained_snapshot, cursor=99),
+            "cdef",
+        )
 
     def test_legacy_adapter_requires_theme_token_factory(self) -> None:
         with self.assertRaises(AssertionError):
@@ -797,6 +907,70 @@ class SnapshotStreamPresenterTestCase(IsolatedAsyncioTestCase):
                 if isinstance(item, CliStreamAnswerTextChunk)
             ],
             ["answer"],
+        )
+
+    async def test_theme_default_presenter_filters_committed_reasoning_only(
+        self,
+    ) -> None:
+        config = _config(
+            stats=False,
+            display_reasoning=True,
+            display_events=False,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old")
+        cursor = reasoning_end_cursor(builder.snapshot())
+        builder.append_reasoning_text(" new")
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        snapshot = builder.snapshot()
+        presenter = CliStreamSnapshotPresenter(getLogger(__name__))
+
+        items = await _collect(
+            presenter,
+            _request(
+                config,
+                snapshot,
+                mode="live",
+                reasoning_cursor=cursor,
+            ),
+        )
+        fully_committed = await _collect(
+            presenter,
+            _request(
+                config,
+                snapshot,
+                mode="live",
+                reasoning_cursor=reasoning_end_cursor(snapshot),
+            ),
+        )
+
+        reasoning_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "reasoning"
+        )
+        self.assertEqual(reasoning_frame.renderable, "Reasoning:\n new")
+        self.assertNotIn("old", str(reasoning_frame.renderable))
+        self.assertIn(
+            "tools",
+            [
+                item.role
+                for item in items
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+        )
+        self.assertEqual(
+            [
+                item.role
+                for item in fully_committed
+                if isinstance(item, CliStreamRenderableFrame)
+            ],
+            ["tools"],
         )
 
     async def test_theme_default_presenter_renders_answer_with_stats(
@@ -1176,6 +1350,50 @@ class LegacyThemeStreamPresenterTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(theme.calls[0]["thinking_text_tokens"], ["think"])
         self.assertIs(theme.calls[0]["display_reasoning"], True)
+
+    async def test_live_adapter_filters_reasoning_without_opaque_frames(
+        self,
+    ) -> None:
+        config = _config(display_reasoning=True, stats=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old")
+        cursor = reasoning_end_cursor(builder.snapshot())
+        builder.append_reasoning_text(" new")
+        snapshot = builder.snapshot()
+        theme = RecordingTheme((None, "opaque-frame"))
+        presenter = LegacyThemeStreamPresenter(theme, getLogger(__name__))
+
+        items = await _collect(
+            presenter,
+            _request(config, snapshot, reasoning_cursor=cursor),
+        )
+        fully_committed = await _collect(
+            presenter,
+            _request(
+                config,
+                snapshot,
+                reasoning_cursor=reasoning_end_cursor(snapshot),
+            ),
+        )
+
+        reasoning_frame = next(
+            item
+            for item in items
+            if isinstance(item, CliStreamRenderableFrame)
+            and item.role == "reasoning"
+        )
+        self.assertEqual(reasoning_frame.renderable, "Reasoning:\n new")
+        self.assertEqual(theme.calls[0]["thinking_text_tokens"], [" new"])
+        self.assertEqual(theme.calls[1]["thinking_text_tokens"], [])
+        self.assertEqual(
+            [
+                item.renderable
+                for item in (*items, *fully_committed)
+                if isinstance(item, CliStreamRenderableFrame)
+                and item.role == "stream"
+            ],
+            ["opaque-frame", "opaque-frame"],
+        )
 
     async def test_live_adapter_accepts_synchronous_frame_iterable(
         self,

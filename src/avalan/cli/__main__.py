@@ -4907,8 +4907,8 @@ class CLI:
                     print(str(error), file=sys.stderr)
                     raise SystemExit(1) from error
                 except InputContractError as error:
-                    result = interaction_renderer.cli_interaction_result(error)
-                    if result.exit_code is None:
+                    result = interaction_renderer.cli_input_error_result(error)
+                    if result is None or result.exit_code is None:
                         raise
                     raise interaction_renderer.CliInteractionExit(
                         result

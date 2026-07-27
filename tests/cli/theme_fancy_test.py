@@ -24,6 +24,7 @@ from avalan.cli.display_snapshot import (
     CliStreamSnapshot,
     CliStreamSnapshotBuilder,
 )
+from avalan.cli.stream_presenter import reasoning_end_cursor
 from avalan.cli.theme import (
     TokenRenderDisplayToken,
     TokenRenderDisplayTokenCandidate,
@@ -222,12 +223,14 @@ def _stream_request(
     *,
     context: CliStreamPresenterContext | None = None,
     mode: str = "live",
+    reasoning_cursor: int = 0,
 ) -> CliStreamPresenterRequest:
     return CliStreamPresenterRequest(
         snapshot=snapshot,
         display_config=config,
         context=_stream_context() if context is None else context,
         mode=mode,  # type: ignore[arg-type]
+        reasoning_cursor=reasoning_cursor,
     )
 
 
@@ -247,6 +250,12 @@ def _render_visible_text(*renderables: object) -> str:
 
 def _frame_text(frame: CliStreamRenderableFrame) -> str:
     return _render_visible_text(frame.renderable)
+
+
+def _frames(items: list[object]) -> list[CliStreamRenderableFrame]:
+    return [
+        item for item in items if isinstance(item, CliStreamRenderableFrame)
+    ]
 
 
 class FancyThemeFlowProgressTestCase(unittest.TestCase):
@@ -742,6 +751,81 @@ class FancyStreamPresenterTestCase(IsolatedAsyncioTestCase):
         self.assertIn("native plan", output)
         self.assertIn("model Reasoning summary", output)
         self.assertIn("summary plan", output)
+
+    async def test_reasoning_panels_filter_only_committed_prefix(
+        self,
+    ) -> None:
+        config = _stream_config(
+            stats=False,
+            display_tools=True,
+            display_events=False,
+            display_tokens=0,
+            display_reasoning=True,
+        )
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("old reasoning")
+        builder.add_active_tool(
+            tool_call_id="call-1",
+            name="calc",
+            arguments={"x": 1},
+        )
+        old_snapshot = builder.snapshot()
+        cursor = reasoning_end_cursor(old_snapshot)
+        presenter = FancyStreamPresenter(self.theme, getLogger(__name__))
+        await _collect_stream_items(
+            presenter,
+            _stream_request(config, old_snapshot),
+        )
+        builder.append_reasoning_text(" new reasoning")
+        snapshot = builder.snapshot()
+
+        items = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                snapshot,
+                reasoning_cursor=cursor,
+            ),
+        )
+        fully_committed = await _collect_stream_items(
+            presenter,
+            _stream_request(
+                config,
+                snapshot,
+                reasoning_cursor=reasoning_end_cursor(snapshot),
+            ),
+        )
+
+        reasoning_frame = next(
+            frame for frame in _frames(items) if frame.role == "reasoning"
+        )
+        output = _frame_text(reasoning_frame)
+        self.assertIn("new reasoning", output)
+        self.assertNotIn("old reasoning", output)
+        self.assertIn(
+            "calc",
+            _frame_text(
+                next(
+                    frame for frame in _frames(items) if frame.role == "tools"
+                )
+            ),
+        )
+        cleared_reasoning = next(
+            frame
+            for frame in _frames(fully_committed)
+            if frame.role == "reasoning"
+        )
+        self.assertEqual(cleared_reasoning.renderable, "")
+        self.assertIn(
+            "calc",
+            _frame_text(
+                next(
+                    frame
+                    for frame in _frames(fully_committed)
+                    if frame.role == "tools"
+                )
+            ),
+        )
 
     async def test_blank_reasoning_block_creates_no_panel(self) -> None:
         config = _stream_config(

@@ -36,6 +36,7 @@ from avalan.cli.interaction_renderer import (
     CliInteractionExit,
     cli_input_required_result,
 )
+from avalan.cli.stream_coordinator import CliStreamCoordinator
 from avalan.cli.theme import TokenRenderState
 from avalan.cli.theme.basic import BasicTheme
 from avalan.cli.theme.fancy import FancyTheme
@@ -1263,6 +1264,105 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(final.reasoning_text, "plan")
         self.assertEqual(final.answer_text, "answer")
         console.print.assert_any_call("answer", end="")
+
+    async def test_reasoning_prompt_handoff_commits_presented_cursor(
+        self,
+    ) -> None:
+        class RecordingPresenter:
+            supports_stderr_diagnostics = True
+
+            def __init__(self) -> None:
+                self.requests: list[CliStreamPresenterRequest] = []
+
+            async def present(
+                self,
+                request: CliStreamPresenterRequest,
+            ) -> AsyncIterator[CliStreamAnswerTextChunk]:
+                self.requests.append(request)
+                if False:
+                    yield CliStreamAnswerTextChunk(text="")
+
+        class RecordingTheme:
+            def __init__(self, presenter: RecordingPresenter) -> None:
+                self.presenter = presenter
+
+            def stream_presenter(
+                self,
+                logger: object,
+                *,
+                event_stats: object | None = None,
+            ) -> RecordingPresenter:
+                _ = logger, event_stats
+                return self.presenter
+
+        first_reasoning_presented = asyncio.Event()
+        resume_stream = asyncio.Event()
+        items = _canonical_reasoning_answer_stream_items(
+            reasoning=("old", " new"),
+            answer=(),
+        )
+
+        class Response:
+            input_token_count = 1
+            can_think = False
+            is_thinking = False
+
+            def set_thinking(self, value: bool) -> None:
+                self.is_thinking = value
+
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
+                async def gen() -> AsyncIterator[CanonicalStreamItem]:
+                    yield items[0]
+                    yield items[1]
+                    first_reasoning_presented.set()
+                    await resume_stream.wait()
+                    for item in items[2:]:
+                        yield item
+
+                return gen()
+
+        presenter = RecordingPresenter()
+        coordinator_container: dict[str, CliStreamCoordinator | None] = {}
+        task = asyncio.create_task(
+            model_cmds.token_generation(
+                args=Namespace(skip_display_reasoning_time=False),
+                console=MagicMock(),
+                theme=RecordingTheme(presenter),  # type: ignore[arg-type]
+                logger=getLogger(__name__),
+                orchestrator=None,
+                event_stats=None,
+                lm=SimpleNamespace(model_id="m", tokenizer_config=None),
+                input_string="i",
+                response=Response(),  # type: ignore[arg-type]
+                display_tokens=0,
+                dtokens_pick=0,
+                with_stats=False,
+                tool_events_limit=2,
+                refresh_per_second=2,
+                coordinator_container=coordinator_container,
+                display_config=self._display_config(
+                    display_reasoning=True,
+                ),
+            )
+        )
+
+        try:
+            await asyncio.wait_for(first_reasoning_presented.wait(), 1)
+            coordinator = coordinator_container.get("coordinator")
+            self.assertIsNotNone(coordinator)
+            assert coordinator is not None
+            callback = coordinator._live_commit_callback
+            self.assertIsNotNone(callback)
+            assert callback is not None
+            callback()
+        finally:
+            resume_stream.set()
+        await task
+
+        self.assertIn(
+            len("old"),
+            [request.reasoning_cursor for request in presenter.requests],
+        )
 
     async def test_token_generation_fancy_uses_snapshot_presenter(
         self,

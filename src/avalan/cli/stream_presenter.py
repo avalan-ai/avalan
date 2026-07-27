@@ -5,6 +5,7 @@ from ..model.stream import (
     StreamChannel,
     StreamItemKind,
     StreamReasoningRepresentation,
+    StreamReasoningSegment,
 )
 from .display import CliStreamDisplayConfig
 from .display_snapshot import (
@@ -15,7 +16,7 @@ from .display_snapshot import (
 )
 
 from collections.abc import AsyncIterable, AsyncIterator, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from inspect import isawaitable
 from json import JSONDecodeError, dumps, loads
 from logging import Logger
@@ -133,12 +134,15 @@ class CliStreamPresenterRequest:
     display_config: CliStreamDisplayConfig
     context: CliStreamPresenterContext
     mode: StreamPresenterMode
+    reasoning_cursor: int = 0
 
     def __post_init__(self) -> None:
         assert isinstance(self.snapshot, CliStreamSnapshot)
         assert isinstance(self.display_config, CliStreamDisplayConfig)
         assert isinstance(self.context, CliStreamPresenterContext)
         assert self.mode in ("live", "answer")
+        assert isinstance(self.reasoning_cursor, int)
+        assert self.reasoning_cursor >= 0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -397,7 +401,10 @@ def _snapshot_diagnostic_frames(
         (
             "reasoning",
             (
-                reasoning_display_text(snapshot)
+                reasoning_display_text(
+                    snapshot,
+                    cursor=request.reasoning_cursor,
+                )
                 if snapshot.display.show_reasoning
                 else ""
             ),
@@ -424,14 +431,18 @@ def _snapshot_diagnostic_frames(
 
 def reasoning_display_blocks(
     snapshot: CliStreamSnapshot,
+    *,
+    cursor: int = 0,
 ) -> tuple[CliReasoningDisplayBlock, ...]:
     """Return contiguous reasoning blocks grouped by representation."""
     assert isinstance(snapshot, CliStreamSnapshot)
+    assert isinstance(cursor, int)
+    assert cursor >= 0
     blocks: list[CliReasoningDisplayBlock] = []
     active_representation: StreamReasoningRepresentation | None = None
     active_parts: list[str] = []
     previous_text: str | None = None
-    for segment in snapshot.reasoning_segments:
+    for segment in reasoning_segments_after(snapshot, cursor=cursor):
         separator = (
             ""
             if previous_text is None
@@ -472,12 +483,81 @@ def reasoning_display_label(
     return "Reasoning summary"
 
 
-def reasoning_display_text(snapshot: CliStreamSnapshot) -> str:
+def reasoning_display_text(
+    snapshot: CliStreamSnapshot,
+    *,
+    cursor: int = 0,
+) -> str:
     """Return labeled reasoning text for generic presenters."""
     assert isinstance(snapshot, CliStreamSnapshot)
     return "\n\n".join(
         f"{reasoning_display_label(block.representation)}:\n{block.text}"
-        for block in reasoning_display_blocks(snapshot)
+        for block in reasoning_display_blocks(snapshot, cursor=cursor)
+    )
+
+
+def reasoning_end_cursor(snapshot: CliStreamSnapshot) -> int:
+    """Return the absolute cursor after retained cumulative reasoning."""
+    assert isinstance(snapshot, CliStreamSnapshot)
+    return snapshot.reasoning_truncation.dropped_characters + len(
+        snapshot.reasoning_text
+    )
+
+
+def reasoning_segments_after(
+    snapshot: CliStreamSnapshot,
+    *,
+    cursor: int,
+) -> tuple[StreamReasoningSegment, ...]:
+    """Return retained reasoning strictly after an absolute cursor."""
+    assert isinstance(snapshot, CliStreamSnapshot)
+    assert isinstance(cursor, int)
+    assert cursor >= 0
+    segments = snapshot.reasoning_segments
+    if not segments:
+        return ()
+
+    tail_start = snapshot.reasoning_truncation.dropped_characters
+    tail_end = reasoning_end_cursor(snapshot)
+    if cursor <= tail_start or cursor > tail_end:
+        return segments
+    if cursor == tail_end:
+        return ()
+
+    relative_cursor = cursor - tail_start
+    relative_position = 0
+    result: tuple[StreamReasoningSegment, ...] = ()
+    for index, segment in enumerate(segments):
+        segment_start = relative_position
+        segment_end = segment_start + len(segment.text)
+        if relative_cursor < segment_end:
+            offset = max(0, relative_cursor - segment_start)
+            first = (
+                segment
+                if offset == 0
+                else replace(segment, text=segment.text[offset:])
+            )
+            result = (first, *segments[index + 1 :])
+            break
+        relative_position = segment_end + len(
+            _reasoning_separator_after(segments, index)
+        )
+
+    assert result
+    return result
+
+
+def reasoning_text_after(
+    snapshot: CliStreamSnapshot,
+    *,
+    cursor: int,
+) -> str:
+    """Return unlabeled retained reasoning strictly after a cursor."""
+    assert isinstance(snapshot, CliStreamSnapshot)
+    segments = reasoning_segments_after(snapshot, cursor=cursor)
+    return "".join(
+        segment.text + _reasoning_separator_after(segments, index)
+        for index, segment in enumerate(segments)
     )
 
 
@@ -487,6 +567,19 @@ def _reasoning_paragraph_separator(left: str, right: str) -> str:
     trailing_line_feeds = _edge_line_feeds(left, reverse=True)
     leading_line_feeds = _edge_line_feeds(right, reverse=False)
     return "\n" * max(0, 2 - trailing_line_feeds - leading_line_feeds)
+
+
+def _reasoning_separator_after(
+    segments: tuple[StreamReasoningSegment, ...],
+    index: int,
+) -> str:
+    assert isinstance(index, int)
+    if index + 1 >= len(segments):
+        return ""
+    return _reasoning_paragraph_separator(
+        segments[index].text,
+        segments[index + 1].text,
+    )
 
 
 def _edge_line_feeds(text: str, *, reverse: bool) -> int:
@@ -641,7 +734,14 @@ def _theme_token_render_state(
         pick=context.token_probability_pick,
         focus_on_token_when=focus_on_token_when,
         reasoning_text_tokens=(
-            (snapshot.reasoning_text,) if snapshot.reasoning_text else ()
+            (reasoning_text,)
+            if (
+                reasoning_text := reasoning_text_after(
+                    snapshot,
+                    cursor=request.reasoning_cursor,
+                )
+            )
+            else ()
         ),
         tool_text_tokens=(
             (snapshot.tool_call_request_text,)
