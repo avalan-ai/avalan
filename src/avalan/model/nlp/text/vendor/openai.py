@@ -6985,10 +6985,15 @@ class OpenAIClient(TextGenerationVendor):
                     )
             if request_timeout is not None:
                 kwargs["timeout"] = request_timeout
-            single_attempt_replay = self._is_azure and request_has_replay_items
-            if request_max_retries is not None or single_attempt_replay:
+            single_attempt_azure_dispatch = (
+                self._is_azure and provider_idempotency_key is not None
+            )
+            if (
+                request_max_retries is not None
+                or single_attempt_azure_dispatch
+            ):
                 effective_max_retries = (
-                    0 if single_attempt_replay else request_max_retries
+                    0 if single_attempt_azure_dispatch else request_max_retries
                 )
                 assert effective_max_retries is not None
                 request_client = self._client.with_options(
@@ -7006,7 +7011,7 @@ class OpenAIClient(TextGenerationVendor):
                     default=(self._stream_response_failed_retry_delay_seconds),
                 )
             )
-            if single_attempt_replay:
+            if single_attempt_azure_dispatch:
                 stream_response_failed_retries = 0
             if capability:
                 schemas = OpenAIClient._tool_schemas(
