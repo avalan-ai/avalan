@@ -796,6 +796,45 @@ def test_snapshot_restore_rejects_cross_provider_client(
     assert raised.value.code is InputErrorCode.SNAPSHOT_PROVIDER_UNAVAILABLE
 
 
+def test_azure_in_process_replay_preserves_automatic_retries() -> None:
+    base_url = "https://tenant.openai.azure.com/openai/v1/"
+    client = _client(
+        base_url=base_url,
+        azure_api_version="preview",
+    )
+    sdk_client = MagicMock()
+    sdk_client.base_url = base_url
+    request_client = MagicMock()
+    request_client.responses.create = AsyncMock(return_value=object())
+    sdk_client.with_options.return_value = request_client
+    client._client = sdk_client  # noqa: SLF001
+    client._stream_response_failed_retries = 24  # noqa: SLF001
+    client._stream_response_failed_retry_delay_seconds = 1.0  # noqa: SLF001
+    _retain(client)
+    settings = GenerationSettings(
+        openai_max_retries=9,
+        openai_response_failed_retries=9,
+    )
+
+    async def run_replay_dispatch() -> None:
+        with patch.object(openai_module, "OpenAIStream") as stream_type:
+            await client(
+                "deployment",
+                [_resolved_input_message()],
+                settings,
+            )
+
+        sdk_client.with_options.assert_called_once_with(max_retries=9)
+        request_client.responses.create.assert_awaited_once()
+        stream_kwargs = stream_type.call_args.kwargs
+        assert stream_kwargs["request_has_replay_items"] is True
+        assert stream_kwargs["stream_retries"] == 9
+        request_kwargs = request_client.responses.create.await_args.kwargs
+        assert "Idempotency-Key" not in request_kwargs["extra_headers"]
+
+    asyncio_run(run_replay_dispatch())
+
+
 def test_azure_resumed_dispatch_disables_every_automatic_retry() -> None:
     binding = _binding(
         provider_family=ProviderFamilyName("azure_openai"),
