@@ -35,6 +35,8 @@ from avalan.tool.display import (
     sanitize_display_label,
     sanitize_display_value,
     tool_call_display_projection_from_metadata,
+    tool_display_arguments_redacted,
+    tool_display_arguments_redaction,
     tool_display_projection_from_metadata,
     tool_display_projection_metadata,
     tool_outcome_display_projection_from_metadata,
@@ -180,6 +182,36 @@ def test_sensitive_labels_and_values_are_redacted() -> None:
     assert details[1].value == REDACTED_DISPLAY_VALUE
     assert details[2].value == REDACTED_DISPLAY_VALUE
     assert projection.redacted
+
+
+def test_tool_argument_redaction_context_is_nested_and_restored() -> None:
+    assert tool_display_arguments_redacted()
+
+    with tool_display_arguments_redaction(False):
+        assert not tool_display_arguments_redacted()
+        projection = ToolDisplayProjection(
+            action="search",
+            label="third.party",
+            target="token",
+            details=(
+                ToolDisplayDetail(label="api_key", value="abc123"),
+                ToolDisplayDetail(
+                    label="notes",
+                    value="password=hunter2",
+                ),
+            ),
+        )
+        with tool_display_arguments_redaction(True):
+            assert tool_display_arguments_redacted()
+        assert not tool_display_arguments_redacted()
+
+    details = tuple(projection.details)
+    assert tool_display_arguments_redacted()
+    assert projection.target == "token"
+    assert details[0].label == "api_key"
+    assert details[0].value == "abc123"
+    assert details[1].value == "password=hunter2"
+    assert not projection.redacted
 
 
 def test_control_obfuscated_sensitive_labels_are_redacted() -> None:

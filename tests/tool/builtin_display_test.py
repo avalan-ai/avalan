@@ -34,7 +34,10 @@ from avalan.tool.builtin_display import (
     project_search_tool_display,
 )
 from avalan.tool.code import CodeToolSet
-from avalan.tool.display import ToolDisplayProjection
+from avalan.tool.display import (
+    ToolDisplayProjection,
+    tool_display_arguments_redaction,
+)
 from avalan.tool.graph import GraphToolSet
 from avalan.tool.manager import ToolManager
 from avalan.tool.math import MathToolSet
@@ -202,6 +205,48 @@ def test_browser_projection_handles_empty_and_malformed_urls() -> None:
     assert relative_query_projection.target == "docs/page"
     assert relative_projection.target == "docs/page"
     assert not relative_projection.redacted
+
+
+def test_unredacted_mode_shows_url_arguments_without_credentials() -> None:
+    url = "https://example.test/page?token=visible#section"
+    credential_url = (
+        "https://user:hunter2@example.test/page?token=secret#section"
+    )
+    file_path = "/workspace/private/chart.png"
+
+    with tool_display_arguments_redaction(False):
+        projection = project_browser_open_tool_display(
+            call=ToolCall(
+                id="browser-open-visible",
+                name="browser.open",
+                arguments={"url": url},
+            )
+        )
+        credential_projection = project_browser_open_tool_display(
+            call=ToolCall(
+                id="browser-open-credential",
+                name="browser.open",
+                arguments={"url": credential_url},
+            )
+        )
+        graph_projection = project_graph_tool_display(
+            call=ToolCall(
+                id="graph-visible-path",
+                name="graph.bar",
+                arguments={"categories": ["A"], "values": [1]},
+            ),
+            settings={"file": file_path},
+        )
+
+    payload = _payload_text(credential_projection)
+    assert projection.target == url
+    assert not projection.redacted
+    assert credential_projection.redacted
+    assert credential_projection.target == "https://example.test/page"
+    assert file_path in _payload_text(graph_projection)
+    assert not graph_projection.redacted
+    assert "hunter2" not in payload
+    assert "token=secret" not in payload
 
 
 def test_protocol_relative_urls_do_not_leak_credentials() -> None:

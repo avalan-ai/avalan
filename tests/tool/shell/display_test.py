@@ -15,7 +15,10 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolValue,
 )
-from avalan.tool.display import ToolDisplayProjection
+from avalan.tool.display import (
+    ToolDisplayProjection,
+    tool_display_arguments_redaction,
+)
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     SHELL_COMMAND_DEFINITIONS,
@@ -1885,6 +1888,79 @@ class ShellDisplayProjectionTerminalTest(IsolatedAsyncioTestCase):
                 projection = _terminal_projection(manager, outcome)
                 payload = dumps(projection.to_payload(), sort_keys=True)
 
+                self.assertTrue(projection.redacted)
+                self.assertNotIn(argument, payload)
+                self.assertIn("[redacted]", payload)
+
+    def test_terminal_projection_can_show_logical_display_argv(self) -> None:
+        manager = _shell_manager(["shell.sed"])
+        selector = "/tool-skills-file/p"
+        path = "/workspace/src/avalan/cli/__main__.py"
+        call = ToolCall(
+            id="call-sed",
+            name="shell.sed",
+            arguments={"patterns": ["tool-skills-file"], "paths": [path]},
+        )
+        result = ExecutionResult(
+            backend="local",
+            tool_name="shell.sed",
+            command="sed",
+            argv=("sed", "-n", "-e", selector, path),
+            display_argv=("sed", "-n", "-e", selector, path),
+            cwd=".",
+            display_cwd=".",
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.TEXT,
+            error_code=ShellExecutionErrorCode.COMPLETED,
+        )
+        outcome = ToolCallResult(
+            id="result-sed",
+            call=call,
+            name=call.name,
+            arguments=call.arguments,
+            result=ShellFormattedResult("formatted", result),
+        )
+
+        with tool_display_arguments_redaction(False):
+            projection = _terminal_projection(manager, outcome)
+
+        payload = dumps(projection.to_payload(), sort_keys=True)
+        self.assertFalse(projection.redacted)
+        self.assertIn(selector, payload)
+        self.assertIn(path, payload)
+        self.assertNotIn("[redacted]", payload)
+
+    def test_unredacted_mode_keeps_non_optional_shell_safety(self) -> None:
+        for argument in (
+            "\x1b]0;unsafe\x07",
+            "/tmp/avalan-shell-private/page",
+        ):
+            with self.subTest(argument=argument):
+                result = ExecutionResult(
+                    backend="local",
+                    tool_name="shell.rg",
+                    command="rg",
+                    argv=("rg", argument),
+                    display_argv=("rg", argument),
+                    cwd=".",
+                    display_cwd=".",
+                    status=ShellExecutionStatus.COMPLETED,
+                    exit_code=0,
+                    stdout="",
+                    stderr="",
+                    stdout_media_type="text/plain",
+                    output_kind=ShellOutputKind.TEXT,
+                    error_code=ShellExecutionErrorCode.COMPLETED,
+                )
+
+                with tool_display_arguments_redaction(False):
+                    projection = project_shell_execution_result(result)
+
+                payload = dumps(projection.to_payload(), sort_keys=True)
                 self.assertTrue(projection.redacted)
                 self.assertNotIn(argument, payload)
                 self.assertIn("[redacted]", payload)

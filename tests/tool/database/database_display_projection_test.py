@@ -39,7 +39,11 @@ from avalan.tool.database.sample import DatabaseSampleTool
 from avalan.tool.database.size import DatabaseSizeTool
 from avalan.tool.database.tables import DatabaseTablesTool
 from avalan.tool.database.tasks import DatabaseTasksTool
-from avalan.tool.display import ToolDisplayDetail, ToolDisplayProjection
+from avalan.tool.display import (
+    ToolDisplayDetail,
+    ToolDisplayProjection,
+    tool_display_arguments_redaction,
+)
 from avalan.tool.manager import ToolManager
 
 _DSN = "postgresql+asyncpg://db_user:super-secret-password@example.com/app"
@@ -117,6 +121,23 @@ def test_query_calls_show_bounded_redacted_sql_summary() -> None:
         assert projection.truncated
         assert len(projection.preview.content) <= 320
         assert _detail_value(projection, "sql_command") == "SELECT"
+
+
+def test_unredacted_mode_shows_bounded_sql_arguments() -> None:
+    manager = _manager()
+    sql = (
+        "SELECT id FROM users WHERE password_hash = 'hunter2' "
+        "AND api_token = 'token-secret'"
+    )
+
+    with tool_display_arguments_redaction(False):
+        projection = _project_call(manager, "database.run", {"sql": sql})
+
+    assert projection.preview is not None
+    assert projection.preview.content == sql
+    assert _detail_value(projection, "sql") == sql
+    assert not projection.redacted
+    assert not projection.truncated
 
 
 def test_query_calls_redact_sensitive_sql_edge_cases() -> None:

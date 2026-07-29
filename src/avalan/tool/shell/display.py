@@ -4,6 +4,7 @@ from ..display import (
     ToolDisplayDetail,
     ToolDisplayPreview,
     ToolDisplayProjection,
+    tool_display_arguments_redacted,
 )
 from .commands.helpers import is_denied_display_path
 from .entities import (
@@ -1173,7 +1174,9 @@ def _safe_path(path: str | None) -> tuple[str | None, bool]:
     if path is None:
         return None, False
     assert isinstance(path, str)
-    if _is_unsafe_display_path(path) or is_denied_display_path(path):
+    if is_denied_display_path(path) or (
+        tool_display_arguments_redacted() and _is_unsafe_display_path(path)
+    ):
         return REDACTED_DISPLAY_VALUE, True
     return path, False
 
@@ -1194,9 +1197,11 @@ def _is_unsafe_display_path(path: str) -> bool:
 def _safe_generated_path(path: str) -> tuple[str, bool]:
     assert isinstance(path, str)
     if (
-        _is_unsafe_display_path(path)
-        or is_denied_display_path(path)
+        is_denied_display_path(path)
         or any(marker in path for marker in _GENERATED_OUTPUT_PATH_MARKERS)
+        or (
+            tool_display_arguments_redacted() and _is_unsafe_display_path(path)
+        )
     ):
         return REDACTED_DISPLAY_VALUE, True
     return path, False
@@ -1216,8 +1221,11 @@ def _is_unsafe_command_argument(argument: str) -> bool:
     if _has_unsafe_control_character(argument):
         return True
     return any(
-        _is_unsafe_command_path_candidate(candidate)
-        or is_denied_display_path(candidate)
+        is_denied_display_path(candidate)
+        or (
+            tool_display_arguments_redacted()
+            and _is_unsafe_command_path_candidate(candidate)
+        )
         for candidate in _command_path_candidates(argument)
     )
 
@@ -1348,8 +1356,9 @@ def _append_globs(
     for item in value:
         glob = str(item)
         display_path = glob[1:] if glob.startswith("!") else glob
-        if _is_unsafe_display_path(display_path) or is_denied_display_path(
-            display_path
+        if is_denied_display_path(display_path) or (
+            tool_display_arguments_redacted()
+            and _is_unsafe_display_path(display_path)
         ):
             globs.append(REDACTED_DISPLAY_VALUE)
             redacted = True

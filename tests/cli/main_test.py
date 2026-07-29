@@ -212,6 +212,10 @@ class CliInitTestCase(TestCase):
         self.assertIn("--display-events", model_run_help)
         self.assertIn("--stats", model_run_help)
         self.assertIn("--display-tools", model_run_help)
+        self.assertIn(
+            "--display-tools-arguments-redacted",
+            model_run_help,
+        )
         self.assertIn("--display-tools-events", model_run_help)
         self.assertIn("--display-reasoning-raw", model_run_help)
         self.assertIn("--display-reasoning-simple", model_run_help)

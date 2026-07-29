@@ -11,6 +11,7 @@ from .display import (
     ToolDisplayDetail,
     ToolDisplayPreview,
     ToolDisplayProjection,
+    tool_display_arguments_redacted,
 )
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -825,6 +826,12 @@ def _safe_url(value: str | None) -> tuple[str | None, bool]:
         parsed = urlsplit(value)
     except ValueError:
         return REDACTED_DISPLAY_VALUE, True
+    if (
+        not tool_display_arguments_redacted()
+        and not parsed.username
+        and not parsed.password
+    ):
+        return value, False
     redacted = bool(
         parsed.username or parsed.password or parsed.query or parsed.fragment
     )
@@ -848,6 +855,8 @@ def _safe_url(value: str | None) -> tuple[str | None, bool]:
 def _safe_path(value: str | None) -> tuple[str | None, bool]:
     if not value:
         return None, False
+    if not tool_display_arguments_redacted():
+        return value, False
     if (
         value.startswith(("/", "~"))
         or "\\" in value

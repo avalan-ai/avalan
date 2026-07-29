@@ -7,7 +7,9 @@ from ..entities import (
     ToolValue,
 )
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Iterator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from math import isfinite
 from re import IGNORECASE, sub
@@ -27,6 +29,11 @@ MAX_DISPLAY_SCAN_LENGTH = 1000
 
 ToolDisplayScalar: TypeAlias = None | bool | int | float | str
 
+_TOOL_DISPLAY_ARGUMENTS_REDACTED = ContextVar(
+    "avalan_tool_display_arguments_redacted",
+    default=True,
+)
+
 _SENSITIVE_DISPLAY_PATTERN = compile_pattern(
     r"api[_-]?key|authorization|bearer|credential|password|passwd|"
     r"private[_-]?key|secret|session[_-]?key|token",
@@ -40,6 +47,22 @@ _ANSI_CONTROL_STRING_PATTERN = (
 )
 _ANSI_CSI_PATTERN = r"(?:\x1b\[|\x9b)[0-?]*[ -/]*[@-~]"
 _ANSI_ESCAPE_PATTERN = r"\x1b[ -/]*[0-~]"
+
+
+def tool_display_arguments_redacted() -> bool:
+    """Return whether tool display arguments use privacy redaction."""
+    return _TOOL_DISPLAY_ARGUMENTS_REDACTED.get()
+
+
+@contextmanager
+def tool_display_arguments_redaction(enabled: bool) -> Iterator[None]:
+    """Temporarily configure tool display argument privacy redaction."""
+    assert isinstance(enabled, bool)
+    token = _TOOL_DISPLAY_ARGUMENTS_REDACTED.set(enabled)
+    try:
+        yield
+    finally:
+        _TOOL_DISPLAY_ARGUMENTS_REDACTED.reset(token)
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -611,7 +634,11 @@ def _sanitize_display_text(
     assert isinstance(text, str)
     assert isinstance(max_length, int)
     assert max_length > len(TRUNCATED_DISPLAY_SUFFIX)
-    if redact_sensitive and _contains_sensitive_text(text):
+    if (
+        redact_sensitive
+        and tool_display_arguments_redacted()
+        and _contains_sensitive_text(text)
+    ):
         return _SanitizedText(value=REDACTED_DISPLAY_VALUE, redacted=True)
     source, source_truncated = _bounded_text_sample(text, max_length)
     normalized = _normalize_display_text(source)
@@ -651,9 +678,8 @@ def _sanitize_display_scalar(
         assert isinstance(label, str)
     assert isinstance(max_length, int)
     assert max_length > len(TRUNCATED_DISPLAY_SUFFIX)
-    if (
-        label is not None
-        and is_sensitive_display_label(label)
+    if tool_display_arguments_redacted() and (
+        (label is not None and is_sensitive_display_label(label))
         or is_sensitive_display_value(value)
     ):
         return _SanitizedScalar(

@@ -11,6 +11,7 @@ from ..display import (
     ToolDisplayPreview,
     ToolDisplayProjection,
     is_sensitive_display_value,
+    tool_display_arguments_redacted,
     truncate_display_text,
 )
 from . import (
@@ -790,7 +791,7 @@ def _safe_sql_text(sql: str) -> _DisplayText:
         return _DisplayText(value="")
 
     normalized = _WHITESPACE_PATTERN.sub(" ", raw)
-    if _has_sensitive_sql_context(raw):
+    if tool_display_arguments_redacted() and _has_sensitive_sql_context(raw):
         return _DisplayText(
             value=_sensitive_sql_summary(normalized),
             redacted=True,
@@ -804,7 +805,9 @@ def _safe_sql_text(sql: str) -> _DisplayText:
         quoted = literal[1:] if prefix else literal
         quote = quoted[0]
         content = quoted[1:-1]
-        if is_sensitive_display_value(content):
+        if tool_display_arguments_redacted() and is_sensitive_display_value(
+            content
+        ):
             redacted = True
             return f"{prefix}{quote}{REDACTED_DISPLAY_VALUE}{quote}"
         if len(content) <= _SQL_LITERAL_LIMIT:

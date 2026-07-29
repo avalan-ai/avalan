@@ -51,6 +51,7 @@ from ...model.stream import (
     stream_projection_text_delta,
 )
 from ...secrets import KeyringSecrets
+from ...tool.display import tool_display_arguments_redaction
 from . import ModelSettings, get_model_settings, is_ds4_backend_selected
 
 from argparse import Namespace
@@ -1121,40 +1122,48 @@ async def token_generation(
             await render_snapshot()
 
     async def event_stream() -> None:
-        async for event in event_listen(stop_signal=stop_signal):
-            assert _has_side_channel_event_fields(event)
-            await reduce_event(cast(CliSideChannelEvent, event))
+        with tool_display_arguments_redaction(
+            display_config.display_tools_arguments_redacted
+        ):
+            async for event in event_listen(stop_signal=stop_signal):
+                assert _has_side_channel_event_fields(event)
+                await reduce_event(cast(CliSideChannelEvent, event))
 
     async def response_stream() -> None:
         nonlocal side_channel_events_enabled, snapshot_revision
         try:
-            async for projection in _stream_render_projections(
-                response,
-                stream_session_id="cli-render-stream",
-                run_id="cli-render-run",
-                turn_id="cli-render-turn",
+            with tool_display_arguments_redaction(
+                display_config.display_tools_arguments_redacted
             ):
-                if projection.terminal_outcome is not None:
-                    side_channel_events_enabled = False
-                    stop_signal.set()
-                await reduce_projection(projection)
-                if (
-                    projection.terminal_outcome
-                    is StreamTerminalOutcome.INPUT_REQUIRED
+                async for projection in _stream_render_projections(
+                    response,
+                    stream_session_id="cli-render-stream",
+                    run_id="cli-render-run",
+                    turn_id="cli-render-turn",
                 ):
-                    correlation = projection.correlation
-                    if not (
-                        correlation.request_id and correlation.continuation_id
+                    if projection.terminal_outcome is not None:
+                        side_channel_events_enabled = False
+                        stop_signal.set()
+                    await reduce_projection(projection)
+                    if (
+                        projection.terminal_outcome
+                        is StreamTerminalOutcome.INPUT_REQUIRED
                     ):
-                        raise StreamValidationError(
-                            "CLI input-required projection lacks correlation"
+                        correlation = projection.correlation
+                        if not (
+                            correlation.request_id
+                            and correlation.continuation_id
+                        ):
+                            raise StreamValidationError(
+                                "CLI input-required projection lacks "
+                                "correlation"
+                            )
+                        raise interaction_renderer.CliInteractionExit(
+                            interaction_renderer.cli_input_required_result(
+                                str(correlation.request_id),
+                                str(correlation.continuation_id),
+                            )
                         )
-                    raise interaction_renderer.CliInteractionExit(
-                        interaction_renderer.cli_input_required_result(
-                            str(correlation.request_id),
-                            str(correlation.continuation_id),
-                        )
-                    )
         except BaseException:
             stop_signal.set()
             raise
@@ -1509,6 +1518,9 @@ def _legacy_stream_display_config(
         ),
         display_reasoning_simple=bool(
             getattr(args, "display_reasoning_simple", False)
+        ),
+        display_tools_arguments_redacted=bool(
+            getattr(args, "display_tools_arguments_redacted", False)
         ),
     )
 
