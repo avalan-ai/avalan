@@ -1337,6 +1337,14 @@ class CLI:
             help="Show tool lifecycle details for agent or orchestrator runs.",
         )
         model_inference_display_parser.add_argument(
+            "--display-tools-arguments-redacted",
+            action="store_true",
+            help=(
+                "Redact sensitive-looking tool arguments in lifecycle "
+                "displays."
+            ),
+        )
+        model_inference_display_parser.add_argument(
             "--display-tools-events",
             type=int,
             default=None,

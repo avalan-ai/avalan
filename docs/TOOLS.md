@@ -63,6 +63,9 @@ echo "What is (4 + 6) * 5 / 2?" \
 Use `--display-tools` to show tool calls and results, `--display-events` for
 non-tool stream events, and `--tools-confirm` when a human should approve each
 call before execution.
+Tool arguments are visible by default. Add
+`--display-tools-arguments-redacted` to apply conservative privacy redaction
+to sensitive-looking argument values in lifecycle displays.
 
 ## Schemas and Formats
 

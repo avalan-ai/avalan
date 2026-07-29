@@ -4,7 +4,7 @@
   "exclusions": [
     {
       "path": "src/avalan/cli/__main__.py",
-      "line": 5267,
+      "line": 5275,
       "text": "    main()  # pragma: no cover"
     },
     {
@@ -29,7 +29,7 @@
     },
     {
       "path": "src/avalan/cli/commands/model.py",
-      "line": 338,
+      "line": 339,
       "text": "                )  # pragma: no cover - unreachable"
     },
     {
@@ -440,7 +440,7 @@
       182,
       183,
       184,
-      5267
+      5275
     ],
     "src/avalan/cli/commands/agent.py": [
       678,
@@ -491,9 +491,9 @@
       2676
     ],
     "src/avalan/cli/commands/model.py": [
-      96,
       97,
-      336
+      98,
+      337
     ],
     "src/avalan/cli/download.py": [
       95,
@@ -2435,5 +2435,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "e77869f2d3936879509c270ea672955aacc05fd463df4eae504122553892a05d"
+  "snapshot_sha256": "e0a9ee6f4f57ec4340a9e36ef900f1c7e941597dacf252b7bc2b6105b0ece40c"
 }

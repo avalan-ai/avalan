@@ -791,6 +791,7 @@ usage: avalan agent run [-h] [--cache-dir CACHE_DIR] [--subfolder SUBFOLDER]
                         [--skip-display-reasoning-time] [--display-reasoning]
                         [--display-reasoning-raw] [--display-reasoning-simple]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-arguments-redacted]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
                         [--id ID] [--participant PARTICIPANT] [--conversation]
@@ -1006,6 +1007,9 @@ options:
                         time
   --display-tools       Show tool lifecycle details for agent or orchestrator
                         runs.
+  --display-tools-arguments-redacted
+                        Redact sensitive-looking tool arguments in lifecycle
+                        displays.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel.
                         Defaults to all retained tool events; use 0 to hide
@@ -3519,6 +3523,7 @@ plicate}]
                         [--display-time-to-n-token [DISPLAY_TIME_TO_N_TOKEN]] [--skip-display-reasoning-time]
                         [--display-reasoning] [--display-reasoning-raw] [--display-reasoning-simple]
                         [--display-tokens [DISPLAY_TOKENS]] [--display-tools]
+                        [--display-tools-arguments-redacted]
                         [--display-tools-events DISPLAY_TOOLS_EVENTS]
                         [--display-answer-height-expand | --display-answer-height DISPLAY_ANSWER_HEIGHT]
                         [--attention {eager,flash_attention_2,flex_attention,sdpa}] [--output-hidden-states] [--path PATH]
@@ -3638,6 +3643,8 @@ plicate}
   --display-tokens [DISPLAY_TOKENS]
                         How many tokens with full information to display at a time
   --display-tools       Show tool lifecycle details for agent or orchestrator runs.
+  --display-tools-arguments-redacted
+                        Redact sensitive-looking tool arguments in lifecycle displays.
   --display-tools-events DISPLAY_TOOLS_EVENTS
                         How many tool events to show on tool call panel.
                         Defaults to all retained tool events; use 0 to hide

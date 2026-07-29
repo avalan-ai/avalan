@@ -29,6 +29,7 @@ class CliStreamDisplayConfig:
     display_reasoning: bool = False
     display_reasoning_raw: bool = False
     display_reasoning_simple: bool = False
+    display_tools_arguments_redacted: bool = False
 
     def __post_init__(self) -> None:
         assert isinstance(self.quiet, bool)
@@ -61,6 +62,7 @@ class CliStreamDisplayConfig:
         assert isinstance(self.display_reasoning, bool)
         assert isinstance(self.display_reasoning_raw, bool)
         assert isinstance(self.display_reasoning_simple, bool)
+        assert isinstance(self.display_tools_arguments_redacted, bool)
 
     @property
     def diagnostic_channel(self) -> DiagnosticChannel:
@@ -171,6 +173,9 @@ def cli_stream_display_config(
             display_reasoning=False,
             display_reasoning_raw=False,
             display_reasoning_simple=False,
+            display_tools_arguments_redacted=bool(
+                getattr(args, "display_tools_arguments_redacted", False)
+            ),
         )
 
     display_tools_events = getattr(args, "display_tools_events", None)
@@ -217,5 +222,8 @@ def cli_stream_display_config(
         ),
         display_reasoning_simple=bool(
             getattr(args, "display_reasoning_simple", False)
+        ),
+        display_tools_arguments_redacted=bool(
+            getattr(args, "display_tools_arguments_redacted", False)
         ),
     )

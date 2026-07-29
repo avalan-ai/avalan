@@ -15,6 +15,7 @@ def _args(**overrides: object) -> Namespace:
         "quiet": False,
         "stats": False,
         "display_tools": False,
+        "display_tools_arguments_redacted": False,
         "display_events": False,
         "display_tools_events": None,
         "record": False,
@@ -48,6 +49,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     "show_events": False,
                     "show_reasoning": False,
                     "display_tools_events": None,
+                    "display_tools_arguments_redacted": False,
                     "display_reasoning": False,
                     "display_reasoning_raw": False,
                     "display_reasoning_simple": False,
@@ -116,6 +118,16 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 },
             ),
             (
+                "display-tools-arguments-redacted",
+                _args(display_tools_arguments_redacted=True),
+                True,
+                {
+                    "display_tools_arguments_redacted": True,
+                    "diagnostic_channel": "none",
+                    "answer_stdout_only": False,
+                },
+            ),
+            (
                 "display-events",
                 _args(display_events=True),
                 True,
@@ -143,6 +155,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "display-tools-events-zero",
                 _args(
                     display_tools=True,
+                    display_tools_arguments_redacted=True,
                     display_events=True,
                     display_tools_events=0,
                 ),
@@ -194,6 +207,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                     quiet=True,
                     stats=True,
                     display_tools=True,
+                    display_tools_arguments_redacted=True,
                     display_events=True,
                     display_tools_events=3,
                     record=True,
@@ -209,6 +223,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 {
                     "stats": False,
                     "display_tools": False,
+                    "display_tools_arguments_redacted": True,
                     "display_events": False,
                     "display_tools_events": 0,
                     "record": False,
@@ -337,6 +352,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
             ("display_time_to_n_token", 0),
             ("display_reasoning_raw", "yes"),
             ("display_reasoning_simple", "yes"),
+            ("display_tools_arguments_redacted", "yes"),
         ]
 
         for attribute, value in cases:
@@ -354,6 +370,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "model-id",
                 "--stats",
                 "--display-tools",
+                "--display-tools-arguments-redacted",
                 "--display-events",
                 "--display-tools-events",
                 "0",
@@ -368,6 +385,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "agent.toml",
                 "--stats",
                 "--display-tools",
+                "--display-tools-arguments-redacted",
                 "--display-events",
                 "--display-tools-events",
                 "0",
@@ -379,6 +397,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
         for parsed in (model_args, agent_args):
             self.assertTrue(parsed.stats)
             self.assertTrue(parsed.display_tools)
+            self.assertTrue(parsed.display_tools_arguments_redacted)
             self.assertTrue(parsed.display_events)
             self.assertEqual(parsed.display_tools_events, 0)
             self.assertTrue(parsed.display_reasoning_raw)
@@ -393,6 +412,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
 
         for parsed in (model_args, agent_args):
             self.assertIsNone(parsed.display_tools_events)
+            self.assertFalse(parsed.display_tools_arguments_redacted)
             self.assertFalse(parsed.display_reasoning_raw)
             self.assertFalse(parsed.display_reasoning_simple)
             config = cli_stream_display_config(
@@ -401,6 +421,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 interactive=True,
             )
             self.assertIsNone(config.display_tools_events)
+            self.assertFalse(config.display_tools_arguments_redacted)
 
     def test_model_and_agent_run_parse_quiet_record_display_surface(
         self,
@@ -415,6 +436,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "--record",
                 "--stats",
                 "--display-tools",
+                "--display-tools-arguments-redacted",
                 "--display-events",
                 "--display-tools-events",
                 "0",
@@ -427,6 +449,7 @@ class CliStreamDisplayConfigTestCase(TestCase):
                 "--record",
                 "--stats",
                 "--display-tools",
+                "--display-tools-arguments-redacted",
                 "--display-events",
                 "--display-tools-events",
                 "0",
@@ -446,10 +469,12 @@ class CliStreamDisplayConfigTestCase(TestCase):
             self.assertTrue(parsed.record)
             self.assertTrue(parsed.stats)
             self.assertTrue(parsed.display_tools)
+            self.assertTrue(parsed.display_tools_arguments_redacted)
             self.assertTrue(parsed.display_events)
             self.assertEqual(parsed.display_tools_events, 0)
             self.assertFalse(config.record)
             self.assertFalse(config.show_stats)
             self.assertFalse(config.show_tools)
+            self.assertTrue(config.display_tools_arguments_redacted)
             self.assertFalse(config.show_events)
             self.assertTrue(config.answer_stdout_only)

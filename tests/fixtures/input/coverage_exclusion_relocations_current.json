@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "e77869f2d3936879509c270ea672955aacc05fd463df4eae504122553892a05d",
+  "current_snapshot_sha256": "e0a9ee6f4f57ec4340a9e36ef900f1c7e941597dacf252b7bc2b6105b0ece40c",
   "directives": {
     "added": 12,
     "removed": 0,
     "relocated": 11,
-    "sha256": "4f7a701bb51900f3eb1081607f8cb26467796bff9eddf624f8e506ece5aefebb"
+    "sha256": "d852f4849b56a76f98c05ed30679a08fb5c99847de88e26279368a389f71846e"
   },
   "report_lines": {
     "added": 939,
     "removed": 274,
-    "sha256": "c67a9e1237cb4e76d91739e8e0745247ef05a7406931cd0272a1b4821f1399fe"
+    "sha256": "4abba4aca269cc91bfbcee4dbfcc9b23174c9f55b28aa32c9b458b86e5ae0bed"
   },
   "review": {
-    "reviewed_by": "structured-input acceptance cleanup",
-    "rationale": "The direct baseline-to-current digest replaces repeated cumulative phase snapshots while retaining exact derived exclusion deltas."
+    "reviewed_by": "tool display argument redaction",
+    "rationale": "The current snapshot tracks source-line relocations introduced by the tool display argument redaction option while retaining exact derived exclusion deltas."
   },
-  "ledger_sha256": "20418c5ca91c6d92390d1fdb5273411baf6d2eac08a88c597630678fcbae2d67"
+  "ledger_sha256": "4bf4cb620ab82bb81d454f3b71acdbf494f37bc47c0a7b399d2f9cf35e8568ac"
 }
