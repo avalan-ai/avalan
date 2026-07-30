@@ -176,6 +176,40 @@ class ShellSandboxPlanningTest(IsolatedAsyncioTestCase):
             ("/trusted/bin/date", "-u", "+sandbox=%Y %% %z"),
         )
 
+    async def test_shasum_sandbox_plan_preserves_bounded_argv(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "visible.bin").write_bytes(b"\x00avalan\xff")
+            settings = ShellToolSettings(
+                execution_mode="sandbox",
+                workspace_root=str(root),
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(
+                _shasum_request(
+                    "visible.bin",
+                    algorithm="512256",
+                )
+            )
+            plan = lower_shell_execution_spec(
+                spec,
+                sandbox_settings=_sandbox_settings(root),
+            )
+
+        assert plan.sandbox_plan is not None
+        self.assertEqual(
+            plan.sandbox_plan.request.argv,
+            (
+                "/trusted/bin/shasum",
+                "-a",
+                "512256",
+                "--",
+                "visible.bin",
+            ),
+        )
+
     async def test_montage_plan_uses_suffixed_generated_output(self) -> None:
         with TemporaryDirectory() as temporary_directory:
             root = Path(temporary_directory)
@@ -1680,6 +1714,27 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
     )
 
 
+def _shasum_request(
+    path: str,
+    *,
+    algorithm: str,
+) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name="shell.shasum",
+        command="shasum",
+        options={"algorithm": algorithm},
+        paths=(
+            PathOperand(
+                name="path",
+                path=path,
+                kind="file",
+                access="read",
+            ),
+        ),
+        cwd=None,
+    )
+
+
 def _montage_request() -> ShellCommandRequest:
     return ShellCommandRequest(
         tool_name="shell.montage",
@@ -1830,6 +1885,7 @@ def _sandbox_settings(
             "/trusted/bin/date",
             "/trusted/bin/montage",
             "/trusted/bin/pdftoppm",
+            "/trusted/bin/shasum",
         ),
         read_roots=(str(root),),
         scratch_roots=(str(root / "scratch"),),

@@ -47,6 +47,7 @@ from avalan.tool.shell import (
     MontageTool,
     PathOperand,
     PsTool,
+    ShasumTool,
     ShellCommandDefinition,
     ShellCommandRequest,
     ShellCommandStepRequest,
@@ -106,6 +107,10 @@ class ShellPublicApiTest(TestCase):
         )
         self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
         self.assertIs(DateTool, import_module("avalan.tool.shell").DateTool)
+        self.assertIs(
+            ShasumTool,
+            import_module("avalan.tool.shell").ShasumTool,
+        )
         self.assertIs(LsofTool, import_module("avalan.tool.shell").LsofTool)
         self.assertIs(
             MontageTool,
@@ -404,6 +409,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.rg",
             "avalan.tool.shell.commands.reportlab",
             "avalan.tool.shell.commands.sed",
+            "avalan.tool.shell.commands.shasum",
             "avalan.tool.shell.commands.tail",
             "avalan.tool.shell.commands.tesseract",
             "avalan.tool.shell.commands.wc",
@@ -428,6 +434,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.tools",
             "avalan.tool.shell.tools.date",
             "avalan.tool.shell.tools.montage",
+            "avalan.tool.shell.tools.shasum",
             "avalan.tool.shell.toolset",
         ):
             self.assertEqual(import_module(module_name).__name__, module_name)
@@ -497,6 +504,25 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(parameters["utc"].default, False)
         self.assertEqual(parameters["format"].default, "default")
         self.assertIsNone(parameters["custom_format"].default)
+
+    def test_shasum_contract_requires_paths_and_defaults_to_sha1(self) -> None:
+        parameters = signature(ShasumTool.__call__).parameters
+
+        self.assertEqual(
+            tuple(parameters)[:8],
+            (
+                "self",
+                "paths",
+                "algorithm",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+                "context",
+            ),
+        )
+        self.assertIs(parameters["paths"].default, parameters["paths"].empty)
+        self.assertEqual(parameters["algorithm"].default, "1")
 
     def test_shell_toolset_is_namespaced_with_available_tools(
         self,

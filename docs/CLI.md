@@ -311,6 +311,7 @@ Public shell tools:
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
 | `shell.date` | Read the current date and time in a bounded portable format. | core | `coreutils` |
+| `shell.shasum` | Hash explicit regular files with an allowlisted SHA algorithm. | core | `perl-utils` |
 | `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
 | `shell.ps` | Inspect a fixed summary or resource view for exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.lsof` | Inspect bounded descriptor metadata for exactly one selected process identifier. | process | `lsof` |
@@ -360,6 +361,19 @@ and arbitrary date operands are rejected before execution. Avalan prepends
 the required `+`; callers do not provide it as an option boundary. The clock
 and local timezone are those visible to the selected host, sandbox, or
 container backend.
+
+`shell.shasum` requires one or more explicit regular workspace file paths.
+Its `algorithm` values are `1`, `224`, `256`, `384`, `512`, `512224`, and
+`512256`; `1` is the default to match native `shasum`. Avalan passes only the
+fixed algorithm selector and an option boundary before normalized paths.
+Check-file mode, stdin, binary/text mode switches, tagged output, and
+arbitrary arguments are rejected before execution. Seatbelt execution grants
+this tool read-only access to the system-owned `/System/Library/Perl` runtime;
+it does not grant `/Library/Perl`. Bubblewrap exposes only roots from its
+trusted profile, so Linux operators must expose their distribution's Perl
+interpreter through `trusted_executables` or `executable_search_roots` and
+its library and module directories through `read_roots`. The documented
+Alpine container provides its complete runtime through `perl-utils`.
 
 `shell.montage` accepts two or more explicit workspace image paths. Shell
 brace expansion is not evaluated by the tool, so callers expand expressions

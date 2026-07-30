@@ -32,6 +32,7 @@ from ...entities import (
     ToolValue,
 )
 from ...isolation import (
+    SandboxBackend,
     SandboxEffectiveSettings,
     SandboxOutputPolicy,
     SandboxResourceLimits,
@@ -56,6 +57,7 @@ from .entities import (
     ShellExecutionStatus,
     ShellOutputKind,
     ShellPolicyDenied,
+    _ShellRuntimeDependency,
 )
 from .executor import (
     CommandExecutor,
@@ -79,6 +81,12 @@ _DEFAULT_CLEANUP_SECONDS = 5.0
 _GENERATED_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
 _MAX_PROGRESS_STREAM_BYTES = 4096
 _MAX_PROGRESS_STREAM_CHUNKS = 16
+_SEATBELT_RUNTIME_DEPENDENCY_READ_ROOTS: dict[
+    _ShellRuntimeDependency,
+    tuple[str, ...],
+] = {
+    _ShellRuntimeDependency.SYSTEM_PERL: ("/System/Library/Perl",),
+}
 
 
 class _ContainerGeneratedOutputError(Exception):
@@ -297,6 +305,11 @@ def _narrow_sandbox_settings(
     sandbox_settings: SandboxEffectiveSettings,
 ) -> SandboxEffectiveSettings:
     profile = sandbox_settings.profile
+    backend = cast(SandboxBackend, sandbox_settings.backend)
+    runtime_read_roots = _runtime_dependency_read_roots(
+        spec.runtime_dependencies,
+        backend,
+    )
     resources = replace(
         profile.resources,
         timeout_seconds=_sandbox_timeout_seconds(spec, profile.resources),
@@ -304,10 +317,27 @@ def _narrow_sandbox_settings(
     output = _sandbox_output_policy(spec, profile.output)
     narrowed_profile = replace(
         profile,
+        read_roots=tuple(
+            dict.fromkeys((*profile.read_roots, *runtime_read_roots))
+        ),
         resources=resources,
         output=output,
     )
     return replace(sandbox_settings, profile=narrowed_profile)
+
+
+def _runtime_dependency_read_roots(
+    dependencies: tuple[_ShellRuntimeDependency, ...],
+    backend: SandboxBackend,
+) -> tuple[str, ...]:
+    if backend is SandboxBackend.BUBBLEWRAP:
+        return ()
+    assert backend is SandboxBackend.SEATBELT
+    return tuple(
+        root
+        for dependency in dependencies
+        for root in _SEATBELT_RUNTIME_DEPENDENCY_READ_ROOTS[dependency]
+    )
 
 
 def _sandbox_timeout_seconds(

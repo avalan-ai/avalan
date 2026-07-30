@@ -148,6 +148,7 @@ from .tools import KillTool as KillTool
 from .tools import LsofTool as LsofTool
 from .tools import MontageTool as MontageTool
 from .tools import PsTool as PsTool
+from .tools import ShasumTool as ShasumTool
 from .toolset import ShellToolSet as ShellToolSet
 
 SHELL_GIT_DEFAULT_ALLOWED_COMMAND_IDS = _GIT_DEFAULT_ALLOWED_COMMAND_IDS

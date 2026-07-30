@@ -138,6 +138,7 @@ from .pypdf import PyPdfTool as PyPdfTool
 from .reportlab import ReportLabTool as ReportLabTool
 from .rg import RgTool as RgTool
 from .sed import SedTool as SedTool
+from .shasum import ShasumTool as ShasumTool
 from .tail import TailTool as TailTool
 from .tesseract import TesseractTool as TesseractTool
 from .wc import WcTool as WcTool

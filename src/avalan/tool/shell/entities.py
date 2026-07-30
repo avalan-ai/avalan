@@ -71,6 +71,24 @@ _SHELL_COMPOSITION_MODES: tuple[ShellCompositionMode, ...] = (
 )
 
 
+class _ShellRuntimeDependency(StrEnum):
+    SYSTEM_PERL = "system_perl"
+
+
+def _assert_shell_runtime_dependencies(
+    value: tuple[_ShellRuntimeDependency, ...],
+    field_name: str,
+) -> None:
+    assert isinstance(value, tuple), f"{field_name} must be a tuple"
+    assert len(value) == len(
+        set(value)
+    ), f"{field_name} must not contain duplicates"
+    for dependency in value:
+        assert isinstance(
+            dependency, _ShellRuntimeDependency
+        ), f"{field_name} must contain shell runtime dependencies"
+
+
 def _assert_composition_mode(value: object, field_name: str) -> None:
     _assert_non_empty_string(value, field_name)
     assert (
@@ -369,6 +387,7 @@ class ExecutionSpec:
     max_stdout_bytes: int
     max_stderr_bytes: int
     metadata: dict[str, object] = field(default_factory=dict)
+    runtime_dependencies: tuple[_ShellRuntimeDependency, ...] = ()
 
     def __post_init__(self, _policy_owned: object) -> None:
         assert (
@@ -422,10 +441,19 @@ class ExecutionSpec:
         _assert_non_negative_int(self.max_stdout_bytes, "max_stdout_bytes")
         _assert_non_negative_int(self.max_stderr_bytes, "max_stderr_bytes")
         assert isinstance(self.metadata, dict), "metadata must be a dictionary"
+        _assert_shell_runtime_dependencies(
+            self.runtime_dependencies,
+            "runtime_dependencies",
+        )
         object.__setattr__(self, "argv", tuple(self.argv))
         object.__setattr__(self, "display_argv", tuple(self.display_argv))
         object.__setattr__(self, "env", dict(self.env))
         object.__setattr__(self, "metadata", dict(self.metadata))
+        object.__setattr__(
+            self,
+            "runtime_dependencies",
+            tuple(self.runtime_dependencies),
+        )
 
 
 _EXECUTION_SPEC_FACTORY_KEY = object()
@@ -451,6 +479,7 @@ def _create_execution_spec_from_policy(
     max_stdout_bytes: int,
     max_stderr_bytes: int,
     metadata: dict[str, object] | None = None,
+    runtime_dependencies: tuple[_ShellRuntimeDependency, ...] = (),
 ) -> ExecutionSpec:
     if metadata is not None:
         assert isinstance(
@@ -477,6 +506,7 @@ def _create_execution_spec_from_policy(
         max_stdout_bytes=max_stdout_bytes,
         max_stderr_bytes=max_stderr_bytes,
         metadata=dict(metadata if metadata is not None else {}),
+        runtime_dependencies=runtime_dependencies,
     )
 
 

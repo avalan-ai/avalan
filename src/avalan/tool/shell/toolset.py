@@ -108,6 +108,7 @@ from .tools import (
     ReportLabTool,
     RgTool,
     SedTool,
+    ShasumTool,
     ShellCompositionResultFormatter,
     ShellResultFormatter,
     TailTool,
@@ -335,6 +336,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             DateTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            ShasumTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

@@ -19,6 +19,7 @@ by Avalan's common read-only shell tools:
 - `ps`
 - `rg`
 - `sed`
+- `shasum`
 - `tail`
 - `wc`
 - `awk`
@@ -94,6 +95,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.ps \
       --tool shell.rg \
       --tool shell.sed \
+      --tool shell.shasum \
       --tool shell.tail \
       --tool shell.wc \
       --tool shell.awk \
@@ -141,6 +143,12 @@ option or date operand. `default` leaves off the format operand, while
 `iso8601` emits `YYYY-MM-DDTHH:MM:SS+HHMM` or the corresponding negative
 numeric offset; UTC is `+0000`. The reported clock and local timezone belong
 to the container backend, not necessarily the host.
+
+`shell.shasum` is supplied by Alpine's `perl-utils` package. It hashes one or
+more explicit regular workspace files with SHA-1, SHA-224, SHA-256, SHA-384,
+SHA-512, SHA-512/224, or SHA-512/256. The default SHA-1 algorithm preserves
+native `shasum` behavior. Check-file mode, stdin, binary/text mode switches,
+tagged output, and arbitrary command arguments are not exposed.
 
 `shell.lsof` requires `--tool-shell-allow-process-tools` and inspects exactly
 one PID. It returns only bounded numeric-descriptor metadata with canonical
