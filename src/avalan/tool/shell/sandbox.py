@@ -31,10 +31,15 @@ from .entities import (
     ShellExecutionStatus,
     ShellOutputKind,
 )
-from .executor import CommandExecutor, _status_for_exit_code
+from .executor import (
+    CommandExecutor,
+    _status_for_exit_code,
+    generated_file_dimensions_from_bytes,
+)
 from .filesystem import make_directory as _make_directory
 from .filesystem import private_temp_directory
 from .filesystem import write_bytes as _write_bytes
+from .process import _GeneratedOutputError
 from .settings import ShellToolSettings
 
 from base64 import b64encode
@@ -605,6 +610,15 @@ async def _generated_files(
         total_bytes += len(content)
         if total_bytes > plan.max_total_bytes:
             raise _generated_output_too_large()
+        media_type = plan.suffix_media_types[suffix]
+        try:
+            width, height = generated_file_dimensions_from_bytes(
+                content,
+                media_type,
+                plan,
+            )
+        except _GeneratedOutputError:
+            raise _generated_output_too_large() from None
         display_path = _display_generated_path(path, plan)
         metadata: dict[str, object] = {}
         content_base64 = (
@@ -623,10 +637,12 @@ async def _generated_files(
         files.append(
             GeneratedFile(
                 display_path=display_path,
-                media_type=plan.suffix_media_types[suffix],
+                media_type=media_type,
                 suffix=suffix,
                 bytes=len(content),
                 sha256=sha256(content).hexdigest(),
+                width=width,
+                height=height,
                 content_base64=content_base64,
                 truncated=False,
                 metadata=metadata,

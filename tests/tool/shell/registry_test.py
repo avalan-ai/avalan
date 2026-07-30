@@ -64,6 +64,7 @@ class ShellRegistryTest(TestCase):
                 "pdfplumber",
                 "pypdf",
                 "tesseract",
+                "montage",
             ),
         )
 
@@ -144,6 +145,14 @@ class ShellRegistryTest(TestCase):
             groups_by_id["pypdf"], ShellDependencyGroup.PYTHON_PDF
         )
         self.assertEqual(groups_by_id["tesseract"], ShellDependencyGroup.OCR)
+        self.assertEqual(
+            groups_by_id["montage"],
+            ShellDependencyGroup.IMAGEMAGICK,
+        )
+        self.assertEqual(
+            SHELL_COMMAND_DEFINITIONS["montage"].container_package_hints,
+            ("imagemagick", "imagemagick-jpeg", "font-dejavu"),
+        )
 
     def test_command_definitions_include_complete_backend_metadata(
         self,
@@ -211,6 +220,7 @@ class ShellRegistryTest(TestCase):
                 "pdfplumber",
                 "pypdf",
                 "tesseract",
+                "montage",
             },
         )
         self.assertEqual(
@@ -230,6 +240,7 @@ class ShellRegistryTest(TestCase):
                 "pdfplumber",
                 "pypdf",
                 "tesseract",
+                "montage",
             },
         )
 

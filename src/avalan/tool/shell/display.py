@@ -39,6 +39,7 @@ _REQUEST_ACTIONS = {
     "head": "read",
     "tail": "read",
     "ls": "list",
+    "montage": "compose",
     "cat": "read",
     "nl": "number",
     "pgrep": "find",
@@ -64,6 +65,7 @@ _REQUEST_SUMMARIES = {
     "head": "Read the first part of a file.",
     "tail": "Read the last part of a file.",
     "ls": "List a path.",
+    "montage": "Create a composite image.",
     "cat": "Read a file.",
     "nl": "Number file lines.",
     "pgrep": "Find matching process identifiers.",
@@ -89,6 +91,7 @@ _PATH_TARGET_COMMANDS = frozenset(
         "head",
         "tail",
         "ls",
+        "montage",
         "cat",
         "nl",
         "file",
@@ -943,6 +946,17 @@ def _request_details(
             _append_option(details, request.options, "oem")
             _append_option(details, request.options, "dpi")
             _append_option(details, request.options, "output_format")
+        case "montage":
+            _append_option(details, request.options, "thumbnail")
+            _append_option(details, request.options, "tile")
+            _append_option(details, request.options, "geometry")
+            _append_option(details, request.options, "output_format")
+            _append_safe_path_option(
+                details,
+                request.options,
+                "output_filename",
+            )
+            _append_option(details, request.options, "quality")
     cwd, cwd_redacted = _safe_path(request.cwd)
     if cwd is not None:
         details.append(_detail("cwd", cwd, redacted=cwd_redacted))

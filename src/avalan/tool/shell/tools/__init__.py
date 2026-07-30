@@ -95,6 +95,7 @@ from .jq import JqTool as JqTool
 from .kill import KillTool as KillTool
 from .ls import LsTool as LsTool
 from .lsof import LsofTool as LsofTool
+from .montage import MontageTool as MontageTool
 from .nl import NlTool as NlTool
 from .pdfinfo import PdfInfoTool as PdfInfoTool
 from .pdfplumber import PdfPlumberTool as PdfPlumberTool

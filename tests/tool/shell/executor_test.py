@@ -1,3 +1,5 @@
+from .image_fixtures import VALID_JPEG_BYTES
+
 from asyncio import CancelledError, Event, create_task, gather, sleep, wait_for
 from asyncio.subprocess import DEVNULL, PIPE
 from base64 import b64encode
@@ -38,7 +40,7 @@ from avalan.tool.shell.executor import (
     _matches_generated_output_prefix,
     _safe_materialized_filename,
 )
-from avalan.tool.shell.filesystem import resolve_policy_path
+from avalan.tool.shell.filesystem import PNG_SIGNATURE, resolve_policy_path
 from avalan.tool.shell.policy import ExecutionPolicy
 from avalan.tool.shell.process import (
     ShellProcessLimiter,
@@ -2473,7 +2475,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             "generated image dimensions 3x2 exceed maximum pixels 5",
         )
 
-    async def test_generated_output_accepts_missing_dimensions_and_page(
+    async def test_generated_output_rejects_invalid_image_signature(
         self,
     ) -> None:
         result, _ = await _run_generated_output_case(
@@ -2482,11 +2484,63 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
             )
         )
 
+        self.assertEqual(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertEqual(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(
+            result.error_message,
+            "generated image signature is invalid",
+        )
+        self.assertEqual(result.generated_files, ())
+
+    async def test_generated_output_rejects_mismatched_image_signature(
+        self,
+    ) -> None:
+        result, _ = await _run_generated_output_case(
+            lambda plan: (Path(plan.prefix).parent / "page.png").write_bytes(
+                VALID_JPEG_BYTES
+            )
+        )
+
+        self.assertEqual(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertEqual(
+            result.error_message,
+            "generated image signature is invalid",
+        )
+        self.assertEqual(result.generated_files, ())
+
+    async def test_generated_output_rejects_truncated_png_header(self) -> None:
+        result, _ = await _run_generated_output_case(
+            lambda plan: (Path(plan.prefix).parent / "page.png").write_bytes(
+                PNG_SIGNATURE
+            )
+        )
+
+        self.assertEqual(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertEqual(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(
+            result.error_message,
+            "generated image signature is invalid",
+        )
+        self.assertEqual(result.generated_files, ())
+
+    async def test_generated_output_accepts_missing_page_number(self) -> None:
+        result, _ = await _run_generated_output_case(
+            lambda plan: (Path(plan.prefix).parent / "page.png").write_bytes(
+                _png_bytes(width=2, height=3)
+            )
+        )
+
         generated = result.generated_files[0]
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertIsNone(generated.page)
-        self.assertIsNone(generated.width)
-        self.assertIsNone(generated.height)
+        self.assertEqual(generated.width, 2)
+        self.assertEqual(generated.height, 3)
 
     async def test_generated_output_accepts_non_image_media_type(self) -> None:
         with TemporaryDirectory():

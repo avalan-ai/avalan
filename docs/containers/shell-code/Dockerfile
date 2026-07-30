@@ -8,8 +8,11 @@ RUN apk add --no-cache \
     coreutils \
     file \
     findutils \
+    font-dejavu \
     gawk \
     git \
+    imagemagick \
+    imagemagick-jpeg \
     jq \
     lsof \
     procps-ng \

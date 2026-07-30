@@ -327,9 +327,11 @@ Public shell tools:
 | `shell.pdfplumber` | Extract bounded text or tables from a PDF. | Python PDF | `python3` with `avalan` and `pdfplumber` |
 | `shell.pypdf` | Inspect metadata or extract bounded text from a PDF. | Python PDF | `python3` with `avalan` and `pypdf` |
 | `shell.tesseract` | Recognize text in an image. | OCR | `tesseract-ocr` or `tesseract` |
+| `shell.montage` | Create one bounded composite image from explicit image paths. | ImageMagick | `imagemagick`, JPEG codec support, and a configured font |
 
 Media tools (`shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
-`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, and `shell.tesseract`)
+`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, `shell.tesseract`, and
+`shell.montage`)
 are disabled unless `allow_media_tools = true`. Optional binaries are resolved
 at invocation time: if a configured command is not installed, the tool returns
 a formatted `command_unavailable` result instead of failing agent loading. The
@@ -337,6 +339,25 @@ Python PDF tools resolve a trusted Python executable and also report
 `command_unavailable` when the required package cannot be imported. In
 container mode, the selected image must make both `avalan` and the target PDF
 library importable to that Python interpreter.
+
+`shell.montage` accepts two or more explicit workspace image paths. Shell
+brace expansion is not evaluated by the tool, so callers expand expressions
+such as `page-0{1,2,3}` into separate `paths` values. Structured
+`thumbnail="425x550"`, `tile="3x2"`, `geometry="+8+8"`, and
+`output_format="jpg"` arguments cover the corresponding ImageMagick montage
+operation. The optional `output_filename` is a safe basename such as
+`contact-01-06.jpg`; directory-bearing output paths are rejected. The result
+is a bounded generated artifact on local, sandbox, and container backends,
+not an arbitrary workspace write. Each explicit input contributes only its
+first image scene, embedded label and caption properties are cleared, and
+ImageMagick receives bounded memory, map, disk, thread, and list-length
+resources. Generated JPEG and PNG signatures and dimensions are validated
+again after execution.
+The documented Alpine image supplies `DejaVu-Sans` automatically. Local and
+sandbox execution use the host ImageMagick font configuration by default;
+set the trusted `--tool-shell-montage-font` option to a host font name or file
+path when that configuration has no default font. Configured font values are
+redacted from model-visible command projections.
 
 `shell.pgrep`, `shell.ps`, and `shell.lsof` additionally require
 `allow_process_tools = true`. `shell.pgrep` accepts

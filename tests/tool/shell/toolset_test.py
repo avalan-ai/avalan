@@ -75,6 +75,7 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.pdfplumber",
     "shell.pypdf",
     "shell.tesseract",
+    "shell.montage",
 )
 _EXPECTED_GIT_READ_SCHEMA_NAMES = tuple(
     f"shell.git_{command_id.replace('-', '_')}"
@@ -906,6 +907,16 @@ async def _call_tesseract(tool: Tool) -> str:
     return await _call_tool(tool, "ocr/small.pgm")
 
 
+async def _call_montage(tool: Tool) -> str:
+    return await _call_tool(
+        tool,
+        ("ocr/small.pgm", "ocr/small.pgm"),
+        thumbnail="100x100",
+        tile="2x1",
+        output_format="jpg",
+    )
+
+
 async def _call_tool(tool: Tool, *args: object, **kwargs: object) -> str:
     return await tool(*args, **kwargs, context=ToolCallContext())
 
@@ -934,6 +945,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "pdfplumber": _call_pdfplumber,
     "pypdf": _call_pypdf,
     "tesseract": _call_tesseract,
+    "montage": _call_montage,
 }
 
 

@@ -99,6 +99,11 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.pdfplumber": {"path": "media/small.pdf", "last_page": 1},
     "shell.pypdf": {"path": "media/small.pdf"},
     "shell.tesseract": {"path": "ocr/small.pgm", "languages": ["eng"]},
+    "shell.montage": {
+        "paths": ["media/first.jpg", "media/second.jpg"],
+        "thumbnail": "425x550",
+        "tile": "2x1",
+    },
 }
 _EXPECTED_ACTIONS = {
     "shell.rg": "search",
@@ -124,6 +129,7 @@ _EXPECTED_ACTIONS = {
     "shell.pdfplumber": "extract",
     "shell.pypdf": "inspect",
     "shell.tesseract": "recognize",
+    "shell.montage": "compose",
 }
 
 

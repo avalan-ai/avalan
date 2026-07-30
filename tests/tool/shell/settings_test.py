@@ -74,6 +74,17 @@ class ShellToolSettingsTest(TestCase):
             "max_ocr_pixels": 20000000,
             "max_ocr_languages": 4,
             "max_tesseract_dpi": 600,
+            "max_montage_inputs": 64,
+            "max_montage_input_bytes": 268435456,
+            "max_montage_input_pixels": 200000000,
+            "max_montage_input_pixels_per_file": 50000000,
+            "max_montage_input_long_edge_pixels": 10000,
+            "max_montage_spacing_pixels": 1024,
+            "max_montage_memory_bytes": 268435456,
+            "max_montage_map_bytes": 536870912,
+            "max_montage_disk_bytes": 1073741824,
+            "max_montage_threads": 2,
+            "montage_font": "",
             "stream_read_chunk_bytes": 8192,
             "max_concurrent_processes": 4,
             "max_concurrent_heavy_processes": 1,
@@ -98,6 +109,10 @@ class ShellToolSettingsTest(TestCase):
                 self.assertEqual(getattr(settings, field_name), value)
         self.assertEqual(settings.allowed_commands, SHELL_COMMAND_IDS)
         self.assertEqual(settings.allowed_pdf_raster_formats, ("png",))
+        self.assertEqual(
+            settings.allowed_montage_output_formats,
+            ("jpg", "jpeg", "png"),
+        )
         self.assertEqual(settings.allowed_tesseract_output_formats, ("txt",))
         self.assertEqual(settings.allowed_tesseract_languages, ("eng",))
         self.assertEqual(settings.git, ShellGitToolSettings())
@@ -122,6 +137,7 @@ class ShellToolSettingsTest(TestCase):
         self.assertIn("max_pipeline_bytes", scalar_fields)
         self.assertIn("max_intermediate_bytes", scalar_fields)
         self.assertIn("pipeline_transport", scalar_fields)
+        self.assertIn("montage_font", scalar_fields)
         self.assertNotIn("allowed_commands", scalar_fields)
         self.assertNotIn("environment", scalar_fields)
         self.assertNotIn("environment_allowlist", scalar_fields)
@@ -460,6 +476,18 @@ class ShellToolSettingsTest(TestCase):
                     with self.assertRaises(AssertionError):
                         ShellToolSettings(**{field_name: value})
 
+    def test_montage_resource_limits_reject_zero_and_negative(self) -> None:
+        for field_name in (
+            "max_montage_memory_bytes",
+            "max_montage_map_bytes",
+            "max_montage_disk_bytes",
+            "max_montage_threads",
+        ):
+            for value in (0, -1):
+                with self.subTest(field_name=field_name, value=value):
+                    with self.assertRaises(AssertionError):
+                        ShellToolSettings(**{field_name: value})
+
     def test_rejects_invalid_scalar_settings(self) -> None:
         invalid_kwargs = (
             {"backend": "remote"},
@@ -473,6 +501,9 @@ class ShellToolSettingsTest(TestCase):
             {"input_file_manifest_message": ""},
             {"input_file_manifest_path_message": ""},
             {"pipeline_transport": "shell"},
+            {"montage_font": 1},
+            {"montage_font": "bad\x00font"},
+            {"montage_font": "x" * 4097},
             {"max_stdout_bytes": 0},
             {"max_stdin_bytes": 1},
             {"default_timeout_seconds": 61.0},
@@ -490,6 +521,8 @@ class ShellToolSettingsTest(TestCase):
             {"allowed_commands": ("unknown",)},
             {"allowed_pdf_raster_formats": ()},
             {"allowed_pdf_raster_formats": ("jpg",)},
+            {"allowed_montage_output_formats": ()},
+            {"allowed_montage_output_formats": ("gif",)},
             {"allowed_tesseract_output_formats": ()},
             {"allowed_tesseract_output_formats": ("pdf",)},
             {"allowed_tesseract_languages": ()},

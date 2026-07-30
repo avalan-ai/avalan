@@ -41,8 +41,13 @@ _DEFAULT_DENIED_SIGNATURES = (
     b"MZ",
     b"\x7fELF",
 )
+_DEFAULT_ARTIFACT_INSPECTION_BYTES = 16
+_MAX_IMAGE_INSPECTION_BYTES = 1048576
+_IMAGE_INSPECTION_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
 _EXTENSION_MEDIA_TYPES = {
     ".csv": "text/csv",
+    ".jpeg": "image/jpeg",
+    ".jpg": "image/jpeg",
     ".json": "application/json",
     ".jsonl": "application/json",
     ".log": "text/plain",
@@ -161,6 +166,15 @@ class ContainerOutputMediaPolicy:
             ],
         }
 
+    def denied_signature_matches(self, signature: bytes) -> tuple[bytes, ...]:
+        """Return denied prefixes matching an output signature."""
+        assert isinstance(signature, bytes), "signature must be bytes"
+        return tuple(
+            denied
+            for denied in self.denied_signatures
+            if signature.startswith(denied)
+        )
+
 
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -169,6 +183,7 @@ class ContainerOutputContract:
     max_bytes: int
     max_files: int = 1
     per_file_bytes: int | None = None
+    image_inspection_bytes: int | None = None
     enabled: bool = True
     media_policy: ContainerOutputMediaPolicy = field(
         default_factory=ContainerOutputMediaPolicy,
@@ -190,8 +205,27 @@ class ContainerOutputContract:
         _assert_positive_int(self.max_files, "max_files")
         if self.per_file_bytes is not None:
             _assert_positive_int(self.per_file_bytes, "per_file_bytes")
-        _assert_bool(self.enabled, "enabled")
         assert isinstance(self.media_policy, ContainerOutputMediaPolicy)
+        if self.image_inspection_bytes is not None:
+            _assert_positive_int(
+                self.image_inspection_bytes,
+                "image_inspection_bytes",
+            )
+            assert (
+                self.image_inspection_bytes
+                >= _DEFAULT_ARTIFACT_INSPECTION_BYTES
+            ), "image_inspection_bytes must preserve the signature prefix"
+            assert (
+                self.image_inspection_bytes <= _MAX_IMAGE_INSPECTION_BYTES
+            ), "image_inspection_bytes exceeds the image scan limit"
+            assert (
+                self.contract_type
+                is ContainerOutputContractType.GENERATED_FILE
+            ), "image inspection requires a generated-file contract"
+            assert set(self.media_policy.allowed_media_types).issubset(
+                _IMAGE_INSPECTION_MEDIA_TYPES
+            ), "image inspection requires JPEG or PNG media"
+        _assert_bool(self.enabled, "enabled")
         object.__setattr__(
             self,
             "allowed_uids",
@@ -208,6 +242,12 @@ class ContainerOutputContract:
         return self.per_file_bytes or self.max_bytes
 
     @property
+    def artifact_inspection_bytes(self) -> int:
+        return (
+            self.image_inspection_bytes or _DEFAULT_ARTIFACT_INSPECTION_BYTES
+        )
+
+    @property
     def is_stream(self) -> bool:
         contract_type = cast(ContainerOutputContractType, self.contract_type)
         return contract_type in {
@@ -217,7 +257,7 @@ class ContainerOutputContract:
 
     def to_dict(self) -> dict[str, object]:
         contract_type = cast(ContainerOutputContractType, self.contract_type)
-        return {
+        value: dict[str, object] = {
             "contract_type": contract_type.value,
             "max_bytes": self.max_bytes,
             "max_files": self.max_files,
@@ -231,6 +271,9 @@ class ContainerOutputContract:
                 None if self.allowed_gids is None else list(self.allowed_gids)
             ),
         }
+        if self.image_inspection_bytes is not None:
+            value["image_inspection_bytes"] = self.image_inspection_bytes
+        return value
 
 
 @final
@@ -327,6 +370,7 @@ class ContainerOutputArtifact:
     size_bytes: int
     media_type: str
     digest: str
+    signature: bytes = b""
     content: bytes | None = None
     quarantined: bool = False
 
@@ -344,6 +388,11 @@ class ContainerOutputArtifact:
         assert self.size_bytes >= 0, "size_bytes must not be negative"
         _assert_non_empty_string(self.media_type, "media_type")
         _assert_digest(self.digest)
+        assert isinstance(self.signature, bytes)
+        assert len(self.signature) <= min(
+            self.size_bytes,
+            _MAX_IMAGE_INSPECTION_BYTES,
+        ), "signature exceeds the artifact inspection bound"
         if self.content is not None:
             assert isinstance(self.content, bytes)
             assert len(self.content) == self.size_bytes
@@ -393,6 +442,10 @@ class ContainerArchiveEntry:
         if self.media_type is not None:
             _assert_non_empty_string(self.media_type, "media_type")
         assert isinstance(self.signature, bytes)
+        assert len(self.signature) <= min(
+            self.size_bytes,
+            _MAX_IMAGE_INSPECTION_BYTES,
+        ), "signature exceeds the archive inspection bound"
 
     def to_dict(self) -> dict[str, object]:
         entry_type = cast(ContainerArchiveEntryType, self.entry_type)
@@ -728,6 +781,7 @@ def validate_copied_outputs(
             stat_result.st_size,
             stat_result.st_uid,
             stat_result.st_gid,
+            contract.artifact_inspection_bytes,
         )
         if opened_file is None:
             entry_diagnostics.append(
@@ -758,6 +812,7 @@ def validate_copied_outputs(
                     size_bytes=stat_result.st_size,
                     media_type=media_type,
                     digest=digest,
+                    signature=signature,
                     quarantined=_partial_mode(
                         partial_output,
                         resolved_policy,
@@ -894,11 +949,27 @@ def validate_archive_entries(
                 canonical_path,
                 entry.media_type,
             )
+            inspection_bytes = min(
+                entry.size_bytes,
+                contract.artifact_inspection_bytes,
+            )
+            if (
+                contract.image_inspection_bytes is not None
+                and len(entry.signature) < inspection_bytes
+            ):
+                entry_diagnostics.append(
+                    _diagnostic(
+                        ContainerOutputDiagnosticCode.UNSAFE_SIGNATURE,
+                        canonical_path,
+                        "archive image inspection bytes are incomplete",
+                    )
+                )
+            signature = entry.signature[:inspection_bytes]
             entry_diagnostics.extend(
                 _media_diagnostics(
                     canonical_path,
                     media_type,
-                    entry.signature,
+                    signature,
                     contract.media_policy,
                 )
             )
@@ -911,6 +982,7 @@ def validate_archive_entries(
                         size_bytes=entry.size_bytes,
                         media_type=media_type,
                         digest=_metadata_digest(entry),
+                        signature=signature,
                         quarantined=_partial_mode(
                             partial_output,
                             resolved_policy,
@@ -1111,15 +1183,14 @@ def _media_diagnostics(
                 "output media type is not allowed",
             )
         )
-    for denied in policy.denied_signatures:
-        if signature.startswith(denied):
-            diagnostics.append(
-                _diagnostic(
-                    ContainerOutputDiagnosticCode.UNSAFE_SIGNATURE,
-                    path,
-                    "output file signature is denied",
-                )
+    for _ in policy.denied_signature_matches(signature):
+        diagnostics.append(
+            _diagnostic(
+                ContainerOutputDiagnosticCode.UNSAFE_SIGNATURE,
+                path,
+                "output file signature is denied",
             )
+        )
     return diagnostics
 
 
@@ -1154,6 +1225,7 @@ def _read_validated_file(
     expected_size: int,
     expected_uid: int,
     expected_gid: int,
+    inspection_bytes: int,
 ) -> tuple[bytes, str] | None:
     try:
         file_descriptor = open_fd(str(path), O_RDONLY | O_NOFOLLOW)
@@ -1180,6 +1252,7 @@ def _read_validated_file(
             signature, digest = _read_fd_signature_and_digest(
                 file_descriptor,
                 expected_size,
+                inspection_bytes,
             )
             after_stat = fstat(file_descriptor)
             if not _same_validated_file(
@@ -1233,6 +1306,7 @@ def _same_validated_file(
 def _read_fd_signature_and_digest(
     file_descriptor: int,
     expected_size: int,
+    inspection_bytes: int,
 ) -> tuple[bytes, str]:
     digest = sha256()
     signature = b""
@@ -1243,8 +1317,8 @@ def _read_fd_signature_and_digest(
         if not chunk:
             break
         remaining_size -= len(chunk)
-        if len(signature) < 16:
-            remaining = 16 - len(signature)
+        if len(signature) < inspection_bytes:
+            remaining = inspection_bytes - len(signature)
             signature += chunk[:remaining]
         digest.update(chunk)
     if remaining_size != 0 or read_fd(file_descriptor, 1):

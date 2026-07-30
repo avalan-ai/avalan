@@ -932,6 +932,7 @@ class CliShellToolOptionTestCase(TestCase):
             "environment_allowlist",
             "allowed_commands",
             "allowed_pdf_raster_formats",
+            "allowed_montage_output_formats",
             "allowed_tesseract_output_formats",
             "allowed_tesseract_languages",
         }

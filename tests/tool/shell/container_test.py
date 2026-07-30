@@ -1,3 +1,5 @@
+from .image_fixtures import VALID_JPEG_BYTES, valid_png_bytes
+
 from argparse import Namespace
 from collections.abc import Awaitable, Callable
 from pathlib import Path
@@ -35,6 +37,7 @@ from avalan.container import (
     ContainerOutputDecisionType,
     ContainerOutputDiagnostic,
     ContainerOutputDiagnosticCode,
+    ContainerOutputMediaPolicy,
     ContainerOutputValidationResult,
     ContainerProfile,
     ContainerRunPlan,
@@ -77,13 +80,16 @@ from avalan.tool.shell.container import (
     _diagnostic_summary,
     _generated_file,
     _generated_files,
+    _normalize_generated_artifact,
 )
 from avalan.tool.shell.entities import (
     GENERATED_OUTPUT_PREFIX_PLACEHOLDER,
     ShellExecutionErrorCode,
     ShellFormattedCompositionResult,
+    ShellFormattedResult,
 )
 from avalan.tool.shell.executor import CommandExecutor
+from avalan.tool.shell.filesystem import IMAGE_DIMENSION_SCAN_BYTES
 
 _DIGEST = "9" * 64
 _IMAGE = f"ghcr.io/example/shell-tools@sha256:{_DIGEST}"
@@ -376,6 +382,89 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             ("application/pdf",),
         )
         self.assertEqual(plan.output_contract.max_files, 1)
+        self.assertIsNone(plan.output_contract.image_inspection_bytes)
+
+    async def test_montage_container_plan_uses_suffixed_output(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(_montage_request())
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        self.assertIsNotNone(plan.container_plan)
+        assert plan.container_plan is not None
+        argv = plan.container_plan.run_plan.command.argv
+        self.assertEqual(argv[0], "montage")
+        font_index = argv.index("-font")
+        self.assertEqual(
+            argv[font_index : font_index + 2],
+            ("-font", "DejaVu-Sans"),
+        )
+        self.assertIn("./one.jpg[0]", argv)
+        self.assertIn("./two.jpg[0]", argv)
+        list_limit_index = argv.index("list-length")
+        self.assertEqual(argv[list_limit_index + 1], "2")
+        self.assertEqual(argv[-1], "/outputs/montage.jpg")
+        self.assertNotIn(GENERATED_OUTPUT_PREFIX_PLACEHOLDER, argv)
+        self.assertIsNotNone(plan.output_contract)
+        assert plan.output_contract is not None
+        self.assertEqual(
+            tuple(plan.output_contract.media_policy.allowed_media_types),
+            ("image/jpeg",),
+        )
+        self.assertEqual(plan.output_contract.max_files, 1)
+        self.assertEqual(
+            plan.output_contract.image_inspection_bytes,
+            IMAGE_DIMENSION_SCAN_BYTES,
+        )
+
+    async def test_montage_nested_cwd_uses_cwd_relative_container_paths(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            nested = root / "nested"
+            nested.mkdir()
+            _write_test_jpeg(nested / "one.jpg")
+            _write_test_jpeg(nested / "two.jpg")
+            configured_font = "/container/fonts/Operator Font.ttf"
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_media_tools=True,
+                montage_font=configured_font,
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(_montage_request(cwd="nested"))
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        assert plan.container_plan is not None
+        run_plan = plan.container_plan.run_plan
+        argv = run_plan.command.argv
+        self.assertEqual(run_plan.command.cwd, "/workspace/nested")
+        self.assertIn("./one.jpg[0]", argv)
+        self.assertIn("./two.jpg[0]", argv)
+        self.assertNotIn("./nested/one.jpg[0]", argv)
+        self.assertIn(configured_font, argv)
+        self.assertNotIn(configured_font, spec.display_argv)
+        self.assertIn("[configured_font]", spec.display_argv)
 
     async def test_required_disabled_container_plan_fails_closed(
         self,
@@ -855,6 +944,59 @@ class ShellContainerExecutorTest(IsolatedAsyncioTestCase):
         self.assertTrue(events)
         for event in events:
             self.assertNotIn("/outputs/document.pdf", event.content)
+
+    async def test_container_revalidates_generated_pdf_signatures(
+        self,
+    ) -> None:
+        cases = (
+            ("mz", b"MZpayload", ShellExecutionStatus.TOO_LARGE),
+            ("elf", b"\x7fELFpayload", ShellExecutionStatus.TOO_LARGE),
+            ("pdf", b"%PDF-1.4\n", ShellExecutionStatus.COMPLETED),
+        )
+        for name, signature, expected_status in cases:
+            with self.subTest(name=name):
+                output_contract = ContainerOutputContract(
+                    contract_type=ContainerOutputContractType.GENERATED_FILE,
+                    max_bytes=len(signature),
+                )
+                backend = ContainerFakeBackend(
+                    ContainerFakeBackendScript(
+                        capabilities=_capabilities(),
+                        output_result=ContainerOutputValidationResult(
+                            decision=ContainerOutputDecisionType.ACCEPT,
+                            contract=output_contract,
+                            artifacts=(
+                                ContainerOutputArtifact(
+                                    artifact_type=(
+                                        ContainerOutputContractType.GENERATED_FILE
+                                    ),
+                                    path="document.pdf",
+                                    size_bytes=len(signature),
+                                    media_type="application/pdf",
+                                    digest=f"sha256:{'6' * 64}",
+                                    signature=signature,
+                                ),
+                            ),
+                            total_bytes=len(signature),
+                            file_count=1,
+                        ),
+                    )
+                )
+
+                result = await ShellContainerCommandExecutor(
+                    container_settings=_effective_settings(required=True),
+                    container_backend=backend,
+                ).execute(_direct_reportlab_spec())
+
+                self.assertIs(result.status, expected_status)
+                if expected_status is ShellExecutionStatus.COMPLETED:
+                    self.assertEqual(len(result.generated_files), 1)
+                else:
+                    self.assertEqual(
+                        result.error_message,
+                        "container generated output signature was denied",
+                    )
+                    self.assertEqual(result.generated_files, ())
 
     async def test_container_rejects_generated_outputs_outside_plan(
         self,
@@ -1383,6 +1525,251 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
         ):
             self.assertNotIn(forbidden, serialized_schema)
 
+    async def test_montage_toolset_executes_with_container_artifact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            output_contract = ContainerOutputContract(
+                contract_type=ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=512,
+            )
+            backend = ContainerFakeBackend(
+                ContainerFakeBackendScript(
+                    capabilities=_capabilities(),
+                    output_result=ContainerOutputValidationResult(
+                        decision=ContainerOutputDecisionType.ACCEPT,
+                        contract=output_contract,
+                        artifacts=(
+                            ContainerOutputArtifact(
+                                artifact_type=(
+                                    ContainerOutputContractType.GENERATED_FILE
+                                ),
+                                path="montage.jpg",
+                                size_bytes=len(VALID_JPEG_BYTES),
+                                media_type="image/jpeg",
+                                digest=f"sha256:{'1' * 64}",
+                                signature=VALID_JPEG_BYTES,
+                            ),
+                        ),
+                        total_bytes=len(VALID_JPEG_BYTES),
+                        file_count=1,
+                    ),
+                )
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_settings=_effective_settings(required=True),
+                container_backend=backend,
+            )
+            call = cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "montage"),
+            )
+
+            output = await call(
+                ("one.jpg", "two.jpg"),
+                thumbnail="10x10",
+                tile="2x1",
+                output_filename="contact.jpg",
+                context=ToolCallContext(),
+            )
+
+        self.assertIn("status: completed", output)
+        formatted = cast(ShellFormattedResult, output)
+        result = formatted.execution_result
+        self.assertEqual(result.backend, "container")
+        self.assertEqual(len(result.generated_files), 1)
+        self.assertEqual(result.generated_files[0].display_path, "contact.jpg")
+        self.assertEqual(result.generated_files[0].media_type, "image/jpeg")
+        self.assertEqual(
+            (
+                result.generated_files[0].width,
+                result.generated_files[0].height,
+            ),
+            (16, 16),
+        )
+
+    async def test_montage_container_rejects_oversized_compressed_raster(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            oversized = valid_png_bytes(width=4096, height=1)
+            output_contract = ContainerOutputContract(
+                contract_type=ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=1024,
+                media_policy=ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/png",),
+                ),
+            )
+            backend = ContainerFakeBackend(
+                ContainerFakeBackendScript(
+                    capabilities=_capabilities(),
+                    output_result=ContainerOutputValidationResult(
+                        decision=ContainerOutputDecisionType.ACCEPT,
+                        contract=output_contract,
+                        artifacts=(
+                            ContainerOutputArtifact(
+                                artifact_type=(
+                                    ContainerOutputContractType.GENERATED_FILE
+                                ),
+                                path="montage.png",
+                                size_bytes=len(oversized),
+                                media_type="image/png",
+                                digest=f"sha256:{'2' * 64}",
+                                signature=oversized,
+                            ),
+                        ),
+                        total_bytes=len(oversized),
+                        file_count=1,
+                    ),
+                )
+            )
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                container_settings=_effective_settings(required=True),
+                container_backend=backend,
+            )
+
+            output = await cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "montage"),
+            )(
+                ("one.jpg", "two.jpg"),
+                output_format="png",
+                output_filename="contact.png",
+                context=ToolCallContext(),
+            )
+
+        result = cast(ShellFormattedResult, output).execution_result
+        self.assertIs(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertIs(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(result.generated_files, ())
+
+    async def test_montage_revalidates_custom_backend_artifacts(
+        self,
+    ) -> None:
+        cases = (
+            (
+                "artifact type",
+                ContainerOutputContractType.TASK_ARTIFACT,
+                "image/jpeg",
+                len(VALID_JPEG_BYTES),
+                VALID_JPEG_BYTES,
+                "artifact type did not match contract",
+            ),
+            (
+                "media type",
+                ContainerOutputContractType.GENERATED_FILE,
+                "image/png",
+                len(VALID_JPEG_BYTES),
+                VALID_JPEG_BYTES,
+                "media type was not allowed",
+            ),
+            (
+                "inspection bytes",
+                ContainerOutputContractType.GENERATED_FILE,
+                "image/jpeg",
+                len(VALID_JPEG_BYTES) + 1,
+                VALID_JPEG_BYTES,
+                "image inspection bytes are incomplete",
+            ),
+        )
+        for (
+            name,
+            artifact_type,
+            media_type,
+            size_bytes,
+            signature,
+            expected_error,
+        ) in cases:
+            with self.subTest(name=name):
+                with TemporaryDirectory() as temporary_directory:
+                    root = Path(temporary_directory)
+                    _write_test_jpeg(root / "one.jpg")
+                    _write_test_jpeg(root / "two.jpg")
+                    settings = ShellToolSettings(
+                        execution_mode="container",
+                        workspace_root=str(root),
+                        allow_media_tools=True,
+                    )
+                    output_contract = ContainerOutputContract(
+                        contract_type=(
+                            ContainerOutputContractType.GENERATED_FILE
+                        ),
+                        max_bytes=size_bytes,
+                    )
+                    backend = ContainerFakeBackend(
+                        ContainerFakeBackendScript(
+                            capabilities=_capabilities(),
+                            output_result=ContainerOutputValidationResult(
+                                decision=(ContainerOutputDecisionType.ACCEPT),
+                                contract=output_contract,
+                                artifacts=(
+                                    ContainerOutputArtifact(
+                                        artifact_type=artifact_type,
+                                        path="montage.jpg",
+                                        size_bytes=size_bytes,
+                                        media_type=media_type,
+                                        digest=f"sha256:{'3' * 64}",
+                                        signature=signature,
+                                    ),
+                                ),
+                                total_bytes=size_bytes,
+                                file_count=1,
+                            ),
+                        )
+                    )
+                    toolset = ShellToolSet(
+                        settings=settings,
+                        policy=ExecutionPolicy(
+                            settings=settings,
+                            resolver=_AllResolved(),
+                        ),
+                        container_settings=_effective_settings(required=True),
+                        container_backend=backend,
+                    )
+
+                    output = await cast(
+                        Callable[..., Awaitable[str]],
+                        _tool_by_name(toolset, "montage"),
+                    )(
+                        ("one.jpg", "two.jpg"),
+                        output_filename="contact.jpg",
+                        context=ToolCallContext(),
+                    )
+
+                result = cast(ShellFormattedResult, output).execution_result
+                self.assertIs(result.status, ShellExecutionStatus.TOO_LARGE)
+                self.assertIn(expected_error, result.error_message or "")
+                self.assertEqual(result.generated_files, ())
+
     async def test_policy_denial_and_path_guards_happen_before_container(
         self,
     ) -> None:
@@ -1670,6 +2057,93 @@ class ShellContainerValueTest(TestCase):
                 with self.assertRaises(_ContainerGeneratedOutputError):
                     _generated_file(artifact, spec.output_plan)
 
+    def test_generated_artifact_normalization_bounds_inspection_bytes(
+        self,
+    ) -> None:
+        contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=32,
+            image_inspection_bytes=16,
+            media_policy=ContainerOutputMediaPolicy(
+                allowed_media_types=("image/jpeg",),
+            ),
+        )
+        artifact = ContainerOutputArtifact(
+            artifact_type=ContainerOutputContractType.GENERATED_FILE,
+            path="montage.jpg",
+            size_bytes=32,
+            media_type="image/jpeg",
+            digest=f"sha256:{'4' * 64}",
+            signature=b"\xff\xd8" + b"a" * 30,
+        )
+        short_contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=1,
+            image_inspection_bytes=32,
+            media_policy=ContainerOutputMediaPolicy(
+                allowed_media_types=("image/jpeg",),
+            ),
+        )
+        short_artifact = ContainerOutputArtifact(
+            artifact_type=ContainerOutputContractType.GENERATED_FILE,
+            path="montage.jpg",
+            size_bytes=1,
+            media_type="image/jpeg",
+            digest=f"sha256:{'5' * 64}",
+            signature=b"x",
+        )
+        pdf_contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=2,
+            media_policy=ContainerOutputMediaPolicy(
+                allowed_media_types=("application/pdf",),
+            ),
+        )
+        boundary_artifact = ContainerOutputArtifact(
+            artifact_type=ContainerOutputContractType.GENERATED_FILE,
+            path="document.pdf",
+            size_bytes=1,
+            media_type="application/pdf",
+            digest=f"sha256:{'6' * 64}",
+            signature=b"M",
+        )
+        empty_deny_contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=2,
+            media_policy=ContainerOutputMediaPolicy(
+                allowed_media_types=("application/pdf",),
+                denied_signatures=(),
+            ),
+        )
+        empty_deny_artifact = ContainerOutputArtifact(
+            artifact_type=ContainerOutputContractType.GENERATED_FILE,
+            path="document.pdf",
+            size_bytes=2,
+            media_type="application/pdf",
+            digest=f"sha256:{'7' * 64}",
+            signature=b"MZ",
+        )
+
+        normalized = _normalize_generated_artifact(artifact, contract)
+        normalized_short = _normalize_generated_artifact(
+            short_artifact,
+            short_contract,
+        )
+        normalized_boundary = _normalize_generated_artifact(
+            boundary_artifact,
+            pdf_contract,
+        )
+        normalized_empty_deny = _normalize_generated_artifact(
+            empty_deny_artifact,
+            empty_deny_contract,
+        )
+
+        self.assertEqual(normalized.signature, artifact.signature[:16])
+        self.assertEqual(artifact.signature, b"\xff\xd8" + b"a" * 30)
+        self.assertEqual(normalized_short.signature, b"x")
+        self.assertEqual(normalized_boundary.signature, b"M")
+        self.assertEqual(normalized_empty_deny.signature, b"MZ")
+
 
 def _output_artifact(
     *,
@@ -1701,6 +2175,39 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
         ),
         cwd=cwd,
     )
+
+
+def _montage_request(*, cwd: str | None = None) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name="shell.montage",
+        command="montage",
+        options={
+            "thumbnail": "10x10",
+            "tile": "2x1",
+            "geometry": "+0+0",
+            "output_format": "jpg",
+            "output_filename": "contact.jpg",
+        },
+        paths=(
+            PathOperand(
+                name="path_0",
+                path="one.jpg",
+                kind="image_file",
+                access="read",
+            ),
+            PathOperand(
+                name="path_1",
+                path="two.jpg",
+                kind="image_file",
+                access="read",
+            ),
+        ),
+        cwd=cwd,
+    )
+
+
+def _write_test_jpeg(path: Path) -> None:
+    path.write_bytes(VALID_JPEG_BYTES)
 
 
 def _nl_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:

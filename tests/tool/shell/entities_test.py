@@ -558,6 +558,26 @@ class ShellEntitiesTest(TestCase):
 
         self.assertEqual(plan.allowed_suffixes, (".png",))
         self.assertEqual(plan.suffix_media_types, {".png": "image/png"})
+        self.assertIsNone(plan.output_path_suffix)
+        self.assertEqual(plan.runtime_path("/outputs/page"), "/outputs/page")
+
+        suffixed = GeneratedOutputPlan(
+            prefix_name="montage",
+            display_prefix="contact",
+            allowed_suffixes=(".jpg",),
+            suffix_media_types={".jpg": "image/jpeg"},
+            max_files=1,
+            max_file_bytes=2,
+            max_total_bytes=3,
+            max_inline_bytes=4,
+            output_path_suffix=".jpg",
+        )
+        self.assertEqual(
+            suffixed.runtime_path("/outputs/montage"),
+            "/outputs/montage.jpg",
+        )
+        with self.assertRaises(AssertionError):
+            suffixed.runtime_path("")
 
     def test_generated_output_plan_is_frozen(self) -> None:
         plan = GeneratedOutputPlan(
@@ -596,6 +616,7 @@ class ShellEntitiesTest(TestCase):
             "max_inline_bytes": -1,
             "max_raster_long_edge_pixels": -1,
             "max_raster_pixels": True,
+            "output_path_suffix": ".jpg",
         }
         for field_name, value in invalid_values.items():
             with self.subTest(field_name=field_name):
