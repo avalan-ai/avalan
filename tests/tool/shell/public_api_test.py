@@ -32,6 +32,7 @@ from avalan.tool.shell import (
     BackendBoundaryCompositionExecutor,
     CommandExecutor,
     CompositionExecutor,
+    DateTool,
     ExecutableLookup,
     ExecutableResolver,
     ExecutionPolicy,
@@ -104,6 +105,7 @@ class ShellPublicApiTest(TestCase):
             ShellToolSet, import_module("avalan.tool.shell").ShellToolSet
         )
         self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
+        self.assertIs(DateTool, import_module("avalan.tool.shell").DateTool)
         self.assertIs(LsofTool, import_module("avalan.tool.shell").LsofTool)
         self.assertIs(
             MontageTool,
@@ -380,6 +382,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.awk",
             "avalan.tool.shell.commands.base",
             "avalan.tool.shell.commands.cat",
+            "avalan.tool.shell.commands.date",
             "avalan.tool.shell.commands.file",
             "avalan.tool.shell.commands.find",
             "avalan.tool.shell.commands.head",
@@ -405,6 +408,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.tesseract",
             "avalan.tool.shell.commands.wc",
             "avalan.tool.shell.composition_executor",
+            "avalan.tool.shell.date",
             "avalan.tool.shell.entities",
             "avalan.tool.shell.executor",
             "avalan.tool.shell.filesystem",
@@ -422,6 +426,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.sandbox",
             "avalan.tool.shell.settings",
             "avalan.tool.shell.tools",
+            "avalan.tool.shell.tools.date",
             "avalan.tool.shell.tools.montage",
             "avalan.tool.shell.toolset",
         ):
@@ -471,6 +476,27 @@ class ShellPublicApiTest(TestCase):
             ),
         )
         self.assertEqual(parameters["limit"].default, 64)
+
+    def test_date_contract_keeps_fixed_formats_optional(self) -> None:
+        parameters = signature(DateTool.__call__).parameters
+
+        self.assertEqual(
+            tuple(parameters)[:9],
+            (
+                "self",
+                "utc",
+                "format",
+                "cwd",
+                "timeout_seconds",
+                "max_stdout_bytes",
+                "max_stderr_bytes",
+                "custom_format",
+                "context",
+            ),
+        )
+        self.assertIs(parameters["utc"].default, False)
+        self.assertEqual(parameters["format"].default, "default")
+        self.assertIsNone(parameters["custom_format"].default)
 
     def test_shell_toolset_is_namespaced_with_available_tools(
         self,

@@ -26,6 +26,7 @@ from ._results import _ps_requested_pids as _ps_requested_pids
 from ._results import _ps_requested_view as _ps_requested_view
 from .awk import AwkTool as AwkTool
 from .cat import CatTool as CatTool
+from .date import DateTool as DateTool
 from .file import FileTool as FileTool
 from .find import FindTool as FindTool
 from .git_base import _bool_text as _bool_text

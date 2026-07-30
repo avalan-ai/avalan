@@ -269,6 +269,15 @@ def test_shell_code_container_includes_process_tool_support() -> None:
     assert "--tool-shell-allow-process-control" in readme
 
 
+def test_shell_code_container_includes_date_support() -> None:
+    dockerfile = _read_repository_text("docs/containers/shell-code/Dockerfile")
+    readme = _read_repository_text("docs/containers/shell-code/README.md")
+
+    assert re.search(r"(?m)^\s+coreutils\s*\\?$", dockerfile)
+    assert "- `date`" in readme
+    assert "--tool shell.date" in readme
+
+
 def test_shell_code_container_includes_montage_support() -> None:
     dockerfile = _read_repository_text("docs/containers/shell-code/Dockerfile")
     readme = _read_repository_text("docs/containers/shell-code/README.md")

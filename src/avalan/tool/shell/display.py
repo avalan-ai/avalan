@@ -42,6 +42,7 @@ _REQUEST_ACTIONS = {
     "montage": "compose",
     "cat": "read",
     "nl": "number",
+    "date": "read",
     "pgrep": "find",
     "ps": "inspect",
     "lsof": "inspect",
@@ -68,6 +69,7 @@ _REQUEST_SUMMARIES = {
     "montage": "Create a composite image.",
     "cat": "Read a file.",
     "nl": "Number file lines.",
+    "date": "Read the current date and time.",
     "pgrep": "Find matching process identifiers.",
     "ps": "Inspect selected process metadata.",
     "lsof": "Inspect selected process descriptor metadata.",
@@ -786,6 +788,9 @@ def _request_target(
     request: ShellCommandRequest,
 ) -> tuple[str | None, bool]:
     match request.command:
+        case "date":
+            utc = request.options.get("utc")
+            return ("UTC" if utc is True else "local time"), False
         case "pgrep":
             return REDACTED_DISPLAY_VALUE, True
         case "ps":
@@ -852,6 +857,10 @@ def _request_details(
     if paths is not None:
         details.append(_detail("paths", paths, redacted=paths_redacted))
     match request.command:
+        case "date":
+            _append_option(details, request.options, "format")
+            _append_option(details, request.options, "custom_format")
+            _append_option(details, request.options, "utc")
         case "lsof":
             _append_option(details, request.options, "limit")
         case "ps":

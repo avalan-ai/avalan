@@ -15,6 +15,7 @@ from .base import (
     ShellDependencyGroup as ShellDependencyGroup,
 )
 from .cat import COMMAND_DEFINITION as CAT_COMMAND
+from .date import COMMAND_DEFINITION as DATE_COMMAND
 from .file import COMMAND_DEFINITION as FILE_COMMAND
 from .find import COMMAND_DEFINITION as FIND_COMMAND
 from .head import COMMAND_DEFINITION as HEAD_COMMAND
@@ -45,6 +46,7 @@ SHELL_COMMANDS = (
     LS_COMMAND,
     CAT_COMMAND,
     NL_COMMAND,
+    DATE_COMMAND,
     PGREP_COMMAND,
     PS_COMMAND,
     LSOF_COMMAND,

@@ -310,6 +310,7 @@ Public shell tools:
 | `shell.ls` | List a directory or file path. | core | `coreutils` |
 | `shell.cat` | Read a bounded text file. | core | `coreutils` |
 | `shell.nl` | Number lines in a bounded text file. | core | `coreutils` |
+| `shell.date` | Read the current date and time in a bounded portable format. | core | `coreutils` |
 | `shell.pgrep` | Find matching process identifiers without returning process text. | process | `procps-ng` or `procps` |
 | `shell.ps` | Inspect a fixed summary or resource view for exactly one selected process identifier. | process | `procps-ng` or `procps` |
 | `shell.lsof` | Inspect bounded descriptor metadata for exactly one selected process identifier. | process | `lsof` |
@@ -339,6 +340,26 @@ Python PDF tools resolve a trusted Python executable and also report
 `command_unavailable` when the required package cannot be imported. In
 container mode, the selected image must make both `avalan` and the target PDF
 library importable to that Python interpreter.
+
+`shell.date` never parses a caller-provided date. Its fixed `format` values
+are `default`, `date`, `time`, `iso8601`, and `unix`; `utc = true` adds UTC
+selection. `default` invokes `date` with no format operand and therefore
+preserves the selected backend's native `date` output, with only optional
+`-u`. The other values emit `YYYY-MM-DD`, `HH:MM:SS`,
+`YYYY-MM-DDTHH:MM:SS+HHMM` (or the corresponding negative numeric offset),
+and Unix epoch seconds. The ISO-8601 offset is always numeric `+HHMM` or
+`-HHMM`, without a colon; UTC is `+0000`.
+
+For bounded custom output, set `custom_format` while leaving `format` at
+`default`. It accepts 1-128 bytes of printable ASCII and only these exact
+two-character directives: `%%`, `%C`, `%d`, `%D`, `%e`, `%F`, `%g`, `%G`,
+`%H`, `%I`, `%j`, `%m`, `%M`, `%R`, `%s`, `%S`, `%T`, `%u`, `%U`, `%V`,
+`%w`, `%W`, `%y`, `%Y`, and `%z`. Every percent sign must begin one of those
+directives. Flags, widths, modifiers, extensions, controls, non-ASCII text,
+and arbitrary date operands are rejected before execution. Avalan prepends
+the required `+`; callers do not provide it as an option boundary. The clock
+and local timezone are those visible to the selected host, sandbox, or
+container backend.
 
 `shell.montage` accepts two or more explicit workspace image paths. Shell
 brace expansion is not evaluated by the tool, so callers expand expressions
