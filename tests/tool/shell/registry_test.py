@@ -47,6 +47,7 @@ class ShellRegistryTest(TestCase):
                 "ls",
                 "cat",
                 "nl",
+                "date",
                 "pgrep",
                 "ps",
                 "lsof",
@@ -119,6 +120,11 @@ class ShellRegistryTest(TestCase):
 
         self.assertEqual(groups_by_id["rg"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
+        self.assertEqual(groups_by_id["date"], ShellDependencyGroup.CORE)
+        self.assertEqual(
+            SHELL_COMMAND_DEFINITIONS["date"].container_package_hints,
+            ("coreutils",),
+        )
         self.assertEqual(groups_by_id["pgrep"], ShellDependencyGroup.PROCESS)
         self.assertEqual(groups_by_id["ps"], ShellDependencyGroup.PROCESS)
         self.assertEqual(groups_by_id["lsof"], ShellDependencyGroup.PROCESS)

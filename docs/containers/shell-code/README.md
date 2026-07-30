@@ -5,6 +5,7 @@ exploration with Apple `container`. It includes the command binaries used
 by Avalan's common read-only shell tools:
 
 - `cat`
+- `date`
 - `file`
 - `find`
 - `git`
@@ -78,6 +79,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --engine-uri 'ai://env:AZURE_OPENAI_API_KEY@openai/gpt-5?azure_api_version=preview' \
       --engine-base-url 'https://vdocintel-staging-openai.openai.azure.com/openai/v1/' \
       --tool shell.cat \
+      --tool shell.date \
       --tool shell.file \
       --tool shell.find \
       --tool shell.git_log \
@@ -128,6 +130,17 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
 `container`, the selected image, or the workspace mount is unavailable. Shell
 tool execution does not fall back to the host when the container profile is
 required.
+
+`shell.date` is supplied by the image's `coreutils` package. Calls use only
+optional `-u` and a fixed preset (`default`, `date`, `time`, `iso8601`, or
+`unix`) or the separately validated `custom_format`. The custom form accepts
+1-128 printable ASCII bytes, permits only the portable directive allowlist
+documented in `docs/CLI.md`, and is mutually exclusive with non-default
+presets. Avalan prepends the required `+`, so caller text cannot become an
+option or date operand. `default` leaves off the format operand, while
+`iso8601` emits `YYYY-MM-DDTHH:MM:SS+HHMM` or the corresponding negative
+numeric offset; UTC is `+0000`. The reported clock and local timezone belong
+to the container backend, not necessarily the host.
 
 `shell.lsof` requires `--tool-shell-allow-process-tools` and inspects exactly
 one PID. It returns only bounded numeric-descriptor metadata with canonical

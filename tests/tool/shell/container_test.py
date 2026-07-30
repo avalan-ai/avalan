@@ -202,6 +202,60 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_date_container_plan_preserves_fixed_utc_format(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(_date_request(utc=True, output_format="iso8601"))
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            ("date", "-u", "+%Y-%m-%dT%H:%M:%S%z"),
+        )
+
+    async def test_date_container_plan_preserves_custom_format(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(
+                _date_request(
+                    utc=True,
+                    output_format="default",
+                    custom_format="container=%Y %% %z",
+                )
+            )
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            ("date", "-u", "+container=%Y %% %z"),
+        )
+
     async def test_git_container_plan_trusts_mounted_repo_root(self) -> None:
         spec = _direct_git_spec(repo_root=".")
         plan = lower_shell_execution_spec(
@@ -2224,6 +2278,27 @@ def _nl_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
             ),
         ),
         cwd=cwd,
+    )
+
+
+def _date_request(
+    *,
+    utc: bool,
+    output_format: str,
+    custom_format: str | None = None,
+) -> ShellCommandRequest:
+    options: dict[str, object] = {
+        "utc": utc,
+        "format": output_format,
+    }
+    if custom_format is not None:
+        options["custom_format"] = custom_format
+    return ShellCommandRequest(
+        tool_name="shell.date",
+        command="date",
+        options=options,
+        paths=(),
+        cwd=None,
     )
 
 

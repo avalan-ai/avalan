@@ -9,6 +9,7 @@ from asyncio.subprocess import PIPE
 from errno import EACCES, EPERM
 from os import environ, getpid
 from pathlib import Path
+from re import fullmatch
 from sys import executable as python_executable
 from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main, skipUnless
@@ -237,6 +238,106 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "nl")
         self.assertIn("0010: alpha", output)
         self.assertIn("0020: needle", output)
+
+    async def test_date_fixed_portable_formats_smoke(self) -> None:
+        await self._require_command("date")
+        tool = _tool_by_name(self._toolset, "date")
+        default = await _call(tool)
+
+        _assert_completed(self, default, "date")
+        self.assertIsInstance(default, ShellFormattedResult)
+        assert isinstance(default, ShellFormattedResult)
+        self.assertEqual(default.execution_result.argv, ("date",))
+        self.assertTrue(default.execution_result.stdout.strip())
+
+        cases = (
+            ("date", False, r"[0-9]{4}-[0-9]{2}-[0-9]{2}"),
+            ("time", False, r"[0-9]{2}:[0-9]{2}:[0-9]{2}"),
+            (
+                "iso8601",
+                False,
+                (
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+                    r"[0-9]{2}:[0-9]{2}:[0-9]{2}[+-][0-9]{4}"
+                ),
+            ),
+            (
+                "iso8601",
+                True,
+                (
+                    r"[0-9]{4}-[0-9]{2}-[0-9]{2}T"
+                    r"[0-9]{2}:[0-9]{2}:[0-9]{2}\+0000"
+                ),
+            ),
+            ("unix", False, r"[0-9]+"),
+        )
+        for output_format, utc, pattern in cases:
+            with self.subTest(format=output_format, utc=utc):
+                output = await _call(
+                    tool,
+                    format=output_format,
+                    utc=utc,
+                )
+
+                _assert_completed(self, output, "date")
+                self.assertIsInstance(output, ShellFormattedResult)
+                assert isinstance(output, ShellFormattedResult)
+                self.assertIsNotNone(
+                    fullmatch(
+                        pattern,
+                        output.execution_result.stdout.strip(),
+                    )
+                )
+
+    async def test_date_validated_custom_format_smoke(self) -> None:
+        await self._require_command("date")
+        tool = _tool_by_name(self._toolset, "date")
+
+        output = await _call(
+            tool,
+            utc=True,
+            custom_format="stamp=%Y-%m-%d %% %H:%M:%S %z epoch=%s",
+        )
+
+        _assert_completed(self, output, "date")
+        self.assertIsInstance(output, ShellFormattedResult)
+        assert isinstance(output, ShellFormattedResult)
+        self.assertEqual(
+            output.execution_result.argv,
+            (
+                "date",
+                "-u",
+                "+stamp=%Y-%m-%d %% %H:%M:%S %z epoch=%s",
+            ),
+        )
+        self.assertIsNotNone(
+            fullmatch(
+                (
+                    r"stamp=[0-9]{4}-[0-9]{2}-[0-9]{2} % "
+                    r"[0-9]{2}:[0-9]{2}:[0-9]{2} \+0000 "
+                    r"epoch=[0-9]+"
+                ),
+                output.execution_result.stdout.strip(),
+            )
+        )
+
+        all_directives = (
+            "%%|%C|%d|%D|%e|%F|%g|%G|%H|%I|%j|%m|%M|%R|%s|%S|%T|"
+            "%u|%U|%V|%w|%W|%y|%Y|%z"
+        )
+        all_output = await _call(
+            tool,
+            utc=True,
+            custom_format=all_directives,
+        )
+
+        _assert_completed(self, all_output, "date")
+        self.assertIsInstance(all_output, ShellFormattedResult)
+        assert isinstance(all_output, ShellFormattedResult)
+        fields = all_output.execution_result.stdout.strip().split("|")
+        self.assertEqual(len(fields), 25)
+        self.assertEqual(fields[0], "%")
+        self.assertTrue(all(fields[1:]))
 
     async def test_pgrep_smoke_and_no_match(self) -> None:
         await self._require_command("pgrep")

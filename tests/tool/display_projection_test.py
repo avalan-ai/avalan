@@ -80,6 +80,7 @@ EXPECTED_BUILT_IN_TOOL_NAMES = {
     "search",
     "shell.awk",
     "shell.cat",
+    "shell.date",
     "shell.file",
     "shell.find",
     "shell.head",

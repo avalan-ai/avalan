@@ -143,6 +143,7 @@ from .resolver import (
 from .sandbox import ShellSandboxCommandExecutor as ShellSandboxCommandExecutor
 from .settings import ShellGitToolSettings as ShellGitToolSettings
 from .settings import ShellToolSettings as ShellToolSettings
+from .tools import DateTool as DateTool
 from .tools import KillTool as KillTool
 from .tools import LsofTool as LsofTool
 from .tools import MontageTool as MontageTool

@@ -108,7 +108,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `date`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, read backend-relative time, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -474,6 +474,24 @@ Local and sandbox execution use ImageMagick's host font configuration unless
 the operator sets trusted `montage_font` configuration (or
 `--tool-shell-montage-font`) to a host font name or file path. The configured
 value is redacted from model-visible command projections.
+
+`shell.date` reads the selected backend's current clock without accepting date
+operands. It supports fixed `default`, `date`, `time`, `iso8601`, and `unix`
+formats plus `utc = true`. `default` maps to native `date` with no format
+operand (and only optional `-u`). The named formats emit `YYYY-MM-DD`,
+`HH:MM:SS`, `YYYY-MM-DDTHH:MM:SS+HHMM` or
+`YYYY-MM-DDTHH:MM:SS-HHMM`, and Unix epoch seconds. ISO-8601 offsets have no
+colon, and UTC is represented as `+0000`.
+
+`custom_format` is a separate bounded option and is mutually exclusive with
+non-default `format`. It accepts 1-128 bytes of printable ASCII containing
+only literal text and `%%`, `%C`, `%d`, `%D`, `%e`, `%F`, `%g`, `%G`, `%H`,
+`%I`, `%j`, `%m`, `%M`, `%R`, `%s`, `%S`, `%T`, `%u`, `%U`, `%V`, `%w`,
+`%W`, `%y`, `%Y`, or `%z`. Each percent sign must form exactly one listed
+two-character directive. Avalan prepends `+` after validation; flags, widths,
+modifiers, extensions, controls, non-ASCII text, and arbitrary operands are
+rejected. Host, sandbox, and container clocks or local timezone configuration
+can differ, so results are backend-relative.
 
 `shell.pgrep`, `shell.ps`, and `shell.lsof` require trusted
 `allow_process_tools = true` configuration. `shell.ps` accepts exactly one PID.

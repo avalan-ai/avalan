@@ -75,6 +75,7 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.ls": {"path": "filesystem"},
     "shell.cat": {"path": "filesystem/visible.txt"},
     "shell.nl": {"path": "filesystem/visible.txt"},
+    "shell.date": {"utc": True, "format": "iso8601"},
     "shell.pgrep": {"pattern": "private-worker-pattern"},
     "shell.ps": {"pids": [1], "view": "resources"},
     "shell.lsof": {"pid": 42, "limit": 16},
@@ -112,6 +113,7 @@ _EXPECTED_ACTIONS = {
     "shell.ls": "list",
     "shell.cat": "read",
     "shell.nl": "number",
+    "shell.date": "read",
     "shell.pgrep": "find",
     "shell.ps": "inspect",
     "shell.lsof": "inspect",
@@ -134,6 +136,28 @@ _EXPECTED_ACTIONS = {
 
 
 class ShellDisplayProjectionCallTest(TestCase):
+    def test_date_call_projection_identifies_clock_and_format(self) -> None:
+        utc = _call_projection(
+            "shell.date",
+            {"utc": True, "format": "iso8601"},
+        )
+        local = _call_projection("shell.date", {})
+
+        self.assertEqual(utc.target, "UTC")
+        self.assertEqual(_detail_value(utc, "format"), "iso8601")
+        self.assertIs(_detail_value(utc, "utc"), True)
+        self.assertEqual(local.target, "local time")
+        self.assertEqual(local.summary, "Read the current date and time.")
+
+        custom = _call_projection(
+            "shell.date",
+            {"custom_format": "stamp=%Y %% %z"},
+        )
+        self.assertEqual(
+            _detail_value(custom, "custom format"),
+            "stamp=%Y %% %z",
+        )
+
     def test_pgrep_call_projection_always_redacts_pattern(self) -> None:
         manager = _shell_manager(["shell.pgrep"])
         pattern = "private-worker-pattern"

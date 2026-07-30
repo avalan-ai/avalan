@@ -42,6 +42,7 @@ from .settings import ShellGitToolSettings, ShellToolSettings
 from .tools import (
     AwkTool,
     CatTool,
+    DateTool,
     FileTool,
     FindTool,
     GitAddTool,
@@ -328,6 +329,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             NlTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            DateTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,
