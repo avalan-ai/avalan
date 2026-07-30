@@ -76,6 +76,10 @@ _CALL_ARGUMENTS: dict[str, dict[str, object]] = {
     "shell.cat": {"path": "filesystem/visible.txt"},
     "shell.nl": {"path": "filesystem/visible.txt"},
     "shell.date": {"utc": True, "format": "iso8601"},
+    "shell.shasum": {
+        "paths": ["filesystem/binary.bin"],
+        "algorithm": "256",
+    },
     "shell.pgrep": {"pattern": "private-worker-pattern"},
     "shell.ps": {"pids": [1], "view": "resources"},
     "shell.lsof": {"pid": 42, "limit": 16},
@@ -114,6 +118,7 @@ _EXPECTED_ACTIONS = {
     "shell.cat": "read",
     "shell.nl": "number",
     "shell.date": "read",
+    "shell.shasum": "hash",
     "shell.pgrep": "find",
     "shell.ps": "inspect",
     "shell.lsof": "inspect",
@@ -136,6 +141,22 @@ _EXPECTED_ACTIONS = {
 
 
 class ShellDisplayProjectionCallTest(TestCase):
+    def test_shasum_call_projection_identifies_paths_and_algorithm(
+        self,
+    ) -> None:
+        projection = _call_projection(
+            "shell.shasum",
+            {
+                "paths": ["filesystem/binary.bin"],
+                "algorithm": "512",
+            },
+        )
+
+        self.assertEqual(projection.action, "hash")
+        self.assertEqual(projection.target, "filesystem/binary.bin")
+        self.assertEqual(projection.summary, "Hash workspace files.")
+        self.assertEqual(_detail_value(projection, "algorithm"), "512")
+
     def test_date_call_projection_identifies_clock_and_format(self) -> None:
         utc = _call_projection(
             "shell.date",

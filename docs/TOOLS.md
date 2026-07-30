@@ -108,7 +108,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `date`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, read backend-relative time, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `date`, `shasum`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, hash files, read backend-relative time, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -492,6 +492,17 @@ two-character directive. Avalan prepends `+` after validation; flags, widths,
 modifiers, extensions, controls, non-ASCII text, and arbitrary operands are
 rejected. Host, sandbox, and container clocks or local timezone configuration
 can differ, so results are backend-relative.
+
+`shell.shasum` hashes one or more explicit regular workspace files. Its
+allowlisted `algorithm` values are `1`, `224`, `256`, `384`, `512`, `512224`,
+and `512256`; SHA-1 is the default to preserve native command behavior.
+Avalan supplies the fixed algorithm selector and an option boundary before
+normalized paths. It does not expose check-file mode, stdin, binary/text mode
+switches, tagged output, or arbitrary arguments. Seatbelt adds read-only
+access to the system-owned `/System/Library/Perl` runtime for this command
+only and never adds `/Library/Perl`. Bubblewrap profiles must explicitly bind
+their distribution's Perl interpreter, libraries, and module directories.
+The documented Alpine image installs the complete `perl-utils` runtime.
 
 `shell.pgrep`, `shell.ps`, and `shell.lsof` require trusted
 `allow_process_tools = true` configuration. `shell.ps` accepts exactly one PID.

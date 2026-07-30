@@ -1,5 +1,6 @@
 from copy import copy, deepcopy
 from dataclasses import FrozenInstanceError
+from typing import cast
 from unittest import TestCase, main
 
 from avalan.tool.shell import (
@@ -26,6 +27,8 @@ from avalan.tool.shell.entities import (
     ShellOutputKind,
     ShellPolicyDenied,
     ShellToolError,
+    _create_execution_spec_from_policy,
+    _ShellRuntimeDependency,
 )
 from avalan.tool.shell.policy import ExecutionPolicy
 
@@ -415,6 +418,7 @@ class ShellEntitiesTest(TestCase):
 
         self.assertEqual(spec.env, {"LC_ALL": "C"})
         self.assertEqual(spec.metadata, {"clamped": True})
+        self.assertEqual(spec.runtime_dependencies, ())
 
     def test_execution_spec_preserves_display_only_fields(self) -> None:
         spec = _create_execution_spec(
@@ -514,6 +518,93 @@ class ShellEntitiesTest(TestCase):
                 kwargs[field_name] = value
                 with self.assertRaises(AssertionError):
                     _create_execution_spec(**kwargs)
+
+    def test_public_execution_spec_factory_rejects_runtime_authority(
+        self,
+    ) -> None:
+        valid = {
+            "backend": "sandbox",
+            "tool_name": "shell.shasum",
+            "command": "shasum",
+            "executable": "/usr/bin/shasum",
+            "argv": ("shasum",),
+            "display_argv": ("shasum",),
+            "cwd": "/workspace",
+            "display_cwd": ".",
+            "env": {},
+            "stdin": None,
+            "stdout_media_type": "text/plain",
+            "output_kind": ShellOutputKind.TEXT,
+            "resource_class": "standard",
+            "output_plan": None,
+            "timeout_seconds": 1.0,
+            "max_stdout_bytes": 10,
+            "max_stderr_bytes": 10,
+        }
+        for field_name in (
+            "seatbelt_runtime_read_roots",
+            "bubblewrap_runtime_read_roots",
+            "runtime_dependencies",
+        ):
+            with self.subTest(field_name=field_name):
+                kwargs = {**valid, field_name: ("/",)}
+                with self.assertRaisesRegex(TypeError, field_name):
+                    _create_execution_spec(**kwargs)
+
+        spec = _create_execution_spec(**valid)
+
+        self.assertEqual(spec.runtime_dependencies, ())
+
+    def test_internal_execution_spec_accepts_only_closed_dependencies(
+        self,
+    ) -> None:
+        valid = {
+            "backend": "sandbox",
+            "tool_name": "shell.shasum",
+            "command": "shasum",
+            "executable": "/usr/bin/shasum",
+            "argv": ("shasum",),
+            "display_argv": ("shasum",),
+            "cwd": "/workspace",
+            "display_cwd": ".",
+            "env": {},
+            "stdin": None,
+            "stdout_media_type": "text/plain",
+            "output_kind": ShellOutputKind.TEXT,
+            "resource_class": "standard",
+            "output_plan": None,
+            "timeout_seconds": 1.0,
+            "max_stdout_bytes": 10,
+            "max_stderr_bytes": 10,
+        }
+        invalid_dependencies = (
+            [cast(object, _ShellRuntimeDependency.SYSTEM_PERL)],
+            (
+                _ShellRuntimeDependency.SYSTEM_PERL,
+                _ShellRuntimeDependency.SYSTEM_PERL,
+            ),
+            ("/",),
+        )
+        for dependencies in invalid_dependencies:
+            with self.subTest(dependencies=dependencies):
+                with self.assertRaises(AssertionError):
+                    _create_execution_spec_from_policy(
+                        **valid,
+                        runtime_dependencies=cast(
+                            tuple[_ShellRuntimeDependency, ...],
+                            dependencies,
+                        ),
+                    )
+
+        spec = _create_execution_spec_from_policy(
+            **valid,
+            runtime_dependencies=(_ShellRuntimeDependency.SYSTEM_PERL,),
+        )
+
+        self.assertEqual(
+            spec.runtime_dependencies,
+            (_ShellRuntimeDependency.SYSTEM_PERL,),
+        )
 
     def test_execution_spec_is_frozen(self) -> None:
         spec = _create_execution_spec(

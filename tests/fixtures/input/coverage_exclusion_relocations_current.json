@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "e0a9ee6f4f57ec4340a9e36ef900f1c7e941597dacf252b7bc2b6105b0ece40c",
+  "current_snapshot_sha256": "0d508a6b187c451f7272a6ccc57d55b69f6d5a4ba25b8c249ebe4e619bc86c36",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "d852f4849b56a76f98c05ed30679a08fb5c99847de88e26279368a389f71846e"
   },
   "report_lines": {
-    "added": 939,
-    "removed": 274,
-    "sha256": "4abba4aca269cc91bfbcee4dbfcc9b23174c9f55b28aa32c9b458b86e5ae0bed"
+    "added": 941,
+    "removed": 276,
+    "sha256": "7ea2262d7ff8098fda5ef7e8f75809e36af8d09405081ea33fb19011181bef5e"
   },
   "review": {
-    "reviewed_by": "tool display argument redaction",
-    "rationale": "The current snapshot tracks source-line relocations introduced by the tool display argument redaction option while retaining exact derived exclusion deltas."
+    "reviewed_by": "shell shasum closed runtime dependency",
+    "rationale": "The current snapshot tracks the parser-exclusion line relocation introduced by the closed shell runtime-dependency identifier while retaining exact derived exclusion deltas."
   },
-  "ledger_sha256": "4bf4cb620ab82bb81d454f3b71acdbf494f37bc47c0a7b399d2f9cf35e8568ac"
+  "ledger_sha256": "cb27c73f8e585e92bafff33407d4f0207e7a8666a26d9e30eba60fe8bef6dc35"
 }

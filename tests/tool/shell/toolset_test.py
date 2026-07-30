@@ -59,6 +59,7 @@ _EXPECTED_SCHEMA_NAMES = (
     "shell.cat",
     "shell.nl",
     "shell.date",
+    "shell.shasum",
     "shell.pgrep",
     "shell.ps",
     "shell.lsof",
@@ -834,6 +835,10 @@ async def _call_date(tool: Tool) -> str:
     return await _call_tool(tool, format="unix")
 
 
+async def _call_shasum(tool: Tool) -> str:
+    return await _call_tool(tool, ("filesystem/binary.bin",), algorithm="256")
+
+
 async def _call_pgrep(tool: Tool) -> str:
     return await _call_tool(tool, "avalan-pgrep-missing-binary")
 
@@ -934,6 +939,7 @@ _TOOL_CALLS: dict[str, Callable[[Tool], Awaitable[str]]] = {
     "cat": _call_cat,
     "nl": _call_nl,
     "date": _call_date,
+    "shasum": _call_shasum,
     "pgrep": _call_pgrep,
     "ps": _call_ps,
     "lsof": _call_lsof,

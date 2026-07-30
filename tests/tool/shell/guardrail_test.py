@@ -25,6 +25,7 @@ SHELL_COMMANDS = (
     "cat",
     "nl",
     "date",
+    "shasum",
     "pgrep",
     "ps",
     "lsof",

@@ -15,6 +15,7 @@ RUN apk add --no-cache \
     imagemagick-jpeg \
     jq \
     lsof \
+    perl-utils \
     procps-ng \
     ripgrep \
     sed

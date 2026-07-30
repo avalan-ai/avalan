@@ -339,6 +339,40 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         self.assertEqual(fields[0], "%")
         self.assertTrue(all(fields[1:]))
 
+    async def test_shasum_algorithms_smoke(self) -> None:
+        await self._require_command("shasum")
+        tool = _tool_by_name(self._toolset, "shasum")
+        expected_lengths = {
+            "1": 40,
+            "224": 56,
+            "256": 64,
+            "384": 96,
+            "512": 128,
+            "512224": 56,
+            "512256": 64,
+        }
+
+        for algorithm, digest_length in expected_lengths.items():
+            with self.subTest(algorithm=algorithm):
+                output = await _call(
+                    tool,
+                    ("filesystem/binary.bin",),
+                    algorithm=algorithm,
+                )
+
+                _assert_completed(self, output, "shasum")
+                self.assertIsInstance(output, ShellFormattedResult)
+                assert isinstance(output, ShellFormattedResult)
+                fields = output.execution_result.stdout.strip().split()
+                self.assertEqual(len(fields[0]), digest_length)
+                self.assertTrue(
+                    all(
+                        character in "0123456789abcdef"
+                        for character in fields[0]
+                    )
+                )
+                self.assertEqual(fields[-1], "filesystem/binary.bin")
+
     async def test_pgrep_smoke_and_no_match(self) -> None:
         await self._require_command("pgrep")
         await _skip_if_process_table_unavailable(self, self._resolver)

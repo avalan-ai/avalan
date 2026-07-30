@@ -15,6 +15,8 @@ from ..entities import (
     PathOperand,
     ShellCommandRequest,
     ShellOutputKind,
+    _assert_shell_runtime_dependencies,
+    _ShellRuntimeDependency,
 )
 
 from collections.abc import Callable
@@ -182,6 +184,7 @@ class ShellCommandDefinition:
     media_risk: bool = False
     process_risk: bool = False
     supports_double_dash: bool = True
+    runtime_dependencies: tuple[_ShellRuntimeDependency, ...] = ()
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.logical_id, "logical_id")
@@ -210,3 +213,7 @@ class ShellCommandDefinition:
         _assert_bool(self.media_risk, "media_risk")
         _assert_bool(self.process_risk, "process_risk")
         _assert_bool(self.supports_double_dash, "supports_double_dash")
+        _assert_shell_runtime_dependencies(
+            self.runtime_dependencies,
+            "runtime_dependencies",
+        )

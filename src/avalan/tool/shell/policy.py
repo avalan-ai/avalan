@@ -113,6 +113,7 @@ _COMPOSITION_PATH_KINDS: Mapping[str, ShellPathKind] = {
     "rg": "any",
     "reportlab": "any",
     "sed": "text_file",
+    "shasum": "file",
     "tail": "text_file",
     "tesseract": "image_file",
     "wc": "text_file",
@@ -413,7 +414,7 @@ class ExecutionPolicy:
         stdout_media_type, output_kind = command_definition.output_contract(
             request
         )
-        return self.create_execution_spec(
+        return _create_execution_spec_from_policy(
             backend=cast(
                 ShellExecutionModeValue, self._settings.execution_mode
             ),
@@ -436,6 +437,11 @@ class ExecutionPolicy:
             max_stdout_bytes=max_stdout_bytes,
             max_stderr_bytes=max_stderr_bytes,
             metadata=metadata,
+            runtime_dependencies=(
+                command_definition.runtime_dependencies
+                if self._settings.execution_mode == "sandbox"
+                else ()
+            ),
         )
 
     def create_execution_spec(
@@ -895,7 +901,7 @@ async def _enforce_content_policy(
                 )
             else:
                 await _enforce_regular_file_inputs(paths)
-        case "file":
+        case "file" | "shasum":
             await _enforce_regular_file_inputs(paths)
         case "ls":
             await _enforce_listing_inputs(paths)

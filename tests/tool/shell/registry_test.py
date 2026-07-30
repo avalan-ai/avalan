@@ -2,7 +2,10 @@ from importlib import import_module
 from unittest import TestCase, main
 
 from avalan.tool.shell.commands.base import ShellStreamContract
-from avalan.tool.shell.entities import ShellOutputKind
+from avalan.tool.shell.entities import (
+    ShellOutputKind,
+    _ShellRuntimeDependency,
+)
 from avalan.tool.shell.registry import (
     SHELL_COMMAND_DEFINITIONS,
     SHELL_COMMAND_IDS,
@@ -48,6 +51,7 @@ class ShellRegistryTest(TestCase):
                 "cat",
                 "nl",
                 "date",
+                "shasum",
                 "pgrep",
                 "ps",
                 "lsof",
@@ -121,9 +125,14 @@ class ShellRegistryTest(TestCase):
         self.assertEqual(groups_by_id["rg"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["nl"], ShellDependencyGroup.CORE)
         self.assertEqual(groups_by_id["date"], ShellDependencyGroup.CORE)
+        self.assertEqual(groups_by_id["shasum"], ShellDependencyGroup.CORE)
         self.assertEqual(
             SHELL_COMMAND_DEFINITIONS["date"].container_package_hints,
             ("coreutils",),
+        )
+        self.assertEqual(
+            SHELL_COMMAND_DEFINITIONS["shasum"].container_package_hints,
+            ("perl-utils",),
         )
         self.assertEqual(groups_by_id["pgrep"], ShellDependencyGroup.PROCESS)
         self.assertEqual(groups_by_id["ps"], ShellDependencyGroup.PROCESS)
@@ -271,6 +280,7 @@ class ShellRegistryTest(TestCase):
             "media_risk": 1,
             "process_risk": 1,
             "supports_double_dash": 1,
+            "runtime_dependencies": ("/",),
         }
         for field_name, value in invalid_values.items():
             with self.subTest(field_name=field_name):
@@ -285,11 +295,32 @@ class ShellRegistryTest(TestCase):
                 "output_contract": _text_output_contract,
                 "stdin_contract": _TEXT_STDIN_CONTRACT,
                 "output_filter": _uppercase_output_filter,
+                "runtime_dependencies": (_ShellRuntimeDependency.SYSTEM_PERL,),
             }
         )
         self.assertIs(definition.output_contract, _text_output_contract)
         self.assertEqual(definition.stdin_contract, _TEXT_STDIN_CONTRACT)
         self.assertIs(definition.output_filter, _uppercase_output_filter)
+        self.assertEqual(
+            definition.runtime_dependencies,
+            (_ShellRuntimeDependency.SYSTEM_PERL,),
+        )
+
+        for dependencies in (
+            [_ShellRuntimeDependency.SYSTEM_PERL],
+            (
+                _ShellRuntimeDependency.SYSTEM_PERL,
+                _ShellRuntimeDependency.SYSTEM_PERL,
+            ),
+        ):
+            with self.subTest(dependencies=dependencies):
+                with self.assertRaises(AssertionError):
+                    ShellCommandDefinition(
+                        **{
+                            **valid,
+                            "runtime_dependencies": dependencies,
+                        }
+                    )
 
     def test_command_definition_defaults_format_text_output(self) -> None:
         definition = ShellCommandDefinition(

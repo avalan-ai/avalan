@@ -100,6 +100,7 @@ EXPECTED_BUILT_IN_TOOL_NAMES = {
     "shell.rg",
     "shell.reportlab",
     "shell.sed",
+    "shell.shasum",
     "shell.tail",
     "shell.tesseract",
     "shell.wc",

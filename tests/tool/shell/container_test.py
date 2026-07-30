@@ -256,6 +256,36 @@ class ShellContainerPlanningTest(IsolatedAsyncioTestCase):
             ("date", "-u", "+container=%Y %% %z"),
         )
 
+    async def test_shasum_container_plan_preserves_bounded_argv(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            (root / "visible.bin").write_bytes(b"\x00avalan\xff")
+            settings = ShellToolSettings(
+                execution_mode="container",
+                workspace_root=str(root),
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(
+                _shasum_request(
+                    "visible.bin",
+                    algorithm="512256",
+                )
+            )
+            plan = lower_shell_execution_spec(
+                spec,
+                container_settings=_effective_settings(),
+            )
+
+        assert plan.container_plan is not None
+        self.assertEqual(
+            plan.container_plan.run_plan.command.argv,
+            ("shasum", "-a", "512256", "--", "visible.bin"),
+        )
+
     async def test_git_container_plan_trusts_mounted_repo_root(self) -> None:
         spec = _direct_git_spec(repo_root=".")
         plan = lower_shell_execution_spec(
@@ -2228,6 +2258,27 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
             ),
         ),
         cwd=cwd,
+    )
+
+
+def _shasum_request(
+    path: str,
+    *,
+    algorithm: str,
+) -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name="shell.shasum",
+        command="shasum",
+        options={"algorithm": algorithm},
+        paths=(
+            PathOperand(
+                name="path",
+                path=path,
+                kind="file",
+                access="read",
+            ),
+        ),
+        cwd=None,
     )
 
 

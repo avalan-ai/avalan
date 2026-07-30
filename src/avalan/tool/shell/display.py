@@ -43,6 +43,7 @@ _REQUEST_ACTIONS = {
     "cat": "read",
     "nl": "number",
     "date": "read",
+    "shasum": "hash",
     "pgrep": "find",
     "ps": "inspect",
     "lsof": "inspect",
@@ -70,6 +71,7 @@ _REQUEST_SUMMARIES = {
     "cat": "Read a file.",
     "nl": "Number file lines.",
     "date": "Read the current date and time.",
+    "shasum": "Hash workspace files.",
     "pgrep": "Find matching process identifiers.",
     "ps": "Inspect selected process metadata.",
     "lsof": "Inspect selected process descriptor metadata.",
@@ -96,6 +98,7 @@ _PATH_TARGET_COMMANDS = frozenset(
         "montage",
         "cat",
         "nl",
+        "shasum",
         "file",
         "wc",
         "awk",
@@ -861,6 +864,8 @@ def _request_details(
             _append_option(details, request.options, "format")
             _append_option(details, request.options, "custom_format")
             _append_option(details, request.options, "utc")
+        case "shasum":
+            _append_option(details, request.options, "algorithm")
         case "lsof":
             _append_option(details, request.options, "limit")
         case "ps":
