@@ -1,9 +1,16 @@
+from .image_fixtures import (
+    VALID_JPEG_BYTES,
+    multi_frame_ppm_bytes,
+    valid_png_bytes,
+)
+
 from asyncio import create_subprocess_exec
 from asyncio.subprocess import PIPE
 from errno import EACCES, EPERM
 from os import environ, getpid
 from pathlib import Path
 from sys import executable as python_executable
+from tempfile import TemporaryDirectory
 from unittest import IsolatedAsyncioTestCase, main, skipUnless
 from uuid import uuid4
 
@@ -12,6 +19,7 @@ from avalan.tool import Tool
 from avalan.tool.shell import (
     SHELL_COMMAND_DEFINITIONS,
     ExecutionPolicy,
+    ExecutionResult,
     LocalCommandExecutor,
     PathOperand,
     ShellCommandRequest,
@@ -24,6 +32,7 @@ from avalan.tool.shell import (
 
 FIXTURE_ROOT = Path(__file__).parent / "fixtures"
 SMOKE_ENV_NAME = "AVALAN_SHELL_REAL_SMOKE"
+SMOKE_MONTAGE_FONT_ENV_NAME = "AVALAN_SHELL_REAL_MONTAGE_FONT"
 SMOKE_PATHS_ENV_NAME = "AVALAN_SHELL_REAL_SMOKE_PATHS"
 TRUSTED_SEARCH_PATHS = (
     "/opt/homebrew/bin",
@@ -51,6 +60,7 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
             allow_process_tools=True,
             executable_search_paths=self._search_paths,
             max_inline_output_file_bytes=256,
+            montage_font=environ.get(SMOKE_MONTAGE_FONT_ENV_NAME, ""),
         )
         self._policy = ExecutionPolicy(
             settings=settings,
@@ -537,6 +547,96 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
         _assert_completed(self, output, "tesseract")
         self.assertIn("stdout_bytes:", output)
 
+    async def test_montage_six_jpeg_sample_smoke(self) -> None:
+        await self._require_command("montage")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            pages = root / "pages"
+            pages.mkdir()
+            paths = tuple(f"pages/page-{index:02d}" for index in range(1, 7))
+            for path in paths:
+                (root / path).write_bytes(VALID_JPEG_BYTES)
+
+            output = await _call(
+                _tool_by_name(_montage_toolset(self, root), "montage"),
+                paths,
+                thumbnail="425x550",
+                tile="3x2",
+                geometry="+8+8",
+                output_format="jpg",
+                output_filename="contact-01-06.jpg",
+            )
+
+        result = _assert_real_montage_completed(self, output)
+        self.assertEqual(len(result.generated_files), 1)
+        generated = result.generated_files[0]
+        self.assertEqual(generated.display_path, "contact-01-06.jpg")
+        self.assertEqual(generated.media_type, "image/jpeg")
+        assert generated.width is not None
+        assert generated.height is not None
+        self.assertLessEqual(generated.width, 1323)
+        self.assertLessEqual(generated.height, 1132)
+
+    async def test_montage_multiframe_and_embedded_labels_smoke(self) -> None:
+        await self._require_command("montage")
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            frames = multi_frame_ppm_bytes(
+                first_rgb=(255, 0, 0),
+                second_rgb=(0, 0, 255),
+            )
+            (root / "first.pnm").write_bytes(frames)
+            (root / "second.pnm").write_bytes(frames)
+            private_text = "private-label-" * 128
+            (root / "labeled-one.png").write_bytes(
+                valid_png_bytes(
+                    width=20,
+                    height=10,
+                    label=private_text,
+                    caption=private_text,
+                )
+            )
+            (root / "labeled-two.png").write_bytes(
+                valid_png_bytes(
+                    width=20,
+                    height=10,
+                    label=private_text,
+                    caption=private_text,
+                )
+            )
+            tool = _tool_by_name(_montage_toolset(self, root), "montage")
+
+            multiframe_output = await _call(
+                tool,
+                ("first.pnm", "second.pnm"),
+                tile="2x1",
+                output_format="png",
+                output_filename="first-scenes.png",
+            )
+            labeled_output = await _call(
+                tool,
+                ("labeled-one.png", "labeled-two.png"),
+                thumbnail="100x100",
+                tile="2x1",
+                geometry="+8+8",
+                output_format="png",
+                output_filename="labels-cleared.png",
+            )
+
+        multiframe_result = _assert_real_montage_completed(
+            self,
+            multiframe_output,
+        )
+        labeled_result = _assert_real_montage_completed(self, labeled_output)
+        self.assertEqual(len(multiframe_result.generated_files), 1)
+        self.assertEqual(len(labeled_result.generated_files), 1)
+        generated = labeled_result.generated_files[0]
+        assert generated.width is not None
+        assert generated.height is not None
+        self.assertLessEqual(generated.width, 232)
+        self.assertLessEqual(generated.height, 116)
+        self.assertNotIn(private_text, str(labeled_output))
+
     async def _require_command(self, command_id: str) -> None:
         command = SHELL_COMMAND_DEFINITIONS[command_id]
         executable = await self._resolver.resolve(command)
@@ -545,6 +645,43 @@ class RealSubprocessSmokeTest(IsolatedAsyncioTestCase):
                 f"{command.dependency_group} command unavailable: "
                 f"{command.executable_name}"
             )
+
+
+def _montage_toolset(
+    test_case: RealSubprocessSmokeTest,
+    root: Path,
+) -> ShellToolSet:
+    settings = ShellToolSettings(
+        workspace_root=str(root),
+        allow_media_tools=True,
+        executable_search_paths=test_case._search_paths,
+        max_inline_output_file_bytes=16384,
+        montage_font=environ.get(SMOKE_MONTAGE_FONT_ENV_NAME, ""),
+    )
+    return ShellToolSet(
+        settings=settings,
+        policy=ExecutionPolicy(
+            settings=settings,
+            resolver=test_case._resolver,
+        ),
+        executor=test_case._executor,
+    )
+
+
+def _assert_real_montage_completed(
+    test_case: IsolatedAsyncioTestCase,
+    output: str,
+) -> ExecutionResult:
+    test_case.assertIsInstance(output, ShellFormattedResult)
+    assert isinstance(output, ShellFormattedResult)
+    result = output.execution_result
+    if (
+        result.status is not ShellExecutionStatus.COMPLETED
+        and "unable to read font" in result.stderr.lower()
+    ):
+        test_case.skipTest("montage has no usable host font configuration")
+    _assert_completed(test_case, output, "montage")
+    return result
 
 
 async def _call(tool: Tool, *args: object, **kwargs: object) -> str:

@@ -258,6 +258,17 @@ class ShellToolSettings:
         "max_ocr_pixels",
         "max_ocr_languages",
         "max_tesseract_dpi",
+        "max_montage_inputs",
+        "max_montage_input_bytes",
+        "max_montage_input_pixels",
+        "max_montage_input_pixels_per_file",
+        "max_montage_input_long_edge_pixels",
+        "max_montage_spacing_pixels",
+        "max_montage_memory_bytes",
+        "max_montage_map_bytes",
+        "max_montage_disk_bytes",
+        "max_montage_threads",
+        "montage_font",
         "stream_read_chunk_bytes",
         "max_concurrent_processes",
         "max_concurrent_heavy_processes",
@@ -329,6 +340,17 @@ class ShellToolSettings:
     max_ocr_pixels: int = 20000000
     max_ocr_languages: int = 4
     max_tesseract_dpi: int = 600
+    max_montage_inputs: int = 64
+    max_montage_input_bytes: int = 268435456
+    max_montage_input_pixels: int = 200000000
+    max_montage_input_pixels_per_file: int = 50000000
+    max_montage_input_long_edge_pixels: int = 10000
+    max_montage_spacing_pixels: int = 1024
+    max_montage_memory_bytes: int = 268435456
+    max_montage_map_bytes: int = 536870912
+    max_montage_disk_bytes: int = 1073741824
+    max_montage_threads: int = 2
+    montage_font: str = ""
     stream_read_chunk_bytes: int = 8192
     max_concurrent_processes: int = 4
     max_concurrent_heavy_processes: int = 1
@@ -351,6 +373,9 @@ class ShellToolSettings:
     )
     allowed_pdf_raster_formats: Sequence[str] = field(
         default_factory=lambda: ("png",),
+    )
+    allowed_montage_output_formats: Sequence[str] = field(
+        default_factory=lambda: ("jpg", "jpeg", "png"),
     )
     allowed_tesseract_output_formats: Sequence[str] = field(
         default_factory=lambda: ("txt",),
@@ -415,6 +440,7 @@ class ShellToolSettings:
         for field_name in _BOOLEAN_FIELDS:
             _assert_bool(getattr(self, field_name), field_name)
         _assert_pipeline_transport(self.pipeline_transport)
+        _assert_montage_font(self.montage_font)
         assert not self.allow_write, "allow_write is reserved"
         assert not self.allow_shell, "allow_shell is reserved"
         _assert_known_commands(self.allowed_commands)
@@ -422,6 +448,11 @@ class ShellToolSettings:
             self.allowed_pdf_raster_formats,
             "allowed_pdf_raster_formats",
             ("png",),
+        )
+        _assert_non_empty_known_values(
+            self.allowed_montage_output_formats,
+            "allowed_montage_output_formats",
+            ("jpg", "jpeg", "png"),
         )
         _assert_non_empty_known_values(
             self.allowed_tesseract_output_formats,
@@ -484,6 +515,11 @@ class ShellToolSettings:
             self,
             "allowed_pdf_raster_formats",
             tuple(self.allowed_pdf_raster_formats),
+        )
+        object.__setattr__(
+            self,
+            "allowed_montage_output_formats",
+            tuple(self.allowed_montage_output_formats),
         )
         object.__setattr__(
             self,
@@ -558,6 +594,16 @@ _POSITIVE_INT_FIELDS = (
     "max_ocr_pixels",
     "max_ocr_languages",
     "max_tesseract_dpi",
+    "max_montage_inputs",
+    "max_montage_input_bytes",
+    "max_montage_input_pixels",
+    "max_montage_input_pixels_per_file",
+    "max_montage_input_long_edge_pixels",
+    "max_montage_spacing_pixels",
+    "max_montage_memory_bytes",
+    "max_montage_map_bytes",
+    "max_montage_disk_bytes",
+    "max_montage_threads",
     "stream_read_chunk_bytes",
     "max_concurrent_processes",
     "max_concurrent_heavy_processes",
@@ -666,6 +712,14 @@ def _assert_relative_path(value: str, field_name: str) -> None:
     path = Path(value)
     assert not path.is_absolute(), f"{field_name} must be relative"
     assert ".." not in path.parts, f"{field_name} must not contain .."
+
+
+def _assert_montage_font(value: object) -> None:
+    assert isinstance(value, str), "montage_font must be a string"
+    assert "\x00" not in value, "montage_font must not contain null bytes"
+    assert (
+        len(value.encode("utf-8")) <= 4096
+    ), "montage_font must not exceed 4096 bytes"
 
 
 def _assert_known_commands(value: object) -> None:

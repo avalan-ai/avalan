@@ -94,6 +94,7 @@ from .tools import (
     KillTool,
     LsofTool,
     LsTool,
+    MontageTool,
     NlTool,
     PdfInfoTool,
     PdfPlumberTool,
@@ -429,6 +430,12 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
             TesseractTool(
+                settings=self._settings,
+                policy=policy,
+                executor=executor,
+                formatter=formatter,
+            ),
+            MontageTool(
                 settings=self._settings,
                 policy=policy,
                 executor=executor,

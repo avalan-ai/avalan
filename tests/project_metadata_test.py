@@ -269,6 +269,18 @@ def test_shell_code_container_includes_process_tool_support() -> None:
     assert "--tool-shell-allow-process-control" in readme
 
 
+def test_shell_code_container_includes_montage_support() -> None:
+    dockerfile = _read_repository_text("docs/containers/shell-code/Dockerfile")
+    readme = _read_repository_text("docs/containers/shell-code/README.md")
+
+    assert re.search(r"(?m)^\s+imagemagick\s*\\?$", dockerfile)
+    assert re.search(r"(?m)^\s+imagemagick-jpeg\s*\\?$", dockerfile)
+    assert re.search(r"(?m)^\s+font-dejavu\s*\\?$", dockerfile)
+    assert "- `montage`" in readme
+    assert "--tool shell.montage" in readme
+    assert "--tool-shell-allow-media-tools" in readme
+
+
 def test_hosted_agent_extras_omit_local_runtime_dependencies() -> None:
     optional_deps = _optional_dependencies()
     selected_extras = ("agent", "server", "tool", "vendors")

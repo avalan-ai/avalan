@@ -77,6 +77,7 @@ from .entities import ShellToolError as ShellToolError
 from .executor import CommandExecutor as CommandExecutor
 from .executor import LocalCommandExecutor as LocalCommandExecutor
 from .filesystem import DEFAULT_SIGNATURE_BYTES as DEFAULT_SIGNATURE_BYTES
+from .filesystem import JPEG_SIGNATURE as JPEG_SIGNATURE
 from .filesystem import PNG_SIGNATURE as PNG_SIGNATURE
 from .filesystem import ShellPathMetadata as ShellPathMetadata
 from .filesystem import ensure_file_size_at_most as ensure_file_size_at_most
@@ -144,6 +145,7 @@ from .settings import ShellGitToolSettings as ShellGitToolSettings
 from .settings import ShellToolSettings as ShellToolSettings
 from .tools import KillTool as KillTool
 from .tools import LsofTool as LsofTool
+from .tools import MontageTool as MontageTool
 from .tools import PsTool as PsTool
 from .toolset import ShellToolSet as ShellToolSet
 

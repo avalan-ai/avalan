@@ -13,12 +13,15 @@ from .entities import (
     ShellExecutionStatus,
 )
 from .filesystem import (
+    JPEG_SIGNATURE,
+    PNG_SIGNATURE,
     file_digest_and_base64,
     inspect_path,
     list_directory,
     make_directory,
     private_temp_directory,
-    probe_image_dimensions,
+    probe_image_dimensions_from_bytes,
+    read_image_signature,
     remove_file,
     remove_tree,
     resolve_policy_path,
@@ -680,11 +683,34 @@ async def _generated_file_dimensions(
     media_type: str,
     plan: GeneratedOutputPlan,
 ) -> tuple[int | None, int | None]:
+    signature = await read_image_signature(path)
+    return generated_file_dimensions_from_bytes(signature, media_type, plan)
+
+
+def generated_file_dimensions_from_bytes(
+    signature: bytes,
+    media_type: str,
+    plan: GeneratedOutputPlan,
+) -> tuple[int | None, int | None]:
+    """Validate and return generated raster dimensions."""
+    assert isinstance(signature, bytes), "signature must be bytes"
+    assert isinstance(media_type, str) and media_type, "media_type is required"
+    assert isinstance(
+        plan, GeneratedOutputPlan
+    ), "plan must be generated output"
     if not media_type.startswith("image/"):
         return None, None
-    dimensions = await probe_image_dimensions(path)
+    expected_signature = {
+        "image/jpeg": JPEG_SIGNATURE,
+        "image/png": PNG_SIGNATURE,
+    }.get(media_type)
+    if expected_signature is None or not signature.startswith(
+        expected_signature
+    ):
+        raise _GeneratedOutputError("generated image signature is invalid")
+    dimensions = probe_image_dimensions_from_bytes(signature)
     if dimensions is None:
-        return None, None
+        raise _GeneratedOutputError("generated image signature is invalid")
     width, height = dimensions
     if (
         plan.max_raster_long_edge_pixels is not None

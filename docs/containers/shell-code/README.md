@@ -13,6 +13,7 @@ by Avalan's common read-only shell tools:
 - `kill`
 - `ls`
 - `lsof`
+- `montage`
 - `pgrep`
 - `ps`
 - `rg`
@@ -86,6 +87,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool shell.ls \
       --tool shell.nl \
       --tool shell.lsof \
+      --tool shell.montage \
       --tool shell.pgrep \
       --tool shell.ps \
       --tool shell.rg \
@@ -112,6 +114,7 @@ echo "At a high level, how is token streaming handled in this codebase? Answer i
       --tool-container-timeout-seconds 30 \
       --tool-shell-container-profile workspace-readonly \
       --tool-shell-container-required \
+      --tool-shell-allow-media-tools \
       --tool-shell-allow-process-tools \
       --memory-recent \
       --run-max-new-tokens 8192 \
@@ -149,3 +152,16 @@ calls. The read-only exploration example does not expose it. Local operators
 can enable it explicitly with both
 `--tool-shell-allow-process-tools` and
 `--tool-shell-allow-process-control`.
+
+The image also installs ImageMagick, its Alpine JPEG codec subpackage, and a
+default font package for `shell.montage`. Montage receives explicit image
+paths rather than shell patterns or brace expressions, and returns one
+bounded generated artifact. Each path selects its first image scene, embedded
+labels and captions are cleared, ImageMagick resource limits are explicit,
+and the returned raster signature and dimensions are checked. Container-mode
+lowering selects the packaged `DejaVu-Sans` font; host and sandbox operators
+can instead set
+`--tool-shell-montage-font` for their ImageMagick installation. Enable the
+tool with `--tool shell.montage` and
+`--tool-shell-allow-media-tools`. A requested `output_filename` is a basename
+for the returned artifact; it is not an arbitrary writable workspace path.

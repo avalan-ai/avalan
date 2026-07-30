@@ -1,3 +1,5 @@
+from .image_fixtures import VALID_JPEG_BYTES, valid_png_bytes
+
 from asyncio import create_task, gather, sleep, wait_for
 from asyncio import run as async_run
 from collections.abc import Awaitable, Callable
@@ -109,6 +111,42 @@ class ShellSandboxPlanningTest(IsolatedAsyncioTestCase):
             str(root.resolve()),
         )
         self.assertIn("sandbox", sandbox.to_dict())
+
+    async def test_montage_plan_uses_suffixed_generated_output(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            settings = ShellToolSettings(
+                execution_mode="sandbox",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            spec = await ExecutionPolicy(
+                settings=settings,
+                resolver=_AllResolved(),
+            ).normalize(_montage_request())
+            plan = lower_shell_execution_spec(
+                spec,
+                sandbox_settings=_sandbox_settings(root),
+            )
+
+        self.assertIsNotNone(plan.sandbox_plan)
+        assert plan.sandbox_plan is not None
+        argv = plan.sandbox_plan.request.argv
+        self.assertEqual(argv[0], "/trusted/bin/montage")
+        self.assertIn("./one.jpg[0]", argv)
+        self.assertIn("./two.jpg[0]", argv)
+        list_limit_index = argv.index("list-length")
+        self.assertEqual(argv[list_limit_index + 1], "2")
+        self.assertEqual(argv[-1], f"{root.resolve()}/outputs/montage.jpg")
+        self.assertNotIn(GENERATED_OUTPUT_PREFIX_PLACEHOLDER, argv)
+        self.assertIsNotNone(spec.output_plan)
+        assert spec.output_plan is not None
+        self.assertEqual(
+            spec.output_plan.suffix_media_types,
+            {".jpg": "image/jpeg"},
+        )
 
     async def test_required_sandbox_plan_never_lowers_to_local(self) -> None:
         spec = _direct_text_spec(Path.cwd())
@@ -1064,6 +1102,117 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
         for forbidden_value in serialized_forbidden:
             self.assertNotIn(forbidden_value, serialized_schema)
 
+    async def test_montage_toolset_executes_with_sandbox_artifact(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            settings = ShellToolSettings(
+                execution_mode="sandbox",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            backend = sandbox_backend_module.SandboxFakeBackend(
+                sandbox_backend_module.SandboxFakeBackendScript(
+                    capabilities=_capabilities(),
+                    stream_chunks=(),
+                    output_files={
+                        "montage.jpg": (root / "one.jpg").read_bytes()
+                    },
+                )
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                sandbox_settings=_sandbox_settings(root),
+                sandbox_backend=backend,
+            )
+            call = cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "montage"),
+            )
+
+            output = await call(
+                ("one.jpg", "two.jpg"),
+                thumbnail="10x10",
+                tile="2x1",
+                output_filename="contact.jpg",
+                context=ToolCallContext(),
+            )
+
+        self.assertIsInstance(output, ShellFormattedResult)
+        formatted = cast(ShellFormattedResult, output)
+        result = formatted.execution_result
+        self.assertIs(result.status, ShellExecutionStatus.COMPLETED)
+        self.assertEqual(result.backend, "sandbox")
+        self.assertEqual(len(result.generated_files), 1)
+        self.assertEqual(result.generated_files[0].display_path, "contact.jpg")
+        self.assertEqual(result.generated_files[0].media_type, "image/jpeg")
+        self.assertEqual(
+            (
+                result.generated_files[0].width,
+                result.generated_files[0].height,
+            ),
+            (16, 16),
+        )
+
+    async def test_montage_sandbox_rejects_oversized_compressed_raster(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            _write_test_jpeg(root / "one.jpg")
+            _write_test_jpeg(root / "two.jpg")
+            settings = ShellToolSettings(
+                execution_mode="sandbox",
+                workspace_root=str(root),
+                allow_media_tools=True,
+            )
+            backend = sandbox_backend_module.SandboxFakeBackend(
+                sandbox_backend_module.SandboxFakeBackendScript(
+                    capabilities=_capabilities(),
+                    stream_chunks=(),
+                    output_files={
+                        "montage.png": valid_png_bytes(
+                            width=4096,
+                            height=1,
+                        )
+                    },
+                )
+            )
+            toolset = ShellToolSet(
+                settings=settings,
+                policy=ExecutionPolicy(
+                    settings=settings,
+                    resolver=_AllResolved(),
+                ),
+                sandbox_settings=_sandbox_settings(root),
+                sandbox_backend=backend,
+            )
+
+            output = await cast(
+                Callable[..., Awaitable[str]],
+                _tool_by_name(toolset, "montage"),
+            )(
+                ("one.jpg", "two.jpg"),
+                output_format="png",
+                output_filename="contact.png",
+                context=ToolCallContext(),
+            )
+
+        result = cast(ShellFormattedResult, output).execution_result
+        self.assertIs(result.status, ShellExecutionStatus.TOO_LARGE)
+        self.assertIs(
+            result.error_code,
+            ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED,
+        )
+        self.assertEqual(result.generated_files, ())
+
     async def test_toolset_uses_isolation_runtime_for_sandbox(self) -> None:
         fixture_root = Path(__file__).parent / "fixtures"
         settings = ShellToolSettings(
@@ -1467,6 +1616,39 @@ def _cat_request(path: str, *, cwd: str | None = None) -> ShellCommandRequest:
     )
 
 
+def _montage_request() -> ShellCommandRequest:
+    return ShellCommandRequest(
+        tool_name="shell.montage",
+        command="montage",
+        options={
+            "thumbnail": "10x10",
+            "tile": "2x1",
+            "geometry": "+0+0",
+            "output_format": "jpg",
+            "output_filename": "contact.jpg",
+        },
+        paths=(
+            PathOperand(
+                name="path_0",
+                path="one.jpg",
+                kind="image_file",
+                access="read",
+            ),
+            PathOperand(
+                name="path_1",
+                path="two.jpg",
+                kind="image_file",
+                access="read",
+            ),
+        ),
+        cwd=None,
+    )
+
+
+def _write_test_jpeg(path: Path) -> None:
+    path.write_bytes(VALID_JPEG_BYTES)
+
+
 def _direct_text_spec(
     root: Path,
     *,
@@ -1581,6 +1763,7 @@ def _sandbox_settings(
         name="shell-readonly",
         trusted_executables=(
             "/trusted/bin/cat",
+            "/trusted/bin/montage",
             "/trusted/bin/pdftoppm",
         ),
         read_roots=(str(root),),

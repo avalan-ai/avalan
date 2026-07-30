@@ -13,6 +13,7 @@ from .commands.helpers import (
     path_matches_sensitive_denylist,
 )
 from .commands.helpers import policy_denied as _policy_denied
+from .commands.montage import MONTAGE_INPUT_DIMENSIONS_METADATA_KEY
 from .commands.nl import (
     RESERVED_SECTION_DELIMITER_SEQUENCES as _NL_SECTION_DELIMITER_SEQUENCES,
 )
@@ -102,6 +103,7 @@ _COMPOSITION_PATH_KINDS: Mapping[str, ShellPathKind] = {
     "head": "text_file",
     "jq": "json_file",
     "ls": "any",
+    "montage": "image_file",
     "nl": "text_file",
     "pdfinfo": "pdf_file",
     "pdfplumber": "pdf_file",
@@ -358,6 +360,11 @@ class ExecutionPolicy:
             normalized_paths,
             metadata,
             settings=self._settings,
+        )
+        await _annotate_montage_metadata(
+            request,
+            normalized_paths,
+            metadata,
         )
         default_timeout_seconds, max_timeout_seconds = _timeout_limits(
             request.command,
@@ -905,6 +912,8 @@ async def _enforce_content_policy(
             await _enforce_pdf_inputs(paths, settings=settings)
         case "tesseract":
             await _enforce_image_inputs(paths, settings=settings)
+        case "montage":
+            await _enforce_montage_inputs(paths, settings=settings)
 
 
 def _wc_reads_text(options: Mapping[str, object]) -> bool:
@@ -969,6 +978,26 @@ async def _annotate_pdf_raster_metadata(
         boxes,
         key=lambda box: _page_size_raster_dpi_cap(box, settings),
     )
+
+
+async def _annotate_montage_metadata(
+    request: ShellCommandRequest,
+    paths: tuple[_NormalizedPath, ...],
+    metadata: dict[str, object],
+) -> None:
+    if request.command != "montage":
+        return
+    dimensions: list[tuple[int, int]] = []
+    for path in paths:
+        if path.metadata is None or not path.metadata.is_file:
+            metadata[MONTAGE_INPUT_DIMENSIONS_METADATA_KEY] = ()
+            return
+        value = await probe_image_dimensions(path.path)
+        if value is None:
+            metadata[MONTAGE_INPUT_DIMENSIONS_METADATA_KEY] = ()
+            return
+        dimensions.append(value)
+    metadata[MONTAGE_INPUT_DIMENSIONS_METADATA_KEY] = tuple(dimensions)
 
 
 async def _enforce_text_inputs(
@@ -1106,6 +1135,41 @@ async def _enforce_image_inputs(
             )
 
 
+async def _enforce_montage_inputs(
+    paths: tuple[_NormalizedPath, ...],
+    *,
+    settings: ShellToolSettings,
+) -> None:
+    total_bytes = 0
+    total_pixels = 0
+    for path in paths:
+        metadata = await _required_file_metadata(path)
+        total_bytes += metadata.size
+        if total_bytes > settings.max_montage_input_bytes:
+            raise _policy_denied(
+                ShellExecutionErrorCode.TOO_LARGE,
+                "montage input files are too large",
+            )
+        dimensions = await probe_image_dimensions(path.path)
+        if dimensions is None:
+            raise _policy_denied(
+                ShellExecutionErrorCode.UNSUPPORTED_MEDIA_SIGNATURE,
+                "unsupported montage image signature",
+            )
+        width, height = dimensions
+        pixels = width * height
+        total_pixels += pixels
+        if (
+            max(width, height) > settings.max_montage_input_long_edge_pixels
+            or pixels > settings.max_montage_input_pixels_per_file
+            or total_pixels > settings.max_montage_input_pixels
+        ):
+            raise _policy_denied(
+                ShellExecutionErrorCode.TOO_LARGE,
+                "montage input image dimensions are too large",
+            )
+
+
 async def _required_file_metadata(
     path: _NormalizedPath,
 ) -> ShellPathMetadata:
@@ -1198,6 +1262,7 @@ def _timeout_limits(
         "reportlab",
         "pdfplumber",
         "pypdf",
+        "montage",
     ):
         return (
             settings.default_pdf_timeout_seconds,

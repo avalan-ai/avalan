@@ -559,6 +559,7 @@ class GeneratedOutputPlan:
     max_inline_bytes: int
     max_raster_long_edge_pixels: int | None = None
     max_raster_pixels: int | None = None
+    output_path_suffix: str | None = None
 
     def __post_init__(self) -> None:
         _assert_safe_path_name(self.prefix_name, "prefix_name")
@@ -584,6 +585,14 @@ class GeneratedOutputPlan:
             self.max_raster_pixels,
             "max_raster_pixels",
         )
+        if self.output_path_suffix is not None:
+            _assert_safe_suffix(
+                self.output_path_suffix,
+                "output_path_suffix",
+            )
+            assert (
+                self.output_path_suffix in self.allowed_suffixes
+            ), "output_path_suffix must be allowed"
         object.__setattr__(
             self,
             "allowed_suffixes",
@@ -594,6 +603,11 @@ class GeneratedOutputPlan:
             "suffix_media_types",
             dict(self.suffix_media_types),
         )
+
+    def runtime_path(self, prefix: str) -> str:
+        """Return the runtime output path for a generated prefix."""
+        _assert_non_empty_string(prefix, "prefix")
+        return f"{prefix}{self.output_path_suffix or ''}"
 
 
 @final

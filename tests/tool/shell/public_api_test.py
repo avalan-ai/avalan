@@ -18,6 +18,7 @@ from unittest import IsolatedAsyncioTestCase, TestCase, main
 from avalan import filesystem
 from avalan.tool import ToolSet
 from avalan.tool.shell import (
+    JPEG_SIGNATURE,
     SHELL_COMMAND_DEFINITIONS,
     SHELL_COMMAND_IDS,
     SHELL_COMMANDS,
@@ -42,6 +43,7 @@ from avalan.tool.shell import (
     LocalCommandExecutor,
     LocalCompositionExecutor,
     LsofTool,
+    MontageTool,
     PathOperand,
     PsTool,
     ShellCommandDefinition,
@@ -103,6 +105,10 @@ class ShellPublicApiTest(TestCase):
         )
         self.assertIs(KillTool, import_module("avalan.tool.shell").KillTool)
         self.assertIs(LsofTool, import_module("avalan.tool.shell").LsofTool)
+        self.assertIs(
+            MontageTool,
+            import_module("avalan.tool.shell").MontageTool,
+        )
         self.assertIs(PsTool, import_module("avalan.tool.shell").PsTool)
         self.assertIs(
             ExecutionPolicy, import_module("avalan.tool.shell").ExecutionPolicy
@@ -176,6 +182,10 @@ class ShellPublicApiTest(TestCase):
         self.assertIs(
             read_image_signature,
             import_module("avalan.tool.shell").read_image_signature,
+        )
+        self.assertIs(
+            JPEG_SIGNATURE,
+            import_module("avalan.tool.shell").JPEG_SIGNATURE,
         )
         self.assertIs(
             probe_image_dimensions,
@@ -378,6 +388,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.commands.kill",
             "avalan.tool.shell.commands.ls",
             "avalan.tool.shell.commands.lsof",
+            "avalan.tool.shell.commands.montage",
             "avalan.tool.shell.commands.nl",
             "avalan.tool.shell.commands.pdfinfo",
             "avalan.tool.shell.commands.pgrep",
@@ -411,6 +422,7 @@ class ShellPublicApiTest(TestCase):
             "avalan.tool.shell.sandbox",
             "avalan.tool.shell.settings",
             "avalan.tool.shell.tools",
+            "avalan.tool.shell.tools.montage",
             "avalan.tool.shell.toolset",
         ):
             self.assertEqual(import_module(module_name).__name__, module_name)

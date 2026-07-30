@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, patch
 from avalan.tool.shell import filesystem as shell_filesystem
 from avalan.tool.shell.filesystem import (
     DEFAULT_SIGNATURE_BYTES,
+    JPEG_SIGNATURE,
     PNG_SIGNATURE,
     ShellPathMetadata,
     ensure_file_size_at_most,
@@ -209,20 +210,24 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
         self.assertEqual(pdf_signature, b"%PDF-")
         self.assertTrue(image_signature.startswith(b"P2\n3 3\n"))
 
-    async def test_probe_image_dimensions_reads_pnm_and_png_headers(
+    async def test_probe_image_dimensions_reads_pnm_png_and_jpeg_headers(
         self,
     ) -> None:
         with TemporaryDirectory() as temporary_directory:
             png_path = Path(temporary_directory) / "image.png"
             png_path.write_bytes(_png_header(width=7, height=11))
+            jpeg_path = Path(temporary_directory) / "image.jpg"
+            jpeg_path.write_bytes(_jpeg_header(width=13, height=17))
 
             pnm_dimensions = await probe_image_dimensions(
                 FIXTURE_ROOT / "ocr" / "small.pgm"
             )
             png_dimensions = await probe_image_dimensions(png_path)
+            jpeg_dimensions = await probe_image_dimensions(jpeg_path)
 
         self.assertEqual(pnm_dimensions, (3, 3))
         self.assertEqual(png_dimensions, (7, 11))
+        self.assertEqual(jpeg_dimensions, (13, 17))
         self.assertIsNone(
             await probe_image_dimensions(
                 FIXTURE_ROOT / "ocr" / "unsupported-signature.dat"
@@ -490,6 +495,44 @@ class ShellFilesystemPrivateProbeTest(TestCase):
         with self.assertRaises(AssertionError):
             shell_filesystem._probe_pnm_dimensions("pnm")  # type: ignore[arg-type]
 
+    def test_jpeg_probe_rejects_malformed_and_truncated_headers(self) -> None:
+        invalid_headers = (
+            b"",
+            JPEG_SIGNATURE,
+            JPEG_SIGNATURE + b"x",
+            JPEG_SIGNATURE + b"\xff",
+            JPEG_SIGNATURE + b"\xff\xe0\x00",
+            JPEG_SIGNATURE + b"\xff\xda\x00\x02",
+            JPEG_SIGNATURE + b"\xff\xe0\x00\x01",
+            JPEG_SIGNATURE + b"\xff\xe0\x00\x10short",
+            JPEG_SIGNATURE + b"\xff\xc0\x00\x07\x08\x00\x01\x00\x01",
+            _jpeg_header(width=0, height=1),
+            _jpeg_header(width=1, height=0),
+        )
+        for header in invalid_headers:
+            with self.subTest(header=header):
+                self.assertIsNone(
+                    shell_filesystem._probe_jpeg_dimensions(header)
+                )
+        with self.assertRaises(AssertionError):
+            shell_filesystem._probe_jpeg_dimensions(  # type: ignore[arg-type]
+                "jpeg"
+            )
+
+    def test_jpeg_probe_accepts_fill_and_standalone_markers(self) -> None:
+        header = (
+            JPEG_SIGNATURE
+            + b"\xff\x01"
+            + b"\xff\xd0"
+            + b"\xff\xff\xe0\x00\x04\x00\x00"
+            + _jpeg_header(width=19, height=23)[2:]
+        )
+
+        self.assertEqual(
+            shell_filesystem._probe_jpeg_dimensions(header),
+            (19, 23),
+        )
+
     def test_async_context_manager_rejects_invalid_prefix(self) -> None:
         with self.assertRaises(AssertionError):
             asyncio_run(_enter_private_temp_directory_with_empty_prefix())
@@ -507,6 +550,18 @@ def _png_header(*, width: int, height: int) -> bytes:
         + b"IHDR"
         + width.to_bytes(4, "big")
         + height.to_bytes(4, "big")
+    )
+
+
+def _jpeg_header(*, width: int, height: int) -> bytes:
+    return (
+        JPEG_SIGNATURE
+        + b"\xff\xe0\x00\x04\x00\x00"
+        + b"\xff\xc0\x00\x11\x08"
+        + height.to_bytes(2, "big")
+        + width.to_bytes(2, "big")
+        + b"\x03"
+        + b"\x01\x11\x00\x02\x11\x00\x03\x11\x00"
     )
 
 

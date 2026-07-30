@@ -376,11 +376,12 @@ def _spawn_argv(
     argv_tail = spec.argv[1:]
     if argv_tail.count(GENERATED_OUTPUT_PREFIX_PLACEHOLDER) != 1:
         raise _GeneratedOutputError
+    output_path = spec.output_plan.runtime_path(str(runtime_output_prefix))
     return (
         spec.executable,
         *(
             (
-                str(runtime_output_prefix)
+                output_path
                 if argument == GENERATED_OUTPUT_PREFIX_PLACEHOLDER
                 else argument
             )

@@ -61,8 +61,11 @@ from .executor import (
     CommandExecutor,
     LocalCommandExecutor,
     _status_for_exit_code,
+    generated_file_dimensions_from_bytes,
 )
+from .filesystem import IMAGE_DIMENSION_SCAN_BYTES
 from .policy import ExecutionPolicy
+from .process import _GeneratedOutputError
 
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, replace
@@ -73,6 +76,7 @@ from typing import cast, final
 
 _CONTAINER_OUTPUT_ROOT = "/outputs"
 _DEFAULT_CLEANUP_SECONDS = 5.0
+_GENERATED_IMAGE_MEDIA_TYPES = frozenset({"image/jpeg", "image/png"})
 _MAX_PROGRESS_STREAM_BYTES = 4096
 _MAX_PROGRESS_STREAM_CHUNKS = 16
 
@@ -377,9 +381,10 @@ def _sandbox_argv(
             output_dir,
             spec.output_plan.prefix_name,
         ).as_posix()
+        output_path = spec.output_plan.runtime_path(output_prefix)
         argv_tail = tuple(
             (
-                output_prefix
+                output_path
                 if argument == GENERATED_OUTPUT_PREFIX_PLACEHOLDER
                 else argument
             )
@@ -626,13 +631,14 @@ def _container_argv(spec: ExecutionSpec) -> tuple[str, ...]:
             _CONTAINER_OUTPUT_ROOT,
             spec.output_plan.prefix_name,
         ).as_posix()
+        replacement = spec.output_plan.runtime_path(replacement)
         return tuple(
             (
                 replacement
                 if argv_item == GENERATED_OUTPUT_PREFIX_PLACEHOLDER
-                else display_item
+                else argv_item
             )
-            for argv_item, display_item in zip(spec.argv, spec.display_argv)
+            for argv_item in spec.argv
         )
     replacement = f"{_CONTAINER_OUTPUT_ROOT}/{spec.command}"
     argv = tuple(
@@ -683,15 +689,22 @@ def _output_contract_from_spec(
     if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
         return None
     assert spec.output_plan is not None, "generated outputs require a plan"
+    media_types = tuple(
+        sorted(set(spec.output_plan.suffix_media_types.values()))
+    )
+    image_inspection_bytes = (
+        IMAGE_DIMENSION_SCAN_BYTES
+        if set(media_types).issubset(_GENERATED_IMAGE_MEDIA_TYPES)
+        else None
+    )
     return ContainerOutputContract(
         contract_type=ContainerOutputContractType.GENERATED_FILE,
         max_bytes=spec.output_plan.max_total_bytes,
         max_files=spec.output_plan.max_files,
         per_file_bytes=spec.output_plan.max_file_bytes,
+        image_inspection_bytes=image_inspection_bytes,
         media_policy=ContainerOutputMediaPolicy(
-            allowed_media_types=tuple(
-                sorted(set(spec.output_plan.suffix_media_types.values()))
-            ),
+            allowed_media_types=media_types,
         ),
     )
 
@@ -783,7 +796,11 @@ def _container_result_to_shell_result(
 ) -> ExecutionResult:
     status, error_code, error_message = _shell_status(spec, result)
     try:
-        generated_files = _generated_files(spec, result.output)
+        generated_files = _generated_files(
+            spec,
+            result.output,
+            plan.output_contract,
+        )
     except _ContainerGeneratedOutputError as error:
         status = ShellExecutionStatus.TOO_LARGE
         error_code = ShellExecutionErrorCode.GENERATED_OUTPUT_CAP_EXCEEDED
@@ -945,6 +962,7 @@ def _scrub_generated_output_paths(
 def _generated_files(
     spec: ExecutionSpec,
     output: ContainerOutputValidationResult | None,
+    active_contract: ContainerOutputContract | None = None,
 ) -> tuple[GeneratedFile, ...]:
     if output is None:
         return ()
@@ -953,24 +971,75 @@ def _generated_files(
     if spec.output_kind is not ShellOutputKind.GENERATED_FILES:
         return ()
     assert spec.output_plan is not None, "generated outputs require a plan"
+    active_contract = (
+        _output_contract_from_spec(spec)
+        if active_contract is None
+        else active_contract
+    )
+    assert (
+        active_contract is not None
+    ), "generated outputs require an active container contract"
     total_bytes = 0
     generated_files: list[GeneratedFile] = []
     for artifact in output.artifacts:
-        if len(generated_files) >= spec.output_plan.max_files:
+        if len(generated_files) >= active_contract.max_files:
             raise _ContainerGeneratedOutputError(
                 "container generated output file count exceeded limit"
             )
-        if artifact.size_bytes > spec.output_plan.max_file_bytes:
+        normalized_artifact = _normalize_generated_artifact(
+            artifact,
+            active_contract,
+        )
+        if normalized_artifact.size_bytes > active_contract.file_byte_limit:
             raise _ContainerGeneratedOutputError(
                 "container generated output file exceeded byte limit"
             )
-        total_bytes += artifact.size_bytes
-        if total_bytes > spec.output_plan.max_total_bytes:
+        total_bytes += normalized_artifact.size_bytes
+        if total_bytes > active_contract.max_bytes:
             raise _ContainerGeneratedOutputError(
                 "container generated output files exceeded total byte limit"
             )
-        generated_files.append(_generated_file(artifact, spec.output_plan))
+        generated_files.append(
+            _generated_file(normalized_artifact, spec.output_plan)
+        )
     return tuple(generated_files)
+
+
+def _normalize_generated_artifact(
+    artifact: ContainerOutputArtifact,
+    active_contract: ContainerOutputContract,
+) -> ContainerOutputArtifact:
+    if artifact.artifact_type is not active_contract.contract_type:
+        raise _ContainerGeneratedOutputError(
+            "container generated output artifact type did not match contract"
+        )
+    if (
+        artifact.media_type
+        not in active_contract.media_policy.allowed_media_types
+    ):
+        raise _ContainerGeneratedOutputError(
+            "container generated output media type was not allowed"
+        )
+    inspection_bytes = min(
+        artifact.size_bytes,
+        active_contract.artifact_inspection_bytes,
+    )
+    if (
+        active_contract.image_inspection_bytes is not None
+        and len(artifact.signature) < inspection_bytes
+    ):
+        raise _ContainerGeneratedOutputError(
+            "container generated image inspection bytes are incomplete"
+        )
+    signature = artifact.signature[:inspection_bytes]
+    if active_contract.media_policy.denied_signature_matches(signature):
+        raise _ContainerGeneratedOutputError(
+            "container generated output signature was denied"
+        )
+    return replace(
+        artifact,
+        signature=signature,
+    )
 
 
 def _generated_file(
@@ -995,6 +1064,14 @@ def _generated_file(
         raise _ContainerGeneratedOutputError(
             "container generated output media type did not match suffix"
         )
+    try:
+        width, height = generated_file_dimensions_from_bytes(
+            artifact.signature,
+            media_type,
+            plan,
+        )
+    except _GeneratedOutputError as error:
+        raise _ContainerGeneratedOutputError(str(error)) from None
     return GeneratedFile(
         display_path=_display_generated_path(path.name, plan),
         media_type=media_type,
@@ -1002,6 +1079,8 @@ def _generated_file(
         bytes=artifact.size_bytes,
         sha256=artifact.digest.removeprefix("sha256:"),
         page=_generated_page_number(path.name, plan.prefix_name),
+        width=width,
+        height=height,
         truncated=False,
         metadata={"quarantined": artifact.quarantined},
     )

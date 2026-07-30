@@ -41,6 +41,7 @@ SHELL_COMMANDS = (
     "pdfplumber",
     "pypdf",
     "tesseract",
+    "montage",
 )
 SHELL_EVALUATION_STRINGS = (
     "/bin/sh",

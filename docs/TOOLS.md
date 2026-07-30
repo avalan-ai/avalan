@@ -108,7 +108,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `pipeline`, `git_*` | Read, inspect, search, transform, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -446,13 +446,34 @@ allow_process_control = false
 ```
 
 Media tools such as `shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
-`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, and `shell.tesseract`
+`shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, `shell.tesseract`, and
+`shell.montage`
 require `allow_media_tools = true` or the corresponding CLI flag. The Python
 PDF tools resolve a trusted Python executable and report `command_unavailable`
 when the required package cannot be imported. In container mode, the selected
 image must make both `avalan` and the target PDF library importable to that
 Python interpreter. Absolute paths, symlinks, hidden files, and executable
 search paths are also opt-in.
+
+`shell.montage` combines two or more explicit PNG, PNM, or JPEG paths into one
+bounded generated image. It does not perform shell brace, glob, variable, or
+command expansion. Use structured values such as `thumbnail="425x550"`,
+`tile="3x2"`, `geometry="+8+8"`, and `output_format="jpg"`. An optional
+basename-only `output_filename="contact-01-06.jpg"` controls the returned
+artifact name; paths such as `tmp/contact.jpg` remain denied because generic
+workspace writes are outside the shell media safety model. Input count,
+aggregate bytes and pixels, spacing, projected output dimensions, output
+bytes, and execution time are all bounded. The same generated-artifact
+contract is used for host, sandbox, and container execution. Each path selects
+only its first image scene; embedded label and caption properties are cleared.
+ImageMagick memory, map, disk, thread, and list-length resources are bounded,
+and returned JPEG or PNG signatures and dimensions are validated after
+execution.
+The documented Alpine container selects its packaged `DejaVu-Sans` font.
+Local and sandbox execution use ImageMagick's host font configuration unless
+the operator sets trusted `montage_font` configuration (or
+`--tool-shell-montage-font`) to a host font name or file path. The configured
+value is redacted from model-visible command projections.
 
 `shell.pgrep`, `shell.ps`, and `shell.lsof` require trusted
 `allow_process_tools = true` configuration. `shell.ps` accepts exactly one PID.

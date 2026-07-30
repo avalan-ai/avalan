@@ -20,6 +20,7 @@ from stat import S_ISDIR, S_ISLNK, S_ISREG
 from typing import final
 
 DEFAULT_SIGNATURE_BYTES = 8192
+IMAGE_DIMENSION_SCAN_BYTES = 1048576
 PDF_PAGE_BOX_SCAN_BYTES = 1048576
 PDF_PAGE_BOX_PATTERN = compile_pattern(
     rb"/(?:CropBox|MediaBox)\s*\[\s*"
@@ -29,6 +30,24 @@ PDF_PAGE_BOX_PATTERN = compile_pattern(
     rb"([-+]?(?:\d+(?:\.\d*)?|\.\d+))\s*\]"
 )
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+JPEG_SIGNATURE = b"\xff\xd8"
+_JPEG_START_OF_FRAME_MARKERS = frozenset(
+    {
+        0xC0,
+        0xC1,
+        0xC2,
+        0xC3,
+        0xC5,
+        0xC6,
+        0xC7,
+        0xC9,
+        0xCA,
+        0xCB,
+        0xCD,
+        0xCE,
+        0xCF,
+    }
+)
 
 
 @final
@@ -195,14 +214,25 @@ async def probe_pdf_page_boxes(
 
 
 async def read_image_signature(path: str | Path) -> bytes:
-    return await read_signature(path)
+    return await read_signature(path, max_bytes=IMAGE_DIMENSION_SCAN_BYTES)
 
 
 async def probe_image_dimensions(path: str | Path) -> tuple[int, int] | None:
     signature = await read_image_signature(path)
+    return probe_image_dimensions_from_bytes(signature)
+
+
+def probe_image_dimensions_from_bytes(
+    signature: bytes,
+) -> tuple[int, int] | None:
+    """Return bounded raster dimensions from encoded image bytes."""
+    assert isinstance(signature, bytes), "signature must be bytes"
     png_dimensions = _probe_png_dimensions(signature)
     if png_dimensions is not None:
         return png_dimensions
+    jpeg_dimensions = _probe_jpeg_dimensions(signature)
+    if jpeg_dimensions is not None:
+        return jpeg_dimensions
     return _probe_pnm_dimensions(signature)
 
 
@@ -243,6 +273,50 @@ def _probe_png_dimensions(signature: bytes) -> tuple[int, int] | None:
     if width <= 0 or height <= 0:
         return None
     return width, height
+
+
+def _probe_jpeg_dimensions(signature: bytes) -> tuple[int, int] | None:
+    assert isinstance(signature, bytes), "signature must be bytes"
+    if not signature.startswith(JPEG_SIGNATURE):
+        return None
+    offset = len(JPEG_SIGNATURE)
+    while offset < len(signature):
+        if signature[offset] != 0xFF:
+            return None
+        while offset < len(signature) and signature[offset] == 0xFF:
+            offset += 1
+        if offset >= len(signature):
+            return None
+        marker = signature[offset]
+        offset += 1
+        if marker in {0x00, 0x01, 0xD8} or 0xD0 <= marker <= 0xD7:
+            continue
+        if marker in {0xD9, 0xDA}:
+            return None
+        if offset + 2 > len(signature):
+            return None
+        segment_length = int.from_bytes(signature[offset : offset + 2], "big")
+        if segment_length < 2:
+            return None
+        segment_end = offset + segment_length
+        if segment_end > len(signature):
+            return None
+        if marker in _JPEG_START_OF_FRAME_MARKERS:
+            if segment_length < 8 or offset + 7 > len(signature):
+                return None
+            height = int.from_bytes(
+                signature[offset + 3 : offset + 5],
+                "big",
+            )
+            width = int.from_bytes(
+                signature[offset + 5 : offset + 7],
+                "big",
+            )
+            if width <= 0 or height <= 0:
+                return None
+            return width, height
+        offset = segment_end
+    return None
 
 
 def _probe_pdf_page_boxes(data: bytes) -> tuple[tuple[float, float], ...]:

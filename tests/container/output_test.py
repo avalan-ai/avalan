@@ -35,6 +35,22 @@ from avalan.container import (
 
 
 class ContainerOutputTest(TestCase):
+    def test_media_policy_matches_denied_signature_prefixes(self) -> None:
+        policy = ContainerOutputMediaPolicy()
+        empty = ContainerOutputMediaPolicy(denied_signatures=())
+
+        self.assertEqual(
+            policy.denied_signature_matches(b"MZpayload"), (b"MZ",)
+        )
+        self.assertEqual(
+            policy.denied_signature_matches(b"\x7fELFpayload"),
+            (b"\x7fELF",),
+        )
+        self.assertEqual(policy.denied_signature_matches(b"M"), ())
+        self.assertEqual(empty.denied_signature_matches(b"MZpayload"), ())
+        with self.assertRaises(AssertionError):
+            policy.denied_signature_matches("MZ")  # type: ignore[arg-type]
+
     def test_output_contracts_and_bounded_streams(self) -> None:
         contracts = output_contracts_from_policy(
             ContainerOutputPolicy(
@@ -66,6 +82,12 @@ class ContainerOutputTest(TestCase):
                 "task_artifact",
                 "runtime_envelope_artifact",
             ],
+        )
+        self.assertTrue(
+            all(
+                "image_inspection_bytes" not in contract.to_dict()
+                for contract in contracts
+            )
         )
         self.assertEqual(
             accepted.decision,
@@ -126,9 +148,10 @@ class ContainerOutputTest(TestCase):
             )
             self.assertEqual(generated.to_dict()["decision"], "accept")
 
-    def test_accepts_pdf_and_png_generated_file_media(self) -> None:
+    def test_accepts_pdf_png_and_jpeg_generated_file_media(self) -> None:
         with _workspace() as root:
             _write(root, "document.pdf", b"%PDF-1.4\n")
+            _write(root, "photo.jpg", b"\xff\xd8safe-jpeg")
             _write(root, "page.png", b"\x89PNG\r\n\x1a\n")
 
             result = validate_copied_outputs(
@@ -136,10 +159,11 @@ class ContainerOutputTest(TestCase):
                 ContainerOutputContract(
                     contract_type=ContainerOutputContractType.GENERATED_FILE,
                     max_bytes=128,
-                    max_files=2,
+                    max_files=3,
                     media_policy=ContainerOutputMediaPolicy(
                         allowed_media_types=(
                             "application/pdf",
+                            "image/jpeg",
                             "image/png",
                         ),
                     ),
@@ -149,8 +173,143 @@ class ContainerOutputTest(TestCase):
         self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
         self.assertEqual(
             [artifact.media_type for artifact in result.artifacts],
-            ["application/pdf", "image/png"],
+            ["application/pdf", "image/png", "image/jpeg"],
         )
+        self.assertEqual(result.artifacts[2].signature, b"\xff\xd8safe-jpeg")
+        self.assertNotIn("signature", result.artifacts[2].to_dict())
+
+    def test_copied_output_retains_default_signature_prefix(self) -> None:
+        content = b"a" * 32
+        with _workspace() as root:
+            _write(root, "artifact.txt", content)
+
+            result = validate_copied_outputs(
+                str(root),
+                _artifact_contract(
+                    ContainerOutputContractType.GENERATED_FILE,
+                    max_bytes=len(content),
+                ),
+            )
+
+        self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(result.artifacts[0].signature, content[:16])
+
+    def test_copied_output_honors_image_inspection_contract(self) -> None:
+        content = b"\xff\xd8" + b"a" * 30
+        contract = ContainerOutputContract(
+            contract_type=ContainerOutputContractType.GENERATED_FILE,
+            max_bytes=len(content),
+            image_inspection_bytes=32,
+            media_policy=ContainerOutputMediaPolicy(
+                allowed_media_types=("image/jpeg",),
+            ),
+        )
+        with _workspace() as root:
+            _write(root, "artifact.jpg", content)
+
+            result = validate_copied_outputs(str(root), contract)
+
+        self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(result.artifacts[0].signature, content)
+        self.assertEqual(contract.to_dict()["image_inspection_bytes"], 32)
+
+    def test_archive_retains_contract_scoped_inspection_prefix(self) -> None:
+        signature = b"\xff\xd8" + b"a" * 30
+        generic = validate_archive_entries(
+            (
+                ContainerArchiveEntry(
+                    path="artifact.txt",
+                    entry_type=ContainerArchiveEntryType.FILE,
+                    size_bytes=len(signature),
+                    signature=signature,
+                ),
+            ),
+            _artifact_contract(
+                ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=len(signature),
+            ),
+        )
+        extended = validate_archive_entries(
+            (
+                ContainerArchiveEntry(
+                    path="artifact.jpg",
+                    entry_type=ContainerArchiveEntryType.FILE,
+                    size_bytes=len(signature),
+                    signature=signature,
+                ),
+            ),
+            ContainerOutputContract(
+                contract_type=ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=len(signature),
+                image_inspection_bytes=24,
+                media_policy=ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/jpeg",),
+                ),
+            ),
+        )
+
+        self.assertEqual(generic.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(extended.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(generic.artifacts[0].signature, signature[:16])
+        self.assertEqual(extended.artifacts[0].signature, signature[:24])
+
+    def test_archive_image_inspection_rejects_undersupplied_header(
+        self,
+    ) -> None:
+        result = validate_archive_entries(
+            (
+                ContainerArchiveEntry(
+                    path="artifact.jpg",
+                    entry_type=ContainerArchiveEntryType.FILE,
+                    size_bytes=32,
+                    signature=b"\xff\xd8" + b"a" * 14,
+                ),
+            ),
+            ContainerOutputContract(
+                contract_type=ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=32,
+                image_inspection_bytes=32,
+                media_policy=ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/jpeg",),
+                ),
+            ),
+        )
+
+        self.assertEqual(result.decision, ContainerOutputDecisionType.REJECT)
+        self.assertEqual(result.artifacts, ())
+        self.assertEqual(
+            result.diagnostics[0].code,
+            ContainerOutputDiagnosticCode.UNSAFE_SIGNATURE,
+        )
+        self.assertEqual(
+            result.diagnostics[0].message,
+            "archive image inspection bytes are incomplete",
+        )
+
+    def test_archive_image_inspection_accepts_complete_short_file(
+        self,
+    ) -> None:
+        result = validate_archive_entries(
+            (
+                ContainerArchiveEntry(
+                    path="artifact.jpg",
+                    entry_type=ContainerArchiveEntryType.FILE,
+                    size_bytes=1,
+                    signature=b"x",
+                ),
+            ),
+            ContainerOutputContract(
+                contract_type=ContainerOutputContractType.GENERATED_FILE,
+                max_bytes=1,
+                image_inspection_bytes=32,
+                media_policy=ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/jpeg",),
+                ),
+            ),
+        )
+
+        self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
+        self.assertEqual(result.artifacts[0].signature, b"x")
 
     def test_archive_accepts_safe_runtime_envelope_artifact(self) -> None:
         contract = _artifact_contract(
@@ -837,14 +996,72 @@ class ContainerOutputTest(TestCase):
             )
 
     def test_value_objects_reject_invalid_values(self) -> None:
+        valid_digest = f"sha256:{'0' * 64}"
         with self.assertRaises(AssertionError):
             ContainerOutputContract(contract_type="stdout", max_bytes=0)
+        invalid_inspection_contracts = (
+            {
+                "contract_type": "stdout",
+                "image_inspection_bytes": 16,
+                "media_policy": ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/png",),
+                ),
+            },
+            {
+                "contract_type": "generated_file",
+                "image_inspection_bytes": 15,
+                "media_policy": ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/png",),
+                ),
+            },
+            {
+                "contract_type": "generated_file",
+                "image_inspection_bytes": 1048577,
+                "media_policy": ContainerOutputMediaPolicy(
+                    allowed_media_types=("image/png",),
+                ),
+            },
+            {
+                "contract_type": "generated_file",
+                "image_inspection_bytes": 16,
+                "media_policy": ContainerOutputMediaPolicy(
+                    allowed_media_types=("text/plain",),
+                ),
+            },
+        )
+        for kwargs in invalid_inspection_contracts:
+            with self.subTest(kwargs=kwargs):
+                with self.assertRaises(AssertionError):
+                    ContainerOutputContract(
+                        max_bytes=1,
+                        **kwargs,  # type: ignore[arg-type]
+                    )
         with self.assertRaises(AssertionError):
             ContainerOutputMediaPolicy(denied_signatures=(b"",))
         with self.assertRaises(AssertionError):
             ContainerArchiveEntry(path="bad", entry_type="file", mode=0o10000)
         with self.assertRaises(AssertionError):
             ContainerArchiveEntry(path="bad", entry_type="file", uid=-1)
+        for size_bytes, signature in ((0, b"x"), (1, b"xy")):
+            with self.subTest(
+                value_type="archive",
+                size_bytes=size_bytes,
+            ):
+                with self.assertRaises(AssertionError):
+                    ContainerArchiveEntry(
+                        path="artifact.jpg",
+                        entry_type="file",
+                        size_bytes=size_bytes,
+                        signature=signature,
+                    )
+        oversized_signature = b"x" * 1048577
+        with self.assertRaises(AssertionError):
+            ContainerArchiveEntry(
+                path="artifact.jpg",
+                entry_type="file",
+                size_bytes=len(oversized_signature),
+                signature=oversized_signature,
+            )
         with self.assertRaises(AssertionError):
             ContainerOutputArtifact(
                 artifact_type="stdout",
@@ -861,6 +1078,67 @@ class ContainerOutputTest(TestCase):
                 media_type="text/plain",
                 digest=_digest("escape"),
             )
+        with self.assertRaises(AssertionError):
+            ContainerOutputArtifact(
+                artifact_type="generated_file",
+                path="artifact.txt",
+                size_bytes=1,
+                media_type="text/plain",
+                digest=valid_digest,
+                signature="bad",  # type: ignore[arg-type]
+            )
+        for size_bytes, signature in ((0, b"x"), (1, b"xy")):
+            with self.subTest(
+                value_type="artifact",
+                size_bytes=size_bytes,
+            ):
+                with self.assertRaises(AssertionError):
+                    ContainerOutputArtifact(
+                        artifact_type="generated_file",
+                        path="artifact.jpg",
+                        size_bytes=size_bytes,
+                        media_type="image/jpeg",
+                        digest=valid_digest,
+                        signature=signature,
+                    )
+        with self.assertRaises(AssertionError):
+            ContainerOutputArtifact(
+                artifact_type="generated_file",
+                path="artifact.jpg",
+                size_bytes=len(oversized_signature),
+                media_type="image/jpeg",
+                digest=valid_digest,
+                signature=oversized_signature,
+            )
+        empty_archive = ContainerArchiveEntry(
+            path="empty.txt",
+            entry_type="file",
+        )
+        short_archive = ContainerArchiveEntry(
+            path="short.txt",
+            entry_type="file",
+            size_bytes=1,
+            signature=b"x",
+        )
+        empty_artifact = ContainerOutputArtifact(
+            artifact_type="generated_file",
+            path="empty.txt",
+            size_bytes=0,
+            media_type="text/plain",
+            digest=valid_digest,
+        )
+        short_artifact = ContainerOutputArtifact(
+            artifact_type="generated_file",
+            path="short.txt",
+            size_bytes=1,
+            media_type="text/plain",
+            digest=valid_digest,
+            signature=b"x",
+        )
+        self.assertEqual(empty_archive.signature, b"")
+        self.assertEqual(short_archive.signature, b"x")
+        self.assertEqual(empty_artifact.signature, b"")
+        self.assertEqual(short_artifact.signature, b"x")
         artifact = ContainerOutputArtifact(
             artifact_type="generated_file",
             path="artifact.txt",
