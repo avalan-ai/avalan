@@ -477,9 +477,52 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     )
     _VERIFIER.verify_observed_exclusions(current, _ROOT)
 
+    protocol_lines = (
+        96,
+        97,
+        100,
+        101,
+        104,
+        105,
+        106,
+        112,
+        113,
+        116,
+        117,
+        118,
+        128,
+        129,
+        135,
+        136,
+        139,
+        140,
+        141,
+        151,
+        152,
+        159,
+        160,
+        161,
+        167,
+        168,
+    )
+    protocol_path = "src/avalan/conversation/protocols.py"
+    assert current.report_lines[protocol_path] == protocol_lines
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 1890
+    assert sum(map(len, current.report_lines.values())) == 1916
+
+    incomplete_report = dict(current.report_lines)
+    incomplete_report[protocol_path] = protocol_lines[:-1]
+    unexplained = _VERIFIER.ExclusionSnapshot(
+        directives=current.directives,
+        report_lines=incomplete_report,
+        digest=current.digest,
+    )
+    with pytest.raises(
+        _VERIFIER.CoverageVerificationError,
+        match="parser exclusions differ",
+    ):
+        _VERIFIER.verify_observed_exclusions(unexplained, _ROOT)
 
 
 def test_coverage_configuration_fails_closed(tmp_path: Path) -> None:
