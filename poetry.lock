@@ -5628,15 +5628,15 @@ sympy = "*"
 
 [[package]]
 name = "openai"
-version = "2.37.0"
+version = "2.42.0"
 description = "The official Python library for the openai API"
 optional = true
 python-versions = ">=3.9"
 groups = ["main"]
 markers = "python_version <= \"3.13\" and platform_system == \"Linux\" and (extra == \"vllm\" or extra == \"nvidia\" or extra == \"litellm\" or extra == \"vendors\") or extra == \"litellm\" or extra == \"vendors\""
 files = [
-    {file = "openai-2.37.0-py3-none-any.whl", hash = "sha256:814633888b8f3b1ffd6615697c6e4ef93632d08b7c2e28c8c5ef3556e5a10107"},
-    {file = "openai-2.37.0.tar.gz", hash = "sha256:f4bc562cc5f3a43d40d678105572d9d44765f6e0f50c125f63055419b72f4bd9"},
+    {file = "openai-2.42.0-py3-none-any.whl", hash = "sha256:8cd46b1877cfd4aea7ade9474940cc4f78dbd41cce3893de11c12510d0b70caf"},
+    {file = "openai-2.42.0.tar.gz", hash = "sha256:5263ee2868608571499df225471770238c8f3ff1ac296874bfc096bbabb6da3a"},
 ]
 
 [package.dependencies]
@@ -10476,4 +10476,4 @@ vllm = []
 [metadata]
 lock-version = "2.1"
 python-versions = ">=3.11,<3.15"
-content-hash = "77cb01898520eae4b4bf741469e876fce8b9838a5a6e0bf1fae379f4a5ead2a6"
+content-hash = "240d660bef853065fe453d78bf3ac20e4fc5876b41765a81053b8c1ef59cd449"

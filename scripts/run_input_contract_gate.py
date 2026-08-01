@@ -2,10 +2,17 @@
 """Run sanitized exact-coverage and structured-input quality gates."""
 
 from argparse import ArgumentParser, Namespace
-from os import environ
 from pathlib import Path
 from subprocess import run
 from sys import executable
+
+from contract_gate import (
+    POSTGRESQL_TEST_DSN_ENV,
+    ContractGateError,
+    exact_coverage_commands,
+    isolated_subprocess_environment,
+    remove_coverage_artifacts,
+)
 
 
 def repository_root() -> Path:
@@ -17,45 +24,16 @@ def run_coverage_gate(*, repo_root: Path | None = None) -> int:
     """Run exact source coverage in a sanitized subprocess environment."""
     root = (repo_root or repository_root()).resolve()
     _remove_coverage_artifacts(root, include_reports=True)
-    commands = (
-        (
-            executable,
-            "-m",
-            "pytest",
-            "--verbose",
-            "-s",
-            "-o",
-            "addopts=",
-            "--cov=src/",
-            "--cov-config=/dev/null",
-            "--cov-report=xml",
-            "--cov-report=json:coverage.json",
-        ),
-        (executable, "scripts/verify_src_coverage.py"),
-        (
-            "jq",
-            "-r",
-            (
-                ".files | to_entries[] | select("
-                ".value.summary.missing_lines != 0 or "
-                ".value.summary.covered_lines != "
-                ".value.summary.num_statements) | "
-                '"\\(.key): " + '
-                '"\\(.value.summary.percent_covered_display)%"'
-            ),
-            "coverage.json",
-        ),
-    )
-    environment = _sanitized_environment()
+    commands = exact_coverage_commands()
     for command in commands:
         try:
-            completed = run(command, cwd=root, check=False, env=environment)
-        except OSError:
+            returncode = _run_isolated_command(root, command)
+        except (ContractGateError, OSError):
             _remove_coverage_artifacts(root, include_reports=True)
             raise
-        if completed.returncode != 0:
+        if returncode != 0:
             _remove_coverage_artifacts(root, include_reports=True)
-            return completed.returncode
+            return returncode
     _remove_coverage_artifacts(root, include_reports=False)
     return 0
 
@@ -73,41 +51,32 @@ def run_gate(through_phase: int, *, repo_root: Path | None = None) -> int:
         str(through_phase),
     )
     try:
-        completed = run(
+        returncode = _run_isolated_command(root, command)
+    except (ContractGateError, OSError):
+        _remove_coverage_artifacts(root, include_reports=True)
+        raise
+    if returncode != 0:
+        _remove_coverage_artifacts(root, include_reports=True)
+    return returncode
+
+
+def _run_isolated_command(root: Path, command: tuple[str, ...]) -> int:
+    """Run one command in a fresh verified subprocess environment."""
+    with isolated_subprocess_environment(
+        root,
+        inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
+        trusted_python_root=repository_root(),
+    ) as environment:
+        return run(
             command,
             cwd=root,
             check=False,
-            env=_sanitized_environment(),
-        )
-    except OSError:
-        _remove_coverage_artifacts(root, include_reports=True)
-        raise
-    if completed.returncode != 0:
-        _remove_coverage_artifacts(root, include_reports=True)
-    return completed.returncode
-
-
-def _sanitized_environment() -> dict[str, str]:
-    environment = {
-        key: value
-        for key, value in environ.items()
-        if key.upper()
-        not in {"PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"}
-        and not key.upper().startswith(("COVERAGE_", "COV_CORE_"))
-    }
-    environment["PYTEST_ADDOPTS"] = ""
-    environment["COVERAGE_RCFILE"] = "/dev/null"
-    return environment
+            env=environment,
+        ).returncode
 
 
 def _remove_coverage_artifacts(root: Path, *, include_reports: bool) -> None:
-    artifacts = list(root.glob(".coverage.*"))
-    artifacts.append(root / ".coverage")
-    if include_reports:
-        artifacts.extend((root / "coverage.json", root / "coverage.xml"))
-    for artifact in artifacts:
-        if artifact.is_file() or artifact.is_symlink():
-            artifact.unlink()
+    remove_coverage_artifacts(root, include_reports=include_reports)
 
 
 def _parse_args() -> Namespace:

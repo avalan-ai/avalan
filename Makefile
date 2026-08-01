@@ -1,8 +1,12 @@
-REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract version release
+REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract version release
 TEST_ARGS := $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
 INPUT_CONTRACT_SCRIPTS := scripts/input_contract_json.py scripts/run_input_contract_gate.py scripts/task_pgsql_test_database.py scripts/verify_input_acceptance.py scripts/verify_input_types.py scripts/verify_src_coverage.py
+CONVERSATION_CONTRACT_SCRIPTS := scripts/contract_gate.py scripts/contract_startup/avalan_contract_gate_plugin.py scripts/contract_startup/sitecustomize.py scripts/run_conversation_contract_gate.py scripts/verify_conversation_acceptance.py scripts/verify_conversation_types.py
+CONTRACT_STARTUP_DIR := $(CURDIR)/scripts/contract_startup
+CONTRACT_PYTHONPATH := $(CONTRACT_STARTUP_DIR):$(CURDIR)/src:$(CURDIR)/scripts
+CONTRACT_PYTHON_ENV := PYTHONSAFEPATH=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$(CONTRACT_PYTHONPATH)" AVALAN_CONTRACT_ALLOWED_PYTHONPATH="$(CONTRACT_PYTHONPATH)"
 LINT_PATHS := src/ tests/ $(INPUT_CONTRACT_SCRIPTS)
 
 ifneq ($(filter coverage coverage-report,$(TEST_ARGS)),)
@@ -29,6 +33,10 @@ lint:
 	poetry run ruff check --fix $(LINT_PATHS)
 	poetry run mypy
 	poetry run mypy $(INPUT_CONTRACT_SCRIPTS)
+	poetry run ruff format --preview $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run black --preview --enable-unstable-feature=string_processing $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run ruff check --fix $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run mypy $(CONVERSATION_CONTRACT_SCRIPTS)
 
 test:
 ifeq ($(filter no-install,$(TEST_ARGS)),)
@@ -44,7 +52,7 @@ else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract
+.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract
 tests: test
 
 test-pgsql:
@@ -60,7 +68,7 @@ test-coverage-exact:
 ifeq ($(filter no-install,$(TEST_ARGS)),)
 	poetry sync --all-extras --with test
 endif
-	poetry run python scripts/run_input_contract_gate.py --coverage-only
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_input_contract_gate.py --coverage-only
 
 test-pgsql-exact:
 	@test -n "$(INPUT_PHASE)" || (echo "INPUT_PHASE is required" >&2; exit 2)
@@ -68,11 +76,35 @@ ifeq ($(filter no-install,$(TEST_ARGS)),)
 	poetry sync --all-extras --with test
 endif
 	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
-	poetry run -- python scripts/task_pgsql_test_database.py --docker --runner-script scripts/run_input_contract_gate.py -- --through-phase $(INPUT_PHASE)
+	poetry run -- env $(CONTRACT_PYTHON_ENV) python scripts/task_pgsql_test_database.py --docker --runner-script scripts/run_input_contract_gate.py -- --through-phase $(INPUT_PHASE)
 
 typecheck-input-contract:
 	@test -n "$(INPUT_PHASE)" || (echo "INPUT_PHASE is required" >&2; exit 2)
-	poetry run python scripts/verify_input_types.py --through-phase $(INPUT_PHASE)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/verify_input_types.py --through-phase $(INPUT_PHASE)
+
+test-conversation-exact:
+	@test -n "$(CONVERSATION_PHASE)" || (echo "CONVERSATION_PHASE is required" >&2; exit 2)
+	@test "$(CONVERSATION_PHASE)" -lt 3 || (echo "conversation phases 3 and later require test-conversation-pgsql-exact" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --preflight --through-phase $(CONVERSATION_PHASE)
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --through-phase $(CONVERSATION_PHASE)
+
+test-conversation-pgsql-exact:
+	@test -n "$(CONVERSATION_PHASE)" || (echo "CONVERSATION_PHASE is required" >&2; exit 2)
+	@test "$(CONVERSATION_PHASE)" -ge 3 || (echo "conversation phases 0 through 2 require test-conversation-exact" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --preflight --through-phase $(CONVERSATION_PHASE)
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --through-phase $(CONVERSATION_PHASE)
+
+typecheck-conversation-contract:
+	@test -n "$(CONVERSATION_PHASE)" || (echo "CONVERSATION_PHASE is required" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/verify_conversation_types.py --through-phase $(CONVERSATION_PHASE)
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))

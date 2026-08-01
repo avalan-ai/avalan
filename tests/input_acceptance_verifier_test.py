@@ -145,6 +145,62 @@ def test_acceptance_cli_executes_exact_synthetic_node(
     )
 
 
+def test_pytest_database_handoff_is_explicit_and_validated(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward only an explicitly requested valid test database DSN."""
+    dsn_name = "AVALAN_TASK_TEST_POSTGRESQL_DSN"
+    dsn = "postgresql://test/avalan_task_test_0123456789abcdef"
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    path = tests / "database_environment_test.py"
+    path.write_text(
+        "from os import environ\n\n"
+        "def test_scoped_handoff() -> None:\n"
+        f"    assert environ[{dsn_name!r}] == {dsn!r}\n\n"
+        "def test_unscoped_environment() -> None:\n"
+        f"    assert {dsn_name!r} not in environ\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setenv(dsn_name, dsn)
+
+    scoped = _VERIFIER._pytest(
+        tmp_path,
+        ("-q", "tests/database_environment_test.py::test_scoped_handoff"),
+        timeout=30,
+    )
+    unscoped = _VERIFIER.run_pytest(
+        tmp_path,
+        (
+            "-q",
+            "tests/database_environment_test.py::test_unscoped_environment",
+        ),
+        timeout=30,
+    )
+
+    assert scoped.returncode == 0, scoped.stdout + scoped.stderr
+    assert unscoped.returncode == 0, unscoped.stdout + unscoped.stderr
+
+    for value, match in (
+        ("", "PostgreSQL DSN is empty"),
+        (
+            "postgresql://test/db?service=production",
+            "malformed or ambiguous",
+        ),
+    ):
+        monkeypatch.setenv(dsn_name, value)
+        with pytest.raises(_VERIFIER.ContractGateError, match=match):
+            _VERIFIER._pytest(
+                tmp_path,
+                (
+                    "-q",
+                    "tests/database_environment_test.py::test_scoped_handoff",
+                ),
+                timeout=30,
+            )
+
+
 def test_acceptance_rejects_execution_for_different_collected_instance(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -472,9 +528,8 @@ def test_contract_decisions_reject_invalid_capability_activation(
         payload = _read("contract_decisions.json")
         rows = {row["id"]: row for row in payload["capability_matrix"]["rows"]}
         if case == "planned_enabled":
-            rows["provider-openai"][
-                "evidence"
-            ] = "planned:src/avalan/model/nlp/text/vendor/openai.py"
+            evidence = "planned:src/avalan/model/nlp/text/vendor/openai.py"
+            rows["provider-openai"]["evidence"] = evidence
         elif case == "unsupported_provider":
             rows["provider-anthropic"].update(
                 production_advertised=True,
@@ -565,9 +620,8 @@ def test_failure_matrix_rejects_missing_na_evidence_path(
 ) -> None:
     """Reject a non-applicability claim backed by a missing file."""
     payload = _read("failure_matrix.json")
-    payload["non_applicability_rules"][0][
-        "evidence"
-    ] = "tests/input/missing_evidence_test.py"
+    evidence = "tests/input/missing_evidence_test.py"
+    payload["non_applicability_rules"][0]["evidence"] = evidence
     _resign(payload, "matrix_sha256")
     path = tmp_path / "failure_matrix.json"
     _write(path, payload)
@@ -776,6 +830,67 @@ def test_current_phase_requires_real_postgresql_harness(
             repo_root=_ROOT,
             through_phase=current_phase,
         )
+
+
+def test_postgresql_harness_begins_at_first_real_e2e_phase(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Require PostgreSQL without omitting any selected acceptance node."""
+    manifest_path = _FIXTURES / "acceptance_manifest.json"
+    manifest = _VERIFIER.load_manifest(manifest_path)
+    all_postgresql = manifest.postgresql_nodes(manifest.current_phase)
+    assert len(all_postgresql) == 11
+    assert {node.active_from_phase for node in all_postgresql} == {5}
+    observed: list[tuple[str, ...]] = []
+
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_validate_contract_fixtures",
+        lambda manifest, fixtures, root: None,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_verify_nodes",
+        lambda nodes, root: observed.append(
+            tuple(node.node_id for node in nodes)
+        ),
+    )
+    monkeypatch.delenv("AVALAN_TASK_TEST_POSTGRESQL_DSN", raising=False)
+
+    _VERIFIER.verify_acceptance(
+        manifest_path,
+        repo_root=_ROOT,
+        through_phase=4,
+    )
+    assert observed == [
+        tuple(node.node_id for node in manifest.active_nodes(4))
+    ]
+    assert len(observed[0]) == 352
+
+    with pytest.raises(
+        _VERIFIER.AcceptanceVerificationError,
+        match="real PostgreSQL harness",
+    ):
+        _VERIFIER.verify_acceptance(
+            manifest_path,
+            repo_root=_ROOT,
+            through_phase=5,
+        )
+
+    monkeypatch.setenv(
+        "AVALAN_TASK_TEST_POSTGRESQL_DSN",
+        "postgresql://test",
+    )
+    _VERIFIER.verify_acceptance(
+        manifest_path,
+        repo_root=_ROOT,
+        through_phase=5,
+    )
+    assert observed[-1] == tuple(
+        node.node_id for node in manifest.active_nodes(5)
+    )
+    assert len(observed[-1]) == 788
+    assert set(node.node_id for node in all_postgresql).issubset(observed[-1])
 
 
 def test_acceptance_only_phase_lag_rejects_new_type_obligations() -> None:

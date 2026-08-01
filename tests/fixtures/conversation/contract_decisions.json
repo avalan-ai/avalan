@@ -1,0 +1,373 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "feature": "conversation_continuity",
+  "owner": "conversation_domain_state_storage",
+  "activation": "dormant",
+  "identity": {
+    "types": {
+      "conversation_id": ["caller_held", "tenant_scoped", "principal_scoped"],
+      "logical_turn_id": ["checkpoint_private"],
+      "execution_segment_id": ["checkpoint_private"],
+      "checkpoint_id": ["checkpoint_private", "tenant_scoped", "principal_scoped"],
+      "branch_id": ["caller_held", "tenant_scoped", "principal_scoped"],
+      "named_head_id": ["caller_held", "tenant_scoped", "principal_scoped"],
+      "provider_lane_id": ["provider_private"],
+      "model_call_id": ["provider_private"],
+      "public_response_id": ["public_opaque", "tenant_scoped", "principal_scoped"],
+      "provisional_response_id": ["public_opaque", "not_addressable"],
+      "upstream_response_id": ["provider_private"],
+      "task_id": ["caller_held", "tenant_scoped", "principal_scoped"],
+      "agent_id": ["caller_held", "tenant_scoped"],
+      "structured_input_continuation_id": ["caller_held_sensitive", "tenant_scoped", "principal_scoped"]
+    },
+    "rules": {
+      "immutable": true,
+      "public_response_never_aliases_upstream": true,
+      "execution_segment_never_becomes_public_response": true,
+      "ordinary_parent_reuse_mutates_parent": false,
+      "checkpoint_sequence": "zero for a root and parent sequence plus one for every child; siblings may share a sequence",
+      "named_head_revision": "independent non-negative CAS revision; never inferred from checkpoint sequence"
+    }
+  },
+  "checkpoint": {
+    "kinds": {
+      "internal_provider_boundary": "private_execution",
+      "structured_input_suspension": "private_execution",
+      "completed_outward_turn": "public_response",
+      "standalone_compact_result": "caller_held",
+      "tombstone": "private_lifecycle",
+      "supersession": "private_lifecycle"
+    },
+    "commit_transitions": {
+      "staged": ["committed", "quarantined"],
+      "committed": [],
+      "quarantined": []
+    },
+    "execution_semantics": {
+      "logical_turn": "one caller input and one outward result across one or more execution segments",
+      "execution_segment": "one private recoverable provider, tool, or suspension interval within a logical turn",
+      "internal_provider_completion": "commit a private provider-boundary checkpoint before dispatching a requested tool",
+      "structured_input": "reference the existing portable continuation by ID, revision, digest, execution definition, and revision binding; never copy its provider snapshot",
+      "outward_completion": "commit a completed-outward-turn checkpoint and public mapping atomically"
+    }
+  },
+  "public_response_id": {
+    "transitions": {
+      "provisional": ["committed", "withheld"],
+      "committed": [],
+      "withheld": []
+    },
+    "rules": {
+      "stream_allocation": "a provisional ID may appear in non-terminal stream events but is not retrievable or resumable",
+      "commit": "checkpoint bytes, public mapping, and ID state commit in one atomic boundary",
+      "terminal_event": "response.completed is emitted only after both checkpoint and public ID are committed",
+      "commit_failure": "withhold the public mapping, quarantine completed upstream state, preserve the parent, and return state_commit_failed",
+      "publication_failure": "do not redispatch; reconcile the committed mapping by idempotency identity or authorized retrieval"
+    }
+  },
+  "response_resource": {
+    "transitions": {
+      "allocated": ["dispatching", "failed"],
+      "dispatching": ["streaming", "input_required", "committing", "failed"],
+      "streaming": ["input_required", "committing", "failed"],
+      "input_required": ["dispatching", "failed", "tombstoned", "expired"],
+      "committing": ["completed", "failed"],
+      "completed": ["tombstoned", "expired"],
+      "failed": ["tombstoned", "expired"],
+      "tombstoned": ["deleted"],
+      "deleted": [],
+      "expired": ["deleted"]
+    },
+    "state_operations_for_addressable_id": {
+      "allocated": {
+        "retrieve": "not_addressable",
+        "continue": "not_addressable",
+        "compact": "not_addressable",
+        "delete": "not_addressable"
+      },
+      "dispatching": {
+        "retrieve": "not_addressable",
+        "continue": "not_addressable",
+        "compact": "not_addressable",
+        "delete": "not_addressable"
+      },
+      "streaming": {
+        "retrieve": "not_addressable",
+        "continue": "not_addressable",
+        "compact": "not_addressable",
+        "delete": "not_addressable"
+      },
+      "input_required": {
+        "retrieve": "allowed",
+        "continue": "structured_input_only",
+        "compact": "denied_state",
+        "delete": "allowed"
+      },
+      "committing": {
+        "retrieve": "not_addressable",
+        "continue": "not_addressable",
+        "compact": "not_addressable",
+        "delete": "not_addressable"
+      },
+      "completed": {
+        "retrieve": "allowed",
+        "continue": "allowed",
+        "compact": "allowed",
+        "delete": "allowed"
+      },
+      "failed": {
+        "retrieve": "allowed",
+        "continue": "denied_state",
+        "compact": "denied_state",
+        "delete": "allowed"
+      },
+      "tombstoned": {
+        "retrieve": "concealed",
+        "continue": "concealed",
+        "compact": "concealed",
+        "delete": "concealed"
+      },
+      "deleted": {
+        "retrieve": "concealed",
+        "continue": "concealed",
+        "compact": "concealed",
+        "delete": "concealed"
+      },
+      "expired": {
+        "retrieve": "concealed",
+        "continue": "concealed",
+        "compact": "concealed",
+        "delete": "concealed"
+      }
+    },
+    "uncommitted_id_operation": "not_addressable",
+    "mapping_states": ["absent", "private_transient", "addressable", "tombstoned"],
+    "permitted_mappings_by_local_storage": {
+      "none": ["absent"],
+      "process_local": ["absent", "addressable", "tombstoned"],
+      "transient": ["absent", "private_transient"],
+      "durable": ["absent", "addressable", "tombstoned"]
+    },
+    "provider_mode_operation_overrides": {
+      "off": {"continue": "denied_state", "compact": "denied_state"},
+      "stateless": {"continue": "state_policy", "compact": "state_policy"},
+      "stored": {"continue": "state_policy", "compact": "denied_state"}
+    },
+    "store_false_terminal": "publish a committed opaque response ID with no addressable mapping after the transient processing boundary",
+    "store_true_terminal": "publish only after the durable authorized mapping and checkpoint commit atomically",
+    "terminal_states": ["deleted"]
+  },
+  "provider_lane_binding": {
+    "version": 1,
+    "required": [
+      "provider_family",
+      "normalized_endpoint",
+      "model_or_deployment",
+      "provider_api_revision",
+      "sdk_revision",
+      "model_configuration_revision",
+      "capability_profile_revision",
+      "tool_schema_revision",
+      "execution_definition_revision",
+      "continuation_codec_version"
+    ],
+    "azure_required": ["azure_resource_identity"],
+    "normalization": {
+      "endpoint": "lowercase scheme and host, remove default port and trailing slash, retain only stable path components",
+      "azure_resource": "lowercase immutable resource host identity",
+      "prohibited": ["credentials", "userinfo", "query", "fragment", "api_key", "unstable_alias"]
+    },
+    "existing_type_references": {
+      "execution_definition": "ExecutionDefinitionRef",
+      "revision_binding": "ContinuationRevisionBinding",
+      "portable_continuation": "PortableContinuation by ID, state revision, and digest through PortableContinuationReference; payload and provider_snapshot are excluded"
+    },
+    "lane_identity": {
+      "version": 1,
+      "prefix": "lane-v1-",
+      "digest": "sha256",
+      "canonical_serialization": "domain-separated length-prefixed UTF-8 fields in declared order",
+      "components": [
+        "contract_version",
+        "conversation_id",
+        "owner_kind",
+        "agent_topology_path",
+        "model_slot",
+        "provider_family",
+        "normalized_endpoint",
+        "azure_resource_identity_or_empty",
+        "model_or_deployment",
+        "model_configuration_revision",
+        "execution_definition_revision"
+      ],
+      "owner_paths": {
+        "direct_model": "direct/{model_slot}",
+        "parent_agent": "agent/{agent_id}/{model_slot}",
+        "child_agent": "{parent_agent_path}/child/{agent_id}/{model_slot}"
+      },
+      "multiple_models": "each stable model slot produces a distinct lane ID within the same outward response",
+      "prohibited_components": ["credential", "query_secret", "upstream_response_id", "process_counter", "random_nonce"]
+    },
+    "child_lane_retention": {
+      "suspended": "retain",
+      "explicitly_resumable": "retain",
+      "terminal": "discard_terminal",
+      "default": "discard_terminal",
+      "recorded_in_checkpoint": true
+    },
+    "drift": "reject before dispatch with typed binding_drift; explicit visible-transcript reset creates a new lane and reports opaque-state loss",
+    "opaque_state": "never merge, compare, or replay across lane IDs"
+  },
+  "branching": {
+    "ordinary_child": {
+      "parent_reusable": true,
+      "parent_mutated": false,
+      "named_head_cas": false,
+      "result": "new immutable child on the parent's branch"
+    },
+    "explicit_branch": {
+      "parent_reusable": true,
+      "parent_mutated": false,
+      "named_head_cas": false,
+      "result": "new immutable child with a new branch ID"
+    },
+    "named_head": {
+      "parent_reusable": false,
+      "parent_mutated": false,
+      "named_head_cas": true,
+      "success": "expected_head_revision equals current revision; atomically point the head to the committed child and increment once",
+      "conflict": "mismatch performs no checkpoint, mapping, outbox, task, or head write"
+    }
+  },
+  "idempotency": {
+    "identity_fields": ["principal_scope", "operation", "idempotency_key", "canonical_request_digest"],
+    "same_key_same_digest": {
+      "committed": "replay_committed",
+      "failed_no_dispatch": "execute",
+      "in_progress": "fenced",
+      "ambiguous": "fenced"
+    },
+    "same_key_different_digest": "conflict",
+    "different_scope_operation_or_key": "execute",
+    "intentional_branch": "use the branch operation and a distinct canonical request digest; never reinterpret a conflicting continuation as a branch",
+    "provider_idempotency_key": "transport metadata only; it is not provider deduplication proof"
+  },
+  "failure_fences": {
+    "validation_before_dispatch": ["never", false, true, false, false],
+    "provider_rejection": ["never", false, true, false, false],
+    "known_no_dispatch_transport": ["bounded_effect_free", false, true, false, false],
+    "ambiguous_possible_dispatch": ["fenced_reconciliation", true, true, false, true],
+    "failure_before_output": ["bounded_effect_free", false, true, false, false],
+    "failure_after_visible_output": ["never", true, true, false, true],
+    "malformed_stream_item": ["never", true, true, false, true],
+    "tool_effect": ["never", true, true, false, true],
+    "suspension": ["never", true, true, false, false],
+    "checkpoint_commit": ["fenced_reconciliation", true, true, true, true],
+    "outward_publication": ["fenced_reconciliation", true, true, false, true]
+  },
+  "failure_fence_tuple_fields": [
+    "retry_rule",
+    "fence_duplicate_dispatch",
+    "preserve_parent",
+    "quarantine_completed_upstream",
+    "reconciliation_required"
+  ],
+  "atomic_boundaries": {
+    "outward_turn": ["checkpoint_bytes", "named_head_cas_if_requested", "public_response_mapping", "task_state", "outbox_records"],
+    "structured_input_suspension": ["checkpoint_bytes", "structured_input_reference", "task_state", "outbox_records"],
+    "standalone_compact": ["checkpoint_bytes_or_caller_held_result", "public_mapping_if_stored", "outbox_records"]
+  },
+  "storage": {
+    "axes": {
+      "local_response": ["none", "process_local", "transient", "durable"],
+      "provider_lane": ["off", "stateless", "stored"]
+    },
+    "independent": true,
+    "permitted_pairs": "all Cartesian pairs allowed by server policy and capability; provider stored always requires explicit disclosure",
+    "served_store_false": "transient local processing only; bounded operational metadata cannot reconstruct provider state",
+    "served_store_true": "durable authorized public mapping and checkpoint required",
+    "direct_default": "process_local",
+    "durable_direct": "explicit opt-in",
+    "mode_conversion": "explicit reset or conversion only; stored parent IDs and stateless ledgers never overlap",
+    "stored_parent_compaction": "unsupported until an explicit stateless fork operation is defined"
+  },
+  "retention": {
+    "effective_ttl": "minimum of each applicable local TTL, envelope TTL, and known upstream lifetime",
+    "upstream_lifetime_status": ["not_applicable", "unknown", "known"],
+    "unknown_upstream_lifetime": "returns no guaranteed effective TTL even when local or envelope TTLs are known",
+    "provider_stored_status": "must be unknown or known; known requires a positive TTL",
+    "non_stored_status": "must be not_applicable and cannot carry an upstream TTL",
+    "store_false_metadata": ["abuse_prevention", "billing", "expiry", "detached_execution_correlation"],
+    "store_false_prohibited": ["full_provider_ledger", "opaque_reasoning_state", "reconstructable_conversation"]
+  },
+  "descendants": {
+    "self_contained_child": "remains usable after parent local expiry or deletion when it owns every required immutable blob reference",
+    "provider_stored_child": "fails closed with upstream_ancestry_unavailable when required provider ancestry expires or is deleted",
+    "deleted_parent": "cannot create new descendants after tombstoning; already committed children retain their independent lifecycle",
+    "content_addressed_blob": "delete only after the final committed checkpoint and reconciliation reference is released; a missing referenced blob is checkpoint_corrupt"
+  },
+  "deletion": {
+    "local_transitions": {
+      "active": ["tombstoned"],
+      "tombstoned": ["deleted"],
+      "deleted": []
+    },
+    "upstream_transitions": {
+      "not_applicable": [],
+      "pending": ["succeeded", "failed", "unsupported"],
+      "succeeded": [],
+      "failed": ["pending"],
+      "unsupported": []
+    },
+    "ordering": "authorize, atomically tombstone local access and enqueue upstream deletion, then retry the outbox independently",
+    "partial_failure": "keep the response unusable and report safe upstream deletion status; never restore local access",
+    "constant_disclosure": "lookup, continuation, compact, retrieve, branch, and delete conceal wrong authority, absent, expired, and tombstoned targets"
+  },
+  "migration": {
+    "structured_input_records": "reference_existing",
+    "legacy_replay_snapshots": "versioned_migration",
+    "n_and_n_plus_1": "compatible_read",
+    "rollback_after_authority_cutover": "reject_rollback",
+    "cutover": "atomic schema and authority change; exactly one provider-state writer; no dual-write authority",
+    "unknown_future_codec": "reject before provider dispatch",
+    "provider_binding_change": "proven migration or explicit visible-transcript reset"
+  },
+  "configuration": {
+    "precedence_high_to_low": ["server_policy", "served_agent", "model_provider", "request", "provider_default"],
+    "request_rule": "may narrow but never increase storage, retention, capabilities, branch limits, concurrency limits, or provider storage",
+    "defaults": {
+      "conversation_mode": "off",
+      "reasoning_context": "auto_omitted",
+      "inline_compaction": "disabled",
+      "standalone_compaction": "disabled",
+      "served_store": false,
+      "feature_activation": "dormant"
+    }
+  },
+  "authority": {
+    "direct_sdk": "trusted_host_context",
+    "embedded": "trusted_host_context",
+    "server": "authenticated_server_context",
+    "local_single_user": "fixed_local_single_user only when explicitly configured and not network exposed",
+    "authenticated_server_requires_tenant": true,
+    "fixed_local_requires_no_tenant": true,
+    "authority_source_required": true,
+    "openai_user_field": "untrusted_metadata_never_authority",
+    "scope": ["tenant", "principal", "served_agent", "endpoint"],
+    "authorization_order": "authorize scope before disclosing existence, lifecycle, or equality"
+  },
+  "surfaces": {
+    "disposition_values": ["activated", "deferred", "incapable"],
+    "direct_model_sdk": {"initial_release": "activated", "phase_0": "dormant"},
+    "agent_sdk": {"initial_release": "activated", "phase_0": "dormant"},
+    "cli": {"initial_release": "deferred", "phase_0": "dormant"},
+    "flow": {"initial_release": "deferred", "phase_0": "dormant"},
+    "mcp": {"initial_release": "deferred", "phase_0": "dormant"},
+    "a2a": {"initial_release": "deferred", "phase_0": "dormant"},
+    "served_responses": {"initial_release": "activated", "phase_0": "dormant"},
+    "legacy_cli_conversation": "visible repeated-message loop only",
+    "legacy_cli_session": "message memory only",
+    "deferred_field_policy": "omit unsupported stateful fields or reject them before dispatch; never accept and discard"
+  }
+}

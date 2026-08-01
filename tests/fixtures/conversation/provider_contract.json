@@ -1,0 +1,865 @@
+{
+  "schema_version": 1,
+  "contract_version": "conversation-provider-contract-v1",
+  "feature": "conversation_continuity",
+  "owner": "provider_runtime",
+  "current_phase": 0,
+  "activation_state": "dormant",
+  "retrieved_date": "2026-08-01",
+  "snapshot_id": "conversation-provider-contract-2026-08-01",
+  "sources": [
+    {
+      "authority": "OpenAI Developer Documentation",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/docs/guides/reasoning"
+    },
+    {
+      "authority": "OpenAI Developer Documentation",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/docs/guides/conversation-state"
+    },
+    {
+      "authority": "OpenAI Developer Documentation",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/docs/guides/compaction"
+    },
+    {
+      "authority": "OpenAI API Reference",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/reference/resources/responses/methods/create"
+    },
+    {
+      "authority": "OpenAI API Reference",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/reference/resources/responses/methods/compact"
+    },
+    {
+      "authority": "OpenAI API Reference",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/reference/resources/responses/methods/retrieve"
+    },
+    {
+      "authority": "OpenAI API Reference",
+      "retrieval_method": "developers_openai_mcp",
+      "retrieved_date": "2026-08-01",
+      "url": "https://developers.openai.com/api/reference/resources/responses/methods/delete"
+    },
+    {
+      "authority": "OpenAI OpenAPI",
+      "document_version": "2.3.0",
+      "retrieval_method": "developers_openai_mcp_openapi",
+      "retrieved_date": "2026-08-01",
+      "url": "https://api.openai.com/v1/responses"
+    },
+    {
+      "authority": "OpenAI OpenAPI",
+      "document_version": "2.3.0",
+      "retrieval_method": "developers_openai_mcp_openapi",
+      "retrieved_date": "2026-08-01",
+      "url": "https://api.openai.com/v1/responses/compact"
+    },
+    {
+      "authority": "Microsoft Learn",
+      "document_last_updated": "2026-06-11",
+      "retrieval_method": "official_microsoft_documentation",
+      "retrieved_date": "2026-08-01",
+      "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses"
+    }
+  ],
+  "sdk_boundary": {
+    "package": "openai",
+    "language": "python",
+    "required_constraint": ">=2.42.0,<3.0.0",
+    "minimum_typed_version": "2.42.0",
+    "last_version_missing_required_surface": "2.41.1",
+    "locked_version": "2.42.0",
+    "lock_selection": "minimum_typed_version",
+    "lock_selection_reason": "Use the smallest release with the required typed surface; later additions remain outside the dormant inventory until independently admitted.",
+    "latest_index_version_on_retrieved_date": "2.52.0",
+    "registry_evidence": {
+      "authority": "Python Package Index",
+      "latest_release_json_url": "https://pypi.org/pypi/openai/2.52.0/json",
+      "locked_release_json_url": "https://pypi.org/pypi/openai/2.42.0/json",
+      "retrieved_date": "2026-08-01",
+      "artifacts": [
+        {
+          "filename": "openai-2.42.0-py3-none-any.whl",
+          "sha256": "8cd46b1877cfd4aea7ade9474940cc4f78dbd41cce3893de11c12510d0b70caf",
+          "url": "https://files.pythonhosted.org/packages/01/61/8ea2cbff2531ee0210706aff60174cd10a5a14c1ca17a8c29b1eb34d0b1b/openai-2.42.0-py3-none-any.whl",
+          "verified_against_downloaded_bytes": true
+        },
+        {
+          "filename": "openai-2.42.0.tar.gz",
+          "sha256": "5263ee2868608571499df225471770238c8f3ff1ac296874bfc096bbabb6da3a",
+          "url": "https://files.pythonhosted.org/packages/6b/e2/c8c7eb634fd2438c2f3fc5c385dd34d0f9d04d6623bcfdf3adcefcf6d7ca/openai-2.42.0.tar.gz",
+          "verified_against_downloaded_bytes": true
+        }
+      ]
+    },
+    "boundary_wheels": [
+      {
+        "reasoning_context_typed": false,
+        "sha256": "a939565f350cb7443cb843b801b88c716ac8024b492fb94ca269d5f6b1bbefd6",
+        "version": "2.41.1"
+      },
+      {
+        "reasoning_context_typed": true,
+        "sha256": "8cd46b1877cfd4aea7ade9474940cc4f78dbd41cce3893de11c12510d0b70caf",
+        "version": "2.42.0"
+      },
+      {
+        "reasoning_context_typed": true,
+        "sha256": "f97e231d9a8fa69ab55897df1080f02d99913fb0a30e3ee56ea16a1eb6c2d434",
+        "version": "2.52.0"
+      }
+    ],
+    "async_resource": "openai.resources.responses.responses.AsyncResponses",
+    "methods": {
+      "compact": {
+        "symbol": "openai.resources.responses.responses.AsyncResponses.compact",
+        "parameter_names": [
+          "model",
+          "input",
+          "instructions",
+          "previous_response_id",
+          "prompt_cache_key",
+          "prompt_cache_retention",
+          "service_tier",
+          "extra_headers",
+          "extra_query",
+          "extra_body",
+          "timeout"
+        ],
+        "parameter_kinds": {
+          "KEYWORD_ONLY": [
+            "model",
+            "input",
+            "instructions",
+            "previous_response_id",
+            "prompt_cache_key",
+            "prompt_cache_retention",
+            "service_tier",
+            "extra_headers",
+            "extra_query",
+            "extra_body",
+            "timeout"
+          ]
+        },
+        "required_parameters": [
+          "model"
+        ],
+        "parameter_defaults": {
+          "singleton:openai.Omit": [
+            "input",
+            "instructions",
+            "previous_response_id",
+            "prompt_cache_key",
+            "prompt_cache_retention",
+            "service_tier"
+          ],
+          "value:builtins.NoneType:null": [
+            "extra_headers",
+            "extra_query",
+            "extra_body"
+          ],
+          "singleton:openai.NotGiven": [
+            "timeout"
+          ]
+        },
+        "resolved_parameter_annotations_sha256": {
+          "model": "f02633e2b1c78f913cd6e37df516480ac705084a878b9eb7753d320ebada8f44",
+          "input": "1892486ab1289727cdcf22b316b5003dd0a173c09e0e1f5065c9c35ac8ffc8dc",
+          "instructions": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
+          "previous_response_id": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
+          "prompt_cache_key": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
+          "prompt_cache_retention": "e100913f12fa67f0529713a8d9b29b24b8c261c285317ae7b68ad73e5d72e790",
+          "service_tier": "95d36af7e59565bbd42071dbe84ab823617b22880265dce6ae555ed06d2575e8",
+          "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
+          "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
+          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
+          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+        },
+        "resolved_return_annotation_sha256": "058397f00c32c60fd199fddfe6146b0e068f0f252f5885c82d985073115e969a"
+      },
+      "create": {
+        "symbol": "openai.resources.responses.responses.AsyncResponses.create",
+        "parameter_names": [
+          "background",
+          "context_management",
+          "conversation",
+          "include",
+          "input",
+          "instructions",
+          "max_output_tokens",
+          "max_tool_calls",
+          "metadata",
+          "model",
+          "moderation",
+          "parallel_tool_calls",
+          "previous_response_id",
+          "prompt",
+          "prompt_cache_key",
+          "prompt_cache_retention",
+          "reasoning",
+          "safety_identifier",
+          "service_tier",
+          "store",
+          "stream",
+          "stream_options",
+          "temperature",
+          "text",
+          "tool_choice",
+          "tools",
+          "top_logprobs",
+          "top_p",
+          "truncation",
+          "user",
+          "extra_headers",
+          "extra_query",
+          "extra_body",
+          "timeout"
+        ],
+        "parameter_kinds": {
+          "KEYWORD_ONLY": [
+            "background",
+            "context_management",
+            "conversation",
+            "include",
+            "input",
+            "instructions",
+            "max_output_tokens",
+            "max_tool_calls",
+            "metadata",
+            "model",
+            "moderation",
+            "parallel_tool_calls",
+            "previous_response_id",
+            "prompt",
+            "prompt_cache_key",
+            "prompt_cache_retention",
+            "reasoning",
+            "safety_identifier",
+            "service_tier",
+            "store",
+            "stream",
+            "stream_options",
+            "temperature",
+            "text",
+            "tool_choice",
+            "tools",
+            "top_logprobs",
+            "top_p",
+            "truncation",
+            "user",
+            "extra_headers",
+            "extra_query",
+            "extra_body",
+            "timeout"
+          ]
+        },
+        "required_parameters": [],
+        "parameter_defaults": {
+          "singleton:openai.Omit": [
+            "background",
+            "context_management",
+            "conversation",
+            "include",
+            "input",
+            "instructions",
+            "max_output_tokens",
+            "max_tool_calls",
+            "metadata",
+            "model",
+            "moderation",
+            "parallel_tool_calls",
+            "previous_response_id",
+            "prompt",
+            "prompt_cache_key",
+            "prompt_cache_retention",
+            "reasoning",
+            "safety_identifier",
+            "service_tier",
+            "store",
+            "stream",
+            "stream_options",
+            "temperature",
+            "text",
+            "tool_choice",
+            "tools",
+            "top_logprobs",
+            "top_p",
+            "truncation",
+            "user"
+          ],
+          "value:builtins.NoneType:null": [
+            "extra_headers",
+            "extra_query",
+            "extra_body"
+          ],
+          "singleton:openai.NotGiven": [
+            "timeout"
+          ]
+        },
+        "resolved_parameter_annotations_sha256": {
+          "background": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
+          "context_management": "646ce8eabaaeedc60662e9d2ef2f379037423ba1a9f06853b18c99bfd0281a75",
+          "conversation": "4632699bb4b671912e248f720c63d357cd9682ff541255c20f85f73ddd79a1b7",
+          "include": "4d44e97cc9afbb6e62df77e1de544fae8edd4610f1e411d1a355338df28a9bba",
+          "input": "69e940e6aa62d98c1177014aff0eb859cb75116b2e1efef824601fae23e4bc9e",
+          "instructions": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
+          "max_output_tokens": "06ea45fb4e9aa1bb22d649439bc4f1d7aa3dec648960d0a2e894cac57d6820ee",
+          "max_tool_calls": "06ea45fb4e9aa1bb22d649439bc4f1d7aa3dec648960d0a2e894cac57d6820ee",
+          "metadata": "860f9a4ab55eaa55c6a5b965b1dcb88098dc594d2dc33dcfd1b61ca9881261c9",
+          "model": "cc5946f1b20dd16dec9d291e450c2d3aeaaab67a8f90d371cbecfc9476b1b98c",
+          "moderation": "886878ec75a381d8470182a7198c21ea728210d2e215a7896a809959dfcf1ecd",
+          "parallel_tool_calls": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
+          "previous_response_id": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
+          "prompt": "b0dcbf82aafe15e7183540c97a50dafefe1aede9e8a0c33d4cd7a3808daa0b27",
+          "prompt_cache_key": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "prompt_cache_retention": "e100913f12fa67f0529713a8d9b29b24b8c261c285317ae7b68ad73e5d72e790",
+          "reasoning": "590b4bfa48d159accb00fb821d40412ba7ecd4a899ec9041f299502588d10465",
+          "safety_identifier": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "service_tier": "8968cd9f4aeed204a6fb27f2b950dfaa9a24dbb82ab3f43093c48342ecca6ab7",
+          "store": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
+          "stream": "803a2a5ed0bc3c6a5976a9a351ebd6a73ef77450d6449dbcff07acf5e078d27c",
+          "stream_options": "f3f88c3ef70915334648121f5a50cac6513c7ff2ee2688e3663bbe28e02ab9f3",
+          "temperature": "11f32bda3f3fe3a97553e2d502ae6818aa1168564a6712873076258c7951b132",
+          "text": "f19fb80fabe87f910f2fe1e2f05cfed4206fad6e3d1db006e159c7da9e527fa9",
+          "tool_choice": "89290a18cb21c44eaf141e08f383a73ab7bb6f60f36bc7ed60691703453baffd",
+          "tools": "f1b79de4695887177bd7ad05d3f36670aa0c40bc79d925cd90a0bd4618d93d2f",
+          "top_logprobs": "06ea45fb4e9aa1bb22d649439bc4f1d7aa3dec648960d0a2e894cac57d6820ee",
+          "top_p": "11f32bda3f3fe3a97553e2d502ae6818aa1168564a6712873076258c7951b132",
+          "truncation": "e0ae5f754133feb4b9d7e9f7cb40b5682ab7ff01aa17a72fff37de78ada02767",
+          "user": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
+          "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
+          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
+          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+        },
+        "resolved_return_annotation_sha256": "ead856529520900e1928e1125e830e87c4165dd246ce4c27fa35ce0dea3b8486"
+      },
+      "delete": {
+        "symbol": "openai.resources.responses.responses.AsyncResponses.delete",
+        "parameter_names": [
+          "response_id",
+          "extra_headers",
+          "extra_query",
+          "extra_body",
+          "timeout"
+        ],
+        "parameter_kinds": {
+          "POSITIONAL_OR_KEYWORD": [
+            "response_id"
+          ],
+          "KEYWORD_ONLY": [
+            "extra_headers",
+            "extra_query",
+            "extra_body",
+            "timeout"
+          ]
+        },
+        "required_parameters": [
+          "response_id"
+        ],
+        "parameter_defaults": {
+          "value:builtins.NoneType:null": [
+            "extra_headers",
+            "extra_query",
+            "extra_body"
+          ],
+          "singleton:openai.NotGiven": [
+            "timeout"
+          ]
+        },
+        "resolved_parameter_annotations_sha256": {
+          "response_id": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4",
+          "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
+          "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
+          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
+          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+        },
+        "resolved_return_annotation_sha256": "c331502f1524434f14ba39e319d48a90ab5f81287c08b275b638c3d35d130a05"
+      },
+      "retrieve": {
+        "symbol": "openai.resources.responses.responses.AsyncResponses.retrieve",
+        "parameter_names": [
+          "response_id",
+          "include",
+          "include_obfuscation",
+          "starting_after",
+          "stream",
+          "extra_headers",
+          "extra_query",
+          "extra_body",
+          "timeout"
+        ],
+        "parameter_kinds": {
+          "POSITIONAL_OR_KEYWORD": [
+            "response_id"
+          ],
+          "KEYWORD_ONLY": [
+            "include",
+            "include_obfuscation",
+            "starting_after",
+            "stream",
+            "extra_headers",
+            "extra_query",
+            "extra_body",
+            "timeout"
+          ]
+        },
+        "required_parameters": [
+          "response_id"
+        ],
+        "parameter_defaults": {
+          "singleton:openai.Omit": [
+            "include",
+            "include_obfuscation",
+            "starting_after",
+            "stream"
+          ],
+          "value:builtins.NoneType:null": [
+            "extra_headers",
+            "extra_query",
+            "extra_body"
+          ],
+          "singleton:openai.NotGiven": [
+            "timeout"
+          ]
+        },
+        "resolved_parameter_annotations_sha256": {
+          "response_id": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4",
+          "include": "1b3aa25e76f751bbd7fc804d9e03af5ed8dc613bb50fdd9a1efcd321bf348839",
+          "include_obfuscation": "db0eb4fc5cfd32e2dab4e1335ed13aa4fcc517b3f6fa154781532470ef6c5e9a",
+          "starting_after": "ba77e98336e4b95073cf224f663c648c984ebdeb7516716f9a0ac3216c8be6bd",
+          "stream": "9a69a8b29683b748e696516bd1afb1711e98776a9d683638f39c670f90fea981",
+          "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
+          "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
+          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
+          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+        },
+        "resolved_return_annotation_sha256": "ead856529520900e1928e1125e830e87c4165dd246ce4c27fa35ce0dea3b8486"
+      }
+    },
+    "typed_symbols": {
+      "compacted_response": "openai.types.responses.CompactedResponse",
+      "compaction_input_item": "openai.types.responses.ResponseCompactionItemParamParam",
+      "compaction_output_item": "openai.types.responses.ResponseCompactionItem",
+      "context_management": "openai.types.responses.response_create_params.ContextManagement",
+      "input_item_union": "openai.types.responses.ResponseInputItemParam",
+      "output_item_union": "openai.types.responses.ResponseOutputItem",
+      "reasoning_request": "openai.types.shared_params.Reasoning",
+      "reasoning_response": "openai.types.shared.Reasoning"
+    },
+    "reasoning_context": {
+      "request": {
+        "required": false,
+        "literal_values": [
+          "auto",
+          "current_turn",
+          "all_turns"
+        ],
+        "resolved_annotation_sha256": "7583b0c9b3864521c0529f6c2b4ce21bf61570971fb8cb2ad86a7711abe7afea"
+      },
+      "response": {
+        "required": false,
+        "literal_values": [
+          "auto",
+          "current_turn",
+          "all_turns"
+        ],
+        "resolved_annotation_sha256": "7583b0c9b3864521c0529f6c2b4ce21bf61570971fb8cb2ad86a7711abe7afea"
+      },
+      "documented_effective_response_values": [
+        "current_turn",
+        "all_turns"
+      ]
+    },
+    "context_management": {
+      "typed_contract": {
+        "symbol": "openai.types.responses.response_create_params.ContextManagement",
+        "total": false,
+        "fields": [
+          {
+            "name": "type",
+            "required": true,
+            "resolved_annotation_sha256": "86a2f535cb61cd56d9ba3a751e958557efe7f4d9d5429f6c815a97bbd47357e8"
+          },
+          {
+            "name": "compact_threshold",
+            "required": false,
+            "resolved_annotation_sha256": "a8a0776ac87d4f17d78ade04356bafcd0636a5fc5b11a2c14ae597c7b7e4b506"
+          }
+        ]
+      },
+      "runtime_disposition": "deferred_fail_closed",
+      "typed_gap": "The SDK types the entry but does not close its discriminator to the compaction literal. Avalan must use an owned closed contract before activation."
+    },
+    "compaction_item": {
+      "input_contract": {
+        "symbol": "openai.types.responses.response_compaction_item_param_param.ResponseCompactionItemParamParam",
+        "total": false,
+        "fields": [
+          {
+            "name": "encrypted_content",
+            "required": true,
+            "resolved_annotation_sha256": "86a2f535cb61cd56d9ba3a751e958557efe7f4d9d5429f6c815a97bbd47357e8"
+          },
+          {
+            "name": "type",
+            "required": true,
+            "resolved_annotation_sha256": "42ca1da3490722e0f100d20317337bc4883e85d7d685dc10c5de9d38eb31aac4"
+          },
+          {
+            "name": "id",
+            "required": false,
+            "resolved_annotation_sha256": "7cf713b2cb5fd2f6e58467e781350c6055646c65557d93d0ddf9ac8385e446e9"
+          }
+        ]
+      },
+      "output_contract": {
+        "symbol": "openai.types.responses.response_compaction_item.ResponseCompactionItem",
+        "fields": [
+          {
+            "name": "id",
+            "required": true,
+            "resolved_annotation_sha256": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4"
+          },
+          {
+            "name": "encrypted_content",
+            "required": true,
+            "resolved_annotation_sha256": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4"
+          },
+          {
+            "name": "type",
+            "required": true,
+            "resolved_annotation_sha256": "340c68ebb8a7d51eb1580f66842b50dad93989235b2751137e32cc84ec0dd1aa"
+          },
+          {
+            "name": "created_by",
+            "required": false,
+            "resolved_annotation_sha256": "7cf713b2cb5fd2f6e58467e781350c6055646c65557d93d0ddf9ac8385e446e9"
+          }
+        ]
+      },
+      "response_contract": {
+        "symbol": "openai.types.responses.compacted_response.CompactedResponse",
+        "fields": [
+          {
+            "name": "id",
+            "required": true,
+            "resolved_annotation_sha256": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4"
+          },
+          {
+            "name": "created_at",
+            "required": true,
+            "resolved_annotation_sha256": "0ae84d8e4b63078731872f379c7aaf28d730c6e20a2dc1e0041cdb6da1e2beb8"
+          },
+          {
+            "name": "object",
+            "required": true,
+            "resolved_annotation_sha256": "715b53026e293d6e91c407040a6ce1db45056d7c05918192e6b81c1ec282b3d7"
+          },
+          {
+            "name": "output",
+            "required": true,
+            "resolved_annotation_sha256": "0e6c014a776f4c3cc1c39d3620b3451dd44c34075883d7b47c8bf6ff2f1573f4"
+          },
+          {
+            "name": "usage",
+            "required": true,
+            "resolved_annotation_sha256": "c2217fc0b8922c58f857ffc828c9facef8f8e86f0c90f16ff002688a2837a362"
+          }
+        ]
+      },
+      "input_required_fields": [
+        "encrypted_content",
+        "type"
+      ],
+      "object_type": "response.compaction",
+      "output_required_fields": [
+        "encrypted_content",
+        "id",
+        "type"
+      ],
+      "wire_type": "compaction",
+      "response_output_required": true,
+      "output_union_resolved_annotation_sha256": "db8960c5dafb08e04528d901701539c6d1c1f127b064ec69312145dad217bd24"
+    },
+    "locked_input_item_union": {
+      "runtime_disposition": "inventory_only_dormant",
+      "resolved_annotation_sha256": "b50249f97d713201c5a4aae5b9317d40a3e157f29f56c0006aa4bebb8b7bc20c",
+      "symbols": [
+        "openai.types.responses.easy_input_message_param.EasyInputMessageParam",
+        "openai.types.responses.response_input_item_param.Message",
+        "openai.types.responses.response_output_message_param.ResponseOutputMessageParam",
+        "openai.types.responses.response_file_search_tool_call_param.ResponseFileSearchToolCallParam",
+        "openai.types.responses.response_computer_tool_call_param.ResponseComputerToolCallParam",
+        "openai.types.responses.response_input_item_param.ComputerCallOutput",
+        "openai.types.responses.response_function_web_search_param.ResponseFunctionWebSearchParam",
+        "openai.types.responses.response_function_tool_call_param.ResponseFunctionToolCallParam",
+        "openai.types.responses.response_input_item_param.FunctionCallOutput",
+        "openai.types.responses.response_input_item_param.ToolSearchCall",
+        "openai.types.responses.response_tool_search_output_item_param_param.ResponseToolSearchOutputItemParamParam",
+        "openai.types.responses.response_input_item_param.AdditionalTools",
+        "openai.types.responses.response_reasoning_item_param.ResponseReasoningItemParam",
+        "openai.types.responses.response_compaction_item_param_param.ResponseCompactionItemParamParam",
+        "openai.types.responses.response_input_item_param.ImageGenerationCall",
+        "openai.types.responses.response_code_interpreter_tool_call_param.ResponseCodeInterpreterToolCallParam",
+        "openai.types.responses.response_input_item_param.LocalShellCall",
+        "openai.types.responses.response_input_item_param.LocalShellCallOutput",
+        "openai.types.responses.response_input_item_param.ShellCall",
+        "openai.types.responses.response_input_item_param.ShellCallOutput",
+        "openai.types.responses.response_input_item_param.ApplyPatchCall",
+        "openai.types.responses.response_input_item_param.ApplyPatchCallOutput",
+        "openai.types.responses.response_input_item_param.McpListTools",
+        "openai.types.responses.response_input_item_param.McpApprovalRequest",
+        "openai.types.responses.response_input_item_param.McpApprovalResponse",
+        "openai.types.responses.response_input_item_param.McpCall",
+        "openai.types.responses.response_custom_tool_call_output_param.ResponseCustomToolCallOutputParam",
+        "openai.types.responses.response_custom_tool_call_param.ResponseCustomToolCallParam",
+        "openai.types.responses.response_input_item_param.CompactionTrigger",
+        "openai.types.responses.response_input_item_param.ItemReference"
+      ],
+      "wire_types": [
+        "message",
+        "file_search_call",
+        "computer_call",
+        "computer_call_output",
+        "web_search_call",
+        "function_call",
+        "function_call_output",
+        "tool_search_call",
+        "tool_search_output",
+        "additional_tools",
+        "reasoning",
+        "compaction",
+        "image_generation_call",
+        "code_interpreter_call",
+        "local_shell_call",
+        "local_shell_call_output",
+        "shell_call",
+        "shell_call_output",
+        "apply_patch_call",
+        "apply_patch_call_output",
+        "mcp_list_tools",
+        "mcp_approval_request",
+        "mcp_approval_response",
+        "mcp_call",
+        "custom_tool_call_output",
+        "custom_tool_call",
+        "compaction_trigger",
+        "item_reference"
+      ]
+    },
+    "conversation_state_transport_policy": {
+      "scope": "conversation_state_and_stateful_create_fields",
+      "runtime_disposition": "dormant_fail_closed",
+      "legacy_generic_request_kwargs_acknowledged": true,
+      "legacy_generic_request_kwargs_description": "The existing one-shot adapter uses generic kwargs for its pre-existing request path and writes exactly one fixed provider value, store=false. That legacy value is not caller control or activation evidence, and the mapping must never carry background or dormant conversation-state fields.",
+      "prohibited_routes": [
+        "extra_body",
+        "conversation_state_dict[str, Any]",
+        "conversation_state_mapping_unpack",
+        "untyped_generation_override",
+        "caller_or_dynamic_store_control",
+        "background_dispatch",
+        "alternate_response_create_mapping_unpack",
+        "responses_lifecycle_alias_or_getattr",
+        "tracked_request_binding_rebind",
+        "trusted_helper_shadow",
+        "runtime_namespace_or_frame_reflection",
+        "reasoning_mapping_alias_or_mutator",
+        "phase0_provider_source_integrity_drift",
+        "runtime_non_create_response_lifecycle"
+      ],
+      "provider_wire_paths": [
+        "background",
+        "previous_response_id",
+        "conversation",
+        "context_management",
+        "context_management.compact_threshold",
+        "reasoning.context",
+        "store"
+      ],
+      "public_request_fields": [
+        "background",
+        "previous_response_id",
+        "conversation",
+        "context_management",
+        "reasoning_context",
+        "conversation_handle",
+        "continuation_envelope",
+        "store"
+      ],
+      "reasoning_mapping_policy": {
+        "mapping_name": "reasoning",
+        "allowed_static_keys": [
+          "effort",
+          "summary"
+        ],
+        "forbidden_path": "reasoning.context",
+        "dynamic_keys_allowed": false,
+        "aliases_allowed": false,
+        "mutator_calls_allowed": false
+      },
+      "stateful_create_field_policy": {
+        "forbidden_provider_wire_roots": [
+          "background",
+          "compact_threshold",
+          "context_management",
+          "conversation",
+          "extra_body",
+          "previous_response_id",
+          "store"
+        ],
+        "typed_sdk_create_fields": {
+          "background": {
+            "sdk_parameter_kind": "KEYWORD_ONLY",
+            "sdk_default_contract": "singleton:openai.Omit",
+            "sdk_resolved_annotation_sha256": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
+            "provider_runtime_disposition": "prohibited",
+            "allowed_provider_write_count": 0,
+            "public_runtime_disposition": "dormant_fail_closed"
+          },
+          "store": {
+            "sdk_parameter_kind": "KEYWORD_ONLY",
+            "sdk_default_contract": "singleton:openai.Omit",
+            "sdk_resolved_annotation_sha256": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
+            "provider_runtime_disposition": "legacy_fixed_false_only",
+            "allowed_provider_write_count": 1,
+            "allowed_provider_value": false,
+            "public_runtime_disposition": "dormant_fail_closed"
+          }
+        },
+        "legacy_fixed_provider_values": {
+          "store": false
+        },
+        "provider_mapping_flow": {
+          "initial_request_mapping": "kwargs",
+          "normalization_temporary": "normalized_request_kwargs",
+          "normalized_request_mapping": "request_kwargs",
+          "attempt_request_mapping": "attempt_kwargs",
+          "copy_function": "_strict_replay_json_copy",
+          "create_target": "request_client.responses.create",
+          "create_unpack_source": "attempt_kwargs",
+          "create_call_count": 1,
+          "mapping_unpack_count": 1
+        },
+        "closed_ast_gate": {
+          "tracked_bindings": [
+            "attempt_kwargs",
+            "kwargs",
+            "normalized_request_kwargs",
+            "request_client",
+            "request_kwargs"
+          ],
+          "trusted_helpers": [
+            "_strict_replay_json_copy",
+            "cast"
+          ],
+          "forbidden_reflection_names": [
+            "eval",
+            "exec",
+            "globals",
+            "locals",
+            "vars"
+          ],
+          "forbidden_frame_attributes": [
+            "_getframe",
+            "ag_frame",
+            "cr_frame",
+            "currentframe",
+            "f_back",
+            "f_globals",
+            "f_locals",
+            "gi_frame",
+            "tb_frame"
+          ],
+          "phase0_source_integrity": {
+            "phase": 0,
+            "kind": "exact_source_sha256",
+            "algorithm": "sha256",
+            "encoding": "sha256 of exact UTF-8 provider module source bytes",
+            "source_path": "src/avalan/model/nlp/text/vendor/openai.py",
+            "covers": [
+              "module_import_and_binding_topology",
+              "_strict_replay_json_copy",
+              "OpenAIClient.__call__",
+              "OpenAIClient._reasoning_config"
+            ],
+            "rotation_policy": "reviewed_provider_phase_transition_only",
+            "value": "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
+          }
+        },
+        "public_runtime_disposition": "dormant_fail_closed"
+      }
+    }
+  },
+  "conformance_digest": [
+    {
+      "claim_id": "OAI-REASONING-CONTEXT",
+      "digest": "The request accepts auto, current_turn, and all_turns. Omission has auto behavior, and each response reports its effective current_turn or all_turns mode.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "OAI-STATELESS-REASONING",
+      "digest": "Current OpenAI documentation says store=false and ZDR responses return encrypted reasoning by default; the legacy reasoning.encrypted_content include remains accepted.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "OAI-STORED-CHAIN",
+      "digest": "previous_response_id is the documented provider-stored chaining input. Manual stateless replay instead preserves every required output item and original phase.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "OAI-INLINE-COMPACTION",
+      "digest": "Responses create accepts context_management with a compaction entry and compact_threshold, and emitted compaction items remain opaque ordered context.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "OAI-STANDALONE-COMPACTION",
+      "digest": "POST /responses/compact is distinct from generation and returns a response.compaction resource whose complete output is the next canonical context.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "AZURE-RESPONSES-V1",
+      "digest": "Microsoft documents the Azure /openai/v1 Responses form, create and stream, previous_response_id chaining, compact, retrieve, delete, and inline context management. Availability remains resource, region, deployment, model, and transport specific.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "AZURE-STATELESS-REASONING",
+      "digest": "The Azure guide instructs store=false callers to request reasoning.encrypted_content explicitly. This provider-specific rule is kept separate from the current OpenAI default behavior.",
+      "activation_evidence": false
+    },
+    {
+      "claim_id": "FAIL-CLOSED",
+      "digest": "Documentation, an OpenAI-shaped URL, model naming, SDK symbols, or one successful request is contract evidence only and never activates a provider capability profile.",
+      "activation_evidence": false
+    }
+  ],
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": [
+      "schema_version",
+      "contract_version",
+      "feature",
+      "owner",
+      "current_phase",
+      "activation_state",
+      "retrieved_date",
+      "snapshot_id",
+      "sources",
+      "sdk_boundary",
+      "conformance_digest"
+    ],
+    "value": "f479bc544e1c3c41033cc5bc719428647f02552277f38912a99a85ec1c27c15f"
+  }
+}

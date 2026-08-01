@@ -12,13 +12,19 @@ from json import JSONDecodeError, dumps, loads
 from os import environ
 from pathlib import Path, PurePosixPath
 from re import compile as compile_regex
-from subprocess import CompletedProcess, TimeoutExpired, run
-from sys import executable, stderr
+from subprocess import CompletedProcess, TimeoutExpired
+from sys import stderr
 from tempfile import TemporaryDirectory
 from typing import Protocol, cast
 from xml.etree.ElementTree import Element
 from xml.etree.ElementTree import parse as parse_xml
 
+from contract_gate import (
+    POSTGRESQL_TEST_DSN_ENV,
+    ContractGateError,
+    junit_testcase_id,
+    run_pytest,
+)
 from input_contract_json import StrictJsonError, strict_json_path
 from verify_input_types import (
     TypeContractManifest,
@@ -37,16 +43,18 @@ _FEATURE = "structured_task_input"
 _MIN_PHASE = 0
 _MAX_PHASE = 12
 _CURRENT_PHASE = _MAX_PHASE
-_CATEGORIES = frozenset(
-    (
-        "unit",
-        "integration",
-        "negative",
-        "race",
-        "security",
-        "public_e2e",
-    )
+_POSTGRESQL_ACCEPTANCE_PREFIX = (
+    "tests/interaction/stores/interaction_pgsql_e2e.py::"
 )
+_CATEGORY_VALUES = (
+    "unit",
+    "integration",
+    "negative",
+    "race",
+    "security",
+    "public_e2e",
+)
+_CATEGORIES = frozenset(_CATEGORY_VALUES)
 _TEST_NODE_PATTERN = compile_regex(r"^tests/[A-Za-z0-9_./-]+\.py::[^\s]+$")
 _DYNAMIC_CODE_PATTERN = compile_regex(r"\b(?:exec|compile)\s*\(")
 _NON_PASSING_SUMMARY_PATTERN = compile_regex(
@@ -58,34 +66,32 @@ _PUBLIC_RESULT_PATTERN = compile_regex(
 _STATUS_PATTERN = compile_regex(r"^[a-z][a-z_]*=[^\s=]+$")
 _ACTIVE_CAPABILITY_EVIDENCE_PREFIX = "active:"
 _CAPABILITY_PROVIDER_KINDS = frozenset(("local_model", "provider_adapter"))
-_CAPABILITY_ROW_FIELDS = frozenset(
-    (
-        "active_from_phase",
-        "advertisement_rule",
-        "attached_prerequisite",
-        "durable_prerequisite",
-        "evidence",
-        "fallback",
-        "id",
-        "kind",
-        "path",
-        "production_advertised",
-        "public_failure_surface",
-        "snapshot_resumability",
-    )
+_CAPABILITY_ROW_FIELD_VALUES = (
+    "active_from_phase",
+    "advertisement_rule",
+    "attached_prerequisite",
+    "durable_prerequisite",
+    "evidence",
+    "fallback",
+    "id",
+    "kind",
+    "path",
+    "production_advertised",
+    "public_failure_surface",
+    "snapshot_resumability",
 )
+_CAPABILITY_ROW_FIELDS = frozenset(_CAPABILITY_ROW_FIELD_VALUES)
 _NATIVE_PRODUCTION_PROVIDER_ID = "provider-openai"
 _FAILURE_MATCH_FIELDS = (
     "condition_id transition_from transition_to public_result_id status_key "
     "status_value provider_call_count domain_side_effect_count"
 ).split()
-_FAILURE_EVIDENCE_FIELDS = frozenset(
-    (
-        *_FAILURE_MATCH_FIELDS,
-        "surface_id",
-        "public_result",
-    )
+_FAILURE_EVIDENCE_FIELD_VALUES = (
+    *_FAILURE_MATCH_FIELDS,
+    "surface_id",
+    "public_result",
 )
+_FAILURE_EVIDENCE_FIELDS = frozenset(_FAILURE_EVIDENCE_FIELD_VALUES)
 _FAILURE_TRANSITIONS = {
     "INPUT-F-01": "created->unavailable",
     "INPUT-F-02": "pending->answered",
@@ -168,6 +174,17 @@ class AcceptanceManifest:
             node
             for node in self.active_nodes(self.current_phase)
             if node.active_from_phase == self.current_phase
+        )
+
+    def postgresql_nodes(
+        self,
+        through_phase: int,
+    ) -> tuple[AcceptanceNode, ...]:
+        """Return selected nodes that require the real PostgreSQL harness."""
+        return tuple(
+            node
+            for node in self.active_nodes(through_phase)
+            if node.node_id.startswith(_POSTGRESQL_ACCEPTANCE_PREFIX)
         )
 
     def activation_history(self) -> tuple[tuple[str, ...], ...]:
@@ -576,7 +593,7 @@ def verify_acceptance(
         raise AcceptanceVerificationError(
             "through-phase must be implemented by the current manifest"
         )
-    if through_phase >= _CURRENT_PHASE:
+    if manifest.postgresql_nodes(through_phase):
         _require_database_harness()
     fixtures = contract_fixture_root or path.parent
     _validate_contract_fixtures(manifest, fixtures, root)
@@ -1311,32 +1328,10 @@ def _verify_failure_matrix_evidence(
 
 def _junit_testcase_id(testcase: Element) -> str:
     """Return one exact pytest instance ID from legacy JUnit evidence."""
-    relative = _nonempty_string(
-        testcase.attrib.get("file"), "JUnit testcase file"
-    )
-    path = PurePosixPath(relative)
-    if path.is_absolute() or path.suffix != ".py" or ".." in path.parts:
-        raise AcceptanceVerificationError(
-            f"JUnit testcase file is invalid: {relative}"
-        )
-    name = _nonempty_string(testcase.attrib.get("name"), "JUnit testcase name")
-    classname = _nonempty_string(
-        testcase.attrib.get("classname"), "JUnit testcase classname"
-    )
-    module_name = ".".join(path.with_suffix("").parts)
-    if classname == module_name:
-        class_parts: tuple[str, ...] = ()
-    elif classname.startswith(f"{module_name}."):
-        class_parts = tuple(classname[len(module_name) + 1 :].split("."))
-    else:
-        raise AcceptanceVerificationError(
-            "JUnit testcase classname does not match its file"
-        )
-    if any(not part for part in class_parts):
-        raise AcceptanceVerificationError(
-            "JUnit testcase classname has an empty component"
-        )
-    return "::".join((relative, *class_parts, name))
+    try:
+        return junit_testcase_id(testcase)
+    except ContractGateError as exc:
+        raise AcceptanceVerificationError(str(exc)) from exc
 
 
 def _pytest(
@@ -1345,31 +1340,11 @@ def _pytest(
     *,
     timeout: int,
 ) -> CompletedProcess[str]:
-    environment = {
-        key: value
-        for key, value in environ.items()
-        if key.upper()
-        not in {"PYTHONPATH", "PYTEST_ADDOPTS", "PYTEST_PLUGINS"}
-    }
-    environment["PYTEST_ADDOPTS"] = ""
-    environment["PYTHONPATH"] = str(root / "src")
-    return run(
-        (
-            executable,
-            "-m",
-            "pytest",
-            "-p",
-            "no:cacheprovider",
-            "-o",
-            "addopts=",
-            *arguments,
-        ),
-        cwd=root,
-        env=environment,
-        check=False,
-        capture_output=True,
-        text=True,
+    return run_pytest(
+        root,
+        arguments,
         timeout=timeout,
+        inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
     )
 
 
@@ -1812,7 +1787,7 @@ def _at_path(
 
 
 def _require_database_harness() -> None:
-    if not environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN"):
+    if not environ.get(POSTGRESQL_TEST_DSN_ENV):
         raise AcceptanceVerificationError(
             "current acceptance inventory requires the real PostgreSQL harness"
         )

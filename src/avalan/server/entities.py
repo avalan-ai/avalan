@@ -51,8 +51,66 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic_core import PydanticCustomError
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
+_DORMANT_CONVERSATION_REQUEST_FIELD_VALUES = (
+    "agent_lane",
+    "agent_lanes",
+    "background",
+    "branch",
+    "branch_id",
+    "checkpoint",
+    "checkpoint_id",
+    "compact",
+    "compaction",
+    "context_management",
+    "continuation",
+    "continuation_envelope",
+    "continuation_id",
+    "conversation",
+    "conversation_envelope",
+    "conversation_handle",
+    "conversation_id",
+    "conversation_mode",
+    "envelope",
+    "execution_segment_id",
+    "expected_head_revision",
+    "head",
+    "head_id",
+    "head_revision",
+    "idempotency",
+    "idempotency_key",
+    "include",
+    "logical_turn_id",
+    "model_call_id",
+    "named_head",
+    "named_head_id",
+    "named_head_revision",
+    "parent_checkpoint_id",
+    "previous_response_id",
+    "provider_lane",
+    "provider_lane_id",
+    "provider_storage",
+    "provisional_response_id",
+    "public_response_id",
+    "reasoning_context",
+    "request_digest",
+    "response_id",
+    "served_store",
+    "store",
+    "structured_input_continuation_id",
+    "task_id",
+    "tool_state",
+    "upstream_response_id",
+)
+DORMANT_CONVERSATION_REQUEST_FIELDS = frozenset(
+    _DORMANT_CONVERSATION_REQUEST_FIELD_VALUES
+)
+_DORMANT_CONVERSATION_REQUEST_FIELDS_BY_NORMALIZED = {
+    "".join(character for character in field if character.isalnum()): field
+    for field in DORMANT_CONVERSATION_REQUEST_FIELDS
+}
 MCP_FILE_DATA_KEYS = ("data", "base64", "file_data")
 MCP_FILE_URL_KEYS = ("uri", "url", "file_url")
 MCP_FILE_SOURCE_KEYS = MCP_FILE_DATA_KEYS + MCP_FILE_URL_KEYS
@@ -1417,6 +1475,7 @@ class ResponsesRequest(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def validate_remote_runtime_authority(cls, value: object) -> object:
+        _reject_dormant_conversation_request_fields(value)
         _reject_request_remote_runtime_authority(
             value,
             allowed_fields=frozenset(cls.model_fields),
@@ -1467,6 +1526,39 @@ def _reject_request_remote_runtime_authority(
         allowed_fields=allowed_fields,
         allow_container_profile_selector=True,
         path=path,
+    )
+
+
+def _reject_dormant_conversation_request_fields(value: object) -> None:
+    if not isinstance(value, Mapping):
+        return
+    for raw_key in value:
+        key = str(raw_key)
+        normalized = "".join(
+            character for character in key.casefold() if character.isalnum()
+        )
+        field = _DORMANT_CONVERSATION_REQUEST_FIELDS_BY_NORMALIZED.get(
+            normalized
+        )
+        if field is not None:
+            raise _dormant_conversation_field_error(field)
+    reasoning = value.get("reasoning")
+    if isinstance(reasoning, Mapping):
+        for raw_key in reasoning:
+            normalized = "".join(
+                character
+                for character in str(raw_key).casefold()
+                if character.isalnum()
+            )
+            if normalized == "context":
+                raise _dormant_conversation_field_error("reasoning.context")
+
+
+def _dormant_conversation_field_error(field: str) -> PydanticCustomError:
+    return PydanticCustomError(
+        "conversation_continuity_dormant",
+        "Conversation continuity field '{field}' is unavailable",
+        {"field": field},
     )
 
 

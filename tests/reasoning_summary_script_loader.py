@@ -232,6 +232,15 @@ def json_mapping_entries(
 
 def _phase9_subprocess_environment() -> dict[str, str]:
     """Return an environment without pytest or coverage instrumentation."""
+    allowed_python_path = environ.get(
+        "AVALAN_CONTRACT_ALLOWED_PYTHONPATH"
+    )
+    guarded_python_path = (
+        environ.get("PYTHONSAFEPATH") == "1"
+        and environ.get("PYTHONNOUSERSITE") == "1"
+        and allowed_python_path is not None
+        and environ.get("PYTHONPATH") == allowed_python_path
+    )
     sanitized = {
         key: value
         for key, value in environ.items()
@@ -239,6 +248,9 @@ def _phase9_subprocess_environment() -> dict[str, str]:
         and not key.upper().startswith(("COVERAGE_", "COV_CORE_", "PYTEST_"))
     }
     sanitized["PYTHONNOUSERSITE"] = "1"
+    if guarded_python_path:
+        assert allowed_python_path is not None
+        sanitized["PYTHONPATH"] = allowed_python_path
     return sanitized
 
 

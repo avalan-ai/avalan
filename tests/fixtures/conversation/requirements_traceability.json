@@ -1,0 +1,1765 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "source_sections": [
+    "9",
+    "10",
+    "11",
+    "12",
+    "13",
+    "14",
+    "15",
+    "16",
+    "17",
+    "18",
+    "19",
+    "20",
+    "21",
+    "22",
+    "23",
+    "24",
+    "25",
+    "26"
+  ],
+  "normative_occurrence_count": 144,
+  "requirements": [
+    {
+      "id": "CONV-N-001",
+      "normative_ordinal": 1,
+      "source_section": "9.1",
+      "normative_level": "MUST",
+      "paraphrase": "Treat encrypted reasoning and compaction payloads as opaque values.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-002",
+      "normative_ordinal": 2,
+      "source_section": "9.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never decrypt, interpret, expose, compare across calls, or render opaque provider state as chain of thought.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-003",
+      "normative_ordinal": 3,
+      "source_section": "9.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Keep displayable reasoning summaries separate from opaque continuation state.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-004",
+      "normative_ordinal": 4,
+      "source_section": "9.2",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve provider-defined item order and adjacency.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-005",
+      "normative_ordinal": 5,
+      "source_section": "9.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never regroup reasoning, assistant, function-call, function-output, or compaction items by kind.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-006",
+      "normative_ordinal": 6,
+      "source_section": "9.2",
+      "normative_level": "MUST",
+      "paraphrase": "Make every provider-required item normalization explicit, versioned, and tested.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-007",
+      "normative_ordinal": 7,
+      "source_section": "9.3",
+      "normative_level": "MUST",
+      "paraphrase": "Bind every provider checkpoint to the exact lane that created it.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-008",
+      "normative_ordinal": 8,
+      "source_section": "9.3",
+      "normative_level": "MUST",
+      "paraphrase": "Include the complete provider, endpoint, model, configuration, tool, execution, capability, and codec identity in lane bindings.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-009",
+      "normative_ordinal": 9,
+      "source_section": "9.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Reject incompatible continuation instead of falling back to visible-message replay.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-010",
+      "normative_ordinal": 10,
+      "source_section": "9.4",
+      "normative_level": "MUST",
+      "paraphrase": "Use Avalan-owned public IDs for Avalan logical responses.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-011",
+      "normative_ordinal": 11,
+      "source_section": "9.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never expose or alias the final upstream response ID as the public response ID.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-012",
+      "normative_ordinal": 12,
+      "source_section": "9.4",
+      "normative_level": "MUST",
+      "paraphrase": "Keep upstream response IDs private to their provider lanes.",
+      "owner_phase": 1,
+      "production_artifact": "src/avalan/conversation/contract.py",
+      "test_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-013",
+      "normative_ordinal": 13,
+      "source_section": "9.5",
+      "normative_level": "MUST",
+      "paraphrase": "Advance conversation state only at validated execution boundaries.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-014",
+      "normative_ordinal": 14,
+      "source_section": "9.5",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never commit a partially parsed streaming item.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-015",
+      "normative_ordinal": 15,
+      "source_section": "9.5",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never overwrite a valid parent checkpoint after a failed attempt.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-016",
+      "normative_ordinal": 16,
+      "source_section": "9.6",
+      "normative_level": "MUST",
+      "paraphrase": "Give store=true and store=false materially distinct documented retention semantics.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-017",
+      "normative_ordinal": 17,
+      "source_section": "9.6",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never retain a complete store=false conversation merely to support bare-ID continuation.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-018",
+      "normative_ordinal": 18,
+      "source_section": "9.7",
+      "normative_level": "MUST",
+      "paraphrase": "Return a typed unsupported-capability error when the selected lane cannot honor requested continuity.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-019",
+      "normative_ordinal": 19,
+      "source_section": "9.7",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never degrade implicitly to visible-transcript-only continuation.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-020",
+      "normative_ordinal": 20,
+      "source_section": "10.1",
+      "normative_level": "MUST",
+      "paraphrase": "Make the coordinator own authorization, binding, request assembly, ordered staging, suspension, compaction, commit, publication, and lifecycle policy.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-021",
+      "normative_ordinal": 21,
+      "source_section": "10.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Keep the coordinator independent of terminal rendering and host-specific behavior.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-022",
+      "normative_ordinal": 22,
+      "source_section": "10.2",
+      "normative_level": "MUST",
+      "paraphrase": "Represent every required identity, ownership, execution, lane, mode, ledger, compaction, configuration, integrity, lifecycle, and observability concept in checkpoints.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-023",
+      "normative_ordinal": 23,
+      "source_section": "10.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never conflate the visible transcript with the private provider item ledger.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-024",
+      "normative_ordinal": 24,
+      "source_section": "10.3",
+      "normative_level": "MUST",
+      "paraphrase": "Create an immutable child checkpoint for every successful logical turn.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-025",
+      "normative_ordinal": 25,
+      "source_section": "10.3",
+      "normative_level": "MUST",
+      "paraphrase": "Use compare-and-swap or equivalent optimistic concurrency for named heads.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-026",
+      "normative_ordinal": 26,
+      "source_section": "10.3",
+      "normative_level": "MUST",
+      "paraphrase": "Resolve concurrent advances as explicit branches or one success plus one typed conflict.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-027",
+      "normative_ordinal": 27,
+      "source_section": "10.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never silently interleave provider item ledgers.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-028",
+      "normative_ordinal": 28,
+      "source_section": "10.4",
+      "normative_level": "MUST",
+      "paraphrase": "Keep reasoning state within the provider lane that produced it.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-029",
+      "normative_ordinal": 29,
+      "source_section": "10.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never merge opaque reasoning items from different providers or deployments.",
+      "owner_phase": 2,
+      "production_artifact": "src/avalan/conversation/coordinator.py",
+      "test_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-030",
+      "normative_ordinal": 30,
+      "source_section": "11.1",
+      "normative_level": "MUST",
+      "paraphrase": "Expose typed conversation mode, parent, reasoning context, inline compaction, standalone compaction, and retention settings.",
+      "owner_phase": 4,
+      "production_artifact": "src/avalan/model/conversation.py",
+      "test_node_ids": [
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-031",
+      "normative_ordinal": 31,
+      "source_section": "11.1",
+      "normative_level": "MUST",
+      "paraphrase": "Return the new checkpoint or conversation handle from every successful result.",
+      "owner_phase": 4,
+      "production_artifact": "src/avalan/model/conversation.py",
+      "test_node_ids": [
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-032",
+      "normative_ordinal": 32,
+      "source_section": "11.1",
+      "normative_level": "MUST",
+      "paraphrase": "Expose the same checkpoint from the terminal streaming result.",
+      "owner_phase": 4,
+      "production_artifact": "src/avalan/model/conversation.py",
+      "test_node_ids": [
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-033",
+      "normative_ordinal": 33,
+      "source_section": "11.1",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve one-shot behavior when conversation settings are omitted.",
+      "owner_phase": 4,
+      "production_artifact": "src/avalan/model/conversation.py",
+      "test_node_ids": [
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-034",
+      "normative_ordinal": 34,
+      "source_section": "11.2",
+      "normative_level": "MUST",
+      "paraphrase": "Require an explicit stored-mode choice and disclose provider-side retention.",
+      "owner_phase": 4,
+      "production_artifact": "src/avalan/model/conversation.py",
+      "test_node_ids": [
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-035",
+      "normative_ordinal": 35,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Implement stateless continuation with store=false, complete ordered replay state, appended input, and post-validation checkpoint commit.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-036",
+      "normative_ordinal": 36,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Use the provider-supported encrypted-reasoning inclusion mechanism when the exact capability profile requires it.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-037",
+      "normative_ordinal": 37,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Replay every provider-required output item for all-turns reasoning.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-038",
+      "normative_ordinal": 38,
+      "source_section": "12.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never treat visible user and assistant text as equivalent to full all-turns replay state.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-039",
+      "normative_ordinal": 39,
+      "source_section": "12.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not cache incomplete reasoning items as replayable state.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-040",
+      "normative_ordinal": 40,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Fail explicitly when missing provider data prevents requested stateless continuity.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-041",
+      "normative_ordinal": 41,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Encrypt stateless checkpoint state at rest.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-042",
+      "normative_ordinal": 42,
+      "source_section": "12.1",
+      "normative_level": "MUST",
+      "paraphrase": "Authenticate and encrypt caller-held continuation envelopes as opaque tokens.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-043",
+      "normative_ordinal": 43,
+      "source_section": "12.2",
+      "normative_level": "MUST",
+      "paraphrase": "Implement stored continuation with store=true, private upstream IDs, new-input-only chaining, and provider-managed history.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-044",
+      "normative_ordinal": 44,
+      "source_section": "12.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not replay the full prior ledger in stored mode unless the exact provider contract requires it.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-045",
+      "normative_ordinal": 45,
+      "source_section": "12.2",
+      "normative_level": "MUST",
+      "paraphrase": "Reapply instructions, tools, and generation settings that stored chaining does not inherit.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-046",
+      "normative_ordinal": 46,
+      "source_section": "12.2",
+      "normative_level": "MUST",
+      "paraphrase": "Disclose that stored continuation enables provider-side retention.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-047",
+      "normative_ordinal": 47,
+      "source_section": "12.2",
+      "normative_level": "MUST",
+      "paraphrase": "Return a typed terminal condition when stored upstream ancestry expires or is deleted.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-048",
+      "normative_ordinal": 48,
+      "source_section": "12.3",
+      "normative_level": "MUST",
+      "paraphrase": "Use exactly one continuation mode per provider lane.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-049",
+      "normative_ordinal": 49,
+      "source_section": "12.3",
+      "normative_level": "MUST",
+      "paraphrase": "Reject every stored/stateless parent-field or lane-binding mixture.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-050",
+      "normative_ordinal": 50,
+      "source_section": "12.3",
+      "normative_level": "MUST",
+      "paraphrase": "Report opaque-continuity loss when an explicit reset starts a new visible-transcript lane.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-051",
+      "normative_ordinal": 51,
+      "source_section": "13",
+      "normative_level": "MUST",
+      "paraphrase": "Represent auto, current-turn, and all-turns reasoning context as typed choices.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-052",
+      "normative_ordinal": 52,
+      "source_section": "13",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not assume every reasoning model supports every reasoning-context value.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-053",
+      "normative_ordinal": 53,
+      "source_section": "13",
+      "normative_level": "MUST",
+      "paraphrase": "Capture the provider-reported effective reasoning context in results and checkpoints.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-054",
+      "normative_ordinal": 54,
+      "source_section": "13",
+      "normative_level": "MUST",
+      "paraphrase": "Retain and replay the full required output sequence for stateless all-turns reasoning.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-055",
+      "normative_ordinal": 55,
+      "source_section": "13",
+      "normative_level": "MUST",
+      "paraphrase": "Send the documented context field and continuation ID for stored all-turns reasoning.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-056",
+      "normative_ordinal": 56,
+      "source_section": "13",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Keep summary selection independent from opaque reasoning retention.",
+      "owner_phase": 6,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-057",
+      "normative_ordinal": 57,
+      "source_section": "14.1",
+      "normative_level": "MUST",
+      "paraphrase": "Model inline and standalone compaction as distinct operations with distinct capability bits.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-058",
+      "normative_ordinal": 58,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Support the typed provider context-management request for inline compaction.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-059",
+      "normative_ordinal": 59,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Validate compact thresholds against the active provider limits.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-060",
+      "normative_ordinal": 60,
+      "source_section": "14.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not treat an illustrative threshold as a universal default.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-061",
+      "normative_ordinal": 61,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Capture compaction items in streaming and non-streaming responses.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-062",
+      "normative_ordinal": 62,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Keep each compaction item opaque and in canonical order.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-063",
+      "normative_ordinal": 63,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Record the newest compaction item as the latest checkpoint boundary.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-064",
+      "normative_ordinal": 64,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "For stateless replay, retain the latest compaction item and suffix while dropping only the provider-authorized prefix.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-065",
+      "normative_ordinal": 65,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "For stored continuation, advance using the upstream continuation ID.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-066",
+      "normative_ordinal": 66,
+      "source_section": "14.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never manually prune provider-managed history in stored mode.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-067",
+      "normative_ordinal": 67,
+      "source_section": "14.2",
+      "normative_level": "MUST",
+      "paraphrase": "Supersede earlier compaction boundaries deterministically.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-068",
+      "normative_ordinal": 68,
+      "source_section": "14.3",
+      "normative_level": "MUST",
+      "paraphrase": "Expose standalone provider compaction as a first-class operation.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-069",
+      "normative_ordinal": 69,
+      "source_section": "14.3",
+      "normative_level": "MUST",
+      "paraphrase": "Validate capability and canonical context, call the compact endpoint without tools, and return validated compact output unchanged.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-070",
+      "normative_ordinal": 70,
+      "source_section": "14.3",
+      "normative_level": "MUST",
+      "paraphrase": "Keep standalone compaction stateless and compatible with zero-data-retention operation.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-071",
+      "normative_ordinal": 71,
+      "source_section": "14.3",
+      "normative_level": "MUST",
+      "paraphrase": "Commit any optional local checkpoint for standalone compact output atomically.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-072",
+      "normative_ordinal": 72,
+      "source_section": "14.3",
+      "normative_level": "MUST",
+      "paraphrase": "Leave the parent checkpoint usable after a failed compact operation.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-073",
+      "normative_ordinal": 73,
+      "source_section": "14.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never label truncation, ordinary summaries, transcript-only retention, reasoning drops, or prompt injection of compact payloads as provider compaction.",
+      "owner_phase": 7,
+      "production_artifact": "src/avalan/conversation/compaction.py",
+      "test_node_ids": [
+        "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-074",
+      "normative_ordinal": 74,
+      "source_section": "15",
+      "normative_level": "MUST",
+      "paraphrase": "Evaluate capabilities at the complete runtime boundary rather than from provider names.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-075",
+      "normative_ordinal": 75,
+      "source_section": "15",
+      "normative_level": "MUST",
+      "paraphrase": "Track stored chaining, stateless replay, reasoning contexts, both compaction modes, stream fidelity, retrieval, and deletion independently.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-076",
+      "normative_ordinal": 76,
+      "source_section": "15.2",
+      "normative_level": "MUST",
+      "paraphrase": "Use the exact native Azure classifier and bind state to Azure resource and deployment identity.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-077",
+      "normative_ordinal": 77,
+      "source_section": "15.2",
+      "normative_level": "MUST",
+      "paraphrase": "Account for Azure endpoint, API revision, deployment capabilities, transport parity, retention, and deletion behavior.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-078",
+      "normative_ordinal": 78,
+      "source_section": "15.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never log or persist sourced live-fixture secrets in test evidence.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-079",
+      "normative_ordinal": 79,
+      "source_section": "15.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Keep generic OpenAI-compatible services incapable by default.",
+      "owner_phase": 0,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material"
+      ]
+    },
+    {
+      "id": "CONV-N-080",
+      "normative_ordinal": 80,
+      "source_section": "15.4",
+      "normative_level": "MUST",
+      "paraphrase": "Raise a typed model capability error before provider dispatch whenever possible.",
+      "owner_phase": 5,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-081",
+      "normative_ordinal": 81,
+      "source_section": "15.4",
+      "normative_level": "MUST",
+      "paraphrase": "Project unsupported served capabilities as OpenAI-shaped 400 errors with stable Avalan codes.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-082",
+      "normative_ordinal": 82,
+      "source_section": "15.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never remove an unsupported stateful field and continue silently.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-083",
+      "normative_ordinal": 83,
+      "source_section": "16.1",
+      "normative_level": "MUST",
+      "paraphrase": "Strictly validate every supported stateful Responses request field and input-item variant.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-084",
+      "normative_ordinal": 84,
+      "source_section": "16.1",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Reject unknown top-level and nested reasoning or context-management fields.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-085",
+      "normative_ordinal": 85,
+      "source_section": "16.1",
+      "normative_level": "MUST",
+      "paraphrase": "Default omitted served store to false.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-086",
+      "normative_ordinal": 86,
+      "source_section": "16.2",
+      "normative_level": "MUST",
+      "paraphrase": "Assign an Avalan-owned public ID to every completed outward response.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-087",
+      "normative_ordinal": 87,
+      "source_section": "16.2",
+      "normative_level": "MUST",
+      "paraphrase": "Resolve each stored public ID to an authorized immutable checkpoint.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-088",
+      "normative_ordinal": 88,
+      "source_section": "16.2",
+      "normative_level": "MUST",
+      "paraphrase": "Resolve, authorize, validate, resume, and create a child when previous_response_id is supplied.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-089",
+      "normative_ordinal": 89,
+      "source_section": "16.3",
+      "normative_level": "MUST",
+      "paraphrase": "Keep stored public responses retrievable for their advertised retention.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-090",
+      "normative_ordinal": 90,
+      "source_section": "16.3",
+      "normative_level": "MUST",
+      "paraphrase": "Support stored continuation after a fresh server process.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-091",
+      "normative_ordinal": 91,
+      "source_section": "16.3",
+      "normative_level": "MUST",
+      "paraphrase": "Scope stored response access to tenant and principal.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-092",
+      "normative_ordinal": 92,
+      "source_section": "16.3",
+      "normative_level": "MUST",
+      "paraphrase": "Delete local checkpoints and follow the documented upstream deletion policy.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-093",
+      "normative_ordinal": 93,
+      "source_section": "16.3",
+      "normative_level": "MUST",
+      "paraphrase": "Fail store=true explicitly when no durable store is configured.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-094",
+      "normative_ordinal": 94,
+      "source_section": "16.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not retain the full store=false conversation beyond its transient processing window.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-095",
+      "normative_ordinal": 95,
+      "source_section": "16.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not promise bare public-ID continuation for store=false.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-096",
+      "normative_ordinal": 96,
+      "source_section": "16.4",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Ensure bounded store=false operational metadata cannot reconstruct conversation or opaque state.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-097",
+      "normative_ordinal": 97,
+      "source_section": "16.4",
+      "normative_level": "MUST",
+      "paraphrase": "Define a versioned namespaced extension for full-fidelity caller-held served-agent state.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-098",
+      "normative_ordinal": 98,
+      "source_section": "16.4",
+      "normative_level": "MUST",
+      "paraphrase": "Authenticate, encrypt, bind, limit, and safely reuse the caller-held state extension.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-099",
+      "normative_ordinal": 99,
+      "source_section": "16.5",
+      "normative_level": "MUST",
+      "paraphrase": "Expose Responses compact at the same configured API prefix as create.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-100",
+      "normative_ordinal": 100,
+      "source_section": "16.5",
+      "normative_level": "MUST",
+      "paraphrase": "Keep the compact route canonical, authorized, bound, stateless, tool-free, and fail-closed.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-101",
+      "normative_ordinal": 101,
+      "source_section": "16.6",
+      "normative_level": "MUST",
+      "paraphrase": "Provide authorized retrieve and delete behavior whenever stored Responses compatibility is claimed.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-102",
+      "normative_ordinal": 102,
+      "source_section": "16.6",
+      "normative_level": "MUST",
+      "paraphrase": "Document deletion, upstream attempts, tombstones, and partial failures.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-103",
+      "normative_ordinal": 103,
+      "source_section": "16.6",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never allow a deleted response to remain usable as a parent.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-104",
+      "normative_ordinal": 104,
+      "source_section": "16.7",
+      "normative_level": "MUST",
+      "paraphrase": "Produce equivalent committed checkpoints for streaming and non-streaming requests.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-105",
+      "normative_ordinal": 105,
+      "source_section": "16.7",
+      "normative_level": "MUST",
+      "paraphrase": "Stage only complete items, preserve event order, hide opaque data, and publish checkpoints only at valid streaming terminals.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-106",
+      "normative_ordinal": 106,
+      "source_section": "16.7",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never retry a logical turn automatically after visible output.",
+      "owner_phase": 10,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-107",
+      "normative_ordinal": 107,
+      "source_section": "17.1",
+      "normative_level": "MUST",
+      "paraphrase": "Advance the provider lane at a recoverable boundary before executing requested tools.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-108",
+      "normative_ordinal": 108,
+      "source_section": "17.1",
+      "normative_level": "MUST",
+      "paraphrase": "Correlate tool outputs and append them in provider order.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-109",
+      "normative_ordinal": 109,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Bind pending structured input and provider-lane state to the same execution checkpoint.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-110",
+      "normative_ordinal": 110,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Resume durable structured-input resolution from that checkpoint after restart.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-111",
+      "normative_ordinal": 111,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Append the human answer after its correlated reserved call.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-112",
+      "normative_ordinal": 112,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Advance structured-input continuation state exactly once.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-113",
+      "normative_ordinal": 113,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Fail closed for expired, cancelled, declined, or tampered structured-input continuations.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-114",
+      "normative_ordinal": 114,
+      "source_section": "17.2",
+      "normative_level": "MUST",
+      "paraphrase": "Reuse the durable structured-input continuation contract rather than serializing competing provider state.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-115",
+      "normative_ordinal": 115,
+      "source_section": "17.3",
+      "normative_level": "MUST",
+      "paraphrase": "Give every child agent an explicit provider lane and ownership relationship.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-116",
+      "normative_ordinal": 116,
+      "source_section": "17.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never insert one child agent's opaque reasoning state into another lane.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-117",
+      "normative_ordinal": 117,
+      "source_section": "18.1",
+      "normative_level": "MUST",
+      "paraphrase": "Use versioned, encrypted, authenticated, rotation-capable, bounded, restart-safe durable checkpoints with explicit TTL and deletion.",
+      "owner_phase": 3,
+      "production_artifact": "src/avalan/conversation/stores/pgsql.py",
+      "test_node_ids": [
+        "tests/conversation/pgsql_restart_e2e_test.py::test_normative_durable_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-118",
+      "normative_ordinal": 118,
+      "source_section": "18.2",
+      "normative_level": "MUST",
+      "paraphrase": "Authorize lookup, continuation, compact, retrieve, branch, and delete before revealing target existence.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-119",
+      "normative_ordinal": 119,
+      "source_section": "18.2",
+      "normative_level": "MUST",
+      "paraphrase": "Bind state to tenant, principal, served agent, and deployment without cross-tenant enumeration.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-120",
+      "normative_ordinal": 120,
+      "source_section": "18.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never log keys, opaque reasoning, envelopes, full ledgers, protected tool output, or storage encryption material.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-121",
+      "normative_ordinal": 121,
+      "source_section": "18.4",
+      "normative_level": "MUST",
+      "paraphrase": "Document caller-held state as sensitive session material that stays out of logs and URLs and uses authenticated secure transport.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-122",
+      "normative_ordinal": 122,
+      "source_section": "18.4",
+      "normative_level": "MUST",
+      "paraphrase": "Return stable machine-readable errors for expiry, key rotation, and replay rejection.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-123",
+      "normative_ordinal": 123,
+      "source_section": "19.1",
+      "normative_level": "MUST",
+      "paraphrase": "Distinguish validation, provider, transport, dispatch ambiguity, visibility, malformed stream, persistence, and publication failure boundaries.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-124",
+      "normative_ordinal": 124,
+      "source_section": "19.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not treat an idempotency key as deduplication proof; fence ambiguous dispatch from automatic duplicate continuation.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-125",
+      "normative_ordinal": 125,
+      "source_section": "19.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not automatically retry after visible output.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-126",
+      "normative_ordinal": 126,
+      "source_section": "19.3",
+      "normative_level": "MUST",
+      "paraphrase": "Surface an explicit state-commit failure when a completed provider response cannot be checkpointed.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-127",
+      "normative_ordinal": 127,
+      "source_section": "19.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never publish a response that falsely promises resumability after checkpoint commit failure.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-128",
+      "normative_ordinal": 128,
+      "source_section": "20",
+      "normative_level": "MUST",
+      "paraphrase": "Define explicit precedence across server, agent, model, request, and provider defaults.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-129",
+      "normative_ordinal": 129,
+      "source_section": "20",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never let a request broaden retention, provider storage, or capability beyond server policy.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-130",
+      "normative_ordinal": 130,
+      "source_section": "21",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Keep opaque state out of metrics and traces while retaining content-safe operational answers.",
+      "owner_phase": 11,
+      "production_artifact": "src/avalan/conversation/security.py",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-131",
+      "normative_ordinal": 131,
+      "source_section": "22.1",
+      "normative_level": "MUST",
+      "paraphrase": "Preserve current one-shot model and agent behavior when conversation settings are absent.",
+      "owner_phase": 0,
+      "production_artifact": "src/avalan/model/nlp/text/vendor/openai.py",
+      "test_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material"
+      ]
+    },
+    {
+      "id": "CONV-N-132",
+      "normative_ordinal": 132,
+      "source_section": "22.1",
+      "normative_level": "MUST",
+      "paraphrase": "Keep the existing tool-call replay path behaviorally correct during migration.",
+      "owner_phase": 8,
+      "production_artifact": "src/avalan/agent/engine.py",
+      "test_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-133",
+      "normative_ordinal": 133,
+      "source_section": "22.2",
+      "normative_level": "MUST",
+      "paraphrase": "Strictly validate stateful served fields once they are advertised.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-134",
+      "normative_ordinal": 134,
+      "source_section": "22.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never accept and ignore a stateful OpenAI field.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-135",
+      "normative_ordinal": 135,
+      "source_section": "22.2",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Reject stored continuation when no durable checkpoint store exists.",
+      "owner_phase": 9,
+      "production_artifact": "src/avalan/server/routers/responses.py",
+      "test_node_ids": [
+        "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-136",
+      "normative_ordinal": 136,
+      "source_section": "22.3",
+      "normative_level": "MUST",
+      "paraphrase": "Require a proven checkpoint migration or explicit visible-transcript reset after binding changes.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-137",
+      "normative_ordinal": 137,
+      "source_section": "24.1",
+      "normative_level": "MUST",
+      "paraphrase": "Cover every required unit behavior including integrity, ordering, modes, compaction, binding, authority, limits, validation, errors, and redaction.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-138",
+      "normative_ordinal": 138,
+      "source_section": "24.2",
+      "normative_level": "MUST",
+      "paraphrase": "Cover every supported provider, mode, transport, execution, turn, reasoning, compaction, lifecycle, interaction, and failure integration combination.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+        "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product"
+      ]
+    },
+    {
+      "id": "CONV-N-139",
+      "normative_ordinal": 139,
+      "source_section": "24.3",
+      "normative_level": "MUST",
+      "paraphrase": "Prove exact provider request shapes for every continuation and compaction mode.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-140",
+      "normative_ordinal": 140,
+      "source_section": "24.3",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Do not infer reasoning continuity from a plausible final answer.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-141",
+      "normative_ordinal": 141,
+      "source_section": "24.4",
+      "normative_level": "MUST",
+      "paraphrase": "Prove the complete stored, stateless, authorization, streaming, agent, interaction, compaction, lifecycle, validation, and privacy server flow with the official client.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-142",
+      "normative_ordinal": 142,
+      "source_section": "24.5",
+      "normative_level": "MUST",
+      "paraphrase": "Verify each activated real provider boundary with bounded live smoke tests when policy and credentials permit.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-143",
+      "normative_ordinal": 143,
+      "source_section": "24.5",
+      "normative_level": "MUST NOT",
+      "paraphrase": "Never activate a generic compatible provider based on one native live success.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-144",
+      "normative_ordinal": 144,
+      "source_section": "25",
+      "normative_level": "MUST",
+      "paraphrase": "Explain retention, state categories, modes, reasoning context, compaction, continuation IDs, keys, lifecycle, Azure limits, fail-closed compatibility, and safe troubleshooting.",
+      "owner_phase": 12,
+      "production_artifact": "docs/CONVERSATIONS.md",
+      "test_node_ids": [
+        "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+      ]
+    }
+  ],
+  "catalog_sha256": "596f3f62b99be967aa09bdb1f543447d8f7580dfea533ddcaa3aaaa95e2994fe"
+}

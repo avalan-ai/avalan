@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "contract_version": 1,
+  "fixture_sha256": "39a1bd331f63954425516b0cfb1437ad9934feeaaf550121486924dc0caf7547",
+  "clock": {
+    "initial": "2030-01-01T00:00:00+00:00",
+    "advances_seconds": [0, 1, 59, 3600],
+    "expected": [
+      "2030-01-01T00:00:00+00:00",
+      "2030-01-01T00:00:01+00:00",
+      "2030-01-01T00:01:00+00:00",
+      "2030-01-01T01:01:00+00:00"
+    ]
+  },
+  "id_factory": {
+    "prefix": "conversation-fixture",
+    "expected": {
+      "conversation_id": "conversation-fixture-conversation-0001",
+      "logical_turn_id": "conversation-fixture-logical-turn-0002",
+      "execution_segment_id": "conversation-fixture-execution-segment-0003",
+      "checkpoint_id": "conversation-fixture-checkpoint-0004",
+      "branch_id": "conversation-fixture-branch-0005",
+      "named_head_id": "conversation-fixture-named-head-0006",
+      "provider_lane_id": "conversation-fixture-provider-lane-0007",
+      "model_call_id": "conversation-fixture-model-call-0008",
+      "provisional_response_id": "conversation-fixture-provisional-response-0009",
+      "public_response_id": "conversation-fixture-public-response-0010",
+      "upstream_response_id": "conversation-fixture-upstream-response-0011",
+      "task_id": "conversation-fixture-task-0012",
+      "agent_id": "conversation-fixture-agent-0013",
+      "structured_input_continuation_id": "conversation-fixture-structured-input-continuation-0014",
+      "tenant_id": "conversation-fixture-tenant-0015",
+      "principal_id": "conversation-fixture-principal-0016",
+      "endpoint_id": "conversation-fixture-endpoint-0017",
+      "idempotency_key": "conversation-fixture-idempotency-key-0018",
+      "request_digest": "conversation-fixture-request-digest-0019"
+    }
+  },
+  "principal": {
+    "tenant_id": "tenant-fixture",
+    "principal_id": "principal-fixture",
+    "agent_id": "agent-fixture",
+    "endpoint_id": "endpoint-fixture"
+  },
+  "keys": {
+    "test_only": true,
+    "checkpoint_key_ids": ["checkpoint-key-2029-12", "checkpoint-key-2030-01"],
+    "envelope_key_ids": ["envelope-key-2029-12", "envelope-key-2030-01"],
+    "idempotency_digest_key_id": "idempotency-key-2030-01",
+    "material_source": "ephemeral test harness only; never serialized"
+  },
+  "provider_capability": {
+    "profile_id": "synthetic-provider-profile-v1",
+    "test_only": true,
+    "activation": "dormant",
+    "stored_chaining": true,
+    "stateless_encrypted_replay": true,
+    "current_turn_reasoning": true,
+    "all_turns_reasoning": true,
+    "inline_compaction": true,
+    "standalone_compaction": true,
+    "streaming_item_fidelity": true,
+    "retrieval": true,
+    "deletion": true
+  },
+  "provider_item_trace": {
+    "complete": true,
+    "items": [
+      {"index": 0, "kind": "reasoning", "provider_id": "reasoning-1", "status": "completed", "opaque_payload": "opaque-fixture-ciphertext"},
+      {"index": 1, "kind": "function_call", "provider_id": "call-item-1", "status": "completed", "call_id": "call-1", "phase": "assistant"},
+      {"index": 2, "kind": "function_call_output", "provider_id": "output-item-1", "status": "completed", "call_id": "call-1", "phase": "tool"},
+      {"index": 3, "kind": "message", "provider_id": "message-1", "status": "completed", "phase": "final"}
+    ]
+  },
+  "async_barrier": {
+    "parties": 2,
+    "arrival_order": ["advance-a", "advance-b"]
+  },
+  "fault_injection": [
+    "validation_before_dispatch",
+    "provider_rejection",
+    "known_no_dispatch_transport",
+    "ambiguous_possible_dispatch",
+    "failure_before_output",
+    "failure_after_visible_output",
+    "malformed_stream_item",
+    "tool_effect",
+    "suspension",
+    "checkpoint_commit",
+    "outward_publication"
+  ],
+  "named_head_cases": [
+    {"expected_revision": 4, "current_revision": 4, "disposition": "advance"},
+    {"expected_revision": 3, "current_revision": 4, "disposition": "conflict"},
+    {"expected_revision": 5, "current_revision": 4, "disposition": "conflict"}
+  ],
+  "retention_cases": [
+    {"local_storage": "durable", "provider_storage": "stored", "provider_storage_disclosed": true, "upstream_status": "known", "local": 86400, "envelope": 3600, "upstream": 7200, "effective": 3600},
+    {"local_storage": "durable", "provider_storage": "stored", "provider_storage_disclosed": true, "upstream_status": "known", "local": 86400, "envelope": null, "upstream": 7200, "effective": 7200},
+    {"local_storage": "durable", "provider_storage": "stored", "provider_storage_disclosed": true, "upstream_status": "unknown", "local": 86400, "envelope": 3600, "upstream": null, "effective": null},
+    {"local_storage": "none", "provider_storage": "off", "provider_storage_disclosed": false, "upstream_status": "not_applicable", "local": null, "envelope": null, "upstream": null, "effective": null}
+  ],
+  "public_response_resources": [
+    {
+      "name": "provisional_stream",
+      "resource_state": "streaming",
+      "checkpoint_state": "staged",
+      "public_id_state": "provisional",
+      "terminal_publication_allowed": false
+    },
+    {
+      "name": "committed_completion",
+      "resource_state": "completed",
+      "checkpoint_state": "committed",
+      "public_id_state": "committed",
+      "terminal_publication_allowed": true
+    },
+    {
+      "name": "commit_failure",
+      "resource_state": "failed",
+      "checkpoint_state": "quarantined",
+      "public_id_state": "withheld",
+      "terminal_publication_allowed": false
+    },
+    {
+      "name": "local_tombstone",
+      "resource_state": "tombstoned",
+      "checkpoint_state": "committed",
+      "public_id_state": "committed",
+      "terminal_publication_allowed": false
+    }
+  ]
+}

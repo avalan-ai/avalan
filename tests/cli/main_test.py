@@ -120,10 +120,28 @@ class CliInitTestCase(TestCase):
         root_path = Path(__file__).resolve().parents[2]
         source_path = root_path / "src"
         environment = environ.copy()
-        python_path = str(source_path)
-        if environment.get("PYTHONPATH"):
-            python_path = f"{python_path}{pathsep}{environment['PYTHONPATH']}"
-        environment["PYTHONPATH"] = python_path
+        allowed_python_path = environment.get(
+            "AVALAN_CONTRACT_ALLOWED_PYTHONPATH"
+        )
+        guarded_python_path = (
+            environment.get("PYTHONSAFEPATH") == "1"
+            and environment.get("PYTHONNOUSERSITE") == "1"
+            and allowed_python_path is not None
+            and environment.get("PYTHONPATH") == allowed_python_path
+        )
+        if guarded_python_path:
+            assert allowed_python_path is not None
+            self.assertIn(
+                str(source_path.resolve()),
+                allowed_python_path.split(pathsep),
+            )
+        else:
+            python_path = str(source_path)
+            if environment.get("PYTHONPATH"):
+                python_path = (
+                    f"{python_path}{pathsep}{environment['PYTHONPATH']}"
+                )
+            environment["PYTHONPATH"] = python_path
         script = dedent("""
             import importlib.abc
             import sys
