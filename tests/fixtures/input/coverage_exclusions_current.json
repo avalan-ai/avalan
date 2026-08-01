@@ -642,6 +642,34 @@
       524,
       531
     ],
+    "src/avalan/conversation/protocols.py": [
+      96,
+      97,
+      100,
+      101,
+      104,
+      105,
+      106,
+      112,
+      113,
+      116,
+      117,
+      118,
+      128,
+      129,
+      135,
+      136,
+      139,
+      140,
+      141,
+      151,
+      152,
+      159,
+      160,
+      161,
+      167,
+      168
+    ],
     "src/avalan/entities.py": [
       24,
       25,
@@ -2435,5 +2463,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "0d508a6b187c451f7272a6ccc57d55b69f6d5a4ba25b8c249ebe4e619bc86c36"
+  "snapshot_sha256": "463f1c6563959f672cfd8be7fa920c35f2a56e1c6a0a7a67ea11ce959a807523"
 }

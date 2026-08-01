@@ -1,5 +1,23 @@
 """Expose dormant conversation contract definitions."""
 
+from . import state as _state
+from .binding import CapabilityEvidence as CapabilityEvidence
+from .binding import CapabilityEvidenceState as CapabilityEvidenceState
+from .binding import ConversationCapability as ConversationCapability
+from .binding import (
+    ConversationCapabilityProfile as ConversationCapabilityProfile,
+)
+from .binding import ProviderFamily as ProviderFamily
+from .binding import ProviderLaneBinding as ProviderLaneBinding
+from .binding import ProviderTransport as ProviderTransport
+from .binding import normalize_endpoint as normalize_endpoint
+from .codec import CHECKPOINT_CODEC_VERSION as CHECKPOINT_CODEC_VERSION
+from .codec import CheckpointCodecLimits as CheckpointCodecLimits
+from .codec import (
+    ConversationCheckpointCodec as ConversationCheckpointCodec,
+)
+from .codec import checkpoint_payload_digest as checkpoint_payload_digest
+from .codec import with_checkpoint_integrity as with_checkpoint_integrity
 from .contract import (
     CHECKPOINT_COMMIT_TRANSITIONS as CHECKPOINT_COMMIT_TRANSITIONS,
 )
@@ -99,4 +117,173 @@ from .contract import (
 )
 from .contract import (
     terminal_publication_allowed as terminal_publication_allowed,
+)
+from .errors import (
+    ConversationAmbiguousDispatchError as ConversationAmbiguousDispatchError,
+)
+from .errors import (
+    ConversationAuthorizationError as ConversationAuthorizationError,
+)
+from .errors import (
+    ConversationBindingDriftError as ConversationBindingDriftError,
+)
+from .errors import ConversationCapabilityError as ConversationCapabilityError
+from .errors import ConversationCodecError as ConversationCodecError
+from .errors import ConversationCommitError as ConversationCommitError
+from .errors import ConversationConflictError as ConversationConflictError
+from .errors import ConversationDeletedError as ConversationDeletedError
+from .errors import ConversationError as ConversationError
+from .errors import ConversationErrorCode as ConversationErrorCode
+from .errors import ConversationExpiredError as ConversationExpiredError
+from .errors import ConversationIntegrityError as ConversationIntegrityError
+from .errors import ConversationLimitError as ConversationLimitError
+from .errors import (
+    ConversationPublicationError as ConversationPublicationError,
+)
+from .errors import ConversationStorageError as ConversationStorageError
+from .errors import ConversationTransitionError as ConversationTransitionError
+from .errors import ConversationValidationError as ConversationValidationError
+from .items import (
+    PROVIDER_ITEM_NORMALIZATION_VERSION as PROVIDER_ITEM_NORMALIZATION_VERSION,
+)
+from .items import PROVIDER_ITEM_SEMANTICS as PROVIDER_ITEM_SEMANTICS
+from .items import CompactionBoundary as CompactionBoundary
+from .items import ProviderItem as ProviderItem
+from .items import ProviderItemCaller as ProviderItemCaller
+from .items import ProviderItemCorrelation as ProviderItemCorrelation
+from .items import ProviderItemKind as ProviderItemKind
+from .items import ProviderItemLedger as ProviderItemLedger
+from .items import (
+    ProviderItemNormalizationRule as ProviderItemNormalizationRule,
+)
+from .items import ProviderItemPhase as ProviderItemPhase
+from .items import ProviderItemSemanticRule as ProviderItemSemanticRule
+from .items import VisibleTranscript as VisibleTranscript
+from .items import VisibleTranscriptEntry as VisibleTranscriptEntry
+from .items import VisibleTranscriptRole as VisibleTranscriptRole
+from .observability import ConversationObservation as ConversationObservation
+from .observability import (
+    ConversationRequestSemantics as ConversationRequestSemantics,
+)
+from .observability import authority_digest as authority_digest
+from .observability import canonical_request_digest as canonical_request_digest
+from .observability import checkpoint_observation as checkpoint_observation
+from .observability import idempotency_digest as idempotency_digest
+from .protocols import ConversationCoordinator as ConversationCoordinator
+from .protocols import ConversationObserver as ConversationObserver
+from .protocols import ConversationProvider as ConversationProvider
+from .protocols import ConversationProviderStream as ConversationProviderStream
+from .protocols import ConversationStore as ConversationStore
+from .protocols import ProviderPlan as ProviderPlan
+from .protocols import ProviderResult as ProviderResult
+from .protocols import StatelessProviderPlan as StatelessProviderPlan
+from .protocols import StoredProviderPlan as StoredProviderPlan
+from .settings import CompactionOperation as CompactionOperation
+from .settings import CompactionPolicy as CompactionPolicy
+from .settings import ConversationHandle as ConversationHandle
+from .settings import ConversationMode as ConversationMode
+from .settings import (
+    ConversationModeChangeAuthorization as ConversationModeChangeAuthorization,
+)
+from .settings import (
+    ConversationModeChangeOperation as ConversationModeChangeOperation,
+)
+from .settings import ConversationModeConversion as ConversationModeConversion
+from .settings import ConversationModeReset as ConversationModeReset
+from .settings import ConversationModeTransition as ConversationModeTransition
+from .settings import ConversationParent as ConversationParent
+from .settings import (
+    ConversationResetDisposition as ConversationResetDisposition,
+)
+from .settings import ConversationResult as ConversationResult
+from .settings import ConversationSettings as ConversationSettings
+from .settings import ConversationStreamTerminal as ConversationStreamTerminal
+from .settings import DisabledCompaction as DisabledCompaction
+from .settings import EffectiveReasoningContext as EffectiveReasoningContext
+from .settings import EffectiveReasoningMetadata as EffectiveReasoningMetadata
+from .settings import InlineCompaction as InlineCompaction
+from .settings import ModeTransitionAuthority as ModeTransitionAuthority
+from .settings import NamedHeadParent as NamedHeadParent
+from .settings import (
+    OneShotConversationSettings as OneShotConversationSettings,
+)
+from .settings import ReasoningContext as ReasoningContext
+from .settings import StandaloneCompactRequest as StandaloneCompactRequest
+from .settings import StandaloneCompactResult as StandaloneCompactResult
+from .settings import (
+    StatelessConversationHandle as StatelessConversationHandle,
+)
+from .settings import (
+    StatelessConversationSettings as StatelessConversationSettings,
+)
+from .settings import StatelessParent as StatelessParent
+from .settings import StoredConversationHandle as StoredConversationHandle
+from .settings import StoredConversationSettings as StoredConversationSettings
+from .settings import StoredParent as StoredParent
+from .settings import (
+    validate_mode_transition_authority as validate_mode_transition_authority,
+)
+from .state import (
+    CHECKPOINT_LIFECYCLE_TRANSITIONS as CHECKPOINT_LIFECYCLE_TRANSITIONS,
+)
+from .state import PROVIDER_LANE_TRANSITIONS as PROVIDER_LANE_TRANSITIONS
+from .state import CheckpointCandidate as CheckpointCandidate
+from .state import CheckpointIntegrityMetadata as CheckpointIntegrityMetadata
+from .state import CheckpointLifecycle as CheckpointLifecycle
+from .state import CheckpointTimestamps as CheckpointTimestamps
+from .state import ConversationCheckpoint as ConversationCheckpoint
+from .state import DeletionSnapshot as DeletionSnapshot
+from .state import (
+    ExecutionSegmentCheckpointCandidate as ExecutionSegmentCheckpointCandidate,
+)
+from .state import MultiLaneCheckpointContent as MultiLaneCheckpointContent
+from .state import NamedHeadLifecycle as NamedHeadLifecycle
+from .state import NamedHeadMetadata as NamedHeadMetadata
+from .state import NamedHeadSnapshot as NamedHeadSnapshot
+from .state import (
+    OutwardTurnCheckpointCandidate as OutwardTurnCheckpointCandidate,
+)
+from .state import ProviderLaneLifecycle as ProviderLaneLifecycle
+from .state import ProviderLaneSnapshot as ProviderLaneSnapshot
+from .state import SafeCheckpointCounts as SafeCheckpointCounts
+from .state import (
+    StatelessProviderLaneSnapshot as StatelessProviderLaneSnapshot,
+)
+from .state import StoredProviderLaneSnapshot as StoredProviderLaneSnapshot
+from .state import (
+    SuspensionCheckpointCandidate as SuspensionCheckpointCandidate,
+)
+from .state import reduce_checkpoint_lifecycle as reduce_checkpoint_lifecycle
+from .state import reduce_deletion as reduce_deletion
+from .state import reduce_named_head as reduce_named_head
+from .state import reduce_provider_lane as reduce_provider_lane
+from .state import reduce_response_resource as reduce_response_resource
+from .value import AuthorityDigest as AuthorityDigest
+from .value import CallerHeldState as CallerHeldState
+from .value import CapabilityProfileId as CapabilityProfileId
+from .value import CapabilityProfileRevision as CapabilityProfileRevision
+from .value import ConversationCodecVersion as ConversationCodecVersion
+from .value import ExecutionDefinitionRevision as ExecutionDefinitionRevision
+from .value import IntegrityDigest as IntegrityDigest
+from .value import JsonLimits as JsonLimits
+from .value import ModelConfigurationRevision as ModelConfigurationRevision
+from .value import OpaqueProviderState as OpaqueProviderState
+from .value import ProviderApiRevision as ProviderApiRevision
+from .value import ProviderCallId as ProviderCallId
+from .value import ProviderItemId as ProviderItemId
+from .value import ProviderItemIndex as ProviderItemIndex
+from .value import ProviderItemOrder as ProviderItemOrder
+from .value import ProviderSdkRevision as ProviderSdkRevision
+from .value import RequestSemanticDigest as RequestSemanticDigest
+from .value import SafeAlias as SafeAlias
+from .value import ToolSchemaRevision as ToolSchemaRevision
+from .value import canonical_json_bytes as canonical_json_bytes
+from .value import freeze_json_value as freeze_json_value
+from .value import json_digest as json_digest
+from .value import thaw_json_value as thaw_json_value
+from .value import validate_identifier as validate_identifier
+from .value import validate_revision as validate_revision
+
+StandaloneCompactCheckpointCandidate = (
+    _state.StandaloneCompactCheckpointCandidate
 )

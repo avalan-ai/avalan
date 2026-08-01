@@ -204,21 +204,40 @@ _PHASE0_ACTIVE_SOURCE_SHA256 = {
         "a528fbcff6e706a83bb5560deb14f23c7fc27c56cd4145796b99ac485e396458"
     ),
 }
-_ACTIVE_SOURCE_SHA256_BY_PHASE = {0: _PHASE0_ACTIVE_SOURCE_SHA256}
-_NODE_PAYLOAD_SHA256_BY_PHASE = {0: _PHASE0_NODE_PAYLOAD_SHA256}
+_ACTIVE_SOURCE_SHA256_BY_PHASE = {
+    0: _PHASE0_ACTIVE_SOURCE_SHA256,
+    1: {
+        "tests/conversation/domain_contract_test.py": (
+            "e74903247c01622bd420fa4e3d444b9990977957161f40d0d25a36bc64deb310"
+        )
+    },
+}
+_NODE_PAYLOAD_SHA256_BY_PHASE = {
+    0: _PHASE0_NODE_PAYLOAD_SHA256,
+    1: "9a85447f5de838051a3801b66eccd865ecc62b6e72ecfd9d3084603468ff8663",
+}
 _ACTIVATION_HISTORY_BY_PHASE = {
-    0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74"
+    0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
+    1: "cc98a83a046019ac7bb1f2c16469cc3a67fa6408885e87ff1fb6b265c6aa6161",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
         0,
         "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-    )
+    ),
+    1: (
+        1,
+        "c8982b4da6b6603a382d3319688e73d9a495ecee29d2301b2c4962cdb62b1e8b",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
-    0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256)
+    0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
+    1: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
 }
-_THREAT_STRUCTURE_BY_PHASE = {0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256)}
+_THREAT_STRUCTURE_BY_PHASE = {
+    0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
+    1: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
+}
 _PHASE0_NODE_INVENTORY = (
     (
         "phase0-positive-fixtures",
@@ -469,7 +488,17 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.json"
+    return fixture_root() / "acceptance_manifest.phase1.json"
+
+
+def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
+    """Return a phase-qualified companion beside an acceptance manifest."""
+    name = manifest_path.name
+    prefix = "acceptance_manifest"
+    qualifier = ""
+    if name.startswith(prefix) and name.endswith(".json"):
+        qualifier = name[len(prefix) : -len(".json")]
+    return manifest_path.parent / f"{stem}{qualifier}.json"
 
 
 def load_manifest(path: Path) -> AcceptanceManifest:
@@ -687,6 +716,8 @@ def load_requirements(
         allowed = _replacement_closure(
             requirement.test_node_ids,
             replacement_by_old,
+            node_by_id,
+            requirement.id,
         )
         if allowed != reverse.get(requirement.id, set()):
             raise ConversationAcceptanceError(
@@ -716,14 +747,19 @@ def load_requirements(
 def _replacement_closure(
     roots: tuple[str, ...],
     replacement_by_old: dict[str, tuple[str, ...]],
+    node_by_id: dict[str, AcceptanceNode],
+    requirement_id: str,
 ) -> set[str]:
-    """Return retained roots and every reviewed replacement descendant."""
+    """Return roots and reviewed descendants owning one requirement."""
     observed = set(roots)
     pending = list(roots)
     while pending:
         current = pending.pop()
         for target in replacement_by_old.get(current, ()):
-            if target not in observed:
+            if (
+                requirement_id in node_by_id[target].requirement_ids
+                and target not in observed
+            ):
                 observed.add(target)
                 pending.append(target)
     return observed
@@ -929,17 +965,22 @@ def verify_acceptance(
     )
     requirement_ids = frozenset(item.id for item in requirements)
     load_failure_matrix(
-        fixtures / "failure_matrix.json",
+        companion_fixture_path(path, "failure_matrix"),
         manifest=manifest,
         requirement_ids=requirement_ids,
     )
     _validate_threat_model(
-        fixtures / "threat_model.json",
+        companion_fixture_path(path, "threat_model"),
         manifest=manifest,
         requirement_ids=requirement_ids,
     )
     _validate_integrated_fixtures(fixtures)
-    _validate_type_manifest(fixtures, manifest.current_phase, root)
+    _validate_type_manifest(
+        fixtures,
+        manifest.current_phase,
+        root,
+        acceptance_path=path,
+    )
     verify_gate_source_isolation(root, manifest)
     nodes = manifest.active_nodes(through_phase)
     if not nodes:
@@ -2076,9 +2117,15 @@ def _validate_type_manifest(
     fixtures: Path,
     current_phase: int,
     root: Path,
+    *,
+    acceptance_path: Path | None = None,
 ) -> None:
     """Reuse complete type-manifest and source-anchor validation."""
-    path = fixtures / "type_contract_manifest.json"
+    path = (
+        companion_fixture_path(acceptance_path, "type_contract_manifest")
+        if acceptance_path is not None
+        else fixtures / "type_contract_manifest.json"
+    )
     if not path.is_file():
         raise ConversationAcceptanceError(
             "conversation type-contract manifest is missing"
@@ -2187,9 +2234,9 @@ def _require_phase_anchor_keys(
 ) -> None:
     """Require one append-only independent anchor per implemented phase."""
     expected = set(range(current_phase + 1))
-    if set(anchors) != expected:
+    if not expected <= set(anchors):
         raise ConversationAcceptanceError(
-            f"{label} anchors must cover exactly implemented phases"
+            f"{label} anchors must cover every implemented phase"
         )
 
 
@@ -2283,27 +2330,52 @@ def _validate_replacement_transitions(
         previous = set(activation_history[replacement.phase - 1])
         current = set(activation_history[replacement.phase])
         additions = current - previous
-        if (
-            old.lifecycle != "replaced"
-            or old.active_from_phase >= replacement.phase
-            or replacement.old_node_id not in previous
+        same_phase_split = old.active_from_phase == replacement.phase
+        retained_prior = (
+            old.active_from_phase < replacement.phase
+            and replacement.old_node_id in previous
+        )
+        introduced_split = (
+            same_phase_split
+            and replacement.old_node_id not in previous
+            and replacement.old_node_id in additions
+        )
+        if old.lifecycle != "replaced" or not (
+            retained_prior or introduced_split
         ):
             raise ConversationAcceptanceError(
-                "acceptance replacement old record is not a retained prior "
-                "snapshot member"
+                "acceptance replacement old record is neither a retained "
+                "prior member nor a reviewed same-phase split"
             )
+        target_requirement_sets: list[set[str]] = []
         for target_id in replacement.replacement_node_ids:
             target = node_by_id[target_id]
             if (
                 target.active_from_phase != replacement.phase
                 or target.lifecycle not in {"active", "replaced"}
                 or target_id not in additions
-                or target.requirement_ids != old.requirement_ids
             ):
                 raise ConversationAcceptanceError(
                     "acceptance replacement targets must be new same-phase "
-                    "records with preserved requirement ownership"
+                    "records"
                 )
+            target_requirement_sets.append(set(target.requirement_ids))
+        old_requirements = set(old.requirement_ids)
+        replicated = all(
+            requirements == old_requirements
+            for requirements in target_requirement_sets
+        )
+        partitioned = (
+            all(target_requirement_sets)
+            and set().union(*target_requirement_sets) == old_requirements
+            and sum(len(value) for value in target_requirement_sets)
+            == len(old_requirements)
+        )
+        if not (replicated or partitioned):
+            raise ConversationAcceptanceError(
+                "acceptance replacement targets must replicate or exactly "
+                "partition preserved requirement ownership"
+            )
 
 
 def _validate_replacement_phase_anchors(

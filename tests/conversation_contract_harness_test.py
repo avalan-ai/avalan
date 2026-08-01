@@ -57,8 +57,8 @@ def _repository(tmp_path: Path) -> Path:
         ("src/sample.py", "VALUE = 1\n"),
         ("tests/sample_test.py", "def test_value() -> None:\n    pass\n"),
         (
-            "tests/fixtures/conversation/acceptance_manifest.json",
-            '{"current_phase":0}\n',
+            "tests/fixtures/conversation/acceptance_manifest.phase1.json",
+            '{"current_phase":1}\n',
         ),
         ("scripts/gate.py", "VALUE = 1\n"),
         ("Makefile", "test:\n\ttrue\n"),
@@ -480,7 +480,9 @@ def test_phase_three_owns_database_across_entire_mirrored_gate(
     """Keep one runner-created database alive around every mirrored command."""
     root = _repository(tmp_path)
     _initialize_git(root)
-    manifest = root / "tests/fixtures/conversation/acceptance_manifest.json"
+    manifest = (
+        root / "tests/fixtures/conversation/acceptance_manifest.phase1.json"
+    )
     manifest.write_text('{"current_phase":3}\n', encoding="utf-8")
     calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
     events: list[str] = []
@@ -536,7 +538,7 @@ def test_phase_three_owns_database_across_entire_mirrored_gate(
     ]
 
 
-@pytest.mark.parametrize("through_phase", (-1, 1))
+@pytest.mark.parametrize("through_phase", (-1, 2))
 def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -554,7 +556,7 @@ def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
         lambda *args, **kwargs: calls.append(args[0]),
     )
 
-    with pytest.raises(_RUNNER.ContractGateError, match="range 0..0"):
+    with pytest.raises(_RUNNER.ContractGateError, match="range 0..1"):
         _RUNNER.run_gate(through_phase, repo_root=root)
     assert report.read_text(encoding="utf-8") == "stale\n"
     assert calls == []
@@ -671,7 +673,7 @@ def test_makefile_exposes_explicit_conversation_gates() -> None:
 @pytest.mark.parametrize(
     ("target", "phase"),
     (
-        ("test-conversation-exact", "1"),
+        ("test-conversation-exact", "2"),
         ("test-conversation-pgsql-exact", "3"),
     ),
 )

@@ -50,16 +50,22 @@ _PHASE0_TYPE_FIXTURE_INVENTORY = (
     ),
 )
 _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
-    0: _PHASE0_TYPE_FIXTURE_PAYLOAD_SHA256
+    0: _PHASE0_TYPE_FIXTURE_PAYLOAD_SHA256,
+    1: "3c956beb448e555794ee940c1abb6dac26ea3dbe3b613bfd06aaa808901d7feb",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
-    0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491"
+    0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
+    1: "549af2d3dc75ed1b38f477410671db03a4a55764424f7da78e9b2974d2c0541c",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
         0,
         "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
-    )
+    ),
+    1: (
+        0,
+        "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+    ),
 }
 _TYPE_SOURCE_SHA256_BY_PHASE = {
     0: {
@@ -72,7 +78,30 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
         "tests/conversation_type_contracts/storage_axis_negative.py": (
             "3ae41df1c8a31798bfce91808a1fcf295f8e3a7e6b0fba11c909be2906f72f5b"
         ),
-    }
+    },
+    1: {
+        "tests/conversation_type_contracts/phase1_positive.py": (
+            "1222219ebed59ee2d1f97526b16ccb5cdbcde31a07f20dc154247fc3ceee9826"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase1_identity_interchange_negative.py"
+        ): "34a32980eb653003246ad67fa53bb773111af32dda8cf54fcb95b058869e1f42",
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py": (
+            "413efb785be9096d57fe136bf2cf6c536550266fd7d847f9ef640dc90c13ac4c"
+        ),
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py": (
+            "5ec7e9ff3a113be71328b03edc2066d4b32d2a055387bcabf3cc78d085d87720"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase1_untyped_payload_negative.py"
+        ): "5eb9f6bc20b1e22d7d55a6f2ab6d765e94c245ab40d6cf51519459d4fcf44290",
+        (
+            "tests/conversation_type_contracts/"
+            + "phase1_mutable_checkpoint_negative.py"
+        ): "8a69c01cae054bd2217839ffacadcac856a96db996191526cf094e69b28f18e0",
+    },
 }
 
 
@@ -123,7 +152,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.json"
+        / "type_contract_manifest.phase1.json"
     )
 
 
@@ -493,9 +522,9 @@ def _require_phase_anchor_keys(
     label: str,
 ) -> None:
     """Require one append-only independent anchor per implemented phase."""
-    if set(anchors) != set(range(current_phase + 1)):
+    if not set(range(current_phase + 1)) <= set(anchors):
         raise ConversationTypeContractError(
-            f"{label} anchors must cover exactly implemented phases"
+            f"{label} anchors must cover every implemented phase"
         )
 
 

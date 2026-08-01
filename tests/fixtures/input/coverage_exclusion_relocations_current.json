@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "0d508a6b187c451f7272a6ccc57d55b69f6d5a4ba25b8c249ebe4e619bc86c36",
+  "current_snapshot_sha256": "463f1c6563959f672cfd8be7fa920c35f2a56e1c6a0a7a67ea11ce959a807523",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "d852f4849b56a76f98c05ed30679a08fb5c99847de88e26279368a389f71846e"
   },
   "report_lines": {
-    "added": 941,
+    "added": 967,
     "removed": 276,
-    "sha256": "7ea2262d7ff8098fda5ef7e8f75809e36af8d09405081ea33fb19011181bef5e"
+    "sha256": "3138063461b3d038f5c51d1987d57569d9bdb7650f183f1d54aa1a372409c1bc"
   },
   "review": {
-    "reviewed_by": "shell shasum closed runtime dependency",
-    "rationale": "The current snapshot tracks the parser-exclusion line relocation introduced by the closed shell runtime-dependency identifier while retaining exact derived exclusion deltas."
+    "reviewed_by": "conversation Phase 1 exclusion inventory review",
+    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only async conversation Protocol declarations while retaining every previously reviewed directive and relocation."
   },
-  "ledger_sha256": "cb27c73f8e585e92bafff33407d4f0207e7a8666a26d9e30eba60fe8bef6dc35"
+  "ledger_sha256": "325af7175dca429455dda7b11314d7c9cf675efb23a1c4da557c6e1b898a249c"
 }
