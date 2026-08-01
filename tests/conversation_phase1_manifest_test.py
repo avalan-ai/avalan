@@ -49,8 +49,8 @@ def _payload(name: str) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
 
 
-def test_phase1_defaults_select_the_complete_snapshot_family() -> None:
-    """Select Phase 1 acceptance, type, failure, and threat snapshots."""
+def test_phase2_defaults_select_the_complete_snapshot_family() -> None:
+    """Select Phase 2 acceptance, type, failure, and threat snapshots."""
     type_verifier = _load(
         "_phase1_type_verifier",
         "scripts/verify_conversation_types.py",
@@ -65,38 +65,38 @@ def test_phase1_defaults_select_the_complete_snapshot_family() -> None:
     )
 
     acceptance_path = acceptance.default_manifest_path()
-    assert acceptance_path.name == "acceptance_manifest.phase1.json"
+    assert acceptance_path.name == "acceptance_manifest.phase2.json"
     assert (
         type_verifier.default_manifest_path().name
-        == "type_contract_manifest.phase1.json"
+        == "type_contract_manifest.phase2.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "failure_matrix"
         ).name
-        == "failure_matrix.phase1.json"
+        == "failure_matrix.phase2.json"
     )
     assert (
         acceptance.companion_fixture_path(acceptance_path, "threat_model").name
-        == "threat_model.phase1.json"
+        == "threat_model.phase2.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "type_contract_manifest"
         ).name
-        == "type_contract_manifest.phase1.json"
+        == "type_contract_manifest.phase2.json"
     )
-    assert acceptance.load_manifest(acceptance_path).current_phase == 1
+    assert acceptance.load_manifest(acceptance_path).current_phase == 2
     assert (
         type_verifier.load_manifest(
             type_verifier.default_manifest_path()
         ).current_phase
-        == 1
+        == 2
     )
-    assert runner._CONVERSATION_CURRENT_PHASE == 1
-    runner._validate_through_phase(_ROOT, 1)
+    assert runner._CONVERSATION_CURRENT_PHASE == 2
+    runner._validate_through_phase(_ROOT, 2)
     with pytest.raises(runner.ContractGateError):
-        runner._validate_through_phase(_ROOT, 2)
+        runner._validate_through_phase(_ROOT, 3)
 
 
 def test_phase1_acceptance_validates_selected_companions() -> None:
@@ -106,7 +106,7 @@ def test_phase1_acceptance_validates_selected_companions() -> None:
         "scripts/verify_conversation_acceptance.py",
     )
     manifest = acceptance.verify_acceptance(
-        acceptance.default_manifest_path(),
+        _FIXTURES / "acceptance_manifest.phase1.json",
         repo_root=_ROOT,
         through_phase=1,
         execute=False,

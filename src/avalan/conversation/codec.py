@@ -35,6 +35,7 @@ from .errors import (
     ConversationLimitError,
     ConversationValidationError,
 )
+from .execution import ProviderLaneExecutionReceipt
 from .items import (
     CompactionBoundary,
     ProviderItem,
@@ -424,17 +425,27 @@ def _encode_lane(
         "retention_policy": value.retention_policy.value,
     }
     if isinstance(value, StatelessProviderLaneSnapshot):
-        return {
+        encoded = {
             "mode": "stateless",
             **common,
             "ledger": _encode_ledger(value.ledger),
             "compaction_boundary": _encode_boundary(value.compaction_boundary),
         }
-    return {
+        if value.execution_receipt is not None:
+            encoded["execution_receipt"] = _encode_execution_receipt(
+                value.execution_receipt
+            )
+        return encoded
+    encoded = {
         "mode": "stored",
         **common,
         "upstream_response_id": value.upstream_response_id,
     }
+    if value.execution_receipt is not None:
+        encoded["execution_receipt"] = _encode_execution_receipt(
+            value.execution_receipt
+        )
+    return encoded
 
 
 def _decode_lane(
@@ -448,18 +459,26 @@ def _decode_lane(
     retention_policy = ChildLaneRetentionPolicy(
         _string(raw.get("retention_policy"))
     )
+    receipt = (
+        _decode_execution_receipt(raw["execution_receipt"])
+        if "execution_receipt" in raw
+        else None
+    )
     if mode == "stateless":
+        keys = {
+            "mode",
+            "binding",
+            "reasoning",
+            "lifecycle",
+            "retention_policy",
+            "ledger",
+            "compaction_boundary",
+        }
+        if receipt is not None:
+            keys.add("execution_receipt")
         _exact_keys(
             raw,
-            {
-                "mode",
-                "binding",
-                "reasoning",
-                "lifecycle",
-                "retention_policy",
-                "ledger",
-                "compaction_boundary",
-            },
+            keys,
         )
         return StatelessProviderLaneSnapshot(
             binding=binding,
@@ -468,18 +487,22 @@ def _decode_lane(
             retention_policy=retention_policy,
             ledger=_decode_ledger(raw["ledger"]),
             compaction_boundary=_decode_boundary(raw["compaction_boundary"]),
+            execution_receipt=receipt,
         )
     if mode == "stored":
+        keys = {
+            "mode",
+            "binding",
+            "reasoning",
+            "lifecycle",
+            "retention_policy",
+            "upstream_response_id",
+        }
+        if receipt is not None:
+            keys.add("execution_receipt")
         _exact_keys(
             raw,
-            {
-                "mode",
-                "binding",
-                "reasoning",
-                "lifecycle",
-                "retention_policy",
-                "upstream_response_id",
-            },
+            keys,
         )
         return StoredProviderLaneSnapshot(
             binding=binding,
@@ -489,8 +512,40 @@ def _decode_lane(
             upstream_response_id=UpstreamResponseId(
                 _string(raw["upstream_response_id"])
             ),
+            execution_receipt=receipt,
         )
     raise ConversationCodecError()
+
+
+def _encode_execution_receipt(
+    value: ProviderLaneExecutionReceipt,
+) -> dict[str, object]:
+    return {
+        "schema_version": value.schema_version,
+        "digest": value.digest,
+        "item_count": value.item_count,
+        "opaque_byte_count": value.opaque_byte_count,
+    }
+
+
+def _decode_execution_receipt(
+    value: JsonValue,
+) -> ProviderLaneExecutionReceipt:
+    raw = _mapping(
+        value,
+        {
+            "schema_version",
+            "digest",
+            "item_count",
+            "opaque_byte_count",
+        },
+    )
+    return ProviderLaneExecutionReceipt(
+        schema_version=_integer(raw["schema_version"]),
+        digest=IntegrityDigest(_string(raw["digest"])),
+        item_count=_integer(raw["item_count"]),
+        opaque_byte_count=_integer(raw["opaque_byte_count"]),
+    )
 
 
 def _encode_binding(value: ProviderLaneBinding) -> dict[str, object]:

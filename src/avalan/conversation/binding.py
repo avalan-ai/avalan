@@ -11,6 +11,7 @@ from .value import (
     CapabilityProfileRevision,
     ConversationCodecVersion,
     ExecutionDefinitionRevision,
+    IntegrityDigest,
     ModelConfigurationRevision,
     ProviderApiRevision,
     ProviderSdkRevision,
@@ -140,6 +141,13 @@ class ProviderLaneBinding:
         """Return a stable non-secret alias for observability."""
         digest = sha256(self._canonical_identity().encode("utf-8")).hexdigest()
         return SafeAlias(f"lane-binding-{digest[:16]}")
+
+    @property
+    def integrity_digest(self) -> IntegrityDigest:
+        """Return the full content-safe digest of the exact binding."""
+        return IntegrityDigest(
+            sha256(self._canonical_identity().encode("utf-8")).hexdigest()
+        )
 
     def assert_compatible(self, current: "ProviderLaneBinding") -> None:
         """Reject any provider or execution identity drift."""

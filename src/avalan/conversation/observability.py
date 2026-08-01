@@ -74,6 +74,9 @@ class ConversationObservation:
 
     event: str
     checkpoint_id: CheckpointId
+    authority_scope_digest: AuthorityDigest
+    parent_checkpoint_id: CheckpointId | None
+    lane_ids: tuple[str, ...]
     lane_count: int
     provider_item_count: int
     transcript_entry_count: int
@@ -86,6 +89,19 @@ class ConversationObservation:
     def __post_init__(self) -> None:
         validate_identifier(self.event, "event")
         validate_identifier(self.checkpoint_id, "checkpoint_id")
+        validate_identifier(
+            self.authority_scope_digest, "authority_scope_digest"
+        )
+        if self.parent_checkpoint_id is not None:
+            validate_identifier(
+                self.parent_checkpoint_id, "parent_checkpoint_id"
+            )
+        if type(self.lane_ids) is not tuple:
+            raise ConversationValidationError()
+        for lane_id in self.lane_ids:
+            validate_identifier(lane_id, "lane_id")
+        if len(self.lane_ids) != len(set(self.lane_ids)):
+            raise ConversationValidationError()
         for value in (
             self.lane_count,
             self.provider_item_count,
@@ -111,6 +127,9 @@ class ConversationObservation:
         value: dict[str, JsonValue] = {
             "event": self.event,
             "checkpoint_id": self.checkpoint_id,
+            "authority_scope_digest": self.authority_scope_digest,
+            "parent_checkpoint_id": self.parent_checkpoint_id,
+            "lane_ids": tuple(self.lane_ids),
             "lane_count": self.lane_count,
             "provider_item_count": self.provider_item_count,
             "transcript_entry_count": self.transcript_entry_count,
@@ -195,6 +214,9 @@ def checkpoint_observation(
     return ConversationObservation(
         event=event,
         checkpoint_id=checkpoint.identity.checkpoint_id,
+        authority_scope_digest=authority_digest(checkpoint.authority),
+        parent_checkpoint_id=checkpoint.identity.parent_checkpoint_id,
+        lane_ids=tuple(str(lane.lane_id) for lane in checkpoint.content.lanes),
         lane_count=counts.lane_count,
         provider_item_count=counts.provider_item_count,
         transcript_entry_count=counts.transcript_entry_count,

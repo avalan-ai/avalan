@@ -1,0 +1,206 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "current_phase": 2,
+  "assets": [
+    "opaque_provider_state",
+    "caller_held_envelopes",
+    "checkpoint_lineage",
+    "authority_bindings",
+    "upstream_retained_state"
+  ],
+  "trust_boundaries": [
+    "caller_to_server",
+    "server_to_provider",
+    "runtime_to_checkpoint_store",
+    "runtime_to_observability",
+    "local_delete_to_upstream_delete"
+  ],
+  "threats": [
+    {
+      "id": "opaque-state-disclosure",
+      "asset": "Opaque provider continuation state",
+      "actor": "Untrusted caller or operator",
+      "boundary": "Provider lane to logs and public output",
+      "attack": "Opaque state leaks through prompts, displays, logs, traces, errors, or representations.",
+      "controls": [
+        "opaque-value-type",
+        "content-safe-observability",
+        "sentinel-redaction-tests"
+      ],
+      "requirement_ids": [
+        "CONV-N-001",
+        "CONV-N-002",
+        "CONV-N-120",
+        "CONV-N-130"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "envelope-theft",
+      "asset": "Caller-held continuation envelope",
+      "actor": "Network or log reader",
+      "boundary": "Caller to served Responses API",
+      "attack": "A stolen envelope is replayed as bearer session state.",
+      "controls": [
+        "authenticated-encryption",
+        "authority-binding",
+        "short-ttl",
+        "anti-replay-ledger"
+      ],
+      "requirement_ids": [
+        "CONV-N-042",
+        "CONV-N-098",
+        "CONV-N-121",
+        "CONV-N-122"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "confused-deputy",
+      "asset": "Tenant and principal authority",
+      "actor": "Authenticated caller with unrelated authority",
+      "boundary": "Public response resolution",
+      "attack": "An untrusted request field is treated as authorization for another principal.",
+      "controls": [
+        "trusted-authority-source",
+        "authorize-before-existence",
+        "constant-disclosure-errors"
+      ],
+      "requirement_ids": [
+        "CONV-N-091",
+        "CONV-N-118",
+        "CONV-N-119"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "cross-tenant-equality",
+      "asset": "Checkpoint and envelope identity",
+      "actor": "Cross-tenant caller",
+      "boundary": "Lookup, compare, and error projection",
+      "attack": "Equality, timing, or error differences reveal another tenant's state.",
+      "controls": [
+        "tenant-scoped-digests",
+        "constant-disclosure-errors",
+        "no-cross-lane-comparison"
+      ],
+      "requirement_ids": [
+        "CONV-N-002",
+        "CONV-N-118",
+        "CONV-N-119"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "replay-and-rollback",
+      "asset": "Named head and immutable checkpoint lineage",
+      "actor": "Holder of stale valid state",
+      "boundary": "Continuation and branch advancement",
+      "attack": "A stale token advances a head twice or rolls sequence state backward.",
+      "controls": [
+        "head-cas",
+        "sequence-binding",
+        "explicit-branch-operation",
+        "stable-replay-error"
+      ],
+      "requirement_ids": [
+        "CONV-N-025",
+        "CONV-N-026",
+        "CONV-N-122"
+      ],
+      "owner_phase": 2,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "decompression-size-bomb",
+      "asset": "Checkpoint decoder and storage budget",
+      "actor": "Caller controlling encoded state",
+      "boundary": "Envelope and checkpoint decoding",
+      "attack": "Compressed, nested, or oversized state exhausts memory before limits are enforced.",
+      "controls": [
+        "preallocation-size-limit",
+        "bounded-depth",
+        "bounded-item-count",
+        "streaming-safe-decode"
+      ],
+      "requirement_ids": [
+        "CONV-N-098",
+        "CONV-N-117",
+        "CONV-N-137"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "orphaned-upstream-state",
+      "asset": "Provider-stored response ancestry",
+      "actor": "Provider or storage failure",
+      "boundary": "Local tombstone and upstream deletion outbox",
+      "attack": "Local deletion succeeds while upstream state remains without reconciliation.",
+      "controls": [
+        "local-first-tombstone",
+        "idempotent-deletion-outbox",
+        "partial-status",
+        "operator-reconciliation"
+      ],
+      "requirement_ids": [
+        "CONV-N-092",
+        "CONV-N-102",
+        "CONV-N-103"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "deletion-race",
+      "asset": "Stored checkpoint and descendants",
+      "actor": "Concurrent authorized callers",
+      "boundary": "Continue, branch, retrieve, and delete",
+      "attack": "Continuation races deletion and republishes a tombstoned response.",
+      "controls": [
+        "transactional-tombstone",
+        "head-cas",
+        "descendant-policy",
+        "post-commit-authorization"
+      ],
+      "requirement_ids": [
+        "CONV-N-025",
+        "CONV-N-101",
+        "CONV-N-103",
+        "CONV-N-118"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    }
+  ],
+  "threat_model_sha256": "2e8d4d81230183475ef00b33905a1f18b18b2486f4063a84e80be13429c0dec9"
+}

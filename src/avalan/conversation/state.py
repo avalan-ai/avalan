@@ -22,6 +22,7 @@ from .contract import (
     response_transition_allowed,
 )
 from .errors import ConversationTransitionError, ConversationValidationError
+from .execution import ProviderLaneExecutionReceipt
 from .items import CompactionBoundary, ProviderItemLedger, VisibleTranscript
 from .settings import EffectiveReasoningMetadata, StatelessConversationHandle
 from .value import (
@@ -257,6 +258,7 @@ class StatelessProviderLaneSnapshot:
     lifecycle: ProviderLaneLifecycle
     retention_policy: ChildLaneRetentionPolicy
     compaction_boundary: CompactionBoundary | None = None
+    execution_receipt: ProviderLaneExecutionReceipt | None = None
 
     def __post_init__(self) -> None:
         if type(self.binding) is not ProviderLaneBinding:
@@ -278,6 +280,12 @@ class StatelessProviderLaneSnapshot:
             if type(self.compaction_boundary) is not CompactionBoundary:
                 raise ConversationValidationError()
             self.compaction_boundary.validate_latest(self.ledger)
+        if (
+            self.execution_receipt is not None
+            and type(self.execution_receipt)
+            is not ProviderLaneExecutionReceipt
+        ):
+            raise ConversationValidationError()
 
     @property
     def lane_id(self) -> ProviderLaneId:
@@ -295,6 +303,7 @@ class StoredProviderLaneSnapshot:
     reasoning: EffectiveReasoningMetadata
     lifecycle: ProviderLaneLifecycle
     retention_policy: ChildLaneRetentionPolicy
+    execution_receipt: ProviderLaneExecutionReceipt | None = None
 
     def __post_init__(self) -> None:
         if type(self.binding) is not ProviderLaneBinding:
@@ -309,6 +318,12 @@ class StoredProviderLaneSnapshot:
             ChildLaneRetentionPolicy,
         ):
             raise ConversationValidationError()
+        if (
+            self.execution_receipt is not None
+            and type(self.execution_receipt)
+            is not ProviderLaneExecutionReceipt
+        ):
+            raise ConversationValidationError()
 
     @property
     def lane_id(self) -> ProviderLaneId:
@@ -320,7 +335,8 @@ class StoredProviderLaneSnapshot:
         return (
             "StoredProviderLaneSnapshot("
             f"lane_id={self.lane_id!r}, lifecycle={self.lifecycle.value!r}, "
-            "upstream_response_id=<redacted>)"
+            "upstream_response_id=<redacted>, "
+            f"execution_receipt={self.execution_receipt!r})"
         )
 
 

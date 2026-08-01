@@ -500,23 +500,20 @@ class ResponseStorageContext:
     def __post_init__(self) -> None:
         assert type(self.policy) is StoragePolicy
         assert isinstance(self.public_mapping, PublicResponseMappingState)
-        match self.public_mapping:
-            case PublicResponseMappingState.ABSENT:
-                pass
-            case PublicResponseMappingState.PRIVATE_TRANSIENT:
-                _assert_invariant(
-                    self.policy.local is LocalResponseStorage.TRANSIENT,
-                    "private transient mappings require transient",
-                    "local storage",
-                )
-            case (
-                PublicResponseMappingState.ADDRESSABLE
-                | PublicResponseMappingState.TOMBSTONED
-            ):
-                assert self.policy.local in {
-                    LocalResponseStorage.PROCESS_LOCAL,
-                    LocalResponseStorage.DURABLE,
-                }, "public mappings require process-local or durable storage"
+        if self.public_mapping is PublicResponseMappingState.PRIVATE_TRANSIENT:
+            _assert_invariant(
+                self.policy.local is LocalResponseStorage.TRANSIENT,
+                "private transient mappings require transient",
+                "local storage",
+            )
+        if self.public_mapping in {
+            PublicResponseMappingState.ADDRESSABLE,
+            PublicResponseMappingState.TOMBSTONED,
+        }:
+            assert self.policy.local in {
+                LocalResponseStorage.PROCESS_LOCAL,
+                LocalResponseStorage.DURABLE,
+            }, "public mappings require process-local or durable storage"
 
 
 @final
