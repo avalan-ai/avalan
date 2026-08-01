@@ -208,17 +208,27 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
     0: _PHASE0_ACTIVE_SOURCE_SHA256,
     1: {
         "tests/conversation/domain_contract_test.py": (
-            "e74903247c01622bd420fa4e3d444b9990977957161f40d0d25a36bc64deb310"
+            "b339ff4b902b43fa9f39487e073c256b7b52d994b793e670d87e16fe91078141"
         )
+    },
+    2: {
+        "tests/conversation/coordinator_e2e_test.py": (
+            "f947d135e475045241bf74d098efaa42dd054479805c096af0f1a1534aa6143e"
+        ),
+        "tests/conversation/coordinator_failure_matrix_test.py": (
+            "c84b03d197a486df3ee79ab396c69de4cbc5037786e25054debdea71f81a3519"
+        ),
     },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
     1: "9a85447f5de838051a3801b66eccd865ecc62b6e72ecfd9d3084603468ff8663",
+    2: "8014ee73f5334290be612a567836f02aace953764a14add8d02b1407b487d441",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
     1: "cc98a83a046019ac7bb1f2c16469cc3a67fa6408885e87ff1fb6b265c6aa6161",
+    2: "8a6da13a0627cd0a167649dc9708e3585a717f6cb71db3c17a1c686686c295ca",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -229,14 +239,20 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         1,
         "c8982b4da6b6603a382d3319688e73d9a495ecee29d2301b2c4962cdb62b1e8b",
     ),
+    2: (
+        2,
+        "e0208c0580ae9f450254951d1bac8e761b28502d98d89586ec6d616138fb73e1",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
     0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
     1: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
+    2: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
     1: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
+    2: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
 }
 _PHASE0_NODE_INVENTORY = (
     (
@@ -488,7 +504,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase1.json"
+    return fixture_root() / "acceptance_manifest.phase2.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:

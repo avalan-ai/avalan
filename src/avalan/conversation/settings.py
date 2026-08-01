@@ -8,13 +8,20 @@ from .contract import (
     ConversationId,
     NamedHeadId,
     NamedHeadRevision,
+    ProviderLaneId,
     PublicResponseId,
 )
 from .errors import (
     ConversationAuthorizationError,
     ConversationValidationError,
 )
-from .value import CallerHeldState, IntegrityDigest, validate_identifier
+from .items import ProviderItem
+from .value import (
+    CallerHeldState,
+    IntegrityDigest,
+    SafeAlias,
+    validate_identifier,
+)
 
 from dataclasses import dataclass
 from enum import StrEnum
@@ -27,6 +34,13 @@ class ConversationMode(StrEnum):
     OFF = "off"
     STATELESS = "stateless"
     STORED = "stored"
+
+
+class ProviderLaneOutputScope(StrEnum):
+    """Identify whether lane items are current-call or cumulative output."""
+
+    CURRENT_CALL = "current_call"
+    CUMULATIVE = "cumulative"
 
 
 class ReasoningContext(StrEnum):
@@ -422,12 +436,71 @@ class EffectiveReasoningMetadata:
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderUsage:
+    """Record bounded provider token usage without retaining content."""
+
+    input_tokens: int = 0
+    output_tokens: int = 0
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.input_tokens) is not int
+            or self.input_tokens < 0
+            or type(self.output_tokens) is not int
+            or self.output_tokens < 0
+        ):
+            raise ConversationValidationError()
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderLaneOutput:
+    """Return one lane's completed public output and safe usage metadata."""
+
+    lane_id: ProviderLaneId
+    binding_alias: SafeAlias
+    mode: ConversationMode
+    scope: ProviderLaneOutputScope
+    items: tuple[ProviderItem, ...]
+    reasoning: EffectiveReasoningMetadata
+    usage: ProviderUsage
+
+    def __post_init__(self) -> None:
+        validate_identifier(self.lane_id, "lane_id")
+        validate_identifier(self.binding_alias, "binding_alias")
+        if self.mode is ConversationMode.OFF or not isinstance(
+            self.mode, ConversationMode
+        ):
+            raise ConversationValidationError()
+        if not isinstance(self.scope, ProviderLaneOutputScope):
+            raise ConversationValidationError()
+        if (
+            self.mode is ConversationMode.STORED
+            and self.scope is not ProviderLaneOutputScope.CURRENT_CALL
+        ):
+            raise ConversationValidationError()
+        if type(self.items) is not tuple or any(
+            type(item) is not ProviderItem for item in self.items
+        ):
+            raise ConversationValidationError()
+        if any(item.lane_id != self.lane_id for item in self.items):
+            raise ConversationValidationError()
+        if type(self.reasoning) is not EffectiveReasoningMetadata:
+            raise ConversationValidationError()
+        if type(self.usage) is not ProviderUsage:
+            raise ConversationValidationError()
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class ConversationResult:
     """Return a completed conversation handle and safe integrity metadata."""
 
     handle: ConversationHandle
     reasoning: EffectiveReasoningMetadata
     checkpoint_digest: IntegrityDigest
+    lane_outputs: tuple[ProviderLaneOutput, ...] = ()
+    public_response_id: PublicResponseId | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(
@@ -438,6 +511,31 @@ class ConversationResult:
         if type(self.reasoning) is not EffectiveReasoningMetadata:
             raise ConversationValidationError()
         validate_identifier(self.checkpoint_digest, "checkpoint_digest")
+        if self.public_response_id is not None:
+            validate_identifier(
+                self.public_response_id,
+                "public_response_id",
+            )
+        if isinstance(self.handle, StoredConversationHandle) and (
+            self.handle.public_response_id != self.public_response_id
+        ):
+            raise ConversationValidationError()
+        if type(self.lane_outputs) is not tuple or any(
+            type(item) is not ProviderLaneOutput for item in self.lane_outputs
+        ):
+            raise ConversationValidationError()
+        lane_ids = tuple(item.lane_id for item in self.lane_outputs)
+        if len(lane_ids) != len(set(lane_ids)):
+            raise ConversationValidationError()
+        if self.lane_outputs:
+            has_stored_output = any(
+                item.mode is ConversationMode.STORED
+                for item in self.lane_outputs
+            )
+            if has_stored_output and not isinstance(
+                self.handle, StoredConversationHandle
+            ):
+                raise ConversationValidationError()
 
 
 @final

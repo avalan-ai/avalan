@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "463f1c6563959f672cfd8be7fa920c35f2a56e1c6a0a7a67ea11ce959a807523",
+  "current_snapshot_sha256": "58f496ce04cd11d4702b5b2a85d12dc3c1c46725476391d1e59dbb0531dc5d55",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "d852f4849b56a76f98c05ed30679a08fb5c99847de88e26279368a389f71846e"
   },
   "report_lines": {
-    "added": 967,
+    "added": 1072,
     "removed": 276,
-    "sha256": "3138063461b3d038f5c51d1987d57569d9bdb7650f183f1d54aa1a372409c1bc"
+    "sha256": "f09f8d1419230129486d32dc109fa33c71238f68f596b8cf8a0e349d9f611248"
   },
   "review": {
-    "reviewed_by": "conversation Phase 1 exclusion inventory review",
-    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only async conversation Protocol declarations while retaining every previously reviewed directive and relocation."
+    "reviewed_by": "conversation Phase 2 exclusion inventory review",
+    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only conversation Protocol declarations while retaining every previously reviewed directive and relocation."
   },
-  "ledger_sha256": "325af7175dca429455dda7b11314d7c9cf675efb23a1c4da557c6e1b898a249c"
+  "ledger_sha256": "9f6c1f05744a1739fe82dedbcde345a1d968f990f087d4b6c75a42a3d2091695"
 }

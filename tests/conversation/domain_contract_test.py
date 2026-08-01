@@ -1105,6 +1105,9 @@ def test_safe_observability_and_diagnostics_never_expose_opaque_state(
     allowed = {
         "event",
         "checkpoint_id",
+        "authority_scope_digest",
+        "parent_checkpoint_id",
+        "lane_ids",
         "lane_count",
         "provider_item_count",
         "transcript_entry_count",
@@ -1118,6 +1121,11 @@ def test_safe_observability_and_diagnostics_never_expose_opaque_state(
     lane = checkpoint.content.lanes[0]
     assert isinstance(lane, conversation.StatelessProviderLaneSnapshot)
     assert set(projected) == allowed
+    assert projected["authority_scope_digest"] == (
+        conversation.authority_digest(checkpoint.authority)
+    )
+    assert projected["parent_checkpoint_id"] is None
+    assert projected["lane_ids"] == (lane.lane_id,)
     assert sentinel not in repr(observation)
     assert sentinel not in repr(projected)
     assert sentinel not in repr(lane.ledger)
