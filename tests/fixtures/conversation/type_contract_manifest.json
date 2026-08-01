@@ -1,0 +1,52 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "current_phase": 0,
+  "activation_history": [
+    {
+      "phase": 0,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative"
+      ],
+      "sha256": "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491"
+    }
+  ],
+  "replacements": [],
+  "fixtures": [
+    {
+      "id": "phase0-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/phase0_positive.py",
+      "source_sha256": "1879433067170cd90c801a91c9f79d3a7a6ab8d84f041bf4df03e0d4b0c519b3",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase0-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/identity_interchange_negative.py",
+      "source_sha256": "ee66184ddc28485cbce7520bef6b4769e16875deceac4f30a25b6872deb51344",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/identity_interchange_negative.py:12:39: error: Argument 1 to \"checkpoint_id\" has incompatible type \"ConversationId\"; expected \"CheckpointId\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase0-storage-axis-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/storage_axis_negative.py",
+      "source_sha256": "3ae41df1c8a31798bfce91808a1fcf295f8e3a7e6b0fba11c909be2906f72f5b",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/storage_axis_negative.py:6:11: error: Argument \"local\" to \"StoragePolicy\" has incompatible type \"str\"; expected \"LocalResponseStorage\"  [arg-type]",
+        "tests/conversation_type_contracts/storage_axis_negative.py:7:14: error: Argument \"upstream\" to \"StoragePolicy\" has incompatible type \"str\"; expected \"ProviderLaneStorage\"  [arg-type]"
+      ]
+    }
+  ],
+  "manifest_sha256": "a5087daad09036bf85fef373ce2deeb39e8231816e31892f7eaa2f2e076a78a8"
+}

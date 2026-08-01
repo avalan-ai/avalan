@@ -57,18 +57,45 @@ def test_exact_make_target_fails_closed_on_pytest_failure(
         return CompletedProcess(command, 9)
 
     monkeypatch.setattr(_GATE, "run", fail_pytest)
+    monkeypatch.setenv("HOME", "ambient-home")
+    monkeypatch.setenv("OLDPWD", "ambient-oldpwd")
+    monkeypatch.setenv("PWD", "ambient-pwd")
     monkeypatch.setenv("PYTHONPATH", "ambient-path")
     monkeypatch.setenv("PYTEST_ADDOPTS", "--maxfail=1")
     monkeypatch.setenv("COVERAGE_PROCESS_START", "ambient-coveragerc")
     assert _GATE.run_coverage_gate(repo_root=tmp_path) == 9
     assert len(calls) == 1
     command, environment = calls[0]
-    assert command[1:5] == ("-m", "pytest", "--verbose", "-s")
-    assert ("-o", "addopts=") == command[5:7]
+    assert command[1:3] == ("-m", "pytest")
+    assert command[3:9] == (
+        "-p",
+        "no:cacheprovider",
+        "-p",
+        "pytest_cov",
+        "-p",
+        "anyio.pytest_plugin",
+    )
+    assert command[9:13] == ("--verbose", "-s", "-o", "addopts=")
     assert "--cov-config=/dev/null" in command
     assert environment["PYTEST_ADDOPTS"] == ""
+    assert environment["PYTEST_DISABLE_PLUGIN_AUTOLOAD"] == "1"
     assert environment["COVERAGE_RCFILE"] == "/dev/null"
-    assert "PYTHONPATH" not in environment
+    python_paths = environment["PYTHONPATH"].split(":")
+    assert len(python_paths) == 1
+    assert Path(python_paths[0]).name == "python-startup"
+    assert (
+        environment["AVALAN_CONTRACT_ALLOWED_PYTHONPATH"]
+        == environment["PYTHONPATH"]
+    )
+    assert environment["PYTHONNOUSERSITE"] == "1"
+    assert environment["PYTHONSAFEPATH"] == "1"
+    assert environment["PWD"] == str(tmp_path.resolve())
+    assert environment["PYTHONDONTWRITEBYTECODE"] == "1"
+    runtime_home = Path(environment["HOME"])
+    assert runtime_home.name == "home"
+    assert runtime_home.parent.name.startswith("avalan-contract-runtime-")
+    assert not runtime_home.is_relative_to(tmp_path.resolve())
+    assert "OLDPWD" not in environment
     assert "COVERAGE_PROCESS_START" not in environment
     assert not any(artifact.exists() for artifact in artifacts)
     makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
@@ -77,9 +104,11 @@ def test_exact_make_target_fails_closed_on_pytest_failure(
         in makefile
     )
     assert (
-        "poetry run python scripts/run_input_contract_gate.py --coverage-only"
+        "poetry run env $(CONTRACT_PYTHON_ENV) python "
+        "scripts/run_input_contract_gate.py --coverage-only"
         in makefile
     )
+    assert "CONTRACT_PYTHON_ENV := PYTHONSAFEPATH=1" in makefile
 
 
 def test_project_metadata_pins_complete_common_gate() -> None:
@@ -112,14 +141,21 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     assert "poetry run black --preview" in makefile
     assert "poetry run ruff check --fix $(LINT_PATHS)" in makefile
     assert "poetry run mypy $(INPUT_CONTRACT_SCRIPTS)" in makefile
-    assert (
+    database_command = (
         "--docker --runner-script scripts/run_input_contract_gate.py -- "
         "--through-phase $(INPUT_PHASE)"
+    )
+    assert database_command in makefile
+    assert (
+        "poetry run -- env $(CONTRACT_PYTHON_ENV) python "
+        f"scripts/task_pgsql_test_database.py {database_command}"
         in makefile
     )
+    typecheck_command = (
+        "scripts/verify_input_types.py --through-phase $(INPUT_PHASE)"
+    )
     assert (
-        "poetry run python scripts/verify_input_types.py --through-phase "
-        "$(INPUT_PHASE)"
+        f"poetry run env $(CONTRACT_PYTHON_ENV) python {typecheck_command}"
         in makefile
     )
     assert "make lint" in workflow
@@ -129,11 +165,11 @@ def test_project_metadata_pins_complete_common_gate() -> None:
         "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
         in workflow
     )
-    assert (
+    admin_dsn = (
         "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
         "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
-        in workflow
     )
+    assert admin_dsn in workflow
     assert "run: make test no-install" in workflow
     assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
     assert "make test-pgsql" not in workflow

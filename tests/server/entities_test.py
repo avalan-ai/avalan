@@ -1474,6 +1474,15 @@ class ChatEntitiesTestCase(TestCase):
         with self.assertRaises(ValidationError):
             ResponsesRequest(input={"role": "user", "content": "hi"})
 
+    def test_responses_request_rejects_non_mapping_payload(self) -> None:
+        with self.assertRaises(ValidationError) as error:
+            ResponsesRequest.model_validate([])
+
+        self.assertEqual(
+            error.exception.errors(include_url=False)[0]["type"],
+            "model_type",
+        )
+
     def test_responses_request_rejects_ambiguous_text_aliases(self) -> None:
         message = ChatMessage(role=MessageRole.USER, content="hi")
         with self.assertRaises(ValidationError):

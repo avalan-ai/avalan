@@ -1,4 +1,7 @@
 from argparse import ArgumentParser
+from collections.abc import Iterator
+from contextlib import contextmanager
+from dataclasses import dataclass
 from importlib import import_module
 from importlib.util import find_spec
 from os import environ
@@ -12,6 +15,22 @@ from types import TracebackType
 from typing import Protocol, cast
 from urllib.parse import quote, urlsplit, urlunsplit
 from uuid import uuid4
+
+from contract_gate import (
+    POSTGRESQL_TEST_DSN_ENV,
+    ContractGateError,
+    validate_postgresql_url,
+)
+
+_LEGACY_POSTGRESQL_LEASE_ENV = "AVALAN_TASK_TEST_POSTGRESQL_LEASE_SHA256"
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class PostgreSQLTestDatabase:
+    """Store one database owned by the current harness context."""
+
+    dsn: str
+    name: str
 
 
 class _PgsqlCursor(Protocol):
@@ -138,36 +157,30 @@ def _run_with_admin_dsn(
     *,
     runner_script: str | None = None,
 ) -> int:
-    _require_runtime_modules()
-    database_name = _database_name(database_prefix)
-    test_dsn = _database_dsn(admin_dsn, database_name)
     exit_code = 1
     try:
-        _create_database(admin_dsn, database_name)
-        child_env = environ.copy()
-        child_env["AVALAN_TASK_TEST_POSTGRESQL_DSN"] = test_dsn
-        command = (
-            (executable, runner_script, *child_args)
-            if runner_script is not None
-            else (executable, "-m", "pytest", *child_args)
-        )
-        completed = run(
-            command,
-            check=False,
-            env=child_env,
-        )
-        exit_code = completed.returncode
-    finally:
-        try:
-            _drop_database(admin_dsn, database_name)
-        except Exception as exc:
-            print(
-                "Unable to drop PostgreSQL test database "
-                f"{database_name}: {exc.__class__.__name__}",
-                file=stderr,
+        with postgresql_test_database(
+            admin_dsn=admin_dsn,
+            database_prefix=database_prefix,
+            docker=False,
+        ) as database:
+            child_env = environ.copy()
+            child_env.pop(_LEGACY_POSTGRESQL_LEASE_ENV, None)
+            child_env[POSTGRESQL_TEST_DSN_ENV] = database.dsn
+            command = (
+                (executable, runner_script, *child_args)
+                if runner_script is not None
+                else (executable, "-m", "pytest", *child_args)
             )
-            if exit_code == 0:
-                exit_code = 1
+            completed = run(
+                command,
+                check=False,
+                env=child_env,
+            )
+            exit_code = completed.returncode
+    except ContractGateError as exc:
+        print(str(exc), file=stderr)
+        exit_code = 1
     return exit_code
 
 
@@ -179,7 +192,91 @@ def _run_with_docker(
     timeout_seconds: float,
     runner_script: str | None = None,
 ) -> int:
+    try:
+        with postgresql_test_database(
+            admin_dsn=None,
+            database_prefix=database_prefix,
+            docker=True,
+            image=image,
+            timeout_seconds=timeout_seconds,
+        ) as database:
+            child_env = environ.copy()
+            child_env.pop(_LEGACY_POSTGRESQL_LEASE_ENV, None)
+            child_env[POSTGRESQL_TEST_DSN_ENV] = database.dsn
+            command = (
+                (executable, runner_script, *child_args)
+                if runner_script is not None
+                else (executable, "-m", "pytest", *child_args)
+            )
+            completed = run(command, check=False, env=child_env)
+            return completed.returncode
+    except ContractGateError as exc:
+        print(str(exc), file=stderr)
+        return 1
+
+
+@contextmanager
+def postgresql_test_database(
+    *,
+    admin_dsn: str | None,
+    database_prefix: str,
+    docker: bool,
+    image: str = "postgres:16-alpine",
+    timeout_seconds: float = 60.0,
+) -> Iterator[PostgreSQLTestDatabase]:
+    """Yield one process-owned ephemeral PostgreSQL database."""
     _require_runtime_modules()
+    if docker:
+        if admin_dsn is not None:
+            raise ContractGateError(
+                "Docker database ownership cannot accept an administrator DSN"
+            )
+        with _docker_admin_database(
+            image=image,
+            timeout_seconds=timeout_seconds,
+        ) as owned_admin_dsn:
+            with _admin_test_database(
+                owned_admin_dsn,
+                database_prefix,
+            ) as database:
+                yield database
+        return
+    if not admin_dsn:
+        raise ContractGateError(
+            "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN is not set"
+        )
+    with _admin_test_database(admin_dsn, database_prefix) as database:
+        yield database
+
+
+@contextmanager
+def _admin_test_database(
+    admin_dsn: str,
+    database_prefix: str,
+) -> Iterator[PostgreSQLTestDatabase]:
+    """Create, yield, and drop one database under an administrator DSN."""
+    database_name = _database_name(database_prefix)
+    test_dsn = _database_dsn(admin_dsn, database_name)
+    _create_database(admin_dsn, database_name)
+    try:
+        yield PostgreSQLTestDatabase(dsn=test_dsn, name=database_name)
+    finally:
+        try:
+            _drop_database(admin_dsn, database_name)
+        except Exception as exc:
+            raise ContractGateError(
+                "Unable to drop PostgreSQL test database "
+                f"{database_name}: {exc.__class__.__name__}"
+            ) from exc
+
+
+@contextmanager
+def _docker_admin_database(
+    *,
+    image: str,
+    timeout_seconds: float,
+) -> Iterator[str]:
+    """Yield an administrator DSN owned by one Docker container."""
     container_name = _docker_container_name()
     password = token_urlsafe(24)
     port = _free_tcp_port()
@@ -194,15 +291,16 @@ def _run_with_docker(
         )
         started = True
         _wait_for_database(admin_dsn, timeout_seconds)
-        return _run_with_admin_dsn(
-            admin_dsn,
-            database_prefix,
-            child_args,
-            runner_script=runner_script,
-        )
+        yield admin_dsn
     finally:
         if started:
-            _stop_docker_container(container_name)
+            try:
+                _stop_docker_container(container_name)
+            except SystemExit as exc:
+                raise ContractGateError(
+                    "Unable to stop PostgreSQL Docker container "
+                    f"{container_name}: {exc}"
+                ) from exc
 
 
 def _pytest_args(args: list[str]) -> tuple[str, ...]:
@@ -222,18 +320,20 @@ def _database_name(prefix: str) -> str:
 
 
 def _database_dsn(admin_dsn: str, database_name: str) -> str:
+    try:
+        validate_postgresql_url(admin_dsn)
+    except ContractGateError as exc:
+        message = "admin DSN must be an unambiguous PostgreSQL URL"
+        raise SystemExit(message) from exc
     parts = urlsplit(admin_dsn)
-    if not parts.scheme or not parts.netloc:
-        raise SystemExit("admin DSN must be a URL-style PostgreSQL DSN")
-    return urlunsplit(
-        (
-            parts.scheme,
-            parts.netloc,
-            "/" + quote(database_name, safe=""),
-            parts.query,
-            parts.fragment,
-        )
+    test_parts = (
+        parts.scheme,
+        parts.netloc,
+        "/" + quote(database_name, safe=""),
+        parts.query,
+        parts.fragment,
     )
+    return urlunsplit(test_parts)
 
 
 def _docker_admin_dsn(port: int, password: str) -> str:
@@ -333,35 +433,28 @@ def _start_docker_postgres(
     password: str,
     port: int,
 ) -> None:
-    _run_docker(
-        (
-            "docker",
-            "run",
-            "--detach",
-            "--rm",
-            "--name",
-            name,
-            "--env",
-            "POSTGRES_USER=postgres",
-            "--env",
-            "POSTGRES_DB=postgres",
-            "--env",
-            f"POSTGRES_PASSWORD={password}",
-            "--publish",
-            f"127.0.0.1:{port}:5432",
-            image,
-        )
+    command = (
+        "docker",
+        "run",
+        "--detach",
+        "--rm",
+        "--name",
+        name,
+        "--env",
+        "POSTGRES_USER=postgres",
+        "--env",
+        "POSTGRES_DB=postgres",
+        "--env",
+        f"POSTGRES_PASSWORD={password}",
+        "--publish",
+        f"127.0.0.1:{port}:5432",
+        image,
     )
+    _run_docker(command)
 
 
 def _stop_docker_container(name: str) -> None:
-    try:
-        _run_docker(("docker", "rm", "--force", "--volumes", name))
-    except SystemExit as exc:
-        print(
-            f"Unable to stop PostgreSQL Docker container {name}: {exc}",
-            file=stderr,
-        )
+    _run_docker(("docker", "rm", "--force", "--volumes", name))
 
 
 def _require_runtime_modules() -> None:
