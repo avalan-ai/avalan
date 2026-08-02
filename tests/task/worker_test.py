@@ -1633,10 +1633,12 @@ class FakeDurableSuspensionCoordinator:
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str | None = None,
+        conversation_unit: object | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> _FakeDurableSuspensionCommit:
         assert command.request.origin.run_id == RunId(task_run_id)
+        assert conversation_unit is None
         self.calls.append((command, continuation))
         self.queue.durable_commit_active = True
         try:
@@ -1665,6 +1667,7 @@ class FakeDurableSuspensionCoordinator:
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: object | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> _FakeDurableSuspensionCommit:
@@ -1677,6 +1680,7 @@ class FakeDurableSuspensionCoordinator:
             segment_id=segment_id,
             task_run_id=task_run_id,
             checkpoint_id=checkpoint_id,
+            conversation_unit=conversation_unit,
             now=now,
             metadata=metadata,
         )

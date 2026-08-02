@@ -255,6 +255,38 @@ def test_phase0_inventory_is_complete_and_executable() -> None:
     assert len(matrix.cells) == 99
 
 
+def test_phase3_execution_inherits_only_the_postgresql_test_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Forward the owned database capability into acceptance subprocesses."""
+    observed: list[tuple[str, ...]] = []
+
+    def execute_nodes(
+        root: Path,
+        node_ids: tuple[str, ...],
+        *,
+        junit_path: Path,
+        expected_evidence: dict[str, str],
+        inherited_names: tuple[str, ...],
+    ) -> None:
+        assert root == _ROOT
+        assert len(node_ids) == 42
+        assert junit_path.name == "pytest.xml"
+        assert set(expected_evidence) == set(node_ids)
+        observed.append(inherited_names)
+
+    monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
+
+    _VERIFIER.verify_acceptance(
+        _FIXTURES / "acceptance_manifest.phase3.json",
+        repo_root=_ROOT,
+        through_phase=3,
+        execute=True,
+    )
+
+    assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
+
+
 def test_phase1_activation_appends_anchors_without_rewriting_phase0(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

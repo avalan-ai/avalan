@@ -38,7 +38,7 @@ from .validation import (
 )
 
 from collections.abc import Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime
 from enum import StrEnum
 from hashlib import sha256
@@ -47,7 +47,8 @@ from json import JSONDecodeError, dumps, loads
 from re import compile as compile_pattern
 from typing import NewType, Protocol, TypeAlias, cast, final
 
-PORTABLE_CONTINUATION_VERSION = 1
+PORTABLE_CONTINUATION_PREVIOUS_VERSION = 1
+PORTABLE_CONTINUATION_VERSION = 2
 PORTABLE_CONTINUATION_MAX_UTF8_BYTES = 4_194_304
 
 ContinuationClaimOwnerId = NewType("ContinuationClaimOwnerId", str)
@@ -58,7 +59,7 @@ ContinuationStoreRevision = NewType("ContinuationStoreRevision", int)
 ProviderContinuationSnapshot: TypeAlias = ContinuationSnapshot
 
 _SHA256_PATTERN = compile_pattern(r"^[0-9a-f]{64}$")
-_PORTABLE_FIELDS = {
+_PORTABLE_V1_FIELDS = {
     "version",
     "continuation_id",
     "request_id",
@@ -85,6 +86,9 @@ _PORTABLE_FIELDS = {
     "dispatch",
     "completion",
     "content_sha256",
+}
+_PORTABLE_V2_FIELDS = _PORTABLE_V1_FIELDS | {
+    "conversation_checkpoint_reference"
 }
 
 
@@ -133,6 +137,31 @@ def derive_provider_idempotency_key(
     )
     return ProviderIdempotencyKey(
         f"task-input-{sha256(encoded.encode('utf-8')).hexdigest()}"
+    )
+
+
+def bind_portable_continuation_to_conversation(
+    continuation: "PortableContinuation",
+    reference: "PortableConversationCheckpointReference",
+) -> "PortableContinuation":
+    """Upgrade one version-1 continuation with an exact checkpoint binding."""
+    if type(continuation) is not PortableContinuation:
+        _invalid_type("continuation", "a portable continuation")
+    if type(reference) is not PortableConversationCheckpointReference:
+        _invalid_type(
+            "continuation.conversation_checkpoint_reference",
+            "a portable conversation checkpoint reference",
+        )
+    current = continuation.conversation_checkpoint_reference
+    if current is not None and current != reference:
+        _correlation_error(
+            "continuation.conversation_checkpoint_reference",
+            "continuation is already bound to another checkpoint",
+        )
+    return replace(
+        continuation,
+        conversation_checkpoint_reference=reference,
+        version=PORTABLE_CONTINUATION_VERSION,
     )
 
 
@@ -418,6 +447,34 @@ class ContinuationRejectionCommand:
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class PortableConversationCheckpointReference:
+    """Identify the exact durable conversation suspension boundary."""
+
+    checkpoint_id: str
+    execution_segment_id: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "checkpoint_id",
+            validate_opaque_id(
+                self.checkpoint_id,
+                "continuation.conversation_checkpoint_reference.checkpoint_id",
+            ),
+        )
+        object.__setattr__(
+            self,
+            "execution_segment_id",
+            validate_opaque_id(
+                self.execution_segment_id,
+                "continuation.conversation_checkpoint_reference."
+                "execution_segment_id",
+            ),
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class PortableContinuation:
     """Store only portable state needed to reconstruct one continuation."""
 
@@ -440,22 +497,39 @@ class PortableContinuation:
     created_at: datetime
     updated_at: datetime
     expires_at: datetime
+    conversation_checkpoint_reference: (
+        PortableConversationCheckpointReference | None
+    ) = None
     claim: ContinuationClaim = field(default_factory=ContinuationClaim)
     fencing_token: ContinuationFencingToken = ContinuationFencingToken(0)
     provider_snapshot: ProviderContinuationSnapshot | None = None
     dispatch: ContinuationDispatch | None = None
     completion: ContinuationCompletion | None = None
-    version: int = PORTABLE_CONTINUATION_VERSION
+    version: int = PORTABLE_CONTINUATION_PREVIOUS_VERSION
 
     def __post_init__(self) -> None:
-        if (
-            type(self.version) is not int
-            or self.version != PORTABLE_CONTINUATION_VERSION
-        ):
+        if type(self.version) is not int or self.version not in {
+            PORTABLE_CONTINUATION_PREVIOUS_VERSION,
+            PORTABLE_CONTINUATION_VERSION,
+        }:
             raise InputValidationError(
                 InputErrorCode.SNAPSHOT_UNSUPPORTED,
                 "continuation.version",
                 "portable continuation version is unsupported",
+            )
+        reference = self.conversation_checkpoint_reference
+        if self.version == PORTABLE_CONTINUATION_PREVIOUS_VERSION:
+            if reference is not None:
+                raise InputValidationError(
+                    InputErrorCode.INVALID_FORMAT,
+                    "continuation.conversation_checkpoint_reference",
+                    "version 1 cannot carry a conversation checkpoint",
+                )
+        elif type(reference) is not PortableConversationCheckpointReference:
+            raise InputValidationError(
+                InputErrorCode.INVALID_FORMAT,
+                "continuation.conversation_checkpoint_reference",
+                "version 2 requires an exact conversation checkpoint",
             )
         object.__setattr__(
             self,
@@ -957,6 +1031,9 @@ def decode_portable_continuation(
     value: str | bytes,
     *,
     expected_binding: ContinuationRevisionBinding,
+    expected_conversation_checkpoint_reference: (
+        PortableConversationCheckpointReference | None
+    ) = None,
 ) -> PortableContinuation:
     """Decode a portable continuation and reject identity or revision drift."""
     text = _continuation_text(value)
@@ -975,7 +1052,28 @@ def decode_portable_continuation(
             "portable continuation must be a JSON object",
         )
     item = cast(dict[str, object], raw)
-    if set(item) != _PORTABLE_FIELDS:
+    if "version" not in item:
+        raise InputSnapshotError(
+            InputErrorCode.SNAPSHOT_INVALID,
+            "continuation",
+            "portable continuation fields do not match its schema",
+        )
+    version = _integer(item["version"], "continuation.version")
+    if version not in {
+        PORTABLE_CONTINUATION_PREVIOUS_VERSION,
+        PORTABLE_CONTINUATION_VERSION,
+    }:
+        raise InputSnapshotError(
+            InputErrorCode.SNAPSHOT_UNSUPPORTED,
+            "continuation.version",
+            "portable continuation version is unsupported",
+        )
+    expected_fields = (
+        _PORTABLE_V1_FIELDS
+        if version == PORTABLE_CONTINUATION_PREVIOUS_VERSION
+        else _PORTABLE_V2_FIELDS
+    )
+    if set(item) != expected_fields:
         raise InputSnapshotError(
             InputErrorCode.SNAPSHOT_INVALID,
             "continuation",
@@ -986,13 +1084,6 @@ def decode_portable_continuation(
             InputErrorCode.SNAPSHOT_INVALID,
             "continuation",
             "portable continuation must use canonical JSON",
-        )
-    version = _integer(item["version"], "continuation.version")
-    if version != PORTABLE_CONTINUATION_VERSION:
-        raise InputSnapshotError(
-            InputErrorCode.SNAPSHOT_UNSUPPORTED,
-            "continuation.version",
-            "portable continuation version is unsupported",
         )
     digest = _string(
         item["content_sha256"],
@@ -1027,6 +1118,23 @@ def decode_portable_continuation(
             expected_binding=expected_binding,
         )
     )
+    conversation_checkpoint_reference = (
+        None
+        if version == PORTABLE_CONTINUATION_PREVIOUS_VERSION
+        else _decode_conversation_checkpoint_reference(
+            item["conversation_checkpoint_reference"]
+        )
+    )
+    if (
+        expected_conversation_checkpoint_reference is not None
+        and conversation_checkpoint_reference
+        != expected_conversation_checkpoint_reference
+    ):
+        raise InputSnapshotError(
+            InputErrorCode.CORRELATION_MISMATCH,
+            "continuation.conversation_checkpoint_reference",
+            "conversation checkpoint reference does not match",
+        )
     try:
         return PortableContinuation(
             version=version,
@@ -1105,6 +1213,9 @@ def decode_portable_continuation(
                 item["expires_at"],
                 "continuation.expires_at",
             ),
+            conversation_checkpoint_reference=(
+                conversation_checkpoint_reference
+            ),
             claim=_decode_claim(item["claim"]),
             fencing_token=ContinuationFencingToken(
                 _integer(
@@ -1135,7 +1246,7 @@ def portable_continuation_digest(
 
 
 def _portable_payload(continuation: PortableContinuation) -> JsonObject:
-    return {
+    payload: JsonObject = {
         "version": continuation.version,
         "continuation_id": str(continuation.continuation_id),
         "request_id": str(continuation.request_id),
@@ -1191,10 +1302,55 @@ def _portable_payload(continuation: PortableContinuation) -> JsonObject:
             else _encode_completion(continuation.completion)
         ),
     }
+    if continuation.version == PORTABLE_CONTINUATION_VERSION:
+        reference = continuation.conversation_checkpoint_reference
+        assert reference is not None
+        payload["conversation_checkpoint_reference"] = (
+            _encode_conversation_checkpoint_reference(reference)
+        )
+    return payload
 
 
 def _portable_digest_payload(payload: JsonObject) -> str:
     return sha256(_canonical_json(payload).encode("utf-8")).hexdigest()
+
+
+def _encode_conversation_checkpoint_reference(
+    value: PortableConversationCheckpointReference,
+) -> JsonObject:
+    return {
+        "checkpoint_id": value.checkpoint_id,
+        "execution_segment_id": value.execution_segment_id,
+    }
+
+
+def _decode_conversation_checkpoint_reference(
+    value: object,
+) -> PortableConversationCheckpointReference:
+    item = _object(
+        value,
+        "continuation.conversation_checkpoint_reference",
+    )
+    if set(item) != {"checkpoint_id", "execution_segment_id"}:
+        raise InputSnapshotError(
+            InputErrorCode.SNAPSHOT_INVALID,
+            "continuation.conversation_checkpoint_reference",
+            "conversation checkpoint reference fields do not match",
+        )
+    try:
+        return PortableConversationCheckpointReference(
+            checkpoint_id=_string(
+                item["checkpoint_id"],
+                "continuation.conversation_checkpoint_reference.checkpoint_id",
+            ),
+            execution_segment_id=_string(
+                item["execution_segment_id"],
+                "continuation.conversation_checkpoint_reference."
+                "execution_segment_id",
+            ),
+        )
+    except InputValidationError as exc:
+        raise InputSnapshotError(exc.code, exc.path, exc.safe_message) from exc
 
 
 def _encode_definition(value: ExecutionDefinitionRef) -> JsonObject:

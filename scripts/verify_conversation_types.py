@@ -53,11 +53,13 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_TYPE_FIXTURE_PAYLOAD_SHA256,
     1: "3c956beb448e555794ee940c1abb6dac26ea3dbe3b613bfd06aaa808901d7feb",
     2: "332ca232bcd07b433eee48d0a6a79036f7b730fb5405e3dc6458a0717779de74",
+    3: "203d278171cd5246cb2b6a018a039ce4871d2920cc65a0f9c88ca724046f9eb9",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
     1: "549af2d3dc75ed1b38f477410671db03a4a55764424f7da78e9b2974d2c0541c",
     2: "b0bc7dc13fa87f53d10523d5565c9d27dcd96004b67b696e38925a734090f2df",
+    3: "660f4748cd74131df44512cffe4abd2c94b2f9156bc582abe2bd717a635cf2b9",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -69,6 +71,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
     ),
     2: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    3: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -116,6 +122,15 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             "tests/conversation_type_contracts/"
             + "phase2_sync_effects_negative.py"
         ): "c21e162a44b273a61531fbafadba9da419f715987bdf2bb0714707feb0211ef9",
+    },
+    3: {
+        "tests/conversation_type_contracts/phase3_positive.py": (
+            "b14d8feee7e9068cf26e94a2cf6fa1acfea2eb55a63a86f91861bbaf2a0146b9"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase3_sync_crypto_negative.py"
+        ): "ab3f4ee06fbd0c80c387b825540a596d775b89b37cae6aa7a1289bc6602a7a99",
     },
 }
 
@@ -167,7 +182,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.phase2.json"
+        / "type_contract_manifest.phase3.json"
     )
 
 

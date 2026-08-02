@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "58f496ce04cd11d4702b5b2a85d12dc3c1c46725476391d1e59dbb0531dc5d55",
+  "current_snapshot_sha256": "4d869255d7df93e44b099dc18a3d3204ae0d51f158a85dd4b5908d79117045c3",
   "directives": {
     "added": 12,
     "removed": 0,
     "relocated": 11,
-    "sha256": "d852f4849b56a76f98c05ed30679a08fb5c99847de88e26279368a389f71846e"
+    "sha256": "2ae198a6da05113a7686aec9852ebeb6e1b88879128002f13e0eb7389e18ac56"
   },
   "report_lines": {
-    "added": 1072,
+    "added": 1124,
     "removed": 276,
-    "sha256": "f09f8d1419230129486d32dc109fa33c71238f68f596b8cf8a0e349d9f611248"
+    "sha256": "fa59dc956d540b4a6cf2b115f3b6fc7ddf7f23261ba61b595307ce2630027cca"
   },
   "review": {
-    "reviewed_by": "conversation Phase 2 exclusion inventory review",
-    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only conversation Protocol declarations while retaining every previously reviewed directive and relocation."
+    "reviewed_by": "conversation Phase 3 exclusion inventory review",
+    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only Phase 3 crypto and PostgreSQL Protocol declarations, plus relocations caused by typed durable fields, while retaining every previously reviewed directive."
   },
-  "ledger_sha256": "9f6c1f05744a1739fe82dedbcde345a1d968f990f087d4b6c75a42a3d2091695"
+  "ledger_sha256": "413b99d5fb792b1e8245ec48d885559d16691cfe4df2be79663d486e9e4e9650"
 }

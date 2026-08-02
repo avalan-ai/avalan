@@ -605,7 +605,7 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     assert current.report_lines[store_path] == (135, 136, 137)
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2021
+    assert sum(map(len, current.report_lines.values())) == 2073
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

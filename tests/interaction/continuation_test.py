@@ -11,6 +11,8 @@ from typing import Any, Callable, cast
 import pytest
 
 from avalan.interaction import (
+    PORTABLE_CONTINUATION_PREVIOUS_VERSION,
+    PORTABLE_CONTINUATION_VERSION,
     AgentId,
     BranchId,
     CapabilityRevision,
@@ -33,6 +35,7 @@ from avalan.interaction import (
     ModelConfigRevision,
     ModelId,
     PortableContinuation,
+    PortableConversationCheckpointReference,
     PrincipalScope,
     ProviderConfigRevision,
     ProviderFamilyName,
@@ -43,6 +46,7 @@ from avalan.interaction import (
     StreamSessionId,
     TrustedContinuationRuntimeLoader,
     TurnId,
+    bind_portable_continuation_to_conversation,
     decode_portable_continuation,
     encode_portable_continuation,
     portable_continuation_digest,
@@ -301,6 +305,117 @@ def test_portable_continuation_round_trip_is_canonical_and_immutable() -> None:
         cast(dict[str, object], restored.generation_settings)["new"] = True
 
 
+def test_portable_continuation_v1_v2_cutover_binds_exact_checkpoint() -> None:
+    legacy = _portable()
+    reference = PortableConversationCheckpointReference(
+        checkpoint_id="conversation-checkpoint",
+        execution_segment_id="conversation-segment",
+    )
+
+    upgraded = bind_portable_continuation_to_conversation(legacy, reference)
+    encoded = encode_portable_continuation(upgraded)
+    restored = decode_portable_continuation(
+        encoded,
+        expected_binding=legacy.revision_binding,
+        expected_conversation_checkpoint_reference=reference,
+    )
+
+    assert legacy.version == PORTABLE_CONTINUATION_PREVIOUS_VERSION
+    assert legacy.conversation_checkpoint_reference is None
+    assert upgraded.version == PORTABLE_CONTINUATION_VERSION
+    assert restored == upgraded
+    assert loads(encoded)["conversation_checkpoint_reference"] == {
+        "checkpoint_id": "conversation-checkpoint",
+        "execution_segment_id": "conversation-segment",
+    }
+
+    with pytest.raises(InputSnapshotError) as raised:
+        decode_portable_continuation(
+            encoded,
+            expected_binding=legacy.revision_binding,
+            expected_conversation_checkpoint_reference=(
+                PortableConversationCheckpointReference(
+                    checkpoint_id="other-checkpoint",
+                    execution_segment_id="conversation-segment",
+                )
+            ),
+        )
+    assert raised.value.code is InputErrorCode.CORRELATION_MISMATCH
+
+
+def test_portable_continuation_cutover_rejects_implicit_reinterpretation() -> (
+    None
+):
+    legacy = _portable()
+    reference = PortableConversationCheckpointReference(
+        checkpoint_id="conversation-checkpoint",
+        execution_segment_id="conversation-segment",
+    )
+
+    with pytest.raises(InputValidationError, match="portable continuation"):
+        bind_portable_continuation_to_conversation(
+            cast(PortableContinuation, object()),
+            reference,
+        )
+    with pytest.raises(InputValidationError, match="checkpoint reference"):
+        bind_portable_continuation_to_conversation(
+            legacy,
+            cast(PortableConversationCheckpointReference, object()),
+        )
+    with pytest.raises(InputValidationError, match="requires an exact"):
+        replace(legacy, version=PORTABLE_CONTINUATION_VERSION)
+    with pytest.raises(InputValidationError, match="version 1 cannot"):
+        replace(legacy, conversation_checkpoint_reference=reference)
+
+    upgraded = bind_portable_continuation_to_conversation(legacy, reference)
+    assert (
+        bind_portable_continuation_to_conversation(upgraded, reference)
+        == upgraded
+    )
+    with pytest.raises(InputValidationError, match="another checkpoint"):
+        bind_portable_continuation_to_conversation(
+            upgraded,
+            PortableConversationCheckpointReference(
+                checkpoint_id="other-checkpoint",
+                execution_segment_id="conversation-segment",
+            ),
+        )
+
+
+def test_portable_continuation_cutover_decode_rejects_invalid_references() -> (
+    None
+):
+    legacy = _portable()
+    upgraded = bind_portable_continuation_to_conversation(
+        legacy,
+        PortableConversationCheckpointReference(
+            checkpoint_id="conversation-checkpoint",
+            execution_segment_id="conversation-segment",
+        ),
+    )
+    mutations: tuple[Callable[[dict[str, object]], None], ...] = (
+        lambda item: item.pop("version", None),
+        lambda item: item.__setitem__(
+            "conversation_checkpoint_reference",
+            {"checkpoint_id": "conversation-checkpoint"},
+        ),
+        lambda item: item.__setitem__(
+            "conversation_checkpoint_reference",
+            {
+                "checkpoint_id": "",
+                "execution_segment_id": "conversation-segment",
+            },
+        ),
+    )
+
+    for mutate in mutations:
+        with pytest.raises(InputSnapshotError):
+            decode_portable_continuation(
+                _recoded(upgraded, mutate),
+                expected_binding=upgraded.revision_binding,
+            )
+
+
 def test_terminal_revision_may_be_recorded_after_expiry() -> None:
     """Allow durable sweeps to persist a post-expiry terminal revision."""
     expired_at = _NOW + timedelta(minutes=1)
@@ -436,7 +551,7 @@ def test_claim_rejects_owner_or_lease_state_mismatch(
 @pytest.mark.parametrize(
     ("overrides", "path"),
     (
-        ({"version": 2}, "continuation.version"),
+        ({"version": 3}, "continuation.version"),
         ({"origin": object()}, "continuation.origin"),
         ({"provider_call_correlation_id": ""}, "continuation."),
         ({"definition": object()}, "definition"),
@@ -691,7 +806,7 @@ def test_decode_rejects_unknown_version_provider_model_and_revision() -> None:
         decode_portable_continuation(
             _recoded(
                 continuation,
-                lambda item: item.__setitem__("version", 2),
+                lambda item: item.__setitem__("version", 3),
             ),
             expected_binding=continuation.revision_binding,
         )
@@ -1093,4 +1208,15 @@ def test_durable_continuation_record_rejects_nonportable_value() -> None:
     ):
         DurableContinuationRecord(
             continuation=cast(Any, object()),
+        )
+    continuation = _portable()
+    with pytest.raises(InputValidationError, match="task run does not match"):
+        DurableContinuationRecord(
+            continuation=continuation,
+            task_run_id="other-run",
+        )
+    with pytest.raises(InputValidationError, match="bound task run"):
+        DurableContinuationRecord(
+            continuation=continuation,
+            checkpoint_id="checkpoint",
         )

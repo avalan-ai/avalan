@@ -719,10 +719,64 @@ class PgsqlMigrationRevisionTest(TestCase):
         )
         self.assertIn('"ix_interaction_branches_scope"', schema)
 
+    def test_conversation_revision_extends_aggregated_schema(self) -> None:
+        revision_module = import_module(
+            "avalan.task.stores.pgsql_migrations.versions."
+            "v20260801_0003_conversation_checkpoints"
+        )
+        fake_op = FakeRevisionOp()
+        old_alembic = modules.get("alembic")
+        fake_alembic = ModuleType("alembic")
+        setattr(fake_alembic, "op", fake_op)
+        modules["alembic"] = fake_alembic
+        try:
+            revision_module.upgrade()
+        finally:
+            if old_alembic is None:
+                modules.pop("alembic", None)
+            else:
+                modules["alembic"] = old_alembic
+
+        self.assertEqual(
+            fake_op.bind.statements,
+            list(revision_module.CONVERSATION_SCHEMA_STATEMENTS),
+        )
+        schema = "\n".join(task_pgsql_schema_statements())
+        for table in (
+            "conversation_store_metadata",
+            "conversation_key_revisions",
+            "conversations",
+            "conversation_checkpoints",
+            "conversation_lanes",
+            "conversation_encrypted_payloads",
+            "conversation_checkpoint_payload_refs",
+            "conversation_named_heads",
+            "conversation_idempotency",
+            "conversation_execution_staging",
+            "conversation_provisional_responses",
+            "conversation_public_responses",
+            "conversation_outbox",
+            "conversation_reconciliation_outbox",
+            "conversation_checkpoint_continuations",
+            "conversation_terminal_metadata",
+        ):
+            self.assertIn(f'"{table}"', schema)
+        for required_sql in (
+            '"conversation_checkpoint_id" TEXT DEFAULT NULL',
+            '"conversation_execution_segment_id"\n        TEXT DEFAULT NULL',
+            '"trg_conversation_checkpoint_identity_immutable"',
+            '"trg_conversation_payload_ref_increment"',
+            '"trg_conversation_payload_ref_decrement"',
+            '"conversation_store_readiness"',
+            "conversation checkpoint identity is immutable",
+        ):
+            self.assertIn(required_sql, schema)
+
     def test_revision_downgrade_is_forward_only(self) -> None:
         for revision in (
             "v20260530_0001_task_schema",
             "v20260723_0002_durable_interactions",
+            "v20260801_0003_conversation_checkpoints",
         ):
             with self.subTest(revision=revision):
                 revision_module = import_module(

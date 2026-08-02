@@ -4,6 +4,7 @@ from ..interaction import (
     CreateInteractionCommand,
     PortableContinuation,
 )
+from ..pgsql import PgsqlAtomicSuspensionParticipant
 from ..types import (
     assert_int as _assert_int,
 )
@@ -366,6 +367,7 @@ class TaskDurableSuspensionCoordinator(Protocol):
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> TaskDurableSuspensionCommit: ...
@@ -381,6 +383,7 @@ class TaskDurableSuspensionCoordinator(Protocol):
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> TaskDurableResuspensionCommit: ...
