@@ -27,7 +27,21 @@ class ConversationErrorCode(StrEnum):
     TRANSITION_INVALID = "conversation_transition_invalid"
 
 
-_ERROR_MESSAGES: Mapping[ConversationErrorCode, str] = MappingProxyType(
+class DurableConversationErrorCode(StrEnum):
+    """Identify one stable durable conversation failure category."""
+
+    KEY_MISSING = "conversation_key_missing"
+    KEY_RETIRED = "conversation_key_retired"
+    KEY_POLICY_INVALID = "conversation_key_policy_invalid"
+    CRYPTO_AUTHENTICATION_FAILED = "conversation_crypto_authentication_failed"
+    FEATURE_UNAVAILABLE = "conversation_feature_unavailable"
+    MIGRATION_REQUIRED = "conversation_migration_required"
+
+
+_ERROR_MESSAGES: Mapping[
+    ConversationErrorCode | DurableConversationErrorCode,
+    str,
+] = MappingProxyType(
     {
         ConversationErrorCode.VALIDATION_FAILED: (
             "conversation input is invalid"
@@ -68,6 +82,24 @@ _ERROR_MESSAGES: Mapping[ConversationErrorCode, str] = MappingProxyType(
         ConversationErrorCode.TRANSITION_INVALID: (
             "conversation state transition is invalid"
         ),
+        DurableConversationErrorCode.KEY_MISSING: (
+            "conversation encryption key is unavailable"
+        ),
+        DurableConversationErrorCode.KEY_RETIRED: (
+            "conversation encryption key is retired"
+        ),
+        DurableConversationErrorCode.KEY_POLICY_INVALID: (
+            "conversation encryption key policy is invalid"
+        ),
+        DurableConversationErrorCode.CRYPTO_AUTHENTICATION_FAILED: (
+            "conversation ciphertext authentication failed"
+        ),
+        DurableConversationErrorCode.FEATURE_UNAVAILABLE: (
+            "durable conversation storage is unavailable"
+        ),
+        DurableConversationErrorCode.MIGRATION_REQUIRED: (
+            "durable conversation storage migration is required"
+        ),
     }
 )
 
@@ -77,11 +109,14 @@ class ConversationError(RuntimeError):
 
     def __init__(
         self,
-        code: ConversationErrorCode,
+        code: ConversationErrorCode | DurableConversationErrorCode,
         *,
         boundary: FailureBoundary = FailureBoundary.VALIDATION_BEFORE_DISPATCH,
     ) -> None:
-        assert isinstance(code, ConversationErrorCode)
+        assert isinstance(
+            code,
+            ConversationErrorCode | DurableConversationErrorCode,
+        )
         assert isinstance(boundary, FailureBoundary)
         message = _ERROR_MESSAGES[code]
         self.code = code
@@ -232,3 +267,47 @@ class ConversationTransitionError(ConversationError):
         super().__init__(
             ConversationErrorCode.TRANSITION_INVALID,
         )
+
+
+class ConversationKeyMissingError(ConversationError):
+    """Report a missing durable conversation read or write key."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.KEY_MISSING)
+
+
+class ConversationKeyRetiredError(ConversationError):
+    """Report a durable conversation key outside its read grace period."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.KEY_RETIRED)
+
+
+class ConversationKeyPolicyError(ConversationError):
+    """Report a fail-closed durable conversation key policy."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.KEY_POLICY_INVALID)
+
+
+class ConversationCryptoAuthenticationError(ConversationError):
+    """Report modified ciphertext or associated data uniformly."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            DurableConversationErrorCode.CRYPTO_AUTHENTICATION_FAILED
+        )
+
+
+class ConversationFeatureUnavailableError(ConversationError):
+    """Report unavailable optional durable conversation dependencies."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.FEATURE_UNAVAILABLE)
+
+
+class ConversationMigrationRequiredError(ConversationError):
+    """Report an absent or incompatible durable conversation migration."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.MIGRATION_REQUIRED)

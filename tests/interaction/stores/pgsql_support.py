@@ -1072,7 +1072,7 @@ class FakeCursor:
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
         continuation_id = cast(str, params[0])
-        request_id = cast(str, params[2])
+        request_id = cast(str, params[4])
         if (
             continuation_id in self.database.continuations
             or request_id not in self.database.records
@@ -1081,6 +1081,8 @@ class FakeCursor:
         keys = (
             "continuation_id",
             "checkpoint_id",
+            "conversation_checkpoint_id",
+            "conversation_execution_segment_id",
             "request_id",
             "task_run_id",
             "lifecycle_state",
@@ -1116,12 +1118,14 @@ class FakeCursor:
         self,
         params: tuple[object, ...],
     ) -> dict[str, object] | None:
-        continuation_id = cast(str, params[16])
+        continuation_id = cast(str, params[18])
         row = self.database.continuations.get(continuation_id)
-        if row is None or row["store_revision"] != params[17]:
+        if row is None or row["store_revision"] != params[19]:
             return None
         keys = (
             "lifecycle_state",
+            "conversation_checkpoint_id",
+            "conversation_execution_segment_id",
             "state_revision",
             "store_revision",
             "claim_owner_id",
@@ -1138,7 +1142,7 @@ class FakeCursor:
             "encryption_metadata",
             "updated_at",
         )
-        updates = dict(zip(keys, params[:16], strict=True))
+        updates = dict(zip(keys, params[:18], strict=True))
         updates["encryption_metadata"] = loads(
             cast(str, updates["encryption_metadata"])
         )

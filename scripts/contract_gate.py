@@ -1062,6 +1062,7 @@ def execute_pytest_nodes(
     collection_timeout: int = 180,
     execution_timeout: int = 900,
     expected_evidence: Mapping[str, str] | None = None,
+    inherited_names: tuple[str, ...] = (),
 ) -> PytestEvidence:
     """Collect and execute exact nodes without non-passing outcomes."""
     if not node_ids or len(node_ids) != len(set(node_ids)):
@@ -1073,6 +1074,7 @@ def execute_pytest_nodes(
         root,
         ("--collect-only", "-q", *node_ids),
         timeout=collection_timeout,
+        inherited_names=inherited_names,
     )
     if collection.returncode != 0:
         raise ContractGateError(
@@ -1107,6 +1109,7 @@ def execute_pytest_nodes(
             *node_ids,
         ),
         timeout=execution_timeout,
+        inherited_names=inherited_names,
     )
     if execution.returncode != 0:
         raise ContractGateError(

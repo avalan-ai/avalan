@@ -125,6 +125,29 @@ class PgsqlUnitOfWork:
         assert hasattr(self.cursor, "execute")
 
 
+class PgsqlAtomicSuspensionParticipant(Protocol):
+    """Apply one staged suspension inside a caller-owned transaction."""
+
+    @property
+    def database(self) -> PgsqlDatabase: ...
+
+    @property
+    def checkpoint_id(self) -> str: ...
+
+    @property
+    def execution_segment_id(self) -> str: ...
+
+    @property
+    def continuation_id(self) -> str | None: ...
+
+    @property
+    def continuation_state_revision(self) -> int | None: ...
+
+    async def commit_in(self, unit: PgsqlUnitOfWork) -> object: ...
+
+    def settle_committed(self) -> None: ...
+
+
 PgsqlConnectionConfigurer = Callable[[PgsqlConnection], Awaitable[None]]
 PgsqlUnitOfWorkCallback = Callable[[PgsqlUnitOfWork], Awaitable[object]]
 
@@ -481,22 +504,29 @@ def _connection_setting_statements(
     if settings.statement_timeout_milliseconds is not None:
         statements.append(
             (
-                "SET statement_timeout TO %s",
-                (settings.statement_timeout_milliseconds,),
+                "SELECT set_config('statement_timeout', %s, false)",
+                (str(settings.statement_timeout_milliseconds),),
             )
         )
     if settings.lock_timeout_milliseconds is not None:
         statements.append(
             (
-                "SET lock_timeout TO %s",
-                (settings.lock_timeout_milliseconds,),
+                "SELECT set_config('lock_timeout', %s, false)",
+                (str(settings.lock_timeout_milliseconds),),
             )
         )
     if settings.idle_in_transaction_session_timeout_milliseconds is not None:
         statements.append(
             (
-                "SET idle_in_transaction_session_timeout TO %s",
-                (settings.idle_in_transaction_session_timeout_milliseconds,),
+                (
+                    "SELECT set_config("
+                    "'idle_in_transaction_session_timeout', %s, false)"
+                ),
+                (
+                    str(
+                        settings.idle_in_transaction_session_timeout_milliseconds
+                    ),
+                ),
             )
         )
     if settings.schema is not None:

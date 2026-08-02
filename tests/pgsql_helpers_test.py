@@ -657,11 +657,20 @@ class PsycopgAsyncDatabaseTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             connection.cursor_value.executed,
             [
-                ("SET statement_timeout TO %s", (1000,)),
-                ("SET lock_timeout TO %s", (250,)),
                 (
-                    "SET idle_in_transaction_session_timeout TO %s",
-                    (5000,),
+                    "SELECT set_config('statement_timeout', %s, false)",
+                    ("1000",),
+                ),
+                (
+                    "SELECT set_config('lock_timeout', %s, false)",
+                    ("250",),
+                ),
+                (
+                    (
+                        "SELECT set_config("
+                        "'idle_in_transaction_session_timeout', %s, false)"
+                    ),
+                    ("5000",),
                 ),
                 ('SET search_path TO "tenant_1"', None),
             ],

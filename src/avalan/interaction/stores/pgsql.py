@@ -1,6 +1,7 @@
 """Persist interactions and portable continuations in PostgreSQL."""
 
 from ...pgsql import (
+    PgsqlAtomicSuspensionParticipant,
     PgsqlDatabase,
     PgsqlOperationError,
     PgsqlRow,
@@ -54,6 +55,7 @@ from ..continuation import (
     ContinuationStoreRevision,
     DurableContinuationRecord,
     PortableContinuation,
+    PortableConversationCheckpointReference,
     decode_portable_continuation,
     encode_portable_continuation,
 )
@@ -188,7 +190,7 @@ from re import fullmatch
 from typing import Any, NoReturn, Protocol, TypeVar, cast, final
 from uuid import uuid4
 
-INTERACTION_PGSQL_HEAD_REVISION = "20260723_0002"
+INTERACTION_PGSQL_HEAD_REVISION = "20260801_0003"
 INTERACTION_PGSQL_INSTALL_COMMAND = (
     'python3 -m pip install -U "avalan[task-pgsql]"'
 )
@@ -3242,11 +3244,22 @@ class PgsqlInteractionStore:
         retention_deadline = continuation.expires_at + timedelta(
             days=self._store_policy.retention_days
         )
+        conversation_reference = continuation.conversation_checkpoint_reference
         await unit.cursor.execute(
             _INSERT_CONTINUATION_SQL,
             (
                 continuation.continuation_id,
                 checkpoint_id,
+                (
+                    conversation_reference.checkpoint_id
+                    if conversation_reference is not None
+                    else None
+                ),
+                (
+                    conversation_reference.execution_segment_id
+                    if conversation_reference is not None
+                    else None
+                ),
                 continuation.request_id,
                 task_run_id,
                 DurableContinuationLifecycle.PENDING.value,
@@ -3427,10 +3440,21 @@ class PgsqlInteractionStore:
             claim_owner = settled_claim_owner_id
         claim_expiry = continuation.claim.lease_expires_at
         dispatch = continuation.dispatch
+        conversation_reference = continuation.conversation_checkpoint_reference
         await unit.cursor.execute(
             _UPDATE_CONTINUATION_SQL,
             (
                 lifecycle.value,
+                (
+                    conversation_reference.checkpoint_id
+                    if conversation_reference is not None
+                    else None
+                ),
+                (
+                    conversation_reference.execution_segment_id
+                    if conversation_reference is not None
+                    else None
+                ),
                 continuation.state_revision,
                 continuation.store_revision,
                 claim_owner,
@@ -3821,10 +3845,39 @@ class PgsqlInteractionStore:
                 "encrypted continuation payload is invalid",
             )
         binding = _continuation_binding(payload)
-        return decode_portable_continuation(
+        checkpoint_id = _row_optional_str(
+            row,
+            "conversation_checkpoint_id",
+        )
+        segment_id = _row_optional_str(
+            row,
+            "conversation_execution_segment_id",
+        )
+        if (checkpoint_id is None) != (segment_id is None):
+            raise PgsqlInteractionStoreError(
+                InputErrorCode.SNAPSHOT_INVALID,
+                "continuation.conversation_checkpoint_reference",
+                "normalized conversation checkpoint reference is invalid",
+            )
+        reference = (
+            None
+            if checkpoint_id is None
+            else PortableConversationCheckpointReference(
+                checkpoint_id=checkpoint_id,
+                execution_segment_id=cast(str, segment_id),
+            )
+        )
+        continuation = decode_portable_continuation(
             text,
             expected_binding=binding,
         )
+        if continuation.conversation_checkpoint_reference != reference:
+            raise PgsqlInteractionStoreError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation.conversation_checkpoint_reference",
+                "normalized conversation checkpoint reference does not match",
+            )
+        return continuation
 
     def _durable_continuation_record(
         self,
@@ -3936,6 +3989,7 @@ class PgsqlDurableTaskCoordinator:
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> PgsqlDurableTaskSuspension:
@@ -3971,6 +4025,11 @@ class PgsqlDurableTaskCoordinator:
             )
         if checkpoint_id is not None:
             _assert_opaque(checkpoint_id, "checkpoint_id")
+        self._validate_conversation_unit(
+            continuation,
+            checkpoint_id=checkpoint_id,
+            conversation_unit=conversation_unit,
+        )
         observed_at = await self._observed_at(now)
         safe_metadata = freeze_snapshot_metadata(metadata)
         suspension: TaskQueueSuspension | None = None
@@ -3998,6 +4057,8 @@ class PgsqlDurableTaskCoordinator:
                     "interaction.create",
                     "durable task interaction could not be created",
                 )
+            if conversation_unit is not None:
+                await conversation_unit.commit_in(unit)
             await self._interaction_store._insert_continuation(
                 unit,
                 continuation,
@@ -4025,6 +4086,8 @@ class PgsqlDurableTaskCoordinator:
         )
         assert isinstance(result, CreateInteractionApplied)
         assert suspension is not None
+        if conversation_unit is not None:
+            conversation_unit.settle_committed()
         return PgsqlDurableTaskSuspension(
             interaction=result,
             suspension=suspension,
@@ -4037,6 +4100,7 @@ class PgsqlDurableTaskCoordinator:
         *,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
     ) -> CreateInteractionApplied:
         """Attach one additional branch to an already suspended task."""
         if not isinstance(command, CreateInteractionCommand):
@@ -4066,6 +4130,11 @@ class PgsqlDurableTaskCoordinator:
                 "task_run_id",
                 "task run does not match the interaction origin",
             )
+        self._validate_conversation_unit(
+            continuation,
+            checkpoint_id=checkpoint_id,
+            conversation_unit=conversation_unit,
+        )
 
         async def create(
             store: MemoryInteractionStore,
@@ -4089,6 +4158,8 @@ class PgsqlDurableTaskCoordinator:
                     "interaction.create",
                     "durable task interaction could not be created",
                 )
+            if conversation_unit is not None:
+                await conversation_unit.commit_in(unit)
             await self._task_store._validate_suspended_run_in_unit(
                 unit,
                 task_run_id=task_run_id,
@@ -4108,6 +4179,8 @@ class PgsqlDurableTaskCoordinator:
             selection=_create_snapshot(command),
         )
         assert isinstance(result, CreateInteractionApplied)
+        if conversation_unit is not None:
+            conversation_unit.settle_committed()
         return result
 
     async def complete_and_resuspend(
@@ -4121,6 +4194,7 @@ class PgsqlDurableTaskCoordinator:
         segment_id: str,
         task_run_id: str,
         checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
         now: datetime | None = None,
         metadata: Mapping[str, object] | None = None,
     ) -> PgsqlDurableTaskResuspension:
@@ -4161,6 +4235,11 @@ class PgsqlDurableTaskCoordinator:
             continuation=continuation,
             task_run_id=task_run_id,
         )
+        self._validate_conversation_unit(
+            continuation,
+            checkpoint_id=checkpoint_id,
+            conversation_unit=conversation_unit,
+        )
         observed_at = await self._observed_at(now)
         safe_metadata = freeze_snapshot_metadata(metadata)
         completed: PortableContinuation | None = None
@@ -4189,6 +4268,8 @@ class PgsqlDurableTaskCoordinator:
                     "interaction.create",
                     "successor task interaction could not be created",
                 )
+            if conversation_unit is not None:
+                await conversation_unit.commit_in(unit)
             completed = (
                 await self._interaction_store._complete_continuation_in_unit(
                     unit,
@@ -4236,6 +4317,8 @@ class PgsqlDurableTaskCoordinator:
         assert isinstance(result, CreateInteractionApplied)
         assert completed is not None
         assert suspension is not None
+        if conversation_unit is not None:
+            conversation_unit.settle_committed()
         return PgsqlDurableTaskResuspension(
             completed_continuation=completed,
             interaction=result,
@@ -5840,6 +5923,39 @@ class PgsqlDurableTaskCoordinator:
         return validate_aware_datetime(
             observation.wall_time, "clock.wall_time"
         )
+
+    def _validate_conversation_unit(
+        self,
+        continuation: PortableContinuation,
+        *,
+        checkpoint_id: str,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None,
+    ) -> None:
+        reference = continuation.conversation_checkpoint_reference
+        if reference is None and conversation_unit is None:
+            return
+        if reference is None or conversation_unit is None:
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation.conversation_checkpoint_reference",
+                "conversation suspension must commit in the shared unit",
+            )
+        if (
+            conversation_unit.database is not self._interaction_store._database
+            or conversation_unit.checkpoint_id != checkpoint_id
+            or conversation_unit.checkpoint_id != reference.checkpoint_id
+            or conversation_unit.execution_segment_id
+            != reference.execution_segment_id
+            or conversation_unit.continuation_id
+            != str(continuation.continuation_id)
+            or conversation_unit.continuation_state_revision
+            != int(continuation.state_revision)
+        ):
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "continuation.conversation_checkpoint_reference",
+                "conversation suspension transaction identity does not match",
+            )
 
     @staticmethod
     def _validate_continuation(
@@ -7758,14 +7874,15 @@ RETURNING "run_id"
 
 _INSERT_CONTINUATION_SQL = """
 INSERT INTO "interaction_continuations" (
-    "continuation_id", "checkpoint_id", "request_id", "task_run_id",
+    "continuation_id", "checkpoint_id", "conversation_checkpoint_id",
+    "conversation_execution_segment_id", "request_id", "task_run_id",
     "lifecycle_state",
     "state_revision", "store_revision", "fencing_token", "ciphertext",
     "encryption_key_id", "encryption_algorithm", "encryption_metadata",
     "expires_at", "retention_deadline_at", "created_at", "updated_at"
 ) VALUES (
-    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s, %s, %s,
-    %s
+    %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s,
+    %s, %s, %s
 )
 ON CONFLICT DO NOTHING
 RETURNING *
@@ -7861,6 +7978,8 @@ _UPDATE_CONTINUATION_SQL = """
 UPDATE "interaction_continuations"
 SET
     "lifecycle_state" = %s,
+    "conversation_checkpoint_id" = %s,
+    "conversation_execution_segment_id" = %s,
     "state_revision" = %s,
     "store_revision" = %s,
     "claim_owner_id" = %s,

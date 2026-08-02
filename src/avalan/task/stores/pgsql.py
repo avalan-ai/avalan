@@ -137,13 +137,17 @@ from typing import Any, Protocol, cast
 from uuid import uuid4
 
 TASK_PGSQL_ALEMBIC_VERSION_TABLE = "avalan_task_alembic_version"
-TASK_PGSQL_HEAD_REVISION = "20260723_0002"
+TASK_PGSQL_HEAD_REVISION = "20260801_0003"
 TASK_PGSQL_ADVISORY_LOCK_ID = 8_172_673_911_930_301_927
 _TASK_PGSQL_REVISION_MODULES = (
     "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema",
     (
         "avalan.task.stores.pgsql_migrations.versions."
         "v20260723_0002_durable_interactions"
+    ),
+    (
+        "avalan.task.stores.pgsql_migrations.versions."
+        "v20260801_0003_conversation_checkpoints"
     ),
 )
 _TASK_PGSQL_ALEMBIC_LOCK = Lock()

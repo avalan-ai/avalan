@@ -84,6 +84,7 @@ from avalan.interaction import (
     ModelId,
     ParticipantId,
     PortableContinuation,
+    PortableConversationCheckpointReference,
     PresentInteractionCommand,
     PrincipalScope,
     ProviderConfigRevision,
@@ -122,7 +123,9 @@ from avalan.interaction import (
     UserId,
     WaitForDeadlineChangeCommand,
     WaitForInteractionChangeCommand,
+    bind_portable_continuation_to_conversation,
     create_input_request,
+    encode_portable_continuation,
 )
 from avalan.interaction.a2a import A2AInputRequestMetadata
 from avalan.interaction.a2a_continuation import (
@@ -567,6 +570,54 @@ class _Resumer(InputResumer):
         notification: InputResumptionNotification,
     ) -> None:
         self.notifications.append(notification)
+
+
+class _ConversationParticipant:
+    """Record conversation work joined to an interaction transaction."""
+
+    def __init__(
+        self,
+        database: PgsqlDatabase,
+        *,
+        checkpoint_id: str,
+        execution_segment_id: str,
+        continuation_id: str | None,
+        continuation_state_revision: int | None,
+    ) -> None:
+        self._database = database
+        self._checkpoint_id = checkpoint_id
+        self._execution_segment_id = execution_segment_id
+        self._continuation_id = continuation_id
+        self._continuation_state_revision = continuation_state_revision
+        self.committed_units: list[PgsqlUnitOfWork] = []
+        self.settle_calls = 0
+
+    @property
+    def database(self) -> PgsqlDatabase:
+        return self._database
+
+    @property
+    def checkpoint_id(self) -> str:
+        return self._checkpoint_id
+
+    @property
+    def execution_segment_id(self) -> str:
+        return self._execution_segment_id
+
+    @property
+    def continuation_id(self) -> str | None:
+        return self._continuation_id
+
+    @property
+    def continuation_state_revision(self) -> int | None:
+        return self._continuation_state_revision
+
+    async def commit_in(self, unit: PgsqlUnitOfWork) -> object:
+        self.committed_units.append(unit)
+        return unit
+
+    def settle_committed(self) -> None:
+        self.settle_calls += 1
 
 
 def _origin(run_id: str = "run") -> ExecutionOrigin:
@@ -9173,6 +9224,219 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 branch,
             )
 
+    async def test_conversation_participant_joins_successor_transactions(
+        self,
+    ) -> None:
+        pending_database = FakePgsqlDatabase()
+        pending_store = await _store(pending_database)
+        pending_task_store = PgsqlTaskStore(
+            pending_database,
+            clock=lambda: _NOW,
+        )
+        await _create_suspended_task(
+            pending_database,
+            pending_store,
+            pending_task_store,
+            run_id="pending-conversation",
+            suffix="pending-conversation-base",
+        )
+        pending_request = _request("pending-conversation-successor")
+        pending_request = replace(
+            pending_request,
+            origin=replace(
+                pending_request.origin,
+                run_id=RunId("pending-conversation"),
+                branch_id=BranchId("pending-conversation-successor-root"),
+            ),
+        )
+        pending_checkpoint_id = "checkpoint-pending-conversation"
+        pending_segment_id = "conversation-segment-pending"
+        pending_continuation = bind_portable_continuation_to_conversation(
+            _portable(pending_request),
+            PortableConversationCheckpointReference(
+                checkpoint_id=pending_checkpoint_id,
+                execution_segment_id=pending_segment_id,
+            ),
+        )
+        pending_participant = _ConversationParticipant(
+            pending_database,
+            checkpoint_id=pending_checkpoint_id,
+            execution_segment_id=pending_segment_id,
+            continuation_id=str(pending_continuation.continuation_id),
+            continuation_state_revision=int(
+                pending_continuation.state_revision
+            ),
+        )
+        pending_result = await PgsqlDurableTaskCoordinator(
+            pending_store,
+            pending_task_store,
+        ).create_pending_interaction(
+            _create_command(pending_request),
+            pending_continuation,
+            task_run_id="pending-conversation",
+            checkpoint_id=pending_checkpoint_id,
+            conversation_unit=pending_participant,
+        )
+        self.assertIsInstance(pending_result, CreateInteractionApplied)
+        self.assertEqual(len(pending_participant.committed_units), 1)
+        self.assertEqual(pending_participant.settle_calls, 1)
+
+        resuspend_database = FakePgsqlDatabase()
+        (
+            resuspend_store,
+            resuspend_task_store,
+            dispatched,
+        ) = await _prepare_resumed_dispatch(resuspend_database)
+        successor_request, successor = _successor_interaction(
+            dispatched,
+            suffix="conversation-resuspension",
+        )
+        successor_checkpoint_id = "checkpoint-conversation-resuspension"
+        successor_segment_id = "conversation-segment-resuspension"
+        successor = bind_portable_continuation_to_conversation(
+            successor,
+            PortableConversationCheckpointReference(
+                checkpoint_id=successor_checkpoint_id,
+                execution_segment_id=successor_segment_id,
+            ),
+        )
+        successor_participant = _ConversationParticipant(
+            resuspend_database,
+            checkpoint_id=successor_checkpoint_id,
+            execution_segment_id=successor_segment_id,
+            continuation_id=str(successor.continuation_id),
+            continuation_state_revision=int(successor.state_revision),
+        )
+        resuspended = await PgsqlDurableTaskCoordinator(
+            resuspend_store,
+            resuspend_task_store,
+        ).complete_and_resuspend(
+            ContinuationCompletionCommand(
+                continuation_id=dispatched.continuation_id,
+                expected_store_revision=dispatched.store_revision,
+                owner_id=ContinuationClaimOwnerId("resumed-worker"),
+                fencing_token=dispatched.fencing_token,
+                result_digest="e" * 64,
+            ),
+            _create_command(successor_request),
+            successor,
+            queue_item_id="queue-item",
+            claim_token="resumed-claim-token",
+            segment_id="segment-next",
+            task_run_id="run",
+            checkpoint_id=successor_checkpoint_id,
+            conversation_unit=successor_participant,
+            now=_NOW + timedelta(seconds=5),
+        )
+        self.assertIsInstance(
+            resuspended.interaction,
+            CreateInteractionApplied,
+        )
+        self.assertEqual(len(successor_participant.committed_units), 1)
+        self.assertEqual(successor_participant.settle_calls, 1)
+
+    async def test_conversation_participant_identity_fails_closed(
+        self,
+    ) -> None:
+        database = FakePgsqlDatabase()
+        store = await _store(database)
+        task_store = PgsqlTaskStore(database, clock=lambda: _NOW)
+        coordinator = PgsqlDurableTaskCoordinator(store, task_store)
+        continuation = _portable(_request())
+        checkpoint_id = "conversation-checkpoint"
+        segment_id = "conversation-segment"
+        reference = PortableConversationCheckpointReference(
+            checkpoint_id=checkpoint_id,
+            execution_segment_id=segment_id,
+        )
+        bound = bind_portable_continuation_to_conversation(
+            continuation,
+            reference,
+        )
+
+        def participant(
+            *,
+            candidate_database: PgsqlDatabase = database,
+            candidate_checkpoint_id: str = checkpoint_id,
+            candidate_segment_id: str = segment_id,
+            candidate_continuation_id: str | None = str(bound.continuation_id),
+            candidate_state_revision: int | None = int(bound.state_revision),
+        ) -> _ConversationParticipant:
+            return _ConversationParticipant(
+                candidate_database,
+                checkpoint_id=candidate_checkpoint_id,
+                execution_segment_id=candidate_segment_id,
+                continuation_id=candidate_continuation_id,
+                continuation_state_revision=candidate_state_revision,
+            )
+
+        for candidate, candidate_participant in (
+            (bound, None),
+            (continuation, participant()),
+        ):
+            with self.subTest(pairing=(candidate, candidate_participant)):
+                with self.assertRaises(InputValidationError) as raised:
+                    coordinator._validate_conversation_unit(
+                        candidate,
+                        checkpoint_id=checkpoint_id,
+                        conversation_unit=candidate_participant,
+                    )
+                self.assertEqual(
+                    raised.exception.code,
+                    InputErrorCode.CORRELATION_MISMATCH,
+                )
+
+        mismatch_cases = (
+            (
+                "database",
+                participant(candidate_database=FakePgsqlDatabase()),
+                checkpoint_id,
+            ),
+            ("checkpoint_argument", participant(), "other-checkpoint"),
+            (
+                "checkpoint_reference",
+                participant(candidate_checkpoint_id="other-checkpoint"),
+                "other-checkpoint",
+            ),
+            (
+                "execution_segment",
+                participant(candidate_segment_id="other-segment"),
+                checkpoint_id,
+            ),
+            (
+                "continuation",
+                participant(candidate_continuation_id="other-continuation"),
+                checkpoint_id,
+            ),
+            (
+                "state_revision",
+                participant(candidate_state_revision=1),
+                checkpoint_id,
+            ),
+        )
+        for (
+            dimension,
+            candidate_participant,
+            candidate_checkpoint_id,
+        ) in mismatch_cases:
+            with self.subTest(dimension=dimension):
+                with self.assertRaises(InputValidationError) as raised:
+                    coordinator._validate_conversation_unit(
+                        bound,
+                        checkpoint_id=candidate_checkpoint_id,
+                        conversation_unit=candidate_participant,
+                    )
+                self.assertEqual(
+                    raised.exception.path,
+                    "continuation.conversation_checkpoint_reference",
+                )
+
+        coordinator._validate_conversation_unit(
+            bound,
+            checkpoint_id=checkpoint_id,
+            conversation_unit=participant(),
+        )
+
     async def test_pgsql_coordinator_rejects_invalid_public_contracts(
         self,
     ) -> None:
@@ -10193,6 +10457,48 @@ class PgsqlInteractionStoreTest(IsolatedAsyncioTestCase):
                 encrypted_row,
                 kind="record",
                 identifier="request",
+            )
+
+        operation_clock = SimpleNamespace(
+            read=AsyncMock(side_effect=RuntimeError("clock failure"))
+        )
+        with self.assertRaises(interaction_pgsql._InteractionCallbackError):
+            await store._load_records(
+                _unit(rows=({},)),
+                clock=cast(Any, operation_clock),
+            )
+
+        continuation = _portable(_request("normalized-continuation"))
+        encoded = encode_portable_continuation(continuation).encode()
+        with patch.object(
+            PgsqlInteractionStore,
+            "_decrypt",
+            return_value=encoded,
+        ):
+            with self.assertRaises(PgsqlInteractionStoreError) as malformed:
+                store._continuation_from_row(
+                    {
+                        "continuation_id": continuation.continuation_id,
+                        "conversation_checkpoint_id": "checkpoint",
+                        "conversation_execution_segment_id": None,
+                    }
+                )
+            self.assertIs(
+                malformed.exception.code,
+                InputErrorCode.SNAPSHOT_INVALID,
+            )
+
+            with self.assertRaises(PgsqlInteractionStoreError) as drifted:
+                store._continuation_from_row(
+                    {
+                        "continuation_id": continuation.continuation_id,
+                        "conversation_checkpoint_id": "checkpoint",
+                        "conversation_execution_segment_id": "segment",
+                    }
+                )
+            self.assertIs(
+                drifted.exception.code,
+                InputErrorCode.CORRELATION_MISMATCH,
             )
 
     async def test_pgsql_admission_delivery_contains_failures_and_cancellation(

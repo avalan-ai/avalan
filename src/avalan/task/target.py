@@ -1,4 +1,5 @@
 from ..interaction import DurableInteractionSuspension, InputRequiredResult
+from ..pgsql import PgsqlAtomicSuspensionParticipant
 from .artifact import ArtifactStore
 from .context import TaskDurableResumeHandle, TaskTargetContext
 from .converters import FileConverter
@@ -44,6 +45,7 @@ class TaskTargetSuspended:
     input_required: InputRequiredResult
     checkpoint_id: str | None = None
     durable: DurableInteractionSuspension | None = None
+    conversation_unit: PgsqlAtomicSuspensionParticipant | None = None
     kind: Literal[TaskTargetOutcomeKind.SUSPENDED] = field(
         init=False,
         default=TaskTargetOutcomeKind.SUSPENDED,
@@ -69,6 +71,14 @@ class TaskTargetSuspended:
                 == self.input_required.continuation_id
             )
             assert self.input_required.detached_resumption_available
+        reference = (
+            self.durable.continuation.conversation_checkpoint_reference
+            if self.durable is not None
+            else None
+        )
+        assert (reference is not None) == (self.conversation_unit is not None)
+        if self.conversation_unit is not None:
+            assert self.checkpoint_id == self.conversation_unit.checkpoint_id
 
 
 TaskTargetOutcome: TypeAlias = TaskTargetCompleted | TaskTargetSuspended
@@ -83,11 +93,13 @@ def suspended_task_target_outcome(
     *,
     checkpoint_id: str | None = None,
     durable: DurableInteractionSuspension | None = None,
+    conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
 ) -> TaskTargetSuspended:
     return TaskTargetSuspended(
         input_required=input_required,
         checkpoint_id=checkpoint_id,
         durable=durable,
+        conversation_unit=conversation_unit,
     )
 
 

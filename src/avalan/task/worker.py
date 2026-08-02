@@ -2256,6 +2256,7 @@ class TaskWorker:
     ) -> TaskQueueSuspension:
         required = outcome.input_required
         durable = outcome.durable
+        conversation_unit = getattr(outcome, "conversation_unit", None)
         coordinator = self._durable_suspension_coordinator
         if durable is not None:
             checkpoint_id = outcome.checkpoint_id
@@ -2282,6 +2283,7 @@ class TaskWorker:
                     segment_id=segment.segment_id,
                     task_run_id=claim.run.run_id,
                     checkpoint_id=checkpoint_id,
+                    conversation_unit=conversation_unit,
                     now=self._now(),
                     metadata=metadata,
                 )
@@ -2300,6 +2302,7 @@ class TaskWorker:
                     segment_id=segment.segment_id,
                     task_run_id=claim.run.run_id,
                     checkpoint_id=checkpoint_id,
+                    conversation_unit=conversation_unit,
                     now=self._now(),
                     metadata=metadata,
                 )

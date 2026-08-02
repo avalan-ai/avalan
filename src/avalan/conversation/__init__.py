@@ -129,6 +129,45 @@ from .coordinator import (
     build_checkpoint_candidate as build_checkpoint_candidate,
 )
 from .coordinator import reduce_failure as reduce_failure
+from .crypto import CONVERSATION_AEAD_ALGORITHM as CONVERSATION_AEAD_ALGORITHM
+from .crypto import (
+    CONVERSATION_PAYLOAD_SCHEMA_VERSION as CONVERSATION_PAYLOAD_SCHEMA_VERSION,
+)
+from .crypto import AesGcmConversationCipher as AesGcmConversationCipher
+from .crypto import ConversationCipher as ConversationCipher
+from .crypto import ConversationCryptoBoundary as ConversationCryptoBoundary
+from .crypto import (
+    ConversationCryptoBoundaryHook as ConversationCryptoBoundaryHook,
+)
+from .crypto import ConversationDataKey as ConversationDataKey
+from .crypto import ConversationKeyResolver as ConversationKeyResolver
+from .crypto import ConversationKeyStatus as ConversationKeyStatus
+from .crypto import (
+    ConversationPayloadAssociatedData as ConversationPayloadAssociatedData,
+)  # noqa: E501
+from .crypto import ConversationPayloadKind as ConversationPayloadKind
+from .crypto import (
+    EncryptedConversationPayload as EncryptedConversationPayload,
+)
+from .crypto import (
+    InMemoryConversationKeyResolver as InMemoryConversationKeyResolver,
+)
+from .durable_codec import (
+    DURABLE_PAYLOAD_CODEC_VERSION as DURABLE_PAYLOAD_CODEC_VERSION,
+)
+from .durable_codec import DurableConversationCodec as DurableConversationCodec
+from .durable_codec import (
+    DurableConversationCodecLimits as DurableConversationCodecLimits,
+)
+from .durable_codec import (
+    continuation_definition_digest as continuation_definition_digest,
+)
+from .durable_codec import (
+    continuation_revision_binding_digest as _binding_digest,
+)
+from .durable_codec import (
+    execution_reservation_digest as execution_reservation_digest,
+)
 from .errors import (
     ConversationAmbiguousDispatchError as ConversationAmbiguousDispatchError,
 )
@@ -142,18 +181,31 @@ from .errors import ConversationCapabilityError as ConversationCapabilityError
 from .errors import ConversationCodecError as ConversationCodecError
 from .errors import ConversationCommitError as ConversationCommitError
 from .errors import ConversationConflictError as ConversationConflictError
+from .errors import ConversationCryptoAuthenticationError as _CryptoAuthError
 from .errors import ConversationDeletedError as ConversationDeletedError
 from .errors import ConversationError as ConversationError
 from .errors import ConversationErrorCode as ConversationErrorCode
 from .errors import ConversationExpiredError as ConversationExpiredError
+from .errors import (
+    ConversationFeatureUnavailableError as ConversationFeatureUnavailableError,
+)
 from .errors import ConversationIntegrityError as ConversationIntegrityError
+from .errors import ConversationKeyMissingError as ConversationKeyMissingError
+from .errors import ConversationKeyPolicyError as ConversationKeyPolicyError
+from .errors import ConversationKeyRetiredError as ConversationKeyRetiredError
 from .errors import ConversationLimitError as ConversationLimitError
+from .errors import (
+    ConversationMigrationRequiredError as ConversationMigrationRequiredError,
+)
 from .errors import (
     ConversationPublicationError as ConversationPublicationError,
 )
 from .errors import ConversationStorageError as ConversationStorageError
 from .errors import ConversationTransitionError as ConversationTransitionError
 from .errors import ConversationValidationError as ConversationValidationError
+from .errors import (
+    DurableConversationErrorCode as DurableConversationErrorCode,
+)
 from .execution import (
     ConversationExecutionReservation as ConversationExecutionReservation,
 )
@@ -388,6 +440,29 @@ from .store import (
 )
 from .store import StoreAwaitBoundary as StoreAwaitBoundary
 from .store import StoreDiagnostics as StoreDiagnostics
+from .stores import (
+    CONVERSATION_PGSQL_HEAD_REVISION as CONVERSATION_PGSQL_HEAD_REVISION,
+)
+from .stores import GarbageCollectionReceipt as GarbageCollectionReceipt
+from .stores import KeyRotationReceipt as KeyRotationReceipt
+from .stores import (
+    PgsqlConversationFaultBoundary as PgsqlConversationFaultBoundary,
+)
+from .stores import PgsqlConversationFaultHook as PgsqlConversationFaultHook
+from .stores import PgsqlConversationFaultPoint as PgsqlConversationFaultPoint
+from .stores import PgsqlConversationReadiness as PgsqlConversationReadiness
+from .stores import PgsqlConversationStore as PgsqlConversationStore
+from .stores import (
+    PgsqlConversationStorePolicy as PgsqlConversationStorePolicy,
+)
+from .stores import (
+    PgsqlConversationStoreSettings as PgsqlConversationStoreSettings,
+)
+from .stores import (
+    PgsqlConversationUnitOfWork as PgsqlConversationUnitOfWork,
+)
+from .stores import ReconciliationWorkRecord as ReconciliationWorkRecord
+from .stores import ReconciliationWorkState as ReconciliationWorkState
 from .value import AuthorityDigest as AuthorityDigest
 from .value import CallerHeldState as CallerHeldState
 from .value import CapabilityProfileId as CapabilityProfileId
@@ -417,3 +492,5 @@ from .value import validate_revision as validate_revision
 StandaloneCompactCheckpointCandidate = (
     _state.StandaloneCompactCheckpointCandidate
 )
+ConversationCryptoAuthenticationError = _CryptoAuthError
+continuation_revision_binding_digest = _binding_digest

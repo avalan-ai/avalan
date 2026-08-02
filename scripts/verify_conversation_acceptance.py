@@ -13,6 +13,7 @@ from sys import stderr
 from tempfile import TemporaryDirectory
 
 from contract_gate import (
+    POSTGRESQL_TEST_DSN_ENV,
     ContractGateError,
     StrictJsonError,
     canonical_sha256,
@@ -219,16 +220,32 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "c84b03d197a486df3ee79ab396c69de4cbc5037786e25054debdea71f81a3519"
         ),
     },
+    3: {
+        "tests/conversation/pgsql_restart_e2e_test.py": (
+            "9321dc34c4a5148233ef31a68c4d2b2672fbb892c8cab7b9a9c4c14889813d43"
+        ),
+        "tests/conversation/pgsql_conformance_test.py": (
+            "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5"
+        ),
+        "tests/conversation/pgsql_store_test.py": (
+            "b585ff0ad94903b254b674112adadd55f7e2c9b42c69e312508288c7c88b6edb"
+        ),
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py": (
+            "d31c5f667fff1a4a54ed51cc0e16c8953b7c4e7126128ee1098ce5958354ee74"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
     1: "9a85447f5de838051a3801b66eccd865ecc62b6e72ecfd9d3084603468ff8663",
     2: "8014ee73f5334290be612a567836f02aace953764a14add8d02b1407b487d441",
+    3: "a0f3d780942570e794f1134e2da69754f6c8eabbd419285481653839104126ef",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
     1: "cc98a83a046019ac7bb1f2c16469cc3a67fa6408885e87ff1fb6b265c6aa6161",
     2: "8a6da13a0627cd0a167649dc9708e3585a717f6cb71db3c17a1c686686c295ca",
+    3: "3b1d94a50ca44b715a02b989646bef9daea8d471d649491465a1431cf277194f",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -243,16 +260,32 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         2,
         "e0208c0580ae9f450254951d1bac8e761b28502d98d89586ec6d616138fb73e1",
     ),
+    3: (
+        3,
+        "924ca90b4812ca9dcbf9776a6c9d845d2ddceb2b8081d15c9eaa345b94bb6453",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
     0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
     1: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
     2: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
+    3: (
+        12,
+        10,
+        120,
+        "46ddccdebdcba3000c50045da3c52919643b6935597a8fe5af05722fc6f2701f",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
     1: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
     2: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
+    3: (
+        9,
+        8,
+        14,
+        "c973ba36785f5f28d51ed744a6184b1f40ec61e6f99eb2e0677bc6594fee5b88",
+    ),
 }
 _PHASE0_NODE_INVENTORY = (
     (
@@ -504,7 +537,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase2.json"
+    return fixture_root() / "acceptance_manifest.phase3.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1015,6 +1048,7 @@ def verify_acceptance(
                     expected_evidence={
                         node.node_id: node.evidence_class for node in nodes
                     },
+                    inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
                 )
             except ContractGateError as exc:
                 raise ConversationAcceptanceError(str(exc)) from exc

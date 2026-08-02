@@ -94,6 +94,9 @@ from .continuation import (
     PORTABLE_CONTINUATION_MAX_UTF8_BYTES as PORTABLE_CONTINUATION_MAX_UTF8_BYTES,  # noqa: E501
 )
 from .continuation import (
+    PORTABLE_CONTINUATION_PREVIOUS_VERSION as PORTABLE_CONTINUATION_PREVIOUS_VERSION,  # noqa: E501
+)
+from .continuation import (
     PORTABLE_CONTINUATION_VERSION as PORTABLE_CONTINUATION_VERSION,
 )
 from .continuation import (
@@ -136,6 +139,9 @@ from .continuation import (
     PortableContinuation as PortableContinuation,
 )
 from .continuation import (
+    PortableConversationCheckpointReference as PortableConversationCheckpointReference,  # noqa: E501
+)
+from .continuation import (
     ProviderContinuationSnapshot as ProviderContinuationSnapshot,
 )
 from .continuation import (
@@ -146,6 +152,9 @@ from .continuation import (
 )
 from .continuation import (
     TrustedContinuationRuntimeLoader as TrustedContinuationRuntimeLoader,
+)
+from .continuation import (
+    bind_portable_continuation_to_conversation as bind_portable_continuation_to_conversation,  # noqa: E501
 )
 from .continuation import (
     decode_portable_continuation as decode_portable_continuation,
