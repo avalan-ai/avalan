@@ -9,7 +9,90 @@ from .agent.execution import (
     InteractionRuntime,
 )
 from .agent.orchestrator_contract import Orchestrator
+from .conversation.sdk import (
+    ActiveConversationSettings as ActiveConversationSettings,
+)
+from .conversation.sdk import (
+    ConversationHandleUnavailableError as ConversationHandleUnavailableError,
+)
+from .conversation.sdk import (
+    DirectConversationCancelledError as DirectConversationCancelledError,
+)
+from .conversation.sdk import (
+    DirectConversationClient as DirectConversationClient,
+)
+from .conversation.sdk import (
+    DirectConversationOutputDelta as DirectConversationOutputDelta,
+)
+from .conversation.sdk import (
+    DirectConversationResult as DirectConversationResult,
+)
+from .conversation.sdk import (
+    DirectConversationRuntime as DirectConversationRuntime,
+)
+from .conversation.sdk import (
+    DirectConversationStream as DirectConversationStream,
+)
+from .conversation.sdk import (
+    DirectConversationStreamError as DirectConversationStreamError,
+)
+from .conversation.sdk import (
+    DirectConversationStreamItem as DirectConversationStreamItem,
+)
+from .conversation.sdk import (
+    DirectConversationStreamState as DirectConversationStreamState,
+)
+from .conversation.sdk import (
+    DirectConversationStreamTerminal as DirectConversationStreamTerminal,
+)
+from .conversation.settings import CompactionPolicy as CompactionPolicy
+from .conversation.settings import (
+    ConversationBranchIntent as ConversationBranchIntent,
+)
+from .conversation.settings import ConversationHandle as ConversationHandle
+from .conversation.settings import ConversationMode as ConversationMode
+from .conversation.settings import ConversationParent as ConversationParent
+from .conversation.settings import (
+    ConversationResetIntent as ConversationResetIntent,
+)
+from .conversation.settings import ConversationSettings as ConversationSettings
+from .conversation.settings import DisabledCompaction as DisabledCompaction
+from .conversation.settings import (
+    EffectiveReasoningContext as EffectiveReasoningContext,
+)
+from .conversation.settings import (
+    EffectiveReasoningMetadata as EffectiveReasoningMetadata,
+)
+from .conversation.settings import InlineCompaction as InlineCompaction
+from .conversation.settings import NamedHeadParent as NamedHeadParent
+from .conversation.settings import (
+    OneShotConversationSettings as OneShotConversationSettings,
+)
+from .conversation.settings import ProviderUsage as ProviderUsage
+from .conversation.settings import ReasoningContext as ReasoningContext
+from .conversation.settings import (
+    StandaloneCompactRequest as StandaloneCompactRequest,
+)
+from .conversation.settings import (
+    StandaloneCompactResult as StandaloneCompactResult,
+)
+from .conversation.settings import (
+    StatelessConversationHandle as StatelessConversationHandle,
+)
+from .conversation.settings import (
+    StatelessConversationSettings as StatelessConversationSettings,
+)
+from .conversation.settings import StatelessParent as StatelessParent
+from .conversation.settings import (
+    StoredConversationHandle as StoredConversationHandle,
+)
+from .conversation.settings import (
+    StoredConversationSettings as StoredConversationSettings,
+)
+from .conversation.settings import StoredParent as StoredParent
+from .entities import GenerationSettings as GenerationSettings
 from .entities import Input, ReasoningOrchestratorResponse
+from .entities import ReasoningSettings as ReasoningSettings
 from .interaction.broker import AsyncInteractionBroker, InteractionBroker
 from .interaction.codec import encode_input_request
 from .interaction.continuation import encode_portable_continuation

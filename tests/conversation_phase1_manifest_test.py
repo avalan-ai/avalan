@@ -49,8 +49,8 @@ def _payload(name: str) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
 
 
-def test_phase3_defaults_select_the_complete_snapshot_family() -> None:
-    """Select Phase 3 acceptance, type, failure, and threat snapshots."""
+def test_phase4_defaults_select_the_complete_snapshot_family() -> None:
+    """Select Phase 4 acceptance, type, failure, and threat snapshots."""
     type_verifier = _load(
         "_phase1_type_verifier",
         "scripts/verify_conversation_types.py",
@@ -65,38 +65,38 @@ def test_phase3_defaults_select_the_complete_snapshot_family() -> None:
     )
 
     acceptance_path = acceptance.default_manifest_path()
-    assert acceptance_path.name == "acceptance_manifest.phase3.json"
+    assert acceptance_path.name == "acceptance_manifest.phase4.json"
     assert (
         type_verifier.default_manifest_path().name
-        == "type_contract_manifest.phase3.json"
+        == "type_contract_manifest.phase4.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "failure_matrix"
         ).name
-        == "failure_matrix.phase3.json"
+        == "failure_matrix.phase4.json"
     )
     assert (
         acceptance.companion_fixture_path(acceptance_path, "threat_model").name
-        == "threat_model.phase3.json"
+        == "threat_model.phase4.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "type_contract_manifest"
         ).name
-        == "type_contract_manifest.phase3.json"
+        == "type_contract_manifest.phase4.json"
     )
-    assert acceptance.load_manifest(acceptance_path).current_phase == 3
+    assert acceptance.load_manifest(acceptance_path).current_phase == 4
     assert (
         type_verifier.load_manifest(
             type_verifier.default_manifest_path()
         ).current_phase
-        == 3
+        == 4
     )
-    assert runner._CONVERSATION_CURRENT_PHASE == 3
-    runner._validate_through_phase(_ROOT, 3)
+    assert runner._CONVERSATION_CURRENT_PHASE == 4
+    runner._validate_through_phase(_ROOT, 4)
     with pytest.raises(runner.ContractGateError):
-        runner._validate_through_phase(_ROOT, 4)
+        runner._validate_through_phase(_ROOT, 5)
 
 
 def test_phase1_acceptance_validates_selected_companions() -> None:
@@ -192,6 +192,100 @@ def test_phase3_snapshots_append_to_phase2_without_rewriting_history() -> None:
         assert isinstance(previous, list) and isinstance(current, list)
         assert current[: len(previous)] == previous
         assert len(current) == len(previous) + appended
+
+
+def test_phase4_snapshots_append_to_phase3_without_rewriting_history() -> None:
+    """Preserve Phase 3 bytes while activating direct SDK evidence."""
+    acceptance3 = _payload("acceptance_manifest.phase3.json")
+    acceptance4 = _payload("acceptance_manifest.phase4.json")
+    history3 = acceptance3["activation_history"]
+    history4 = acceptance4["activation_history"]
+    nodes3 = acceptance3["nodes"]
+    nodes4 = acceptance4["nodes"]
+    assert isinstance(history3, list) and isinstance(history4, list)
+    assert isinstance(nodes3, list) and isinstance(nodes4, list)
+    assert history4[: len(history3)] == history3
+    assert len(history4) == len(history3) + 1
+    assert len(nodes4) == len(nodes3) + 6
+    for previous, current in zip(
+        nodes3,
+        nodes4[: len(nodes3)],
+        strict=True,
+    ):
+        assert isinstance(previous, dict) and isinstance(current, dict)
+        if previous.get("id") == "phase4-public-sdk":
+            assert previous.get("lifecycle") == "planned"
+            assert current == {**previous, "lifecycle": "replaced"}
+        else:
+            assert current == previous
+    appended_nodes = nodes4[len(nodes3) :]
+    assert all(
+        isinstance(node, dict) and node.get("active_from_phase") == 4
+        for node in appended_nodes
+    )
+    assert isinstance(appended_nodes[0], dict)
+    assert (
+        appended_nodes[0]["node_id"]
+        == "tests/conversation/direct_sdk_test.py::"
+        "test_stream_create_continue_branch_and_compact"
+    )
+    assert appended_nodes[0]["lifecycle"] == "replaced"
+    assert all(
+        isinstance(node, dict) and node.get("lifecycle") == "active"
+        for node in appended_nodes[1:]
+    )
+    replacements3 = acceptance3["replacements"]
+    replacements4 = acceptance4["replacements"]
+    assert isinstance(replacements3, list)
+    assert isinstance(replacements4, list)
+    assert replacements4[: len(replacements3)] == replacements3
+    assert len(replacements4) == len(replacements3) + 2
+
+    types3 = _payload("type_contract_manifest.phase3.json")
+    types4 = _payload("type_contract_manifest.phase4.json")
+    fixtures3 = types3["fixtures"]
+    fixtures4 = types4["fixtures"]
+    type_history3 = types3["activation_history"]
+    type_history4 = types4["activation_history"]
+    assert isinstance(fixtures3, list) and isinstance(fixtures4, list)
+    assert isinstance(type_history3, list) and isinstance(type_history4, list)
+    assert fixtures4[: len(fixtures3)] == fixtures3
+    assert len(fixtures4) == len(fixtures3) + 2
+    assert type_history4[: len(type_history3)] == type_history3
+
+    failure3 = _payload("failure_matrix.phase3.json")
+    failure4 = _payload("failure_matrix.phase4.json")
+    assert failure4["boundaries"] == failure3["boundaries"]
+    assert failure4["surfaces"] == failure3["surfaces"]
+    cells3 = failure3["cells"]
+    cells4 = failure4["cells"]
+    assert isinstance(cells3, list) and isinstance(cells4, list)
+    assert len(cells4) == len(cells3)
+    for previous, current in zip(cells3, cells4, strict=True):
+        assert isinstance(previous, dict) and isinstance(current, dict)
+        if previous.get("id") == "durable_transaction_failure--direct_sdk":
+            assert previous.get("lifecycle") == "planned"
+            assert current == {
+                **previous,
+                "lifecycle": "active",
+                "evidence_node_id": (
+                    "tests/conversation/direct_sdk_pgsql_test.py::"
+                    "test_public_pgsql_commit_failure_and_post_commit_recovery"
+                ),
+            }
+        else:
+            assert current == previous
+
+    threats3 = _payload("threat_model.phase3.json")
+    threats4 = _payload("threat_model.phase4.json")
+    assert threats4["assets"] == threats3["assets"]
+    assert threats4["trust_boundaries"] == threats3["trust_boundaries"]
+    threats3_items = threats3["threats"]
+    threats4_items = threats4["threats"]
+    assert isinstance(threats3_items, list)
+    assert isinstance(threats4_items, list)
+    assert threats4_items[: len(threats3_items)] == threats3_items
+    assert len(threats4_items) == len(threats3_items) + 1
 
 
 def test_phase0_manifests_remain_byte_pinned_and_history_is_retained() -> None:

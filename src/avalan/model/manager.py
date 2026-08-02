@@ -339,6 +339,7 @@ class ModelManager:
             model_task.model,
             model_task.operation,
             capability,
+            model_task.context,
         )
 
         end = perf_counter()

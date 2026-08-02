@@ -8,6 +8,7 @@ from ...entities import (
     OperationVisionParameters,
     TransformerEngineSettings,
 )
+from ..call import ModelCallContext
 from ..capability import ModelCapabilityCatalog
 from ..vision.classification import ImageClassificationModel
 from ..vision.decoder import VisionEncoderDecoderModel
@@ -72,6 +73,7 @@ class VisionEncoderDecoderModality:
         model: VisionEncoderDecoderModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -134,6 +136,7 @@ class VisionImageClassificationModality:
         model: ImageClassificationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -188,6 +191,7 @@ class VisionImageToTextModality:
         model: ImageToTextModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -258,6 +262,7 @@ class VisionImageTextToTextModality:
         model: ImageTextToTextModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -334,6 +339,7 @@ class VisionObjectDetectionModality:
         model: ObjectDetectionModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]
@@ -395,6 +401,7 @@ class VisionTextToImageModality:
         model: TextToImageModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -464,6 +471,7 @@ class VisionTextToAnimationModality:
         model: TextToAnimationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -543,6 +551,7 @@ class VisionTextToVideoModality:
         model: TextToVideoModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert operation.input
         assert operation.parameters["vision"]
@@ -621,6 +630,7 @@ class VisionSemanticSegmentationModality:
         model: SemanticSegmentationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["vision"]

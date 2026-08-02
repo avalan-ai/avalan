@@ -1,5 +1,10 @@
 from ...entities import GenerationSettings
 from ...interaction import ProviderContinuationSnapshotAdapter
+from ..provider_state import (
+    ProviderStateError,
+    ProviderStateFinalization,
+    ProviderStateSink,
+)
 from ..stream import (
     CanonicalStreamAccumulator,
     CanonicalStreamItem,
@@ -21,7 +26,7 @@ from . import InvalidJsonResponseException
 from asyncio import CancelledError, Task, create_task, sleep, wait
 from collections.abc import AsyncIterable, Mapping
 from enum import Enum
-from inspect import isawaitable
+from inspect import isawaitable, iscoroutinefunction
 from io import StringIO
 from json import JSONDecodeError, loads
 from logging import Logger
@@ -177,6 +182,11 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     _continuation_snapshot_adapter: (
         ProviderContinuationSnapshotAdapter | None
     ) = None
+    _provider_state_sink: ProviderStateSink | None = None
+    _provider_state_finalization: ProviderStateFinalization | None = None
+    _provider_state_finalize_task: Task[ProviderStateFinalization] | None
+    _provider_state_cleanup_task: Task[None] | None
+    _provider_state_cleaned: bool
 
     def __init__(
         self,
@@ -190,6 +200,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         continuation_snapshot_adapter: (
             ProviderContinuationSnapshotAdapter | None
         ) = None,
+        provider_state_sink: ProviderStateSink | None = None,
         **kwargs: Any,
     ) -> None:
         self._args = args
@@ -229,6 +240,24 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
                     "validate reserved calls"
                 )
         self._continuation_snapshot_adapter = continuation_snapshot_adapter
+        if provider_state_sink is not None:
+            finalize = getattr(provider_state_sink, "finalize", None)
+            cleanup = getattr(provider_state_sink, "cleanup", None)
+            if (
+                not callable(finalize)
+                or not callable(cleanup)
+                or not iscoroutinefunction(finalize)
+                or not iscoroutinefunction(cleanup)
+            ):
+                raise TypeError(
+                    "provider_state_sink must finalize and clean "
+                    "asynchronously"
+                )
+        self._provider_state_sink = provider_state_sink
+        self._provider_state_finalization = None
+        self._provider_state_finalize_task = None
+        self._provider_state_cleanup_task = None
+        self._provider_state_cleaned = provider_state_sink is None
         self._on_consumed_callbacks = []
         self._final_text = None
         self._output_closed = False
@@ -367,7 +396,11 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
     @property
     def cleanup_complete(self) -> bool:
         """Return whether the active provider source closed successfully."""
-        return self._output_closed and not self._cleanup_tasks
+        return (
+            self._output_closed
+            and not self._cleanup_tasks
+            and self._provider_state_cleaned
+        )
 
     @property
     def usage(self) -> object | None:
@@ -878,6 +911,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             return
         await self._call_output_cleanup("aclose")
         self._output_closed = True
+        await self._cleanup_provider_state()
         if mark_closed and (
             self._session_state is not _StreamSessionState.FINALIZED
         ):
@@ -893,6 +927,87 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         await self._finalize_stream_accumulation(
             raise_terminal_exception=False
         )
+
+    async def _complete_provider_state(self) -> None:
+        sink = self._provider_state_sink
+        if sink is None:
+            return
+        finalization_cancelled = False
+        finalization_failed = False
+        caller_cancelled = False
+        if self._provider_state_finalization is None:
+            task = self._provider_state_finalize_task
+            if task is None:
+                task = create_task(sink.finalize())
+                self._provider_state_finalize_task = task
+            (
+                result,
+                caller_cancelled,
+                finalization_cancelled,
+                finalization_failed,
+            ) = await self._join_provider_state_task(task)
+            if not finalization_cancelled and not finalization_failed:
+                if type(result) is not ProviderStateFinalization:
+                    finalization_failed = True
+                else:
+                    self._provider_state_finalization = result
+        cleanup_cancelled = False
+        cleanup_failed = False
+        try:
+            cleanup_cancellation = await self._cleanup_provider_state()
+            caller_cancelled = caller_cancelled or cleanup_cancellation
+        except CancelledError:
+            cleanup_cancelled = True
+        except ProviderStateError:
+            cleanup_failed = True
+        if caller_cancelled or finalization_cancelled:
+            raise CancelledError() from None
+        if finalization_failed:
+            raise ProviderStateError() from None
+        if cleanup_cancelled:
+            raise CancelledError() from None
+        if cleanup_failed:
+            raise ProviderStateError() from None
+
+    async def _cleanup_provider_state(self) -> bool:
+        sink = self._provider_state_sink
+        if sink is None or self._provider_state_cleaned:
+            return False
+        task = self._provider_state_cleanup_task
+        if task is None:
+            task = create_task(sink.cleanup())
+            self._provider_state_cleanup_task = task
+        (
+            _,
+            caller_cancelled,
+            task_cancelled,
+            task_failed,
+        ) = await self._join_provider_state_task(task)
+        if task_cancelled:
+            raise CancelledError() from None
+        if task_failed:
+            raise ProviderStateError() from None
+        self._provider_state_cleaned = True
+        return caller_cancelled
+
+    @staticmethod
+    async def _join_provider_state_task(
+        task: Task[ProviderStateFinalization] | Task[None],
+    ) -> tuple[ProviderStateFinalization | None, bool, bool, bool]:
+        caller_cancelled = False
+        while not task.done():
+            try:
+                await wait({task})
+            except CancelledError:
+                caller_cancelled = True
+        result: ProviderStateFinalization | None = None
+        task_cancelled = task.cancelled()
+        task_failed = False
+        if not task_cancelled:
+            task_failed = task.exception() is not None
+        if not task_cancelled and not task_failed:
+            result = task.result()
+        return result, caller_cancelled, task_cancelled, task_failed
 
     async def _call_output_cleanup(self, method_name: str) -> None:
         assert method_name in ("cancel", "aclose")
@@ -1083,6 +1198,7 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             self._ensure_non_stream_prefetched()
             if self._prefetched_text is None:
                 return ""
+            await self._complete_provider_state()
             await self._trigger_consumed()
             self._final_text = self._prefetched_text
             return self._prefetched_text
@@ -1143,10 +1259,12 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
         accumulator = self._stream_accumulator
         if accumulator is None:
             if self._final_text is not None:
+                await self._complete_provider_state()
                 self._session_state = _StreamSessionState.FINALIZED
                 await self._trigger_consumed()
                 return self._final_text
             self._final_text = ""
+            await self._complete_provider_state()
             self._session_state = _StreamSessionState.FINALIZED
             await self._trigger_consumed()
             return self._final_text
@@ -1166,11 +1284,13 @@ class TextGenerationResponse(AsyncIterator[CanonicalStreamItem]):
             return accumulator.answer_text
 
         if self._final_text is not None:
+            await self._complete_provider_state()
             self._session_state = _StreamSessionState.FINALIZED
             await self._trigger_consumed()
             return self._final_text
 
         self._final_text = accumulator.answer_text
+        await self._complete_provider_state()
         self._session_state = _StreamSessionState.FINALIZED
         await self._trigger_consumed()
         return self._final_text

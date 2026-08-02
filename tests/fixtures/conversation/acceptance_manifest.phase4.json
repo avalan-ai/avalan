@@ -1,0 +1,2709 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "current_phase": 4,
+  "categories": [
+    "positive",
+    "negative",
+    "race",
+    "security",
+    "persistence",
+    "wire",
+    "integration",
+    "public_e2e"
+  ],
+  "required_dimensions": {
+    "provider": [
+      "native_openai",
+      "native_azure",
+      "incapable_generic_compatible"
+    ],
+    "provider_mode": [
+      "off",
+      "stateless_encrypted_replay",
+      "provider_stored_chain"
+    ],
+    "local_retention": [
+      "direct_process_local",
+      "durable_local",
+      "served_store_false",
+      "served_store_true"
+    ],
+    "transport": [
+      "streaming",
+      "non_streaming"
+    ],
+    "execution": [
+      "no_tool",
+      "one_tool",
+      "multiple_tool_cycles",
+      "structured_input_suspension",
+      "multiple_agents_lanes"
+    ],
+    "turn_topology": [
+      "first_turn",
+      "ordinary_child",
+      "explicit_branch",
+      "named_head_conflict",
+      "retry",
+      "reset"
+    ],
+    "reasoning_context": [
+      "auto_omitted",
+      "current_turn",
+      "all_turns",
+      "unsupported"
+    ],
+    "compaction": [
+      "none",
+      "inline_no_boundary",
+      "inline_boundary",
+      "repeated_boundary",
+      "standalone"
+    ],
+    "lifecycle": [
+      "same_process",
+      "fresh_process",
+      "expiry",
+      "deletion",
+      "tombstone",
+      "key_rotation"
+    ],
+    "failure": [
+      "validation",
+      "known_no_dispatch",
+      "ambiguous_dispatch",
+      "before_output",
+      "after_visible_output",
+      "malformed_item",
+      "commit_failure",
+      "publication_failure"
+    ],
+    "authority": [
+      "correct_principal",
+      "wrong_tenant",
+      "wrong_principal",
+      "wrong_agent",
+      "no_authenticated_authority"
+    ],
+    "limit": [
+      "item_count",
+      "bytes",
+      "depth",
+      "branch_count",
+      "concurrency",
+      "envelope_size",
+      "ttl"
+    ]
+  },
+  "replacements": [
+    {
+      "phase": 1,
+      "old_node_id": "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+      "replacement_node_ids": [
+        "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+        "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+        "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+        "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+        "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+        "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+        "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+        "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+        "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+        "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+        "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+        "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive"
+      ],
+      "reviewed_by": "independent-phase1-review",
+      "evidence": "requirement-level executable Phase 1 evidence split"
+    },
+    {
+      "phase": 2,
+      "old_node_id": "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract",
+      "replacement_node_ids": [
+        "tests/conversation/coordinator_failure_matrix_test.py::test_internal_segment_and_explicit_reset_are_closed_plans",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_commit_failure_preserves_parent_and_withholds_mapping",
+        "tests/conversation/coordinator_e2e_test.py::test_mixed_stored_and_stateless_lanes_remain_separate",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_execution_closure_has_no_synchronous_io_calls",
+        "tests/conversation/coordinator_e2e_test.py::test_stream_and_nonstream_two_turns_commit_equivalent_state",
+        "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict"
+      ],
+      "reviewed_by": "independent-phase2-review",
+      "evidence": "requirement-level executable Phase 2 evidence split"
+    },
+    {
+      "phase": 3,
+      "old_node_id": "tests/conversation/pgsql_restart_e2e_test.py::test_normative_durable_contract",
+      "replacement_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_payload_references_reject_identity_reassignment",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_tombstone_reconciliation_and_gc",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_checkpoint_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_idempotency_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_execution_staging_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_head_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_outbox_capacity_is_global_under_race",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_real_close_failure_remains_open_and_retriable",
+        "tests/conversation/pgsql_store_test.py::test_store_close_failure_or_cancellation_remains_retriable"
+      ],
+      "reviewed_by": "phase3-remediation-evidence-curation",
+      "evidence": "finding-level executable Phase 3 durable regressions"
+    },
+    {
+      "phase": 4,
+      "old_node_id": "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract",
+      "replacement_node_ids": [
+        "tests/conversation/direct_sdk_test.py::test_stream_create_continue_branch_and_compact",
+        "tests/conversation/direct_sdk_test.py::test_stored_continue_and_explicit_reset",
+        "tests/conversation/direct_generation_contract_test.py::test_ordinary_generation_preserves_one_shot_call_shape"
+      ],
+      "reviewed_by": "phase4-executable-evidence-curation",
+      "evidence": "requirement-level executable Phase 4 direct SDK evidence"
+    },
+    {
+      "phase": 4,
+      "old_node_id": "tests/conversation/direct_sdk_test.py::test_stream_create_continue_branch_and_compact",
+      "replacement_node_ids": [
+        "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_commit_failure_and_post_commit_recovery",
+        "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_stream_failure_redacts_opaque_sidecar",
+        "tests/conversation/direct_sdk_pgsql_test.py::test_public_handle_fresh_process_and_opaque_state_privacy"
+      ],
+      "reviewed_by": "phase4-pgsql-remediation-evidence-curation",
+      "evidence": "real public direct SDK PostgreSQL failure, privacy, and fresh-process evidence"
+    }
+  ],
+  "activation_history": [
+    {
+      "phase": 0,
+      "node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material"
+      ],
+      "sha256": "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74"
+    },
+    {
+      "phase": 1,
+      "node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material",
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+        "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+        "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+        "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+        "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+        "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+        "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+        "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+        "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+        "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+        "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+        "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+        "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive"
+      ],
+      "sha256": "cc98a83a046019ac7bb1f2c16469cc3a67fa6408885e87ff1fb6b265c6aa6161"
+    },
+    {
+      "phase": 2,
+      "node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material",
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+        "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+        "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+        "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+        "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+        "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+        "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+        "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+        "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+        "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+        "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+        "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+        "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive",
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_internal_segment_and_explicit_reset_are_closed_plans",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_commit_failure_preserves_parent_and_withholds_mapping",
+        "tests/conversation/coordinator_e2e_test.py::test_mixed_stored_and_stateless_lanes_remain_separate",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_execution_closure_has_no_synchronous_io_calls",
+        "tests/conversation/coordinator_e2e_test.py::test_stream_and_nonstream_two_turns_commit_equivalent_state",
+        "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict"
+      ],
+      "sha256": "8a6da13a0627cd0a167649dc9708e3585a717f6cb71db3c17a1c686686c295ca"
+    },
+    {
+      "phase": 3,
+      "node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material",
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+        "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+        "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+        "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+        "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+        "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+        "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+        "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+        "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+        "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+        "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+        "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+        "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive",
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract",
+        "tests/conversation/pgsql_restart_e2e_test.py::test_normative_durable_contract",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_internal_segment_and_explicit_reset_are_closed_plans",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_commit_failure_preserves_parent_and_withholds_mapping",
+        "tests/conversation/coordinator_e2e_test.py::test_mixed_stored_and_stateless_lanes_remain_separate",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_execution_closure_has_no_synchronous_io_calls",
+        "tests/conversation/coordinator_e2e_test.py::test_stream_and_nonstream_two_turns_commit_equivalent_state",
+        "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_payload_references_reject_identity_reassignment",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_tombstone_reconciliation_and_gc",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_checkpoint_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_idempotency_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_execution_staging_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_head_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_outbox_capacity_is_global_under_race",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_real_close_failure_remains_open_and_retriable",
+        "tests/conversation/pgsql_store_test.py::test_store_close_failure_or_cancellation_remains_retriable"
+      ],
+      "sha256": "3b1d94a50ca44b715a02b989646bef9daea8d471d649491465a1431cf277194f"
+    },
+    {
+      "phase": 4,
+      "node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+        "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+        "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+        "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+        "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+        "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material",
+        "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+        "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+        "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+        "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+        "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+        "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+        "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+        "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+        "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+        "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+        "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+        "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+        "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive",
+        "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract",
+        "tests/conversation/pgsql_restart_e2e_test.py::test_normative_durable_contract",
+        "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_internal_segment_and_explicit_reset_are_closed_plans",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_commit_failure_preserves_parent_and_withholds_mapping",
+        "tests/conversation/coordinator_e2e_test.py::test_mixed_stored_and_stateless_lanes_remain_separate",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_execution_closure_has_no_synchronous_io_calls",
+        "tests/conversation/coordinator_e2e_test.py::test_stream_and_nonstream_two_turns_commit_equivalent_state",
+        "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+        "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_payload_references_reject_identity_reassignment",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_tombstone_reconciliation_and_gc",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_checkpoint_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_idempotency_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_execution_staging_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_head_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_outbox_capacity_is_global_under_race",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_real_close_failure_remains_open_and_retriable",
+        "tests/conversation/pgsql_store_test.py::test_store_close_failure_or_cancellation_remains_retriable",
+    "tests/conversation/direct_sdk_test.py::test_stream_create_continue_branch_and_compact",
+    "tests/conversation/direct_sdk_test.py::test_stored_continue_and_explicit_reset",
+    "tests/conversation/direct_generation_contract_test.py::test_ordinary_generation_preserves_one_shot_call_shape",
+    "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_commit_failure_and_post_commit_recovery",
+    "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_stream_failure_redacts_opaque_sidecar",
+    "tests/conversation/direct_sdk_pgsql_test.py::test_public_handle_fresh_process_and_opaque_state_privacy"
+      ],
+      "sha256": "869ac471b5bd88df84ff12ccae1d4c7929a70aa8e339a410a7ab031c873cf0b1"
+    }
+  ],
+  "nodes": [
+    {
+      "id": "phase0-positive-fixtures",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-131"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_phase0_contract_fixtures_are_frozen",
+      "surface": "contract_gate",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase0-negative-dormancy",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-079"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_all_production_capabilities_remain_dormant",
+      "surface": "provider_adapter",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "negative"
+    },
+    {
+      "id": "phase0-race-sealed-inventory",
+      "category": "race",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-131"
+      ],
+      "node_id": "tests/conversation_contract_gate_test.py::test_sealed_inventory_rejects_mid_run_mutation",
+      "surface": "contract_gate",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "retry"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "publication_failure"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "bytes"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase0-security-threats",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-079"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete",
+      "surface": "contract_gate",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "wrong_tenant",
+        "wrong_principal",
+        "wrong_agent",
+        "no_authenticated_authority"
+      ],
+      "limit": [
+        "bytes",
+        "depth",
+        "envelope_size",
+        "ttl"
+      ],
+      "evidence_class": "security"
+    },
+    {
+      "id": "phase0-persistence-state-table",
+      "category": "persistence",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-131"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_contract_state_tables_are_total",
+      "surface": "contract_gate",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process",
+        "fresh_process",
+        "expiry",
+        "deletion",
+        "tombstone",
+        "key_rotation"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase0-wire-provider-evidence",
+      "category": "wire",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-079"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+      "surface": "provider_adapter",
+      "provider": [
+        "native_openai",
+        "native_azure",
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted",
+        "current_turn",
+        "all_turns",
+        "unsupported"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase0-public-fail-closed",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-079"
+      ],
+      "node_id": "tests/conversation_response_dormancy_test.py::test_responses_reject_dormant_conversation_fields_before_dispatch",
+      "surface": "served_responses",
+      "provider": [
+        "native_openai",
+        "native_azure",
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off",
+        "stateless_encrypted_replay",
+        "provider_stored_chain"
+      ],
+      "local_retention": [
+        "direct_process_local",
+        "durable_local",
+        "served_store_false",
+        "served_store_true"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool",
+        "one_tool",
+        "multiple_tool_cycles",
+        "structured_input_suspension",
+        "multiple_agents_lanes"
+      ],
+      "turn_topology": [
+        "first_turn",
+        "ordinary_child",
+        "explicit_branch",
+        "named_head_conflict",
+        "retry",
+        "reset"
+      ],
+      "reasoning_context": [
+        "auto_omitted",
+        "current_turn",
+        "all_turns",
+        "unsupported"
+      ],
+      "compaction": [
+        "none",
+        "inline_no_boundary",
+        "inline_boundary",
+        "repeated_boundary",
+        "standalone"
+      ],
+      "scenario_lifecycle": [
+        "same_process",
+        "fresh_process",
+        "expiry",
+        "deletion",
+        "tombstone",
+        "key_rotation"
+      ],
+      "failure": [
+        "validation",
+        "known_no_dispatch",
+        "ambiguous_dispatch",
+        "before_output",
+        "after_visible_output",
+        "malformed_item",
+        "commit_failure",
+        "publication_failure"
+      ],
+      "authority": [
+        "correct_principal",
+        "wrong_tenant",
+        "wrong_principal",
+        "wrong_agent",
+        "no_authenticated_authority"
+      ],
+      "limit": [
+        "item_count",
+        "bytes",
+        "depth",
+        "branch_count",
+        "concurrency",
+        "envelope_size",
+        "ttl"
+      ],
+      "evidence_class": "pre_dispatch_rejection"
+    },
+    {
+      "id": "phase0-one-shot-regression",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-131"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_one_shot_behavior_omits_conversation_state",
+      "surface": "direct_sdk",
+      "provider": [
+        "native_openai",
+        "native_azure"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase0-source-isolation",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_ids": [
+        "CONV-N-079",
+        "CONV-N-131"
+      ],
+      "node_id": "tests/conversation_phase0_contract_test.py::test_tracked_gate_sources_do_not_depend_on_ignored_material",
+      "surface": "contract_gate",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "audit"
+    },
+    {
+      "id": "phase1-domain",
+      "category": "positive",
+      "lifecycle": "replaced",
+      "active_from_phase": 1,
+      "requirement_ids": [
+        "CONV-N-001",
+        "CONV-N-002",
+        "CONV-N-003",
+        "CONV-N-004",
+        "CONV-N-005",
+        "CONV-N-006",
+        "CONV-N-007",
+        "CONV-N-008",
+        "CONV-N-009",
+        "CONV-N-010",
+        "CONV-N-011",
+        "CONV-N-012"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_normative_domain_contract",
+      "surface": "direct_sdk",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase1-opaque-codec-integrity",
+      "category": "wire",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-001"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_codec_limits_and_schema_are_symmetric_on_encode_and_decode",
+      "surface": "checkpoint_codec",
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase1-opaque-redaction",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-002"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_safe_observability_and_diagnostics_never_expose_opaque_state",
+      "surface": "observability",
+      "evidence_class": "security"
+    },
+    {
+      "id": "phase1-summary-separation",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-003"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_reasoning_summary_is_separate_from_opaque_continuation_digest",
+      "surface": "canonical_domain",
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase1-ledger-order",
+      "category": "wire",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-004"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+      "surface": "provider_ledger",
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase1-no-regroup-index",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-005"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_provider_indexes_restart_and_remain_contiguous_per_model_call",
+      "surface": "provider_ledger",
+      "evidence_class": "negative"
+    },
+    {
+      "id": "phase1-item-normalization",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-006"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_provider_item_semantics_are_total_and_exhaustively_enforced",
+      "surface": "canonical_domain",
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase1-lane-checkpoint",
+      "category": "persistence",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-007"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_single_and_multi_lane_checkpoints_round_trip_immutably",
+      "surface": "checkpoint_codec",
+      "evidence_class": "database"
+    },
+    {
+      "id": "phase1-complete-binding",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-008"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+      "surface": "provider_binding",
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase1-binding-drift",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-009"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_mode_transition_authority_rejects_every_current_scope_drift",
+      "surface": "authorization",
+      "evidence_class": "security"
+    },
+    {
+      "id": "phase1-public-response-id",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-010"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_checkpoint_candidate_variants_enforce_exact_boundaries",
+      "surface": "direct_sdk",
+      "evidence_class": "contract"
+    },
+    {
+      "id": "phase1-no-public-alias",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-011"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_public_response_ids_never_alias_private_upstream_ids",
+      "surface": "direct_sdk",
+      "evidence_class": "negative"
+    },
+    {
+      "id": "phase1-private-upstream-id",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "requirement_ids": [
+        "CONV-N-012"
+      ],
+      "node_id": "tests/conversation/domain_contract_test.py::test_provider_plans_make_stored_and_stateless_state_exclusive",
+      "surface": "provider_protocol",
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase2-coordinator",
+      "category": "race",
+      "lifecycle": "replaced",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-013",
+        "CONV-N-014",
+        "CONV-N-015",
+        "CONV-N-016",
+        "CONV-N-017",
+        "CONV-N-018",
+        "CONV-N-019",
+        "CONV-N-020",
+        "CONV-N-021",
+        "CONV-N-022",
+        "CONV-N-023",
+        "CONV-N-024",
+        "CONV-N-025",
+        "CONV-N-026",
+        "CONV-N-027",
+        "CONV-N-028",
+        "CONV-N-029"
+      ],
+      "node_id": "tests/conversation/coordinator_e2e_test.py::test_normative_coordinator_contract",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase3-durable-pgsql",
+      "category": "persistence",
+      "lifecycle": "replaced",
+      "active_from_phase": 3,
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "node_id": "tests/conversation/pgsql_restart_e2e_test.py::test_normative_durable_contract",
+      "surface": "durable_store",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "database"
+    },
+    {
+      "id": "phase4-public-sdk",
+      "category": "public_e2e",
+      "lifecycle": "replaced",
+      "active_from_phase": 4,
+      "requirement_ids": [
+        "CONV-N-030",
+        "CONV-N-031",
+        "CONV-N-032",
+        "CONV-N-033",
+        "CONV-N-034"
+      ],
+      "node_id": "tests/conversation/sdk_e2e_test.py::test_normative_sdk_contract",
+      "surface": "direct_sdk",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "public"
+    },
+    {
+      "id": "phase5-stateless-wire",
+      "category": "wire",
+      "lifecycle": "planned",
+      "active_from_phase": 5,
+      "requirement_ids": [
+        "CONV-N-035",
+        "CONV-N-036",
+        "CONV-N-037",
+        "CONV-N-038",
+        "CONV-N-039",
+        "CONV-N-040",
+        "CONV-N-041",
+        "CONV-N-042",
+        "CONV-N-051",
+        "CONV-N-052",
+        "CONV-N-053",
+        "CONV-N-054",
+        "CONV-N-074",
+        "CONV-N-075",
+        "CONV-N-076",
+        "CONV-N-077",
+        "CONV-N-078",
+        "CONV-N-080"
+      ],
+      "node_id": "tests/conversation/openai_stateless_e2e_test.py::test_normative_stateless_contract",
+      "surface": "provider_adapter",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase6-stored-wire",
+      "category": "wire",
+      "lifecycle": "planned",
+      "active_from_phase": 6,
+      "requirement_ids": [
+        "CONV-N-043",
+        "CONV-N-044",
+        "CONV-N-045",
+        "CONV-N-046",
+        "CONV-N-047",
+        "CONV-N-048",
+        "CONV-N-049",
+        "CONV-N-050",
+        "CONV-N-055",
+        "CONV-N-056"
+      ],
+      "node_id": "tests/conversation/openai_stored_e2e_test.py::test_normative_stored_contract",
+      "surface": "provider_adapter",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase7-compaction",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 7,
+      "requirement_ids": [
+        "CONV-N-057",
+        "CONV-N-058",
+        "CONV-N-059",
+        "CONV-N-060",
+        "CONV-N-061",
+        "CONV-N-062",
+        "CONV-N-063",
+        "CONV-N-064",
+        "CONV-N-065",
+        "CONV-N-066",
+        "CONV-N-067",
+        "CONV-N-068",
+        "CONV-N-069",
+        "CONV-N-070",
+        "CONV-N-071",
+        "CONV-N-072",
+        "CONV-N-073"
+      ],
+      "node_id": "tests/conversation/compaction_e2e_test.py::test_normative_compaction_contract",
+      "surface": "compact",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "wire"
+    },
+    {
+      "id": "phase8-agent-integration",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 8,
+      "requirement_ids": [
+        "CONV-N-107",
+        "CONV-N-108",
+        "CONV-N-109",
+        "CONV-N-110",
+        "CONV-N-111",
+        "CONV-N-112",
+        "CONV-N-113",
+        "CONV-N-114",
+        "CONV-N-115",
+        "CONV-N-116",
+        "CONV-N-132"
+      ],
+      "node_id": "tests/conversation/agent_integration_e2e_test.py::test_normative_agent_contract",
+      "surface": "agent_sdk",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase9-server-stored",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 9,
+      "requirement_ids": [
+        "CONV-N-083",
+        "CONV-N-084",
+        "CONV-N-085",
+        "CONV-N-086",
+        "CONV-N-087",
+        "CONV-N-088",
+        "CONV-N-089",
+        "CONV-N-090",
+        "CONV-N-091",
+        "CONV-N-092",
+        "CONV-N-093",
+        "CONV-N-133",
+        "CONV-N-134",
+        "CONV-N-135"
+      ],
+      "node_id": "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract",
+      "surface": "served_responses",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "public"
+    },
+    {
+      "id": "phase10-server-stateless",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 10,
+      "requirement_ids": [
+        "CONV-N-081",
+        "CONV-N-082",
+        "CONV-N-094",
+        "CONV-N-095",
+        "CONV-N-096",
+        "CONV-N-097",
+        "CONV-N-098",
+        "CONV-N-099",
+        "CONV-N-100",
+        "CONV-N-101",
+        "CONV-N-102",
+        "CONV-N-103",
+        "CONV-N-104",
+        "CONV-N-105",
+        "CONV-N-106"
+      ],
+      "node_id": "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract",
+      "surface": "served_responses",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "public"
+    },
+    {
+      "id": "phase11-hardening",
+      "category": "security",
+      "lifecycle": "planned",
+      "active_from_phase": 11,
+      "requirement_ids": [
+        "CONV-N-118",
+        "CONV-N-119",
+        "CONV-N-120",
+        "CONV-N-121",
+        "CONV-N-122",
+        "CONV-N-123",
+        "CONV-N-124",
+        "CONV-N-125",
+        "CONV-N-126",
+        "CONV-N-127",
+        "CONV-N-128",
+        "CONV-N-129",
+        "CONV-N-130"
+      ],
+      "node_id": "tests/conversation/security_e2e_test.py::test_normative_hardening_contract",
+      "surface": "all_public_surfaces",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "security"
+    },
+    {
+      "id": "phase12-live-completion",
+      "category": "public_e2e",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "CONV-N-136",
+        "CONV-N-137",
+        "CONV-N-138",
+        "CONV-N-139",
+        "CONV-N-140",
+        "CONV-N-141",
+        "CONV-N-142",
+        "CONV-N-143",
+        "CONV-N-144"
+      ],
+      "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+      "surface": "all_public_surfaces",
+      "provider": [
+        "native_openai",
+        "native_azure",
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off",
+        "stateless_encrypted_replay",
+        "provider_stored_chain"
+      ],
+      "local_retention": [
+        "direct_process_local",
+        "durable_local",
+        "served_store_false",
+        "served_store_true"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool",
+        "one_tool",
+        "multiple_tool_cycles",
+        "structured_input_suspension",
+        "multiple_agents_lanes"
+      ],
+      "turn_topology": [
+        "first_turn",
+        "ordinary_child",
+        "explicit_branch",
+        "named_head_conflict",
+        "retry",
+        "reset"
+      ],
+      "reasoning_context": [
+        "auto_omitted",
+        "current_turn",
+        "all_turns",
+        "unsupported"
+      ],
+      "compaction": [
+        "none",
+        "inline_no_boundary",
+        "inline_boundary",
+        "repeated_boundary",
+        "standalone"
+      ],
+      "scenario_lifecycle": [
+        "same_process",
+        "fresh_process",
+        "expiry",
+        "deletion",
+        "tombstone",
+        "key_rotation"
+      ],
+      "failure": [
+        "validation",
+        "known_no_dispatch",
+        "ambiguous_dispatch",
+        "before_output",
+        "after_visible_output",
+        "malformed_item",
+        "commit_failure",
+        "publication_failure"
+      ],
+      "authority": [
+        "correct_principal",
+        "wrong_tenant",
+        "wrong_principal",
+        "wrong_agent",
+        "no_authenticated_authority"
+      ],
+      "limit": [
+        "item_count",
+        "bytes",
+        "depth",
+        "branch_count",
+        "concurrency",
+        "envelope_size",
+        "ttl"
+      ],
+      "evidence_class": "live"
+    },
+    {
+      "id": "phase12-full-matrix",
+      "category": "integration",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "requirement_ids": [
+        "CONV-N-138"
+      ],
+      "node_id": "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+      "surface": "all_public_surfaces",
+      "provider": [
+        "native_openai",
+        "native_azure",
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off",
+        "stateless_encrypted_replay",
+        "provider_stored_chain"
+      ],
+      "local_retention": [
+        "direct_process_local",
+        "durable_local",
+        "served_store_false",
+        "served_store_true"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool",
+        "one_tool",
+        "multiple_tool_cycles",
+        "structured_input_suspension",
+        "multiple_agents_lanes"
+      ],
+      "turn_topology": [
+        "first_turn",
+        "ordinary_child",
+        "explicit_branch",
+        "named_head_conflict",
+        "retry",
+        "reset"
+      ],
+      "reasoning_context": [
+        "auto_omitted",
+        "current_turn",
+        "all_turns",
+        "unsupported"
+      ],
+      "compaction": [
+        "none",
+        "inline_no_boundary",
+        "inline_boundary",
+        "repeated_boundary",
+        "standalone"
+      ],
+      "scenario_lifecycle": [
+        "same_process",
+        "fresh_process",
+        "expiry",
+        "deletion",
+        "tombstone",
+        "key_rotation"
+      ],
+      "failure": [
+        "validation",
+        "known_no_dispatch",
+        "ambiguous_dispatch",
+        "before_output",
+        "after_visible_output",
+        "malformed_item",
+        "commit_failure",
+        "publication_failure"
+      ],
+      "authority": [
+        "correct_principal",
+        "wrong_tenant",
+        "wrong_principal",
+        "wrong_agent",
+        "no_authenticated_authority"
+      ],
+      "limit": [
+        "item_count",
+        "bytes",
+        "depth",
+        "branch_count",
+        "concurrency",
+        "envelope_size",
+        "ttl"
+      ],
+      "evidence_class": "matrix"
+    },
+    {
+      "id": "phase2-validated-boundaries",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-013",
+        "CONV-N-020"
+      ],
+      "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_internal_segment_and_explicit_reset_are_closed_plans",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn",
+        "reset"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase2-complete-stream-items",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-014"
+      ],
+      "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "after_visible_output"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "negative"
+    },
+    {
+      "id": "phase2-parent-preservation",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-015"
+      ],
+      "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_commit_failure_preserves_parent_and_withholds_mapping",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "ordinary_child"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "commit_failure"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "negative"
+    },
+    {
+      "id": "phase2-storage-capability-lanes",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-016",
+        "CONV-N-017",
+        "CONV-N-018",
+        "CONV-N-019",
+        "CONV-N-027",
+        "CONV-N-028",
+        "CONV-N-029"
+      ],
+      "node_id": "tests/conversation/coordinator_e2e_test.py::test_mixed_stored_and_stateless_lanes_remain_separate",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "stateless_encrypted_replay",
+        "provider_stored_chain"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "multiple_agents_lanes"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase2-host-independent-async",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-021"
+      ],
+      "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_execution_closure_has_no_synchronous_io_calls",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "audit"
+    },
+    {
+      "id": "phase2-checkpoint-shape",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-022",
+        "CONV-N-023"
+      ],
+      "node_id": "tests/conversation/coordinator_e2e_test.py::test_stream_and_nonstream_two_turns_commit_equivalent_state",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "streaming",
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "first_turn"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "item_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase2-immutable-children",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-024"
+      ],
+      "node_id": "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "explicit_branch"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "branch_count"
+      ],
+      "evidence_class": "runtime"
+    },
+    {
+      "id": "phase2-named-head-cas",
+      "category": "race",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
+        "CONV-N-025",
+        "CONV-N-026"
+      ],
+      "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict",
+      "surface": "coordinator",
+      "provider": [
+        "incapable_generic_compatible"
+      ],
+      "provider_mode": [
+        "off"
+      ],
+      "local_retention": [
+        "direct_process_local"
+      ],
+      "transport": [
+        "non_streaming"
+      ],
+      "execution": [
+        "no_tool"
+      ],
+      "turn_topology": [
+        "named_head_conflict"
+      ],
+      "reasoning_context": [
+        "auto_omitted"
+      ],
+      "compaction": [
+        "none"
+      ],
+      "scenario_lifecycle": [
+        "same_process"
+      ],
+      "failure": [
+        "validation"
+      ],
+      "authority": [
+        "correct_principal"
+      ],
+      "limit": [
+        "concurrency"
+      ],
+      "evidence_class": "runtime"
+    },
+    {"id":"phase3-payload-reference-ownership","category":"security","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_payload_references_reject_identity_reassignment","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process"],"failure":["validation"],"authority":["correct_principal","wrong_tenant"],"limit":["bytes"],"evidence_class":"security"},
+    {"id":"phase3-tombstone-reconciliation","category":"persistence","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_tombstone_reconciliation_and_gc","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["provider_stored_chain"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process","deletion","tombstone"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["ttl"],"evidence_class":"database"},
+    {"id":"phase3-expiry-reconciliation","category":"persistence","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["provider_stored_chain"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["expiry","deletion"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["ttl"],"evidence_class":"database"},
+    {"id":"phase3-monotonic-key-generation","category":"security","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["retry"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process","key_rotation"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"security"},
+    {"id":"phase3-checkpoint-capacity-race","category":"race","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_checkpoint_capacity_is_global_under_race","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-idempotency-capacity-race","category":"race","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_idempotency_capacity_is_global_under_race","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["retry"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["known_no_dispatch"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-staging-capacity-race","category":"race","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_execution_staging_capacity_is_global_under_race","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["one_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["before_output"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-head-capacity-race","category":"race","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_head_capacity_is_global_under_race","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["named_head_conflict"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-outbox-capacity-race","category":"race","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_outbox_capacity_is_global_under_race","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["publication_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-atomic-suspension-rollback","category":"negative","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface","surface":"structured_input","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["structured_input_suspension"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-atomic-suspension-commit","category":"integration","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface","surface":"structured_input","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["structured_input_suspension"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process"],"failure":["validation"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-close-real-retry","category":"persistence","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_conformance_test.py::test_pgsql_real_close_failure_remains_open_and_retriable","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["off"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["retry"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["fresh_process"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"database"},
+    {"id":"phase3-close-cancellation-retry","category":"negative","lifecycle":"active","active_from_phase":3,"requirement_ids":["CONV-N-117"],"node_id":"tests/conversation/pgsql_store_test.py::test_store_close_failure_or_cancellation_remains_retriable","surface":"durable_store","provider":["incapable_generic_compatible"],"provider_mode":["off"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["retry"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["commit_failure"],"authority":["correct_principal"],"limit":["concurrency"],"evidence_class":"runtime"},
+    {"id":"phase4-direct-stream-terminal","category":"public_e2e","lifecycle":"replaced","active_from_phase":4,"requirement_ids":["CONV-N-030","CONV-N-032"],"node_id":"tests/conversation/direct_sdk_test.py::test_stream_create_continue_branch_and_compact","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["direct_process_local"],"transport":["streaming"],"execution":["no_tool"],"turn_topology":["first_turn","ordinary_child","explicit_branch"],"reasoning_context":["current_turn"],"compaction":["standalone"],"scenario_lifecycle":["same_process"],"failure":["validation"],"authority":["correct_principal"],"limit":["item_count"],"evidence_class":"public"},
+    {"id":"phase4-stored-result-and-disclosure","category":"public_e2e","lifecycle":"active","active_from_phase":4,"requirement_ids":["CONV-N-031","CONV-N-034"],"node_id":"tests/conversation/direct_sdk_test.py::test_stored_continue_and_explicit_reset","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["provider_stored_chain"],"local_retention":["direct_process_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn","ordinary_child","reset"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["validation"],"authority":["correct_principal"],"limit":["item_count"],"evidence_class":"public"},
+    {"id":"phase4-one-shot-compatibility","category":"public_e2e","lifecycle":"active","active_from_phase":4,"requirement_ids":["CONV-N-033"],"node_id":"tests/conversation/direct_generation_contract_test.py::test_ordinary_generation_preserves_one_shot_call_shape","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["off"],"local_retention":["direct_process_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["auto_omitted"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["validation"],"authority":["correct_principal"],"limit":["item_count"],"evidence_class":"public"},
+    {"id":"phase4-public-pgsql-failure-recovery","category":"persistence","lifecycle":"active","active_from_phase":4,"requirement_ids":["CONV-N-030","CONV-N-032"],"node_id":"tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_commit_failure_and_post_commit_recovery","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn","retry"],"reasoning_context":["current_turn"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["commit_failure","publication_failure"],"authority":["correct_principal"],"limit":["bytes"],"evidence_class":"database"},
+    {"id":"phase4-public-pgsql-stream-privacy","category":"security","lifecycle":"active","active_from_phase":4,"requirement_ids":["CONV-N-030","CONV-N-032"],"node_id":"tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_stream_failure_redacts_opaque_sidecar","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["streaming"],"execution":["no_tool"],"turn_topology":["first_turn"],"reasoning_context":["current_turn"],"compaction":["none"],"scenario_lifecycle":["same_process"],"failure":["after_visible_output","commit_failure"],"authority":["correct_principal"],"limit":["bytes"],"evidence_class":"database"},
+    {"id":"phase4-public-pgsql-fresh-process","category":"public_e2e","lifecycle":"active","active_from_phase":4,"requirement_ids":["CONV-N-030","CONV-N-032"],"node_id":"tests/conversation/direct_sdk_pgsql_test.py::test_public_handle_fresh_process_and_opaque_state_privacy","surface":"direct_sdk","provider":["incapable_generic_compatible"],"provider_mode":["stateless_encrypted_replay"],"local_retention":["durable_local"],"transport":["non_streaming"],"execution":["no_tool"],"turn_topology":["first_turn","ordinary_child"],"reasoning_context":["current_turn"],"compaction":["none"],"scenario_lifecycle":["fresh_process"],"failure":["validation"],"authority":["correct_principal"],"limit":["bytes"],"evidence_class":"database"}
+  ],
+  "manifest_sha256": "7e9e5cac674e3f92bd0b9be581cecff587d9533eea3f4c2c12185a544137aae1"
+}

@@ -10,6 +10,7 @@ from .contract import (
     NamedHeadRevision,
     ProviderLaneId,
     PublicResponseId,
+    RetentionLimits,
 )
 from .errors import (
     ConversationAuthorizationError,
@@ -78,6 +79,47 @@ class ConversationModeChangeOperation(StrEnum):
 
     RESET = "reset"
     CONVERT = "convert"
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConversationBranchIntent:
+    """Create an intentional child on a distinct immutable branch."""
+
+    parent: "ConversationParent"
+    branch_id: ConversationBranchId
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.parent, StatelessParent | StoredParent):
+            raise ConversationValidationError()
+        validate_identifier(self.branch_id, "branch_id")
+        if self.branch_id == self.parent.handle.branch_id:
+            raise ConversationValidationError()
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ConversationResetIntent:
+    """Request a new root while explicitly discarding opaque continuity."""
+
+    parent: "ConversationParent"
+    target_mode: ConversationMode
+    provider_storage_disclosed: bool = False
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.parent, StatelessParent | StoredParent):
+            raise ConversationValidationError()
+        if self.target_mode not in {
+            ConversationMode.STATELESS,
+            ConversationMode.STORED,
+        }:
+            raise ConversationValidationError()
+        if type(self.provider_storage_disclosed) is not bool:
+            raise ConversationValidationError()
+        if (
+            self.target_mode is ConversationMode.STORED
+        ) != self.provider_storage_disclosed:
+            raise ConversationValidationError()
 
 
 @final
@@ -368,6 +410,9 @@ class StatelessConversationSettings:
     parent: StatelessParent | None = None
     reasoning_context: ReasoningContext = ReasoningContext.AUTO
     compaction: CompactionPolicy = DisabledCompaction()
+    retention: RetentionLimits | None = None
+    branch: ConversationBranchIntent | None = None
+    named_head: "NamedHeadParent | None" = None
     mode: ConversationMode = ConversationMode.STATELESS
 
     def __post_init__(self) -> None:
@@ -384,6 +429,12 @@ class StatelessConversationSettings:
             self.compaction, DisabledCompaction | InlineCompaction
         ):
             raise ConversationValidationError()
+        _validate_advance_settings(
+            self.parent,
+            self.branch,
+            self.named_head,
+            self.retention,
+        )
 
 
 @final
@@ -394,6 +445,9 @@ class StoredConversationSettings:
     provider_storage_disclosed: bool
     parent: StoredParent | None = None
     reasoning_context: ReasoningContext = ReasoningContext.AUTO
+    retention: RetentionLimits | None = None
+    branch: ConversationBranchIntent | None = None
+    named_head: "NamedHeadParent | None" = None
     mode: ConversationMode = ConversationMode.STORED
 
     def __post_init__(self) -> None:
@@ -407,6 +461,12 @@ class StoredConversationSettings:
             raise ConversationValidationError()
         if not isinstance(self.reasoning_context, ReasoningContext):
             raise ConversationValidationError()
+        _validate_advance_settings(
+            self.parent,
+            self.branch,
+            self.named_head,
+            self.retention,
+        )
 
 
 ConversationSettings: TypeAlias = (
@@ -568,6 +628,29 @@ class NamedHeadParent:
             raise ConversationValidationError()
         if not isinstance(self.parent, StatelessParent | StoredParent):
             raise ConversationValidationError()
+
+
+def _validate_advance_settings(
+    parent: ConversationParent | None,
+    branch: ConversationBranchIntent | None,
+    named_head: NamedHeadParent | None,
+    retention: RetentionLimits | None,
+) -> None:
+    if retention is not None and type(retention) is not RetentionLimits:
+        raise ConversationValidationError()
+    if branch is not None and type(branch) is not ConversationBranchIntent:
+        raise ConversationValidationError()
+    if named_head is not None and type(named_head) is not NamedHeadParent:
+        raise ConversationValidationError()
+    if branch is not None and named_head is not None:
+        raise ConversationValidationError()
+    selected_parent = (
+        branch.parent
+        if branch is not None
+        else (named_head.parent if named_head is not None else None)
+    )
+    if selected_parent is not None and selected_parent != parent:
+        raise ConversationValidationError()
 
 
 @final

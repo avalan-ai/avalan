@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "4d869255d7df93e44b099dc18a3d3204ae0d51f158a85dd4b5908d79117045c3",
+  "current_snapshot_sha256": "1824175c99fa8ff981da51d94286b855c381877cfb1f35381f63b4990a36c2ea",
   "directives": {
     "added": 12,
     "removed": 0,
     "relocated": 11,
-    "sha256": "2ae198a6da05113a7686aec9852ebeb6e1b88879128002f13e0eb7389e18ac56"
+    "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1124,
-    "removed": 276,
-    "sha256": "fa59dc956d540b4a6cf2b115f3b6fc7ddf7f23261ba61b595307ce2630027cca"
+    "added": 1232,
+    "removed": 284,
+    "sha256": "53eec6fe500bc23679efcab19435982b17abcfe4be47fd8a8a46400cc032d8c8"
   },
   "review": {
-    "reviewed_by": "conversation Phase 3 exclusion inventory review",
-    "rationale": "The current snapshot adds only parser exclusions for standard ellipsis-only Phase 3 crypto and PostgreSQL Protocol declarations, plus relocations caused by typed durable fields, while retaining every previously reviewed directive."
+    "reviewed_by": "conversation Phase 4 exclusion inventory audit",
+    "rationale": "The current snapshot adds parser exclusions for standard ellipsis-only async direct SDK and provider-state Protocol declarations, plus relocations caused by typed exports, run context, and CLI documentation, while retaining every previously reviewed directive."
   },
-  "ledger_sha256": "413b99d5fb792b1e8245ec48d885559d16691cfe4df2be79663d486e9e4e9650"
+  "ledger_sha256": "c14bb8a6a2c8735165e6e560abc64b264a88c8bbdd5a7709c44d65024ab2a9c4"
 }

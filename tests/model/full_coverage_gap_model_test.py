@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import torch
 
+from avalan.conversation import ConversationValidationError
 from avalan.entities import (
     EngineSettings,
     GenerationSettings,
@@ -86,8 +87,18 @@ class ModalityRegistryCoverageTestCase(TestCase):
 
         try:
             decorated = ModalityRegistry.register(modality)(handler)
-            self.assertIs(decorated, handler)
-            self.assertIs(ModalityRegistry.get(modality), handler)
+            self.assertIsNot(decorated, handler)
+            self.assertIs(getattr(decorated, "__wrapped__"), handler)
+            self.assertIs(ModalityRegistry.get(modality), decorated)
+            self.assertIs(
+                ModalityRegistry._guard_handler(decorated), decorated
+            )
+            self.assertEqual(
+                asyncio.run(decorated(None, None, None, None, None)),
+                "ok",
+            )
+            with self.assertRaises(ConversationValidationError):
+                asyncio.run(decorated(None, None, None, None, object()))
         finally:
             ModalityRegistry._handlers = original
 
@@ -112,7 +123,9 @@ class ModalityRegistryCoverageTestCase(TestCase):
         try:
             ModalityRegistry._handlers = {}
             ModalityRegistry._register_cached_handlers(module)
-            self.assertIs(ModalityRegistry._handlers[modality], handler)
+            registered = ModalityRegistry._handlers[modality]
+            self.assertIsNot(registered, handler)
+            self.assertIs(getattr(registered, "__wrapped__"), handler)
         finally:
             ModalityRegistry._handlers = original
 

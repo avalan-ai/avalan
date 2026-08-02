@@ -13,6 +13,7 @@ from .contract import (
     CheckpointIdentity,
     CheckpointKind,
     ChildLaneRetentionPolicy,
+    ConversationOperation,
     FailureBoundary,
     IdempotencyDisposition,
     NamedHeadRevision,
@@ -72,6 +73,7 @@ from .protocols import (
     ConversationAuthorityResolver,
     ConversationClock,
     ConversationObserver,
+    ConversationProviderStateSink,
     ConversationPublisher,
     ConversationRetryWaiter,
     ConversationStore,
@@ -108,9 +110,11 @@ from .runtime import (
 from .settings import (
     ConversationMode,
     EffectiveReasoningMetadata,
+    InlineCompaction,
     ProviderLaneOutputScope,
     ProviderUsage,
     ReasoningContext,
+    StatelessConversationHandle,
 )
 from .state import (
     CheckpointCandidate,
@@ -123,6 +127,7 @@ from .state import (
     OutwardTurnCheckpointCandidate,
     ProviderLaneLifecycle,
     ProviderLaneSnapshot,
+    StandaloneCompactCheckpointCandidate,
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
 )
@@ -132,11 +137,12 @@ from .value import (
     validate_identifier,
 )
 
-from asyncio import CancelledError
+from asyncio import CancelledError, Task, create_task, wait
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from hashlib import sha256
+from inspect import iscoroutinefunction
 from typing import TypeAlias, final
 
 
@@ -273,11 +279,13 @@ class _AttemptStaging:
     upstream_response_id: str | None = None
     visible_output: bool = False
     tool_effect: bool = False
+    provider_output: bool = False
 
     def accept(self, item: ProviderItem) -> None:
         if type(item) is not ProviderItem or item.lane_id != self.lane_id:
             raise ConversationValidationError()
         self.items.append(item)
+        self.provider_output = True
         if item.kind is ProviderItemKind.MESSAGE and item.phase in {
             ProviderItemPhase.ASSISTANT,
             ProviderItemPhase.FINAL,
@@ -307,6 +315,7 @@ class _AttemptStaging:
         self.upstream_response_id = None
         self.visible_output = False
         self.tool_effect = False
+        self.provider_output = False
 
 
 @final
@@ -316,6 +325,100 @@ class _DispatchProgress:
 
     def mark_possible_dispatch(self) -> None:
         self.may_have_dispatched = True
+
+
+@final
+class _ProviderStateSinkOwner:
+    """Own one private async stream sink through terminal cleanup."""
+
+    def __init__(self, sink: ConversationProviderStateSink) -> None:
+        for method_name in ("stage", "finalize", "cleanup"):
+            method = getattr(sink, method_name, None)
+            if not callable(method) or not iscoroutinefunction(method):
+                raise ConversationValidationError()
+        self._sink = sink
+        self._finalized = False
+        self._cleanup_task: Task[None] | None = None
+        self._cleaned = False
+
+    @property
+    def cleaned(self) -> bool:
+        """Return whether the owned sidecar cleanup completed."""
+        return self._cleaned
+
+    async def stage(self, item: ProviderItem) -> None:
+        """Stage one item through the private async boundary."""
+        if self._finalized or self._cleaned:
+            raise ConversationValidationError()
+        cancelled = False
+        failed = False
+        try:
+            await self._sink.stage(item)
+        except CancelledError:
+            cancelled = True
+        except BaseException:
+            failed = True
+        if cancelled:
+            raise CancelledError() from None
+        if failed:
+            raise ConversationCommitError() from None
+
+    async def finalize(
+        self,
+        outputs: tuple[ProviderLaneOutputCandidate, ...],
+    ) -> None:
+        """Finalize one complete staged response exactly once."""
+        if self._finalized or self._cleaned:
+            raise ConversationValidationError()
+        self._finalized = True
+        cancelled = False
+        failed = False
+        try:
+            await self._sink.finalize(outputs)
+        except CancelledError:
+            cancelled = True
+        except BaseException:
+            failed = True
+        if cancelled:
+            raise CancelledError() from None
+        if failed:
+            raise ConversationCommitError() from None
+
+    async def cleanup(self) -> None:
+        """Complete cancellation-safe sidecar cleanup exactly once."""
+        if self._cleaned:
+            return
+        task = self._cleanup_task
+        if task is None:
+            task = create_task(self._sink.cleanup())
+            self._cleanup_task = task
+        caller_cancelled = False
+        while not task.done():
+            try:
+                await wait({task})
+            except CancelledError:
+                caller_cancelled = True
+        task_cancelled = task.cancelled()
+        task_failed = False
+        if not task_cancelled:
+            task_failed = task.exception() is not None
+        if task_cancelled:
+            raise CancelledError() from None
+        if task_failed:
+            raise ConversationCommitError() from None
+        self._cleaned = True
+        if caller_cancelled:
+            raise CancelledError() from None
+
+
+def _apply_provider_state_cleanup_failure(
+    primary_failure: BaseException | None,
+    cleanup_failure: BaseException,
+) -> None:
+    """Preserve a primary failure or propagate the safe cleanup failure."""
+    if primary_failure is None:
+        raise cleanup_failure
+    primary_failure.add_note("conversation provider-state cleanup failed")
 
 
 LanePlan: TypeAlias = tuple[
@@ -409,6 +512,19 @@ class RunScopedConversationCoordinator:
         _validate_runtime(runtime)
         return _provider_diagnostics(state, runtime.provider_script)
 
+    def validate_direct_runtime(
+        self,
+        store: ConversationStore,
+        binding: ProviderLaneBinding,
+    ) -> None:
+        """Validate one fake-only direct SDK runtime without allocating."""
+        if self._closed or store is not self._store:
+            raise ConversationValidationError()
+        runtime = self._lanes.get(binding.lane_id)
+        if runtime is None or runtime.binding != binding:
+            raise ConversationValidationError()
+        _validate_lane_runtime(runtime)
+
     async def execute(
         self, request: ConversationRunRequest
     ) -> AtomicCommitReceipt:
@@ -420,6 +536,23 @@ class RunScopedConversationCoordinator:
     ) -> AtomicCommitReceipt:
         """Execute a streaming fake-provider run to its terminal boundary."""
         return await self._run(request, streaming=True)
+
+    async def stream_with_sink(
+        self,
+        request: ConversationRunRequest,
+        sink: ConversationProviderStateSink,
+    ) -> AtomicCommitReceipt:
+        """Execute a streamed run through one private provider-state sink."""
+        return await self._run(request, streaming=True, sink=sink)
+
+    async def compact(
+        self,
+        request: ConversationRunRequest,
+    ) -> AtomicCommitReceipt:
+        """Execute one standalone stateless fake-provider compaction."""
+        if request.semantics.operation is not ConversationOperation.COMPACT:
+            raise ConversationValidationError()
+        return await self._run(request, streaming=False)
 
     async def close(self) -> None:
         """Close the owned store after all run-scoped attempts finish."""
@@ -494,14 +627,21 @@ class RunScopedConversationCoordinator:
         request: ConversationRunRequest,
         *,
         streaming: bool,
+        sink: ConversationProviderStateSink | None = None,
     ) -> AtomicCommitReceipt:
         if self._closed or type(request) is not ConversationRunRequest:
             raise ConversationValidationError()
+        if sink is not None and not streaming:
+            raise ConversationValidationError()
+        sink_owner = (
+            _ProviderStateSinkOwner(sink) if sink is not None else None
+        )
         execution_token = self._activate_execution()
         identity = self._idempotency(request)
         owner_token: str | None = None
         committed = False
         progress = _DispatchProgress()
+        primary_failure: BaseException | None = None
         try:
             await self._hook.reach(CoordinatorAwaitBoundary.RESOLVE_AUTHORITY)
             authority = await self._resolver.resolve()
@@ -551,6 +691,9 @@ class RunScopedConversationCoordinator:
                         resolution.public_response_id,
                         f"publication-{resolution.public_response_id}",
                     )
+                if sink_owner is not None:
+                    await sink_owner.finalize(output_candidates)
+                    await sink_owner.cleanup()
                 return AtomicCommitReceipt(
                     checkpoint=checkpoint,
                     result=result,
@@ -577,7 +720,13 @@ class RunScopedConversationCoordinator:
                 identity=request.identity,
                 streaming=streaming,
                 progress=progress,
+                sink=sink_owner,
             )
+            if request.semantics.operation is ConversationOperation.COMPACT:
+                self._validate_compact_outputs(output_candidates)
+            if sink_owner is not None:
+                await sink_owner.finalize(output_candidates)
+                await sink_owner.cleanup()
             now = await self._clock.now()
             candidate = build_checkpoint_candidate(
                 request,
@@ -635,6 +784,7 @@ class RunScopedConversationCoordinator:
                 )
             return receipt
         except BaseException as exc:
+            primary_failure = exc
             if owner_token is not None and not committed:
                 try:
                     await self._rollback(
@@ -653,7 +803,37 @@ class RunScopedConversationCoordinator:
                     raise cleanup_exc from exc
             raise
         finally:
+            cleanup_failure: BaseException | None = None
+            if sink_owner is not None and not sink_owner.cleaned:
+                try:
+                    await sink_owner.cleanup()
+                except CancelledError as error:
+                    cleanup_failure = error
+                except BaseException:
+                    cleanup_failure = ConversationCommitError()
             self._active_attempts.discard(execution_token)
+            if cleanup_failure is not None:
+                _apply_provider_state_cleanup_failure(
+                    primary_failure,
+                    cleanup_failure,
+                )
+
+    @staticmethod
+    def _validate_compact_outputs(
+        outputs: tuple[ProviderLaneOutputCandidate, ...],
+    ) -> None:
+        if (
+            type(outputs) is not tuple
+            or not outputs
+            or any(
+                output.mode is not ConversationMode.STATELESS
+                or not output.completed_items
+                or output.completed_items[-1].kind
+                is not ProviderItemKind.COMPACTION
+                for output in outputs
+            )
+        ):
+            raise ConversationValidationError()
 
     def _execution_reservation(
         self,
@@ -732,7 +912,13 @@ class RunScopedConversationCoordinator:
                 raise ConversationCapabilityError()
             runtime.capability_profile.assert_binding(runtime.binding)
             self._require_capabilities(
-                lane_request, runtime, streaming=streaming
+                lane_request,
+                runtime,
+                streaming=streaming,
+                standalone_compaction=(
+                    request.semantics.operation
+                    is ConversationOperation.COMPACT
+                ),
             )
             prior = parent_lanes.get(lane_request.lane_id)
             if prior is not None:
@@ -759,6 +945,7 @@ class RunScopedConversationCoordinator:
                     binding=runtime.binding,
                     ledger=ledger,
                     reasoning=reasoning,
+                    compaction=lane_request.compaction,
                 )
             else:
                 if prior is not None and not isinstance(
@@ -785,6 +972,7 @@ class RunScopedConversationCoordinator:
         runtime: ConversationLaneRuntime,
         *,
         streaming: bool,
+        standalone_compaction: bool,
     ) -> None:
         required = [
             (
@@ -801,6 +989,10 @@ class RunScopedConversationCoordinator:
             required.append(ConversationCapability.REASONING_CONTEXT_ALL_TURNS)
         if streaming:
             required.append(ConversationCapability.STREAMING_ITEM_FIDELITY)
+        if isinstance(lane.compaction, InlineCompaction):
+            required.append(ConversationCapability.INLINE_COMPACTION)
+        if standalone_compaction:
+            required.append(ConversationCapability.STANDALONE_COMPACTION)
         for capability in required:
             runtime.capability_profile.require(capability)
 
@@ -858,6 +1050,7 @@ class RunScopedConversationCoordinator:
         identity: CheckpointIdentity,
         streaming: bool,
         progress: _DispatchProgress,
+        sink: _ProviderStateSinkOwner | None,
     ) -> tuple[
         tuple[ProviderLaneSnapshot, ...],
         tuple[ProviderLaneOutputCandidate, ...],
@@ -874,6 +1067,7 @@ class RunScopedConversationCoordinator:
                 staging,
                 streaming=streaming,
                 progress=progress,
+                sink=sink,
             )
             scope = ProviderLaneOutputScope.CURRENT_CALL
             execution_receipt = provider_lane_execution_receipt(
@@ -936,6 +1130,7 @@ class RunScopedConversationCoordinator:
         *,
         streaming: bool,
         progress: _DispatchProgress,
+        sink: _ProviderStateSinkOwner | None,
         _dispatch_provider: Callable[
             [
                 _DeterministicFakeProviderRuntime,
@@ -970,6 +1165,7 @@ class RunScopedConversationCoordinator:
                         plan,
                         staging,
                         progress,
+                        sink,
                     )
                 else:
                     await self._hook.reach(
@@ -989,7 +1185,9 @@ class RunScopedConversationCoordinator:
                 disposition = reduce_failure(
                     exc.boundary,
                     visible_output=staging.visible_output,
-                    tool_effect=staging.tool_effect,
+                    tool_effect=(
+                        staging.tool_effect or staging.provider_output
+                    ),
                     committed=False,
                     ambiguous=isinstance(
                         exc, ConversationAmbiguousDispatchError
@@ -1013,6 +1211,7 @@ class RunScopedConversationCoordinator:
         plan: ProviderPlan,
         staging: _AttemptStaging,
         progress: _DispatchProgress,
+        sink: _ProviderStateSinkOwner | None,
         _next_provider_item: Callable[
             [
                 _DeterministicFakeProviderRuntime,
@@ -1059,6 +1258,8 @@ class RunScopedConversationCoordinator:
                     CoordinatorAwaitBoundary.PROVIDER_STREAM_ITEM
                 )
                 staging.accept(item)
+                if sink is not None:
+                    await sink.stage(item)
             await self._hook.reach(
                 CoordinatorAwaitBoundary.PROVIDER_STREAM_TERMINAL
             )
@@ -1471,6 +1672,12 @@ class RunScopedConversationCoordinator:
                 "lane_id": lane.lane_id,
                 "mode": lane.mode.value,
                 "reasoning_context": lane.reasoning_context.value,
+                "compaction": lane.compaction.operation.value,
+                "compact_threshold": getattr(
+                    lane.compaction,
+                    "compact_threshold",
+                    None,
+                ),
             }
             for lane in request.lanes
         )
@@ -1557,9 +1764,13 @@ def build_checkpoint_candidate(
             revision=NamedHeadRevision(request.advance.expected_revision + 1),
         )
     kind = (
-        CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
-        if request.boundary is ConversationCommitBoundary.INTERNAL_SEGMENT
-        else CheckpointKind.COMPLETED_OUTWARD_TURN
+        CheckpointKind.STANDALONE_COMPACT_RESULT
+        if request.semantics.operation is ConversationOperation.COMPACT
+        else (
+            CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            if request.boundary is ConversationCommitBoundary.INTERNAL_SEGMENT
+            else CheckpointKind.COMPLETED_OUTWARD_TURN
+        )
     )
     checkpoint = with_checkpoint_integrity(
         ConversationCheckpoint(
@@ -1585,6 +1796,15 @@ def build_checkpoint_candidate(
             head=head,
         )
     )
+    if request.semantics.operation is ConversationOperation.COMPACT:
+        return StandaloneCompactCheckpointCandidate(
+            checkpoint=checkpoint,
+            handle=StatelessConversationHandle(
+                conversation_id=checkpoint.identity.conversation_id,
+                checkpoint_id=checkpoint.identity.checkpoint_id,
+                branch_id=checkpoint.identity.branch_id,
+            ),
+        )
     if request.boundary is ConversationCommitBoundary.INTERNAL_SEGMENT:
         return ExecutionSegmentCheckpointCandidate(checkpoint=checkpoint)
     assert request.public_response_id is not None

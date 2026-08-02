@@ -1478,7 +1478,10 @@ class CLI:
             "--conversation",
             action="store_true",
             default=False,
-            help="Activate conversation mode with the agent",
+            help=(
+                "Run a repeated-message agent loop; this does not enable "
+                "provider conversation continuation"
+            ),
         )
         agent_run_parser.add_argument(
             "--watch",
@@ -1501,7 +1504,9 @@ class CLI:
         agent_session_group.add_argument(
             "--session",
             type=str,
-            help="Continue the conversation on the given session",
+            help=(
+                "Select a persistent message-memory session for the agent loop"
+            ),
         )
 
         agent_run_parser.add_argument(

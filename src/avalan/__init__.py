@@ -3,8 +3,10 @@
 # ruff: noqa: E402
 
 from .agent.orchestrator_contract import Orchestrator as Orchestrator
+from .entities import GenerationSettings as GenerationSettings
 from .entities import Input as Input
 from .entities import Message as Message
+from .entities import ReasoningSettings as ReasoningSettings
 from .interaction.entities import AnswerProvenance as AnswerProvenance
 from .interaction.entities import Choice as Choice
 from .interaction.entities import ChoiceValue as ChoiceValue
@@ -100,6 +102,7 @@ def site() -> ParseResult:
     return urlparse(str(config["url"]))
 
 
+from .sdk import ActiveConversationSettings as ActiveConversationSettings
 from .sdk import AgentHeadlessInputPolicy as AgentHeadlessInputPolicy
 from .sdk import AgentInteractionRuntime as AgentInteractionRuntime
 from .sdk import AgentRunCancelled as AgentRunCancelled
@@ -121,6 +124,41 @@ from .sdk import (
 )
 from .sdk import AttachedInputHandler as AttachedInputHandler
 from .sdk import AttachedInputOutcome as AttachedInputOutcome
+from .sdk import CompactionPolicy as CompactionPolicy
+from .sdk import (
+    ConversationBranchIntent as ConversationBranchIntent,
+)
+from .sdk import ConversationHandle as ConversationHandle
+from .sdk import (
+    ConversationHandleUnavailableError as ConversationHandleUnavailableError,
+)
+from .sdk import ConversationMode as ConversationMode
+from .sdk import ConversationParent as ConversationParent
+from .sdk import ConversationResetIntent as ConversationResetIntent
+from .sdk import ConversationSettings as ConversationSettings
+from .sdk import (
+    DirectConversationCancelledError as DirectConversationCancelledError,
+)
+from .sdk import DirectConversationClient as DirectConversationClient
+from .sdk import (
+    DirectConversationOutputDelta as DirectConversationOutputDelta,
+)
+from .sdk import DirectConversationResult as DirectConversationResult
+from .sdk import DirectConversationRuntime as DirectConversationRuntime
+from .sdk import DirectConversationStream as DirectConversationStream
+from .sdk import (
+    DirectConversationStreamError as DirectConversationStreamError,
+)
+from .sdk import (
+    DirectConversationStreamItem as DirectConversationStreamItem,
+)
+from .sdk import (
+    DirectConversationStreamState as DirectConversationStreamState,
+)
+from .sdk import (
+    DirectConversationStreamTerminal as DirectConversationStreamTerminal,
+)
+from .sdk import DisabledCompaction as DisabledCompaction
 from .sdk import DurableInputBridge as DurableInputBridge
 from .sdk import (
     DurableInputContinuationPayload as DurableInputContinuationPayload,
@@ -133,6 +171,9 @@ from .sdk import (
     DurableInputPersistenceRequest as DurableInputPersistenceRequest,
 )
 from .sdk import DurableInputRequestPayload as DurableInputRequestPayload
+from .sdk import EffectiveReasoningContext as EffectiveReasoningContext
+from .sdk import EffectiveReasoningMetadata as EffectiveReasoningMetadata
+from .sdk import InlineCompaction as InlineCompaction
 from .sdk import InputAnswerSubmission as InputAnswerSubmission
 from .sdk import InputContinuationRef as InputContinuationRef
 from .sdk import InputController as InputController
@@ -150,6 +191,26 @@ from .sdk import InputResolutionRequest as InputResolutionRequest
 from .sdk import InputResolutionResult as InputResolutionResult
 from .sdk import InputSubmission as InputSubmission
 from .sdk import InputValidationFeedback as InputValidationFeedback
+from .sdk import NamedHeadParent as NamedHeadParent
+from .sdk import (
+    OneShotConversationSettings as OneShotConversationSettings,
+)
+from .sdk import ProviderUsage as ProviderUsage
+from .sdk import ReasoningContext as ReasoningContext
+from .sdk import StandaloneCompactRequest as StandaloneCompactRequest
+from .sdk import StandaloneCompactResult as StandaloneCompactResult
+from .sdk import (
+    StatelessConversationHandle as StatelessConversationHandle,
+)
+from .sdk import (
+    StatelessConversationSettings as StatelessConversationSettings,
+)
+from .sdk import StatelessParent as StatelessParent
+from .sdk import StoredConversationHandle as StoredConversationHandle
+from .sdk import (
+    StoredConversationSettings as StoredConversationSettings,
+)
+from .sdk import StoredParent as StoredParent
 from .sdk import (
     create_attached_input_runtime as create_attached_input_runtime,
 )

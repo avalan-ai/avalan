@@ -5206,6 +5206,10 @@ class OrchestratorResponse(
             execution=self._execution,
             execution_origin=execution_origin,
             interaction_broker=parent_context.interaction_broker,
+            conversation_coordinator=(parent_context.conversation_coordinator),
+            conversation_authority=parent_context.conversation_authority,
+            conversation_lane=parent_context.conversation_lane,
+            conversation_checkpoint=parent_context.conversation_checkpoint,
         )
         self._context = context
         return context

@@ -169,7 +169,7 @@ _PHASE0_REQUIREMENTS_SHA256 = (
     "596f3f62b99be967aa09bdb1f543447d8f7580dfea533ddcaa3aaaa95e2994fe"
 )
 _PHASE0_FAILURE_STRUCTURE_SHA256 = (
-    "773df38b02279bec169e6dc6f71e801ea78457a700c2de7ecf1f51912b4e5e80"
+    "ce4d56793e95d86b9b49bd1338d132c5ab5f3970c548e9827e8a56b9ca7f4956"
 )
 _PHASE0_THREAT_STRUCTURE_SHA256 = (
     "7d3e7470e5d978da1c5bfaba2c734c15de169f97045f33188633abc77266f239"
@@ -234,18 +234,34 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "d31c5f667fff1a4a54ed51cc0e16c8953b7c4e7126128ee1098ce5958354ee74"
         ),
     },
+    4: {
+        "tests/conversation/direct_generation_contract_test.py": (
+            "11bc20f6645bb8e47d1768c8ccaa0b62aea79a2ba4a8297f48fcd8a2c2517ed2"
+        ),
+        "tests/conversation/direct_sdk_test.py": (
+            "a8a10e69b27842a3b0ec1138d04c1e758a618d091678623fff6e4f3a18d566a8"
+        ),
+        "tests/conversation/direct_sdk_pgsql_test.py": (
+            "b8f5f49ecdb3d9a39a232bc381159c5c78c9f2aba71b432810c611c08c2b29d8"
+        ),
+        "tests/conversation/sdk_e2e_test.py": (
+            "1359c82abdac356fe9c40d527f306ae48c00bdb91c7e8e594e9cfd525626c835"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
     1: "9a85447f5de838051a3801b66eccd865ecc62b6e72ecfd9d3084603468ff8663",
     2: "8014ee73f5334290be612a567836f02aace953764a14add8d02b1407b487d441",
     3: "a0f3d780942570e794f1134e2da69754f6c8eabbd419285481653839104126ef",
+    4: "4882ad8775ecb064daf399f2f83c32c913f4a0d5168396d18c5936936075a3eb",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
     1: "cc98a83a046019ac7bb1f2c16469cc3a67fa6408885e87ff1fb6b265c6aa6161",
     2: "8a6da13a0627cd0a167649dc9708e3585a717f6cb71db3c17a1c686686c295ca",
     3: "3b1d94a50ca44b715a02b989646bef9daea8d471d649491465a1431cf277194f",
+    4: "869ac471b5bd88df84ff12ccae1d4c7929a70aa8e339a410a7ab031c873cf0b1",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -264,6 +280,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         3,
         "924ca90b4812ca9dcbf9776a6c9d845d2ddceb2b8081d15c9eaa345b94bb6453",
     ),
+    4: (
+        5,
+        "1ed1d510bf0a2a09729884cf42b12e078d2acb16cffaa32d0e1fefc5427279a6",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
     0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
@@ -273,7 +293,13 @@ _FAILURE_STRUCTURE_BY_PHASE = {
         12,
         10,
         120,
-        "46ddccdebdcba3000c50045da3c52919643b6935597a8fe5af05722fc6f2701f",
+        "dc99eabb897899280ae9ce8a9ea20c377edda2fae0c838fc824d90e6d5ec543b",
+    ),
+    4: (
+        12,
+        10,
+        120,
+        "dc99eabb897899280ae9ce8a9ea20c377edda2fae0c838fc824d90e6d5ec543b",
     ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
@@ -285,6 +311,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         8,
         14,
         "c973ba36785f5f28d51ed744a6184b1f40ec61e6f99eb2e0677bc6594fee5b88",
+    ),
+    4: (
+        9,
+        8,
+        15,
+        "25399ab5bab61e83943cdc21ce8278b012e2f64792be0e6f6a2bd8a2e9715569",
     ),
 }
 _PHASE0_NODE_INVENTORY = (
@@ -537,7 +569,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase3.json"
+    return fixture_root() / "acceptance_manifest.phase4.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -937,7 +969,7 @@ def _validate_failure_structure_anchors(
     raw_cells: list[object],
     current_phase: int,
 ) -> None:
-    """Validate append-only failure structure while ignoring lifecycle."""
+    """Validate append-only failure topology apart from mutable evidence."""
     _require_phase_anchor_keys(
         _FAILURE_STRUCTURE_BY_PHASE,
         current_phase,
@@ -964,7 +996,7 @@ def _validate_failure_structure_anchors(
             {
                 key: value
                 for key, value in mapping(raw, "failure cell").items()
-                if key != "lifecycle"
+                if key not in {"evidence_node_id", "lifecycle"}
             }
             for raw in raw_cells[:cell_count]
         ]

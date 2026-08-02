@@ -1330,10 +1330,13 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             model_arg: object,
             operation_arg: Operation,
             capability_arg: object,
+            context_arg: ModelCallContext,
         ) -> object:
             self.assertIs(engine_uri_arg, engine_uri)
+            self.assertIs(model_arg, model)
             self.assertIs(operation_arg, operation)
             self.assertIs(capability_arg, capability)
+            self.assertIs(context_arg, task.context)
             return expected
 
         model = object()
@@ -1421,6 +1424,7 @@ class ModelManagerEventDispatchTestCase(IsolatedAsyncioTestCase):
             task.model,
             operation,
             None,
+            task.context,
         )
 
     async def test_exit_with_running_loop_closes_on_interrupt(self):

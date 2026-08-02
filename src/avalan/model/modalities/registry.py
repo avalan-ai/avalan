@@ -12,11 +12,13 @@ from ...entities import (
     ReasoningTag,
     TransformerEngineSettings,
 )
+from ..call import ModelCallContext, validate_native_model_call_context
 from ..capability import ModelCapabilityCatalog
 
 from argparse import Namespace
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from contextlib import AsyncExitStack
+from functools import wraps
 from importlib import import_module
 from inspect import isclass
 from logging import Logger
@@ -24,6 +26,7 @@ from typing import Any, Protocol, TypeVar, cast
 
 HandlerType = TypeVar("HandlerType")
 _HANDLER_MODALITY_ATTRIBUTE = "__avalan_modality__"
+_HANDLER_CONTEXT_GUARD_ATTRIBUTE = "__avalan_context_guard__"
 
 
 class ModalityHandler(Protocol):
@@ -33,6 +36,7 @@ class ModalityHandler(Protocol):
         model: Any,
         operation: Operation,
         capability: ModelCapabilityCatalog | None,
+        context: ModelCallContext | None,
     ) -> Any: ...
 
     def load_engine(
@@ -83,25 +87,98 @@ class ModalityRegistry:
             modality = cls._normalize_modality(modality) if modality else None
             if not isinstance(modality, Modality):
                 continue
+            handler = cls._guard_handler(handler)
             if isclass(handler):
                 class_handler = cast(type[ModalityHandler], handler)
                 cls._handlers[modality] = class_handler()
             else:
                 cls._handlers[modality] = cast(ModalityHandler, handler)
 
+    @staticmethod
+    def _guard_handler(handler: HandlerType) -> HandlerType:
+        """Return one handler guarded against active conversation state."""
+        if isclass(handler):
+            handler_type = cast(type[object], handler)
+            original = cast(
+                Callable[..., Awaitable[Any]],
+                getattr(handler_type, "__call__"),
+            )
+            if getattr(original, _HANDLER_CONTEXT_GUARD_ATTRIBUTE, False):
+                return handler
+
+            @wraps(original)
+            async def guarded_method(
+                instance: object,
+                engine_uri: EngineUri,
+                model: Any,
+                operation: Operation,
+                capability: ModelCapabilityCatalog | None = None,
+                context: ModelCallContext | None = None,
+            ) -> Any:
+                validate_native_model_call_context(context)
+                return await original(
+                    instance,
+                    engine_uri,
+                    model,
+                    operation,
+                    capability,
+                    context,
+                )
+
+            setattr(
+                guarded_method,
+                _HANDLER_CONTEXT_GUARD_ATTRIBUTE,
+                True,
+            )
+            setattr(handler_type, "__call__", guarded_method)
+            return handler
+
+        original = cast(Callable[..., Awaitable[Any]], handler)
+        if getattr(original, _HANDLER_CONTEXT_GUARD_ATTRIBUTE, False):
+            return handler
+
+        @wraps(original)
+        async def guarded_function(
+            engine_uri: EngineUri,
+            model: Any,
+            operation: Operation,
+            capability: ModelCapabilityCatalog | None = None,
+            context: ModelCallContext | None = None,
+        ) -> Any:
+            validate_native_model_call_context(context)
+            return await original(
+                engine_uri,
+                model,
+                operation,
+                capability,
+                context,
+            )
+
+        setattr(
+            guarded_function,
+            _HANDLER_CONTEXT_GUARD_ATTRIBUTE,
+            True,
+        )
+        return cast(HandlerType, guarded_function)
+
     @classmethod
     def register(
         cls, modality: Modality
     ) -> Callable[[HandlerType], HandlerType]:
         def decorator(handler: HandlerType) -> HandlerType:
-            setattr(handler, _HANDLER_MODALITY_ATTRIBUTE, modality)
-            if isclass(handler):
-                class_handler = cast(type[ModalityHandler], handler)
+            guarded_handler = cls._guard_handler(handler)
+            setattr(
+                guarded_handler,
+                _HANDLER_MODALITY_ATTRIBUTE,
+                modality,
+            )
+            if isclass(guarded_handler):
+                class_handler = cast(type[ModalityHandler], guarded_handler)
                 resolved_handler = class_handler()
             else:
-                resolved_handler = cast(ModalityHandler, handler)
+                resolved_handler = cast(ModalityHandler, guarded_handler)
             cls._handlers[modality] = resolved_handler
-            return handler
+            return guarded_handler
 
         return decorator
 

@@ -1710,3 +1710,40 @@ def fake_provider_result(
         ),
         usage=ProviderUsage(input_tokens=turn * 10, output_tokens=turn * 5),
     )
+
+
+def fake_compaction_result(
+    plan: StatelessProviderPlan,
+    *,
+    turn: int,
+    opaque_state: bytes = b"synthetic-compaction",
+) -> ProviderResult:
+    """Return one deterministic fake standalone compaction result."""
+    if type(plan) is not StatelessProviderPlan:
+        raise ConversationValidationError()
+    if type(turn) is not int or turn <= 0:
+        raise ConversationValidationError()
+    item_id = ProviderItemId(f"fake-compaction-{plan.binding.lane_id}-{turn}")
+    item = ProviderItem(
+        item_id=item_id,
+        lane_id=plan.binding.lane_id,
+        model_call_id=ConversationModelCallId(
+            f"fake-compact-call-{plan.binding.lane_id}-{turn}"
+        ),
+        kind=ProviderItemKind.COMPACTION,
+        order=ProviderItemOrder(len(plan.ledger.items)),
+        provider_index=ProviderItemIndex(0),
+        phase=ProviderItemPhase.COMPACTION,
+        caller=ProviderItemCaller.PROVIDER,
+        canonical_input={"id": item_id, "type": "compaction"},
+        normalization_version=PROVIDER_ITEM_NORMALIZATION_VERSION,
+        opaque_state=OpaqueProviderState(_value=opaque_state),
+    )
+    return ProviderResult(
+        items=(item,),
+        reasoning=EffectiveReasoningMetadata(
+            requested=plan.reasoning.requested,
+            effective=EffectiveReasoningContext.CURRENT_TURN,
+        ),
+        usage=ProviderUsage(input_tokens=turn * 10, output_tokens=0),
+    )

@@ -30,9 +30,12 @@ from .execution import (
 from .items import ProviderItem, VisibleTranscriptEntry
 from .observability import ConversationRequestSemantics
 from .settings import (
+    CompactionPolicy,
     ConversationMode,
     ConversationResult,
+    DisabledCompaction,
     EffectiveReasoningMetadata,
+    InlineCompaction,
     ProviderLaneOutput,
     ProviderLaneOutputScope,
     ProviderUsage,
@@ -160,6 +163,7 @@ class ConversationLaneRequest:
     lane_id: ProviderLaneId
     mode: ConversationMode
     reasoning_context: ReasoningContext = ReasoningContext.AUTO
+    compaction: CompactionPolicy = DisabledCompaction()
 
     def __post_init__(self) -> None:
         validate_identifier(self.lane_id, "lane_id")
@@ -168,6 +172,11 @@ class ConversationLaneRequest:
         ):
             raise ConversationValidationError()
         if not isinstance(self.reasoning_context, ReasoningContext):
+            raise ConversationValidationError()
+        if not isinstance(
+            self.compaction,
+            DisabledCompaction | InlineCompaction,
+        ):
             raise ConversationValidationError()
 
 
@@ -233,6 +242,7 @@ class ConversationRunRequest:
         if self.public_response_id is not None:
             validate_identifier(self.public_response_id, "public_response_id")
         _validate_advance_identity(self)
+        _validate_request_operation(self)
 
 
 def _validate_advance_identity(request: ConversationRunRequest) -> None:
@@ -265,6 +275,30 @@ def _validate_advance_identity(request: ConversationRunRequest) -> None:
     if isinstance(advance, ExplicitBranchAdvance):
         if identity.branch_id != advance.branch_id:
             raise ConversationValidationError()
+
+
+def _validate_request_operation(request: ConversationRunRequest) -> None:
+    operation = request.semantics.operation
+    advance = request.advance
+    if isinstance(advance, FirstTurnAdvance | ResetAdvance):
+        expected = ConversationOperation.CREATE
+    elif isinstance(advance, ExplicitBranchAdvance):
+        expected = ConversationOperation.BRANCH
+    elif operation is ConversationOperation.COMPACT:
+        expected = ConversationOperation.COMPACT
+    else:
+        expected = ConversationOperation.CONTINUE
+    if operation is not expected:
+        raise ConversationValidationError()
+    if operation is ConversationOperation.COMPACT and (
+        request.boundary is not ConversationCommitBoundary.INTERNAL_SEGMENT
+        or not isinstance(advance, OrdinaryChildAdvance)
+        or any(
+            lane.mode is not ConversationMode.STATELESS
+            for lane in request.lanes
+        )
+    ):
+        raise ConversationValidationError()
 
 
 class OutboxState(StrEnum):
@@ -962,11 +996,9 @@ def request_operation(
     request: ConversationRunRequest,
 ) -> ConversationOperation:
     """Return the exact idempotency operation for one advance."""
-    if isinstance(request.advance, FirstTurnAdvance | ResetAdvance):
-        return ConversationOperation.CREATE
-    if isinstance(request.advance, ExplicitBranchAdvance):
-        return ConversationOperation.BRANCH
-    return ConversationOperation.CONTINUE
+    if type(request) is not ConversationRunRequest:
+        raise ConversationValidationError()
+    return request.semantics.operation
 
 
 def request_digest_value(value: JsonValue) -> CanonicalRequestDigest:
@@ -975,3 +1007,4 @@ def request_digest_value(value: JsonValue) -> CanonicalRequestDigest:
         raise ConversationValidationError()
     validate_identifier(value, "request_digest")
     return CanonicalRequestDigest(value)
+    (DisabledCompaction,)
