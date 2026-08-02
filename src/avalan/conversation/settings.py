@@ -16,7 +16,7 @@ from .errors import (
     ConversationAuthorizationError,
     ConversationValidationError,
 )
-from .items import ProviderItem
+from .items import VisibleTranscriptEntry
 from .value import (
     CallerHeldState,
     IntegrityDigest,
@@ -521,7 +521,7 @@ class ProviderLaneOutput:
     binding_alias: SafeAlias
     mode: ConversationMode
     scope: ProviderLaneOutputScope
-    items: tuple[ProviderItem, ...]
+    items: tuple[VisibleTranscriptEntry, ...]
     reasoning: EffectiveReasoningMetadata
     usage: ProviderUsage
 
@@ -540,10 +540,8 @@ class ProviderLaneOutput:
         ):
             raise ConversationValidationError()
         if type(self.items) is not tuple or any(
-            type(item) is not ProviderItem for item in self.items
+            type(item) is not VisibleTranscriptEntry for item in self.items
         ):
-            raise ConversationValidationError()
-        if any(item.lane_id != self.lane_id for item in self.items):
             raise ConversationValidationError()
         if type(self.reasoning) is not EffectiveReasoningMetadata:
             raise ConversationValidationError()

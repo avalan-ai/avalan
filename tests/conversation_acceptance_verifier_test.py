@@ -369,6 +369,13 @@ def test_phase1_replacement_retains_tombstone_history_and_source(
         "_ACTIVE_SOURCE_SHA256_BY_PHASE",
         source_anchors,
     )
+    transitions = _VERIFIER._phase5_provider_transitions(_ROOT)
+    transitions.pop(domain_relative)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase5_provider_transitions",
+        lambda _root: transitions,
+    )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
 
@@ -491,8 +498,44 @@ def test_phase1_sources_append_without_rewriting_phase0_pins(
         "_ACTIVE_SOURCE_SHA256_BY_PHASE",
         source_anchors,
     )
+    transitions = _VERIFIER._phase5_provider_transitions(_ROOT)
+    transitions.pop(phase1_relative)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase5_provider_transitions",
+        lambda _root: transitions,
+    )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
+
+
+def test_phase5_provider_transition_target_has_independent_byte_anchor(
+    tmp_path: Path,
+) -> None:
+    """Reject a re-signed transition that rewrites its target bytes."""
+    payload = _read("provider_transition.phase5.json")
+    transitions = payload["transitions"]
+    assert isinstance(transitions, list)
+    target = transitions[0]
+    assert isinstance(target, dict)
+    target["to_size"] = int(cast(int, target["to_size"])) + 1
+    target["to_sha256"] = "0" * 64
+    _resign(payload, "canonical_sha256")
+    transition_path = (
+        tmp_path
+        / "tests"
+        / "fixtures"
+        / "conversation"
+        / "provider_transition.phase5.json"
+    )
+    transition_path.parent.mkdir(parents=True)
+    _write(transition_path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="target differs from its independent anchor",
+    ):
+        _VERIFIER._phase5_provider_transitions(tmp_path)
 
 
 def test_phase1_failure_and_threat_snapshots_are_append_only(

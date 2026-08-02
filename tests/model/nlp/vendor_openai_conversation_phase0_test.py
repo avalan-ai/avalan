@@ -97,6 +97,13 @@ _PROVIDER_CONFORMANCE_PATH = (
     / "conversation"
     / "provider_conformance.json"
 )
+_PROVIDER_TRANSITION_PATH = (
+    _REPOSITORY_ROOT
+    / "tests"
+    / "fixtures"
+    / "conversation"
+    / "provider_transition.phase5.json"
+)
 _ADAPTER_PATH = (
     _REPOSITORY_ROOT
     / "src"
@@ -147,7 +154,13 @@ _FORBIDDEN_PROVIDER_WIRE_ROOTS = frozenset(
 )
 _CLOSED_GATE_TRUSTED_HELPERS = frozenset({"_strict_replay_json_copy", "cast"})
 _CLOSED_GATE_REFLECTION_NAMES = frozenset(
-    {"eval", "exec", "globals", "locals", "vars"}
+    {
+        "eval",
+        "exec",
+        "globals",
+        "locals",
+        "vars",
+    }
 )
 _FRAME_REFLECTION_ATTRIBUTES = frozenset(
     {
@@ -304,10 +317,32 @@ def _phase0_provider_source_digest(source: str) -> str:
     return sha256(source.encode("utf-8")).hexdigest()
 
 
+def _phase5_provider_source_sha256() -> str:
+    transition = _load_json(_PROVIDER_TRANSITION_PATH)
+    assert transition["phase"] == 5
+    assert transition["kind"] == "reviewed_provider_source_transition"
+    payload = dict(transition)
+    digest = payload.pop("canonical_sha256")
+    assert digest == _canonical_digest(payload)
+    entries = [
+        _mapping(value) for value in _sequence(transition["transitions"])
+    ]
+    source = next(
+        item
+        for item in entries
+        if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
+    )
+    assert source["from_size"] == 336_124
+    assert source["from_sha256"] == _PHASE0_PROVIDER_SOURCE_SHA256
+    target = source["to_sha256"]
+    assert type(target) is str
+    return target
+
+
 def _assert_phase0_provider_source_integrity(source: str) -> None:
     assert (
         _phase0_provider_source_digest(source)
-        == _PHASE0_PROVIDER_SOURCE_SHA256
+        == _phase5_provider_source_sha256()
     ), (
         "Phase 0 provider source integrity drifted; rotate the immutable "
         "anchor only through a reviewed provider phase transition"
@@ -598,7 +633,11 @@ def _direct_assignments(
                     syntax_node.value is not None
                 ), f"{name} must have a value"
                 assignments.append(
-                    (syntax_node, syntax_node.target, syntax_node.value)
+                    (
+                        syntax_node,
+                        syntax_node.target,
+                        syntax_node.value,
+                    )
                 )
             continue
         if not isinstance(syntax_node, Assign):
@@ -663,7 +702,11 @@ def _binding_occurrences(
             syntax_node.ctx, Store | Del
         ):
             occurrences.append(
-                (syntax_node.id, syntax_node, type(syntax_node.ctx).__name__)
+                (
+                    syntax_node.id,
+                    syntax_node,
+                    type(syntax_node.ctx).__name__,
+                )
             )
         if isinstance(
             syntax_node,
@@ -693,7 +736,11 @@ def _binding_occurrences(
             occurrences.append((syntax_node.name, syntax_node, "definition"))
         if isinstance(syntax_node, ExceptHandler) and syntax_node.name:
             occurrences.append(
-                (syntax_node.name, syntax_node, "exception_handler")
+                (
+                    syntax_node.name,
+                    syntax_node,
+                    "exception_handler",
+                )
             )
         if isinstance(syntax_node, Import | ImportFrom):
             for import_name in syntax_node.names:
@@ -1597,7 +1644,7 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
         "scope",
         "stateful_create_field_policy",
     }
-    assert policy["scope"] == ("conversation_state_and_stateful_create_fields")
+    assert policy["scope"] == "conversation_state_and_stateful_create_fields"
     assert policy["runtime_disposition"] == "dormant_fail_closed"
     assert policy["legacy_generic_request_kwargs_acknowledged"] is True
     assert type(policy["legacy_generic_request_kwargs_description"]) is str
@@ -1670,9 +1717,7 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
         "public_runtime_disposition",
         "typed_sdk_create_fields",
     }
-    assert create_policy["public_runtime_disposition"] == (
-        "dormant_fail_closed"
-    )
+    assert create_policy["public_runtime_disposition"] == "dormant_fail_closed"
     assert _mapping(create_policy["legacy_fixed_provider_values"]) == {
         "store": False
     }
@@ -1724,10 +1769,10 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
     }
     adapter_source = _ADAPTER_PATH.read_text(encoding="utf-8")
     assert sha256(_ADAPTER_PATH.read_bytes()).hexdigest() == (
-        source_integrity["value"]
+        _phase5_provider_source_sha256()
     )
     assert _phase0_provider_source_digest(adapter_source) == (
-        source_integrity["value"]
+        _phase5_provider_source_sha256()
     )
 
     typed_fields = _mapping(create_policy["typed_sdk_create_fields"])
@@ -1741,8 +1786,9 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
             assert {
                 key: field_policy[key] for key in sdk_contract
             } == sdk_contract
-            assert field_policy["public_runtime_disposition"] == (
-                "dormant_fail_closed"
+            assert (
+                field_policy["public_runtime_disposition"]
+                == "dormant_fail_closed"
             )
         background_policy = _mapping(typed_fields["background"])
         assert background_policy == {
@@ -2113,7 +2159,7 @@ def test_every_tracked_transport_binding_rejects_tuple_rebinding(
         ),
         pytest.param(
             "            request_client = self._client\n",
-            "            for kwargs in values:\n" "                pass\n",
+            "            for kwargs in values:\n                pass\n",
             id="for-target",
         ),
         pytest.param(
@@ -2128,7 +2174,7 @@ def test_every_tracked_transport_binding_rejects_tuple_rebinding(
         ),
         pytest.param(
             "            request_client = self._client\n",
-            "            with manager() as kwargs:\n" "                pass\n",
+            "            with manager() as kwargs:\n                pass\n",
             id="with-target",
         ),
         pytest.param(
@@ -2167,12 +2213,12 @@ def test_every_tracked_transport_binding_rejects_tuple_rebinding(
         ),
         pytest.param(
             "            request_client = self._client\n",
-            "            def kwargs() -> None:\n" "                pass\n",
+            "            def kwargs() -> None:\n                pass\n",
             id="nested-function-name",
         ),
         pytest.param(
             "            request_client = self._client\n",
-            "            class kwargs:\n" "                pass\n",
+            "            class kwargs:\n                pass\n",
             id="nested-class-name",
         ),
         pytest.param(
@@ -2358,15 +2404,19 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
             (
                 (
                     "from asyncio import (\n",
-                    "import builtins as runtime_builtins\n\n"
-                    "from asyncio import (\n",
+                    (
+                        "import builtins as runtime_builtins\n\n"
+                        "from asyncio import (\n"
+                    ),
                 ),
                 (
                     "            request_client = self._client\n",
-                    "            reflected_namespace = "
-                    "runtime_builtins.locals()\n"
-                    '            runtime_builtins.eval("None")\n'
-                    "            request_client = self._client\n",
+                    (
+                        "            reflected_namespace = "
+                        "runtime_builtins.locals()\n"
+                        '            runtime_builtins.eval("None")\n'
+                        "            request_client = self._client\n"
+                    ),
                 ),
             ),
             "",
@@ -2376,9 +2426,11 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
             (
                 (
                     "            request_client = self._client\n",
-                    "            reflected_namespace = "
-                    '__builtins__["locals"]()\n'
-                    "            request_client = self._client\n",
+                    (
+                        "            reflected_namespace = "
+                        '__builtins__["locals"]()\n'
+                        "            request_client = self._client\n"
+                    ),
                 ),
             ),
             "",
@@ -2388,15 +2440,17 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
             (
                 (
                     "            request_client = self._client\n",
-                    '            frame_prefix = "f"\n'
-                    '            frame_suffix = "locals"\n'
-                    '            frame_name = "_".join(\n'
-                    "                (frame_prefix, frame_suffix)\n"
-                    "            )\n"
-                    "            reflected_namespace = getattr(\n"
-                    "                frame, frame_name\n"
-                    "            )\n"
-                    "            request_client = self._client\n",
+                    (
+                        '            frame_prefix = "f"\n'
+                        '            frame_suffix = "locals"\n'
+                        '            frame_name = "_".join(\n'
+                        "                (frame_prefix, frame_suffix)\n"
+                        "            )\n"
+                        "            reflected_namespace = getattr(\n"
+                        "                frame, frame_name\n"
+                        "            )\n"
+                        "            request_client = self._client\n"
+                    ),
                 ),
             ),
             "",
@@ -2405,21 +2459,21 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
         pytest.param(
             (
                 (
-                    "            async def stream_factory() "
-                    "-> AsyncIterator[Any]:\n",
-                    "            recovered_alias = next(\n"
-                    "                cell.cell_contents\n"
-                    "                for cell in "
-                    "(create_response.__closure__ or ())\n"
-                    "                if isinstance(cell.cell_contents, dict)\n"
-                    "            )\n"
-                    '            recovered_field = "".join(\n'
-                    '                ("back", "ground")\n'
-                    "            )\n"
-                    "            recovered_alias[recovered_field] = True\n"
-                    "\n"
-                    "            async def stream_factory() "
-                    "-> AsyncIterator[Any]:\n",
+                    (
+                        "            async def stream_factory() "
+                        "-> AsyncIterator[Any]:\n"
+                    ),
+                    (
+                        "            recovered_alias = next(\n               "
+                        " cell.cell_contents\n                for cell in"
+                        " (create_response.__closure__ or ())\n               "
+                        " if isinstance(cell.cell_contents, dict)\n           "
+                        ' )\n            recovered_field = "".join(\n         '
+                        '       ("back", "ground")\n            )\n           '
+                        " recovered_alias[recovered_field] = True\n\n         "
+                        "   async def stream_factory() ->"
+                        " AsyncIterator[Any]:\n"
+                    ),
                 ),
             ),
             "",
@@ -2428,25 +2482,25 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
         pytest.param(
             (
                 (
-                    "                try:\n"
-                    "                    created_response = await "
-                    "request_client.responses.create(\n",
-                    "                alternate_client = self._client\n"
-                    '                responses_name = "".join(\n'
-                    '                    ("res", "ponses")\n'
-                    "                )\n"
-                    "                responses_resource = getattr(\n"
-                    "                    alternate_client, responses_name\n"
-                    "                )\n"
-                    '                compact_name = "".join(\n'
-                    '                    ("com", "pact")\n'
-                    "                )\n"
-                    "                await getattr(\n"
-                    "                    responses_resource, compact_name\n"
-                    "                )()\n"
-                    "                try:\n"
-                    "                    created_response = await "
-                    "request_client.responses.create(\n",
+                    (
+                        "                try:\n"
+                        "                    created_response = await "
+                        "request_client.responses.create(\n"
+                    ),
+                    (
+                        "                alternate_client = self._client\n    "
+                        '            responses_name = "".join(\n              '
+                        '      ("res", "ponses")\n                )\n         '
+                        "       responses_resource = getattr(\n               "
+                        "     alternate_client, responses_name\n              "
+                        '  )\n                compact_name = "".join(\n       '
+                        '             ("com", "pact")\n                )\n    '
+                        "            await getattr(\n                   "
+                        " responses_resource, compact_name\n               "
+                        " )()\n                try:\n                   "
+                        " created_response = await"
+                        " request_client.responses.create(\n"
+                    ),
                 ),
             ),
             "",

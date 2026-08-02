@@ -1,0 +1,43 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 5,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase5-native-provider-review",
+  "reason": "Reduce the legacy replay owner to a stateless compatibility facade while activating the coordinator-owned native provider ledger.",
+  "transitions": [
+    {
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "from_size": 336124,
+      "from_sha256": "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d",
+      "to_size": 337354,
+      "to_sha256": "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5"
+    },
+    {
+      "path": "tests/conversation/domain_contract_test.py",
+      "from_size": 159738,
+      "from_sha256": "b339ff4b902b43fa9f39487e073c256b7b52d994b793e670d87e16fe91078141",
+      "to_size": 160196,
+      "to_sha256": "6a00228d6ab78a5e2ec6e29da5745f2fe6c083b93e1893e6e8f4fca4bafcce15"
+    },
+    {
+      "path": "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
+      "from_size": 96247,
+      "from_sha256": "953066734fc2c292c26e1fa78b0a2f2ec26ad96035e01f3f0522493e94079ce8",
+      "to_size": 97796,
+      "to_sha256": "67614ab06d27b44fa49c8553b5f7a7a0cad2de3979dd3cd44ee8adf8c134e08b"
+    },
+    {
+      "path": "tests/conversation_phase0_contract_test.py",
+      "from_size": 16753,
+      "from_sha256": "1b3c5fd038c7e8436a42e6456afbc7189465cc80be9ea06c6a4e5f23334a10fc",
+      "to_size": 18110,
+      "to_sha256": "da96d1a90cf07648d33cba6c3b8701dc9dfe3e8116729071a3660fcdc584a6b5"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/native_openai_provider_test.py::test_native_openai_two_turn_replay_is_exact_and_private",
+    "tests/conversation/native_openai_provider_validation_test.py::test_new_input_freezing_and_legacy_facade_is_stateless"
+  ],
+  "canonical_sha256": "2ae08734c675e55d05d432997edb04ea46168cbe5b32d0b6b42c2ac71a7d9b31"
+}

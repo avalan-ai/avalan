@@ -198,6 +198,9 @@ from .errors import (
     ConversationMigrationRequiredError as ConversationMigrationRequiredError,
 )
 from .errors import (
+    ConversationProviderResponseError as ConversationProviderResponseError,
+)
+from .errors import (
     ConversationPublicationError as ConversationPublicationError,
 )
 from .errors import ConversationStorageError as ConversationStorageError
@@ -302,6 +305,22 @@ from .protocols import ProviderPlan as ProviderPlan
 from .protocols import ProviderResult as ProviderResult
 from .protocols import StatelessProviderPlan as StatelessProviderPlan
 from .protocols import StoredProviderPlan as StoredProviderPlan
+from .providers import (
+    NativeOpenAIConversationLaneRuntime as NativeOpenAIConversationLaneRuntime,
+)
+from .providers import (
+    NativeOpenAIEncryptedContentPolicy as NativeOpenAIEncryptedContentPolicy,
+)
+from .providers import NativeOpenAIFunctionTool as NativeOpenAIFunctionTool
+from .providers import (
+    NativeOpenAIProviderDiagnostics as NativeOpenAIProviderDiagnostics,
+)
+from .providers import (
+    NativeOpenAIStatelessProfile as NativeOpenAIStatelessProfile,
+)
+from .providers import (
+    NativeOpenAIStatelessProvider as NativeOpenAIStatelessProvider,
+)
 from .runtime import (
     AtomicCommitReceipt as AtomicCommitReceipt,
 )

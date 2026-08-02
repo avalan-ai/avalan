@@ -1,5 +1,6 @@
 """Define async-only coordinator, store, and provider protocols."""
 
+from ..types import JsonValue
 from .binding import ProviderLaneBinding
 from .contract import (
     AuthorityScope,
@@ -51,9 +52,9 @@ from .state import (
     ConversationCheckpoint,
     NamedHeadSnapshot,
 )
-from .value import validate_identifier
+from .value import freeze_json_value, validate_identifier
 
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Protocol, TypeAlias, final
@@ -68,6 +69,7 @@ class StatelessProviderPlan:
     ledger: ProviderItemLedger
     reasoning: EffectiveReasoningMetadata
     compaction: CompactionPolicy = DisabledCompaction()
+    new_input: Mapping[str, JsonValue] | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -81,6 +83,11 @@ class StatelessProviderPlan:
             )
         ):
             raise ConversationValidationError()
+        if self.new_input is not None:
+            frozen = freeze_json_value(self.new_input)
+            if not isinstance(frozen, Mapping):
+                raise ConversationValidationError()
+            object.__setattr__(self, "new_input", frozen)
 
 
 @final

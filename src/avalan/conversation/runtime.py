@@ -27,7 +27,11 @@ from .execution import (
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionReceipt,
 )
-from .items import ProviderItem, VisibleTranscriptEntry
+from .items import (
+    ProviderItem,
+    VisibleTranscriptEntry,
+    public_provider_item_projection,
+)
 from .observability import ConversationRequestSemantics
 from .settings import (
     CompactionPolicy,
@@ -386,7 +390,7 @@ class ProviderLaneOutputCandidate:
             binding_alias=self.binding.safe_alias,
             mode=self.mode,
             scope=self.scope,
-            items=self.completed_items,
+            items=public_provider_item_projection(self.completed_items),
             reasoning=self.reasoning,
             usage=self.usage,
         )

@@ -134,7 +134,12 @@ async def test_normative_coordinator_contract(
     assert second.output_candidates[0].completed_items == second_result.items
     assert second.output_candidates[0].usage == second_result.usage
     assert second.output_candidates[0].upstream_response_id is None
-    assert second.result.lane_outputs[0].items == second_result.items
+    assert second.result.lane_outputs[0].items == (
+        conversation.VisibleTranscriptEntry(
+            role=conversation.VisibleTranscriptRole.ASSISTANT,
+            content="synthetic-output",
+        ),
+    )
     assert second.result.lane_outputs[0].usage == second_result.usage
     provider = engine.fake_provider_diagnostics(lane_binding.lane_id)
     assert isinstance(
@@ -166,6 +171,99 @@ async def test_normative_coordinator_contract(
     )
     assert engine.diagnostics.active_attempts == 0
     assert store.diagnostics.provisional_responses == 0
+
+
+async def test_public_retrieval_is_lossy_but_private_replay_is_complete(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Expose display text while retaining opaque replay only internally."""
+    record_property("conversation_acceptance_evidence", "security")
+    scope = authority()
+    lane_binding = binding("lane-public-projection")
+    plan = empty_stateless_plan(lane_binding)
+    base = conversation.fake_provider_result(
+        plan,
+        turn=1,
+        text="safe-public-text",
+    )
+    message = replace(
+        base.items[0],
+        order=conversation.ProviderItemOrder(1),
+        provider_index=conversation.ProviderItemIndex(1),
+    )
+    private_item = conversation.ProviderItem(
+        item_id=conversation.ProviderItemId("private-item-identity"),
+        lane_id=lane_binding.lane_id,
+        model_call_id=message.model_call_id,
+        kind=conversation.ProviderItemKind.REASONING,
+        order=conversation.ProviderItemOrder(0),
+        provider_index=conversation.ProviderItemIndex(0),
+        phase=conversation.ProviderItemPhase.ASSISTANT,
+        caller=conversation.ProviderItemCaller.PROVIDER,
+        canonical_input={
+            "id": "private-item-identity",
+            "summary": (),
+            "type": "reasoning",
+        },
+        normalization_version=(
+            conversation.PROVIDER_ITEM_NORMALIZATION_VERSION
+        ),
+        opaque_state=conversation.OpaqueProviderState(
+            _value=b"private-opaque-replay-bytes"
+        ),
+    )
+    result = conversation.ProviderResult(
+        items=(private_item, message),
+        reasoning=base.reasoning,
+        usage=base.usage,
+    )
+    store = conversation.InMemoryConversationStore()
+    publisher = conversation.DeterministicFakePublisher()
+    engine = coordinator(
+        store=store,
+        scope=scope,
+        runtimes=(_runtime(lane_binding, (result,)),),
+        publisher=publisher,
+    )
+    run = request(
+        scope=scope,
+        identity=root_identity("public-projection"),
+        advance=conversation.FirstTurnAdvance(),
+        lane_ids=(str(lane_binding.lane_id),),
+        key="public-projection",
+        response_suffix="public-projection",
+    )
+    receipt = await engine.execute(run)
+    assert run.public_response_id is not None
+    public_result = await store.retrieve(run.public_response_id, scope)
+    private_outputs = await store.retrieve_output_candidates(
+        receipt.checkpoint.identity.checkpoint_id,
+        scope,
+    )
+    assert private_outputs[0].completed_items == result.items
+    assert private_outputs[0].completed_items[0].opaque_state == (
+        private_item.opaque_state
+    )
+    public_items = public_result.lane_outputs[0].items
+    assert public_items == (
+        conversation.VisibleTranscriptEntry(
+            role=conversation.VisibleTranscriptRole.ASSISTANT,
+            content="safe-public-text",
+        ),
+    )
+    for private_name in (
+        "item_id",
+        "model_call_id",
+        "provider_index",
+        "call_id",
+        "canonical_input",
+        "opaque_state",
+    ):
+        assert not hasattr(public_items[0], private_name)
+    rendered = repr(public_result.lane_outputs)
+    assert "private-item-identity" not in rendered
+    assert "private-opaque-replay-bytes" not in rendered
+    assert publisher.published[0].lane_outputs == public_result.lane_outputs
 
 
 async def test_stream_and_nonstream_two_turns_commit_equivalent_state(
@@ -237,8 +335,14 @@ async def test_stream_and_nonstream_two_turns_commit_equivalent_state(
     assert streamed.output_candidates[0].usage == stream_result.usage
     assert direct.result is not None
     assert streamed.result is not None
-    assert direct.result.lane_outputs[0].items == direct_result.items
-    assert streamed.result.lane_outputs[0].items == stream_result.items
+    expected_public_items = (
+        conversation.VisibleTranscriptEntry(
+            role=conversation.VisibleTranscriptRole.ASSISTANT,
+            content="synthetic-output",
+        ),
+    )
+    assert direct.result.lane_outputs[0].items == expected_public_items
+    assert streamed.result.lane_outputs[0].items == expected_public_items
     stream_provider = stream_engine.fake_provider_diagnostics(
         stream_binding.lane_id
     )
@@ -360,9 +464,15 @@ async def test_mixed_stored_and_stateless_lanes_remain_separate(
         stored_result.upstream_response_id
     )
     assert "fake-upstream" not in repr(receipt.output_candidates[1])
+    expected_public_items = (
+        conversation.VisibleTranscriptEntry(
+            role=conversation.VisibleTranscriptRole.ASSISTANT,
+            content="synthetic-output",
+        ),
+    )
     assert tuple(item.items for item in receipt.result.lane_outputs) == (
-        stateless_result.items,
-        stored_result.items,
+        expected_public_items,
+        expected_public_items,
     )
     assert not hasattr(receipt.result.lane_outputs[1], "upstream_response_id")
     assert publisher.published[0].lane_outputs == receipt.result.lane_outputs

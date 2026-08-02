@@ -213,6 +213,16 @@ class ConversationAmbiguousDispatchError(ConversationError):
         )
 
 
+class ConversationProviderResponseError(ConversationError):
+    """Report malformed provider output before any visible effect."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            ConversationErrorCode.VALIDATION_FAILED,
+            boundary=FailureBoundary.FAILURE_BEFORE_OUTPUT,
+        )
+
+
 class ConversationCommitError(ConversationError):
     """Report failure to commit an authoritative checkpoint."""
 

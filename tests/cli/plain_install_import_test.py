@@ -28,27 +28,6 @@ sys.meta_path.insert(0, BlockLocalModelDependencies())
 sys.path.insert(0, "src")
 """
 
-_OPENAI_STUB_CODE = """
-import types
-from importlib.machinery import ModuleSpec
-from types import SimpleNamespace
-
-openai = types.ModuleType("openai")
-openai.__spec__ = ModuleSpec("openai", loader=None)
-
-class Omit:
-    pass
-
-class AsyncOpenAI:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-        self.responses = SimpleNamespace(create=None)
-
-openai.AsyncOpenAI = AsyncOpenAI
-openai.Omit = Omit
-sys.modules["openai"] = openai
-"""
-
 
 class PlainInstallImportTestCase(TestCase):
     def _run_code(self, code: str) -> subprocess.CompletedProcess[str]:
@@ -76,7 +55,7 @@ print("local_model_loaded", local_model_dependency_loaded())
     def test_openai_vendor_load_does_not_import_local_model_dependencies(
         self,
     ) -> None:
-        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + _OPENAI_STUB_CODE + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + """
 from contextlib import AsyncExitStack
 from logging import getLogger
 
@@ -106,7 +85,7 @@ print(
     def test_openai_agent_load_does_not_import_local_model_dependencies(
         self,
     ) -> None:
-        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + _OPENAI_STUB_CODE + """
+        code = _BLOCK_LOCAL_MODEL_DEPENDENCIES_CODE + """
 import asyncio
 from contextlib import AsyncExitStack
 from logging import getLogger
