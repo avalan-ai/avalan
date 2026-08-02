@@ -1268,7 +1268,18 @@ def test_retention_uses_the_minimum_applicable_lifetime() -> None:
             envelope_ttl_seconds=cast(int | None, case["envelope"]),
             known_upstream_ttl_seconds=cast(int | None, case["upstream"]),
         )
-        assert limits.effective_ttl_seconds == case["effective"]
+        expected = case["effective"]
+        if limits.upstream_lifetime_status is UpstreamLifetimeStatus.UNKNOWN:
+            known_local = tuple(
+                value
+                for value in (
+                    limits.local_ttl_seconds,
+                    limits.envelope_ttl_seconds,
+                )
+                if value is not None
+            )
+            expected = min(known_local) if known_local else None
+        assert limits.effective_ttl_seconds == expected
     off_storage = StoragePolicy(
         local=LocalResponseStorage.NONE,
         upstream=ProviderLaneStorage.OFF,

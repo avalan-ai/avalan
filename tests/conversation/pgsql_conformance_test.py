@@ -619,6 +619,128 @@ async def test_pgsql_known_no_dispatch_retries_and_cleanup_converges(
     )
 
 
+async def test_pgsql_ambiguous_dispatch_reconciliation_survives_restart_race(
+    pgsql_harness: _PgsqlHarness,
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Resolve one durable fence without moving an unrelated named head."""
+    record_property("conversation_acceptance_evidence", "database")
+    store = pgsql_harness.store()
+    await store.open()
+    ordinary = _atomic_commit("pgsql-reserved-quarantine-prefix").candidate
+    assert type(ordinary) is conversation.OutwardTurnCheckpointCandidate
+    spoofed_checkpoint = conversation.with_checkpoint_integrity(
+        replace(
+            ordinary.checkpoint,
+            identity=replace(
+                ordinary.checkpoint.identity,
+                checkpoint_id=conversation.CheckpointId(
+                    "quarantine-reserved-prefix-spoof"
+                ),
+            ),
+            integrity=None,
+        )
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        await store.create(
+            conversation.OutwardTurnCheckpointCandidate(
+                checkpoint=spoofed_checkpoint,
+                public_response_id=ordinary.public_response_id,
+            )
+        )
+    root = await store.create(_atomic_commit("pgsql-ambiguity-head").candidate)
+    head_id = conversation.NamedHeadId("pgsql-ambiguity-head")
+    await store.create_head(
+        conversation.NamedHeadSnapshot(
+            head_id=head_id,
+            revision=conversation.NamedHeadRevision(0),
+            checkpoint_id=root.identity.checkpoint_id,
+        ),
+        authority(),
+    )
+    head_before = await store.load_head(head_id, authority())
+    identity = _atomic_commit("pgsql-ambiguity-restart").idempotency
+    with pytest.raises(conversation.ConversationValidationError):
+        await store.reconcile_ambiguous_dispatch(
+            cast(
+                conversation.AmbiguousDispatchReconciliationRequest,
+                object(),
+            )
+        )
+    reservation = await store.reserve_idempotency(identity)
+    assert reservation.owner_token is not None
+    in_progress_request = conversation.AmbiguousDispatchReconciliationRequest(
+        authority=authority(),
+        operation=identity.operation,
+        idempotency_key=identity.key,
+        resolution=conversation.AmbiguousDispatchResolution.RETAIN_FENCE,
+    )
+    with pytest.raises(conversation.ConversationConflictError):
+        await store.reconcile_ambiguous_dispatch(in_progress_request)
+    await store.abandon_idempotency(
+        identity,
+        reservation.owner_token,
+        ambiguous=True,
+    )
+    await store.close()
+
+    restarted = pgsql_harness.store()
+    await restarted.open()
+    assert (await restarted.reserve_idempotency(identity)).disposition is (
+        conversation.IdempotencyDisposition.FENCED
+    )
+    request_value = conversation.AmbiguousDispatchReconciliationRequest(
+        authority=authority(),
+        operation=identity.operation,
+        idempotency_key=identity.key,
+        resolution=conversation.AmbiguousDispatchResolution.RETAIN_FENCE,
+    )
+    retained = await restarted.reconcile_ambiguous_dispatch(request_value)
+    assert retained.disposition is (
+        conversation.AmbiguousDispatchReconciliationDisposition.FENCE_RETAINED
+    )
+    assert (await restarted.reserve_idempotency(identity)).disposition is (
+        conversation.IdempotencyDisposition.FENCED
+    )
+
+    confirmation = replace(
+        request_value,
+        resolution=(
+            conversation.AmbiguousDispatchResolution.CONFIRMED_NO_DISPATCH
+        ),
+    )
+    raced = await gather(
+        restarted.reconcile_ambiguous_dispatch(confirmation),
+        restarted.reconcile_ambiguous_dispatch(confirmation),
+    )
+    assert {result.disposition for result in raced} == {
+        conversation.AmbiguousDispatchReconciliationDisposition.RESOLVED_NO_DISPATCH,
+        conversation.AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH,
+    }
+    repeated = await restarted.reconcile_ambiguous_dispatch(confirmation)
+    assert repeated.disposition is (
+        conversation.AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH
+    )
+    concealed = await restarted.reconcile_ambiguous_dispatch(
+        replace(
+            confirmation,
+            authority=replace(authority(), principal_id="wrong-principal"),
+        )
+    )
+    assert concealed.disposition is (
+        conversation.AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
+    )
+    assert await restarted.load_head(head_id, authority()) == head_before
+    retry = await restarted.reserve_idempotency(identity)
+    assert retry.disposition is conversation.IdempotencyDisposition.EXECUTE
+    assert retry.owner_token is not None
+    await restarted.abandon_idempotency(
+        identity,
+        retry.owner_token,
+        ambiguous=False,
+    )
+
+
 async def test_pgsql_checkpoint_capacity_is_global_under_race(
     pgsql_harness: _PgsqlHarness,
     record_property: Callable[[str, object], None],

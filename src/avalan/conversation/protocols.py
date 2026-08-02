@@ -17,6 +17,13 @@ from .execution import (
     ProviderLaneExecutionStage,
 )
 from .items import ProviderItem, ProviderItemLedger
+from .lifecycle import (
+    AmbiguousDispatchReconciliationRequest,
+    AmbiguousDispatchReconciliationResult,
+    LocalDeletionPreparation,
+    ProviderQuarantineReceipt,
+    ProviderQuarantineRequest,
+)
 from .observability import (
     ConversationObservation,
 )
@@ -91,21 +98,39 @@ class StatelessProviderPlan:
 
 
 @final
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class StoredProviderPlan:
     """Dispatch new input using one private upstream response ID."""
 
     binding: ProviderLaneBinding
     upstream_response_id: UpstreamResponseId
     reasoning: EffectiveReasoningMetadata
+    new_input: Mapping[str, JsonValue] | None = None
+    model_call_index: int = 1
+    item_order_offset: int = 0
 
     def __post_init__(self) -> None:
         if (
             type(self.binding) is not ProviderLaneBinding
             or type(self.reasoning) is not EffectiveReasoningMetadata
+            or type(self.model_call_index) is not int
+            or self.model_call_index <= 0
+            or type(self.item_order_offset) is not int
+            or self.item_order_offset < 0
         ):
             raise ConversationValidationError()
         validate_identifier(self.upstream_response_id, "upstream_response_id")
+        _freeze_stored_input(self)
+
+    def __repr__(self) -> str:
+        """Return plan metadata without private provider state or input."""
+        return (
+            "StoredProviderPlan("
+            f"binding_alias={self.binding.safe_alias!r}, "
+            "upstream_response_id=<redacted>, new_input=<redacted>, "
+            f"model_call_index={self.model_call_index}, "
+            f"item_order_offset={self.item_order_offset})"
+        )
 
 
 @final
@@ -115,13 +140,33 @@ class FirstStoredProviderPlan:
 
     binding: ProviderLaneBinding
     reasoning: EffectiveReasoningMetadata
+    new_input: Mapping[str, JsonValue] | None = None
+    model_call_index: int = 1
+    item_order_offset: int = 0
 
     def __post_init__(self) -> None:
         if (
             type(self.binding) is not ProviderLaneBinding
             or type(self.reasoning) is not EffectiveReasoningMetadata
+            or type(self.model_call_index) is not int
+            or self.model_call_index <= 0
+            or type(self.item_order_offset) is not int
+            or self.item_order_offset < 0
         ):
             raise ConversationValidationError()
+        _freeze_stored_input(self)
+
+
+def _freeze_stored_input(
+    plan: FirstStoredProviderPlan | StoredProviderPlan,
+) -> None:
+    """Freeze one stored request input before provider dispatch."""
+    if plan.new_input is None:
+        return
+    frozen = freeze_json_value(plan.new_input)
+    if not isinstance(frozen, Mapping):
+        raise ConversationValidationError()
+    object.__setattr__(plan, "new_input", frozen)
 
 
 ProviderPlan: TypeAlias = (
@@ -130,7 +175,7 @@ ProviderPlan: TypeAlias = (
 
 
 @final
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProviderResult:
     """Return complete validated items and effective reasoning metadata."""
 
@@ -153,6 +198,14 @@ class ProviderResult:
                 self.upstream_response_id,
                 "upstream_response_id",
             )
+
+    def __repr__(self) -> str:
+        """Return result metadata without private provider state."""
+        return (
+            "ProviderResult("
+            f"item_count={len(self.items)}, reasoning={self.reasoning!r}, "
+            f"usage={self.usage!r}, upstream_response_id=<redacted>)"
+        )
 
 
 class ConversationProviderStream(Protocol):
@@ -273,6 +326,20 @@ class ConversationStore(Protocol):
         """Commit every authoritative outward artifact atomically."""
         ...
 
+    async def quarantine_provider_checkpoint(
+        self,
+        request: ProviderQuarantineRequest,
+    ) -> ProviderQuarantineReceipt:
+        """Persist one private cleanup checkpoint transactionally."""
+        ...
+
+    async def reconcile_ambiguous_dispatch(
+        self,
+        request: AmbiguousDispatchReconciliationRequest,
+    ) -> AmbiguousDispatchReconciliationResult:
+        """Apply one explicit durable ambiguity decision."""
+        ...
+
     async def stage_execution(
         self,
         stage: ProviderLaneExecutionStage,
@@ -381,6 +448,14 @@ class ConversationStore(Protocol):
         authority: AuthorityScope,
     ) -> ConversationResult:
         """Retrieve one authorized committed public result."""
+        ...
+
+    async def prepare_deletion(
+        self,
+        public_response_id: PublicResponseId,
+        authority: AuthorityScope,
+    ) -> LocalDeletionPreparation:
+        """Resolve active, tombstoned, or deleted local state privately."""
         ...
 
     async def tombstone(

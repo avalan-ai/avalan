@@ -7,6 +7,7 @@ from .contract import (
     CheckpointIdentity,
     IdempotencyDisposition,
     IdempotencyRecordState,
+    LocalDeletionState,
     NamedHeadId,
     NamedHeadRevision,
     ProvisionalResponseId,
@@ -29,6 +30,18 @@ from .execution import (
     provider_lane_execution_receipt,
 )
 from .items import ProviderItemLedger
+from .lifecycle import (
+    AmbiguousDispatchReconciliationDisposition,
+    AmbiguousDispatchReconciliationRequest,
+    AmbiguousDispatchReconciliationResult,
+    AmbiguousDispatchResolution,
+    LocalDeletionPreparation,
+    ProviderLifecycleOrigin,
+    ProviderLifecycleWorkRecord,
+    ProviderLifecycleWorkState,
+    ProviderQuarantineReceipt,
+    ProviderQuarantineRequest,
+)
 from .observability import authority_digest
 from .protocols import (
     ConversationClock,
@@ -77,9 +90,10 @@ from .state import (
     OutwardTurnCheckpointCandidate,
     StandaloneCompactCheckpointCandidate,
     StatelessProviderLaneSnapshot,
+    StoredProviderLaneSnapshot,
     SuspensionCheckpointCandidate,
 )
-from .value import AuthorityDigest, validate_identifier
+from .value import AuthorityDigest, IntegrityDigest, validate_identifier
 
 from asyncio import CancelledError, Condition, Lock
 from dataclasses import dataclass, replace
@@ -112,6 +126,7 @@ class StoreAwaitBoundary(StrEnum):
     ROLLBACK_SETTLED = "rollback_settled"
     RETRIEVE = "retrieve"
     RETRIEVE_OUTPUTS = "retrieve_outputs"
+    PREPARE_DELETE = "prepare_delete"
     TOMBSTONE = "tombstone"
     DELETE = "delete"
     LIST = "list"
@@ -243,6 +258,7 @@ class _StagedExecutionRecord:
 class _TerminalMetadata:
     checkpoint_id: CheckpointId
     public_response_id: PublicResponseId | None
+    authority_digest: str
     state: CheckpointLifecycle
     at: datetime
 
@@ -327,6 +343,7 @@ class InMemoryConversationStore:
         self._outbox: dict[str, OutboxRecord] = {}
         self._outbox_ready_order: dict[str, int] = {}
         self._terminal: dict[CheckpointId, _TerminalMetadata] = {}
+        self._provider_lifecycle: dict[str, ProviderLifecycleWorkRecord] = {}
         self._owner_sequence = 0
         self._execution_stage_sequence = 0
         self._outbox_ready_sequence = 0
@@ -859,6 +876,50 @@ class InMemoryConversationStore:
             raise cancellation
         return resolution
 
+    async def reconcile_ambiguous_dispatch(
+        self,
+        request: AmbiguousDispatchReconciliationRequest,
+    ) -> AmbiguousDispatchReconciliationResult:
+        """Apply one explicit durable ambiguity decision."""
+        if type(request) is not AmbiguousDispatchReconciliationRequest:
+            raise ConversationValidationError()
+        key = (
+            str(authority_digest(request.authority)),
+            request.operation.value,
+            str(request.idempotency_key),
+        )
+        async with self._idempotency_changed:
+            self._ensure_open_locked()
+            current = self._idempotency.get(key)
+            if current is None:
+                return AmbiguousDispatchReconciliationResult(
+                    disposition=(
+                        AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
+                    )
+                )
+            if current.state is IdempotencyRecordState.FAILED_NO_DISPATCH:
+                disposition = (
+                    AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH
+                )
+            elif current.state is not IdempotencyRecordState.AMBIGUOUS:
+                raise ConversationConflictError()
+            elif (
+                request.resolution is AmbiguousDispatchResolution.RETAIN_FENCE
+            ):
+                disposition = (
+                    AmbiguousDispatchReconciliationDisposition.FENCE_RETAINED
+                )
+            else:
+                self._idempotency[key] = replace(
+                    current,
+                    state=IdempotencyRecordState.FAILED_NO_DISPATCH,
+                )
+                self._idempotency_changed.notify_all()
+                disposition = (
+                    AmbiguousDispatchReconciliationDisposition.RESOLVED_NO_DISPATCH
+                )
+        return AmbiguousDispatchReconciliationResult(disposition=disposition)
+
     async def inspect_idempotency_settlement(
         self,
         identity: RequestIdempotencyIdentity,
@@ -964,6 +1025,71 @@ class InMemoryConversationStore:
                 raise ConversationAuthorizationError()
             return result
 
+    async def prepare_deletion(
+        self,
+        public_response_id: PublicResponseId,
+        authority: AuthorityScope,
+    ) -> LocalDeletionPreparation:
+        """Resolve one authorized deletion without disclosing private state."""
+        validate_identifier(public_response_id, "public_response_id")
+        if type(authority) is not AuthorityScope:
+            raise ConversationValidationError()
+        await self._hook.reach(StoreAwaitBoundary.PREPARE_DELETE)
+        supplied = str(authority_digest(authority))
+        async with self._lock:
+            self._ensure_open_locked()
+            record = self._public.get(public_response_id)
+            if record is not None:
+                authorized = compare_digest(supplied, record.authority_digest)
+                stored = self._checkpoints.get(record.checkpoint_id)
+                available = stored is not None and (
+                    (
+                        not record.tombstoned
+                        and stored.checkpoint.lifecycle
+                        is CheckpointLifecycle.COMMITTED
+                    )
+                    or (
+                        record.tombstoned
+                        and stored.checkpoint.lifecycle
+                        is CheckpointLifecycle.TOMBSTONED
+                    )
+                )
+                if not authorized or not available:
+                    raise ConversationAuthorizationError()
+                assert stored is not None
+                return LocalDeletionPreparation(
+                    state=(
+                        LocalDeletionState.TOMBSTONED
+                        if record.tombstoned
+                        else LocalDeletionState.ACTIVE
+                    ),
+                    checkpoint=stored.checkpoint,
+                )
+            terminal = next(
+                (
+                    item
+                    for item in self._terminal.values()
+                    if item.public_response_id == public_response_id
+                ),
+                None,
+            )
+            expected = (
+                terminal.authority_digest
+                if terminal is not None
+                else self._CONCEALED_DIGEST
+            )
+            authorized = compare_digest(supplied, expected)
+            deleted = (
+                terminal is not None
+                and terminal.state is CheckpointLifecycle.DELETED
+            )
+            if not authorized or not deleted:
+                raise ConversationAuthorizationError()
+            return LocalDeletionPreparation(
+                state=LocalDeletionState.DELETED,
+                checkpoint=None,
+            )
+
     async def tombstone(
         self,
         public_response_id: PublicResponseId,
@@ -1000,8 +1126,13 @@ class InMemoryConversationStore:
             self._record_terminal_locked(
                 tombstone.identity.checkpoint_id,
                 public_response_id,
+                stored.authority_digest,
                 CheckpointLifecycle.TOMBSTONED,
                 at,
+            )
+            self._enqueue_provider_lifecycle_locked(
+                tombstone,
+                ProviderLifecycleOrigin.LOCAL_TOMBSTONE,
             )
             return tombstone
 
@@ -1027,6 +1158,8 @@ class InMemoryConversationStore:
                 is not CheckpointLifecycle.TOMBSTONED
             ):
                 raise ConversationAuthorizationError()
+            if self._provider_lifecycle_pending_locked(record.checkpoint_id):
+                raise ConversationTransitionError()
             del self._checkpoints[record.checkpoint_id]
             del self._public[public_response_id]
             self._results.pop(public_response_id, None)
@@ -1040,9 +1173,11 @@ class InMemoryConversationStore:
             self._record_terminal_locked(
                 record.checkpoint_id,
                 public_response_id,
+                stored.authority_digest,
                 CheckpointLifecycle.DELETED,
                 at,
             )
+            self._retire_provider_lifecycle_locked(record.checkpoint_id)
 
     async def list_checkpoints(
         self,
@@ -1098,6 +1233,7 @@ class InMemoryConversationStore:
                 key
                 for key, stored in self._checkpoints.items()
                 if stored.checkpoint.lifecycle is CheckpointLifecycle.EXPIRED
+                and not self._provider_lifecycle_pending_locked(key)
             )
             for checkpoint_id in preexisting_expired[:limit]:
                 self._remove_expired_locked(checkpoint_id, now)
@@ -1132,11 +1268,152 @@ class InMemoryConversationStore:
                 self._record_terminal_locked(
                     checkpoint_id,
                     None,
+                    stored.authority_digest,
                     CheckpointLifecycle.EXPIRED,
                     now,
                 )
+                self._enqueue_provider_lifecycle_locked(
+                    checkpoint,
+                    ProviderLifecycleOrigin.LOCAL_EXPIRY,
+                )
                 expired += 1
             return SweepReceipt(expired=expired, deleted=deleted)
+
+    async def claim_provider_lifecycle(
+        self,
+        authority: AuthorityScope,
+        *,
+        limit: int,
+    ) -> tuple[ProviderLifecycleWorkRecord, ...]:
+        """Claim bounded provider lifecycle work for one authority."""
+        if type(authority) is not AuthorityScope:
+            raise ConversationValidationError()
+        if (
+            type(limit) is not int
+            or not 1 <= limit <= self._limits.max_page_size
+        ):
+            raise ConversationLimitError()
+        now = await self._clock.now()
+        self._validate_time(now)
+        authority_key = str(authority_digest(authority))
+        async with self._lock:
+            self._ensure_open_locked()
+            selected: list[ProviderLifecycleWorkRecord] = []
+            for work_id, record in self._provider_lifecycle.items():
+                stored = self._checkpoints.get(record.checkpoint_id)
+                if (
+                    stored is None
+                    or stored.authority_digest != authority_key
+                    or record.state
+                    not in {
+                        ProviderLifecycleWorkState.PENDING,
+                        ProviderLifecycleWorkState.FAILED,
+                    }
+                    and not (
+                        record.state is ProviderLifecycleWorkState.CLAIMED
+                        and record.lease_expires_at is not None
+                        and record.lease_expires_at <= now
+                    )
+                ):
+                    continue
+                claimed = replace(
+                    record,
+                    state=ProviderLifecycleWorkState.CLAIMED,
+                    attempts=record.attempts + 1,
+                    lease_owner=self._next_owner_token_locked(),
+                    lease_expires_at=now
+                    + timedelta(seconds=self._limits.outbox_lease_seconds),
+                )
+                self._provider_lifecycle[work_id] = claimed
+                selected.append(claimed)
+                if len(selected) == limit:
+                    break
+            return tuple(selected)
+
+    async def acknowledge_provider_lifecycle(
+        self,
+        record: ProviderLifecycleWorkRecord,
+        *,
+        succeeded: bool,
+    ) -> None:
+        """Settle one exact provider lifecycle attempt."""
+        if (
+            type(record) is not ProviderLifecycleWorkRecord
+            or record.state is not ProviderLifecycleWorkState.CLAIMED
+            or record.lease_owner is None
+            or type(succeeded) is not bool
+        ):
+            raise ConversationValidationError()
+        async with self._lock:
+            self._ensure_open_locked()
+            current = self._provider_lifecycle.get(record.work_id)
+            if current != record:
+                raise ConversationConflictError()
+            self._provider_lifecycle[record.work_id] = replace(
+                record,
+                state=(
+                    ProviderLifecycleWorkState.COMPLETED
+                    if succeeded
+                    else ProviderLifecycleWorkState.FAILED
+                ),
+                lease_owner=None,
+                lease_expires_at=None,
+            )
+
+    async def quarantine_provider_checkpoint(
+        self,
+        request: ProviderQuarantineRequest,
+    ) -> ProviderQuarantineReceipt:
+        """Persist one private cleanup checkpoint transactionally."""
+        if type(request) is not ProviderQuarantineRequest:
+            raise ConversationValidationError()
+        candidates = (request.candidate, *request.additional_candidates)
+        prepared = tuple(
+            (
+                committed,
+                self._codec.encode(committed),
+            )
+            for candidate in candidates
+            for committed in (
+                self._committed_checkpoint(
+                    self._candidate_checkpoint(candidate),
+                    request.created_at,
+                ),
+            )
+        )
+        async with self._lock:
+            self._ensure_open_locked()
+            for committed, encoded in prepared:
+                checkpoint_id = committed.identity.checkpoint_id
+                existing = self._checkpoints.get(checkpoint_id)
+                if existing is not None:
+                    if existing.encoded != encoded:
+                        raise ConversationConflictError()
+                    continue
+                self._validate_checkpoint_write_locked(
+                    committed,
+                    encoded,
+                    enforce_capacity=False,
+                )
+            for committed, encoded in prepared:
+                checkpoint_id = committed.identity.checkpoint_id
+                if checkpoint_id in self._checkpoints:
+                    continue
+                self._checkpoints[checkpoint_id] = _StoredCheckpoint(
+                    checkpoint=committed,
+                    encoded=encoded,
+                    authority_digest=str(
+                        authority_digest(committed.authority)
+                    ),
+                )
+                self._enqueue_provider_lifecycle_locked(
+                    committed,
+                    ProviderLifecycleOrigin.COMMIT_QUARANTINE,
+                )
+        return ProviderQuarantineReceipt(
+            checkpoint_id=prepared[0][0].identity.checkpoint_id,
+            target_count=len(prepared),
+        )
 
     async def prune(self, now: datetime, *, limit: int) -> PruneReceipt:
         self._validate_time(now)
@@ -1555,11 +1832,22 @@ class InMemoryConversationStore:
         self,
         checkpoint: ConversationCheckpoint,
         encoded: bytes,
+        *,
+        enforce_capacity: bool = True,
     ) -> None:
         checkpoint_id = checkpoint.identity.checkpoint_id
         if checkpoint_id in self._checkpoints:
             raise ConversationConflictError()
-        if len(self._checkpoints) >= self._limits.max_checkpoints:
+        if enforce_capacity and str(checkpoint_id).startswith("quarantine-"):
+            raise ConversationValidationError()
+        ordinary_checkpoint_count = sum(
+            not str(checkpoint_id).startswith("quarantine-")
+            for checkpoint_id in self._checkpoints
+        )
+        if (
+            enforce_capacity
+            and ordinary_checkpoint_count >= self._limits.max_checkpoints
+        ):
             raise ConversationLimitError()
         if len(encoded) > self._limits.max_checkpoint_bytes:
             raise ConversationLimitError()
@@ -2009,6 +2297,7 @@ class InMemoryConversationStore:
         self,
         checkpoint_id: CheckpointId,
         public_response_id: PublicResponseId | None,
+        authority_key: str,
         state: CheckpointLifecycle,
         at: datetime,
     ) -> None:
@@ -2018,6 +2307,7 @@ class InMemoryConversationStore:
         self._terminal[checkpoint_id] = _TerminalMetadata(
             checkpoint_id=checkpoint_id,
             public_response_id=public_response_id,
+            authority_digest=authority_key,
             state=state,
             at=at,
         )
@@ -2025,7 +2315,7 @@ class InMemoryConversationStore:
     def _remove_expired_locked(
         self, checkpoint_id: CheckpointId, at: datetime
     ) -> None:
-        del self._checkpoints[checkpoint_id]
+        stored = self._checkpoints.pop(checkpoint_id)
         for public_id, record in tuple(self._public.items()):
             if record.checkpoint_id == checkpoint_id:
                 del self._public[public_id]
@@ -2035,9 +2325,54 @@ class InMemoryConversationStore:
         self._record_terminal_locked(
             checkpoint_id,
             None,
+            stored.authority_digest,
             CheckpointLifecycle.DELETED,
             at,
         )
+        self._retire_provider_lifecycle_locked(checkpoint_id)
+
+    def _enqueue_provider_lifecycle_locked(
+        self,
+        checkpoint: ConversationCheckpoint,
+        origin: ProviderLifecycleOrigin,
+    ) -> None:
+        for lane in checkpoint.content.lanes:
+            if not isinstance(lane, StoredProviderLaneSnapshot):
+                continue
+            work_id = (
+                f"provider-lifecycle-{checkpoint.identity.checkpoint_id}-"
+                f"{lane.lane_id}"
+            )
+            if work_id in self._provider_lifecycle:
+                continue
+            self._provider_lifecycle[work_id] = ProviderLifecycleWorkRecord(
+                work_id=work_id,
+                checkpoint_id=checkpoint.identity.checkpoint_id,
+                lane_id=lane.lane_id,
+                binding_digest=IntegrityDigest(lane.binding.integrity_digest),
+                upstream_response_id=lane.upstream_response_id,
+                origin=origin,
+                state=ProviderLifecycleWorkState.PENDING,
+                attempts=0,
+            )
+
+    def _provider_lifecycle_pending_locked(
+        self,
+        checkpoint_id: CheckpointId,
+    ) -> bool:
+        return any(
+            record.checkpoint_id == checkpoint_id
+            and record.state is not ProviderLifecycleWorkState.COMPLETED
+            for record in self._provider_lifecycle.values()
+        )
+
+    def _retire_provider_lifecycle_locked(
+        self,
+        checkpoint_id: CheckpointId,
+    ) -> None:
+        for work_id, record in tuple(self._provider_lifecycle.items()):
+            if record.checkpoint_id == checkpoint_id:
+                del self._provider_lifecycle[work_id]
 
     def _retire_outbox_for_checkpoint_locked(
         self, checkpoint_id: CheckpointId

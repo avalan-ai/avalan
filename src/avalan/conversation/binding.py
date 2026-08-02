@@ -89,6 +89,7 @@ class ProviderLaneBinding:
     transport: ProviderTransport
     agent_id: ConversationAgentId
     azure_resource_identity: str | None = None
+    execution_definition_digest: IntegrityDigest | None = None
 
     def __post_init__(self) -> None:
         validate_identifier(self.lane_id, "lane_id")
@@ -135,6 +136,11 @@ class ProviderLaneBinding:
                 raise ConversationValidationError()
         elif self.azure_resource_identity is not None:
             raise ConversationValidationError()
+        if self.execution_definition_digest is not None:
+            validate_identifier(
+                self.execution_definition_digest,
+                "execution_definition_digest",
+            )
 
     @property
     def safe_alias(self) -> SafeAlias:
@@ -155,7 +161,7 @@ class ProviderLaneBinding:
             raise ConversationBindingDriftError()
 
     def _canonical_identity(self) -> str:
-        values = (
+        values = [
             self.adapter_type,
             self.provider_family.value,
             self.normalized_endpoint,
@@ -170,7 +176,9 @@ class ProviderLaneBinding:
             str(self.continuation_codec_version),
             self.transport.value,
             self.agent_id,
-        )
+        ]
+        if self.execution_definition_digest is not None:
+            values.append(self.execution_definition_digest)
         return "".join(f"{len(value)}:{value}" for value in values)
 
 

@@ -133,6 +133,11 @@ from .sdk import (
     ConversationHandleUnavailableError as ConversationHandleUnavailableError,
 )
 from .sdk import ConversationMode as ConversationMode
+from .sdk import (
+    ConversationModeChangeOperation as ConversationModeChangeOperation,
+)
+from .sdk import ConversationModeConversion as ConversationModeConversion
+from .sdk import ConversationModeReset as ConversationModeReset
 from .sdk import ConversationParent as ConversationParent
 from .sdk import ConversationResetIntent as ConversationResetIntent
 from .sdk import ConversationSettings as ConversationSettings
@@ -158,6 +163,7 @@ from .sdk import (
 from .sdk import (
     DirectConversationStreamTerminal as DirectConversationStreamTerminal,
 )
+from .sdk import DirectDeletionResult as DirectDeletionResult
 from .sdk import DisabledCompaction as DisabledCompaction
 from .sdk import DurableInputBridge as DurableInputBridge
 from .sdk import (
@@ -191,6 +197,7 @@ from .sdk import InputResolutionRequest as InputResolutionRequest
 from .sdk import InputResolutionResult as InputResolutionResult
 from .sdk import InputSubmission as InputSubmission
 from .sdk import InputValidationFeedback as InputValidationFeedback
+from .sdk import ModeTransitionAuthority as ModeTransitionAuthority
 from .sdk import NamedHeadParent as NamedHeadParent
 from .sdk import (
     OneShotConversationSettings as OneShotConversationSettings,

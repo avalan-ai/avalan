@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 6,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase6-native-stored-provider-review",
+  "reason": "Layer exact provider-stored chaining, private lifecycle reconciliation, and direct SDK surfaces without rewriting frozen Phase 0 through 5 provider evidence.",
+  "transitions": [
+    {
+      "path": "src/avalan/__init__.py",
+      "from_size": 9617,
+      "from_sha256": "2b41467ac4dc6d6e637d342e69e5efc96a344e15097a24f693b9b045e2ee5498",
+      "to_size": 9978,
+      "to_sha256": "496ce5f01ed2c12d3bb37712c37e5a97cf0a5a814acbf05f54a70ebf68518847"
+    },
+    {
+      "path": "src/avalan/conversation/__init__.py",
+      "from_size": 26055,
+      "from_sha256": "044b5d410f12222266e623ed04b05ce7c0fe8288553ef436d860aed67237e0fa",
+      "to_size": 28421,
+      "to_sha256": "1c157fe247d198e07dff583eead46f21de8c70c9cefdc1abe80991ddd8667ddb"
+    },
+    {
+      "path": "src/avalan/conversation/coordinator.py",
+      "from_size": 86533,
+      "from_sha256": "4239e49d847faee802a92da6b1089f0e4db1779973d2812abd946db4a4c4efd3",
+      "to_size": 111286,
+      "to_sha256": "b586445a0d5910238d191508a5a534cc8f0b8910e72081c5551e9038021e2547"
+    },
+    {
+      "path": "src/avalan/conversation/lifecycle.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 21054,
+      "to_sha256": "fddefa4f3c8f62450f5de68531bb7a1d9f5fc348b12a00d28fc1a19aef1c2df7"
+    },
+    {
+      "path": "src/avalan/conversation/protocols.py",
+      "from_size": 17492,
+      "from_sha256": "061ab8bbba83a8fef21143ab56af6b9b8a529267d58055d75ed1cbd8422b02b9",
+      "to_size": 20226,
+      "to_sha256": "f9faba0869f6f156139d5e88c384fbfe61caa32d5d72f2439d8914698ef37db0"
+    },
+    {
+      "path": "src/avalan/conversation/providers/__init__.py",
+      "from_size": 626,
+      "from_sha256": "edb3542550c21497a599ba31956a0d8054dd98715e458d948078a5d6769e8230",
+      "to_size": 1133,
+      "to_sha256": "4c6c408a95d86e0f254a19d70a9fd77ba98524a13da73c20f7cec28491035aa4"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai.py",
+      "from_size": 39320,
+      "from_sha256": "eaf92e24c7e57bc6ba4d8db7868cd36e97489d4b4b42e5de94c9a9ce154c1fa9",
+      "to_size": 41406,
+      "to_sha256": "4081b066e549a014a3dd3b9b1210d0c9ca51e4b9e0c720330073d66db04e347c"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai_stored.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 29169,
+      "to_sha256": "9c0132bb7c48669c1ee157f7a58fb8582d4f51bca116db65ff4543856cda6019"
+    },
+    {
+      "path": "src/avalan/conversation/sdk.py",
+      "from_size": 34109,
+      "from_sha256": "bd650c6f99f98b896a2d0b7bde64b41c5a88d57a9c613b064b4f1273480ea1f5",
+      "to_size": 46113,
+      "to_sha256": "fdadba814639ce92e08e79be36dafff25e4cd793c2f94b69de109f05a8b2884d"
+    },
+    {
+      "path": "src/avalan/conversation/store.py",
+      "from_size": 86275,
+      "from_sha256": "572c48d0528552a8c4fe1e8217174c700da3496c70fb120defc33c2730c14936",
+      "to_size": 99760,
+      "to_sha256": "6718b06f63d1ea7e097dd78aebdcbaeca85ead83277f7019114aa89b0f34e222"
+    },
+    {
+      "path": "src/avalan/conversation/stores/pgsql.py",
+      "from_size": 175913,
+      "from_sha256": "351eb6d72d7f19624d83d30721cba47742ae26e3f2e4c1e98467e5201fe42c1f",
+      "to_size": 190583,
+      "to_sha256": "8e3afd42d2e3455400bfd19bd1329a6c2267155b5b9d8899535a7083ce49c29c"
+    },
+    {
+      "path": "src/avalan/sdk.py",
+      "from_size": 76975,
+      "from_sha256": "114d6540ab9ef0c4ca3a025f0550a2c716993f90b19e551be342db4d0f23e51c",
+      "to_size": 77463,
+      "to_sha256": "afdf0f4056e33a39d00bf0d5b5587a26ac0d40eacf47f53bb67f278b8aecf162"
+    },
+    {
+      "path": "tests/conversation/pgsql_conformance_test.py",
+      "from_size": 42709,
+      "from_sha256": "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5",
+      "to_size": 47586,
+      "to_sha256": "2e6ab3c8048ddc6461ad13e214ca0c47a67bb94f2655d686bf22a59280328090"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/openai_stored_e2e_test.py::test_stored_public_upstream_alias_never_commits_pgsql_mapping",
+    "tests/conversation/native_openai_stored_provider_test.py::test_unproven_lifecycle_and_conversion_fail_closed",
+    "tests/conversation/native_openai_stored_provider_test.py::test_execution_definition_bytes_fail_before_dispatch",
+    "tests/conversation/openai_stored_e2e_test.py::test_stored_quarantine_survives_pgsql_capacity_and_restart",
+    "tests/conversation/native_openai_stored_provider_test.py::test_known_provider_rejection_releases_idempotency_fence",
+    "tests/conversation/pgsql_conformance_test.py::test_pgsql_ambiguous_dispatch_reconciliation_survives_restart_race",
+    "tests/conversation/openai_stored_e2e_test.py::test_retired_runtime_continues_after_pgsql_store_restart",
+    "tests/conversation/openai_stored_e2e_test.py::test_stream_close_quarantine_survives_pgsql_restart_capacity",
+    "tests/conversation/openai_stored_e2e_test.py::test_generated_checkpoint_alias_fails_pgsql_codec_and_sdk",
+    "tests/conversation/openai_stored_e2e_test.py::test_retrieve_execution_drift_fails_over_tcp_and_pgsql"
+  ],
+  "canonical_sha256": "470e683a7ec1b7f85816979f71b72af6e622249f382d74f035218b1a5702d855"
+}

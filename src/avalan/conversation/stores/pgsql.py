@@ -20,6 +20,7 @@ from ..contract import (
     CheckpointId,
     IdempotencyDisposition,
     IdempotencyRecordState,
+    LocalDeletionState,
     NamedHeadId,
     NamedHeadRevision,
     PortableContinuationReference,
@@ -63,6 +64,18 @@ from ..execution import (
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionStage,
     provider_lane_execution_receipt,
+)
+from ..lifecycle import (
+    AmbiguousDispatchReconciliationDisposition,
+    AmbiguousDispatchReconciliationRequest,
+    AmbiguousDispatchReconciliationResult,
+    AmbiguousDispatchResolution,
+    LocalDeletionPreparation,
+    ProviderLifecycleOrigin,
+    ProviderLifecycleWorkRecord,
+    ProviderLifecycleWorkState,
+    ProviderQuarantineReceipt,
+    ProviderQuarantineRequest,
 )
 from ..observability import authority_digest
 from ..protocols import (
@@ -118,6 +131,7 @@ from ..store import (
 from ..value import (
     AuthorityDigest,
     ConversationCodecVersion,
+    IntegrityDigest,
     validate_identifier,
 )
 
@@ -358,6 +372,8 @@ class ReconciliationWorkRecord:
     upstream_response_id: UpstreamResponseId | None = None
     lease_owner: str | None = None
     lease_expires_at: datetime | None = None
+    binding_digest: IntegrityDigest | None = None
+    checkpoint_lifecycle: CheckpointLifecycle | None = None
 
     def __post_init__(self) -> None:
         for value, name in (
@@ -391,6 +407,13 @@ class ReconciliationWorkRecord:
             validate_identifier(self.lease_owner, "lease_owner")
         if self.lease_expires_at is not None:
             _validate_time(self.lease_expires_at)
+        if self.binding_digest is not None:
+            validate_identifier(self.binding_digest, "binding_digest")
+        if self.checkpoint_lifecycle is not None and not isinstance(
+            self.checkpoint_lifecycle,
+            CheckpointLifecycle,
+        ):
+            raise ConversationValidationError()
 
     def __repr__(self) -> str:
         """Return leased metadata without the private upstream target."""
@@ -402,7 +425,9 @@ class ReconciliationWorkRecord:
             f"state={self.state.value!r}, attempts={self.attempts}, "
             "upstream_response_id=<redacted>, "
             f"lease_owner={self.lease_owner!r}, "
-            f"lease_expires_at={self.lease_expires_at!r})"
+            f"lease_expires_at={self.lease_expires_at!r}, "
+            f"binding_digest={self.binding_digest!r}, "
+            f"checkpoint_lifecycle={self.checkpoint_lifecycle!r})"
         )
 
 
@@ -903,10 +928,16 @@ class PgsqlConversationStore:
         self,
         cursor: PgsqlCursor,
         prepared: _PreparedCheckpoint,
+        *,
+        enforce_capacity: bool = True,
     ) -> None:
         checkpoint = prepared.checkpoint
         identity = checkpoint.identity
         authority_key = str(authority_digest(checkpoint.authority))
+        if enforce_capacity and str(identity.checkpoint_id).startswith(
+            "quarantine-"
+        ):
+            raise ConversationValidationError()
         await self._synchronize_write_key(cursor, authority_key, prepared.key)
         await self._execute(
             cursor,
@@ -926,7 +957,8 @@ class PgsqlConversationStore:
             or _row_str(conversation, "lifecycle_state") != "active"
         ):
             raise ConversationAuthorizationError()
-        await self._validate_checkpoint_capacity(cursor, checkpoint)
+        if enforce_capacity:
+            await self._validate_checkpoint_capacity(cursor, checkpoint)
         counts = checkpoint.content.safe_counts
         total_payload_bytes = sum(
             value.plaintext_bytes for value in prepared.payloads
@@ -1971,8 +2003,22 @@ class PgsqlConversationStore:
         checkpoint_id: CheckpointId,
         authority: AuthorityScope,
     ) -> ConversationCheckpoint:
+        return await self._load_checkpoint_lifecycle(
+            checkpoint_id,
+            authority,
+            CheckpointLifecycle.COMMITTED,
+        )
+
+    async def _load_checkpoint_lifecycle(
+        self,
+        checkpoint_id: CheckpointId,
+        authority: AuthorityScope,
+        lifecycle: CheckpointLifecycle,
+    ) -> ConversationCheckpoint:
         validate_identifier(checkpoint_id, "checkpoint_id")
         if type(authority) is not AuthorityScope:
+            raise ConversationValidationError()
+        if not isinstance(lifecycle, CheckpointLifecycle):
             raise ConversationValidationError()
         self._ensure_open()
         authority_key = authority_digest(authority)
@@ -1981,7 +2027,7 @@ class PgsqlConversationStore:
             _SELECT_CHECKPOINT_PAYLOAD_SQL,
             (checkpoint_id, authority_key),
         )
-        if row is None or _row_str(row, "lifecycle_state") != "committed":
+        if row is None or _row_str(row, "lifecycle_state") != lifecycle.value:
             raise ConversationAuthorizationError()
         self._validate_payload_reference_row(
             row,
@@ -1998,7 +2044,7 @@ class PgsqlConversationStore:
             or checkpoint.authority != authority
             or str(authority_digest(checkpoint.authority))
             != str(authority_key)
-            or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+            or checkpoint.lifecycle is not lifecycle
             or checkpoint.identity.execution_segment_id
             != _row_str(row, "execution_segment_id")
             or checkpoint.identity.sequence
@@ -2355,6 +2401,74 @@ class PgsqlConversationStore:
 
         return await self._transaction("idempotency_reconcile", operation)
 
+    async def reconcile_ambiguous_dispatch(
+        self,
+        request: AmbiguousDispatchReconciliationRequest,
+    ) -> AmbiguousDispatchReconciliationResult:
+        """Apply one explicit durable ambiguity decision."""
+        if type(request) is not AmbiguousDispatchReconciliationRequest:
+            raise ConversationValidationError()
+        authority_key = str(authority_digest(request.authority))
+        now = await self._clock.now()
+        _validate_time(now)
+
+        async def operation(
+            cursor: PgsqlCursor,
+        ) -> AmbiguousDispatchReconciliationResult:
+            row = await self._fetchone(
+                cursor,
+                "ambiguous_dispatch_reconcile_select",
+                _SELECT_IDEMPOTENCY_FOR_UPDATE_SQL,
+                (
+                    authority_key,
+                    request.operation.value,
+                    request.idempotency_key,
+                ),
+            )
+            if row is None:
+                disposition = (
+                    AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
+                )
+            else:
+                state = IdempotencyRecordState(_row_str(row, "record_state"))
+                if state is IdempotencyRecordState.FAILED_NO_DISPATCH:
+                    disposition = (
+                        AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH
+                    )
+                elif state is not IdempotencyRecordState.AMBIGUOUS:
+                    raise ConversationConflictError()
+                elif (
+                    request.resolution
+                    is AmbiguousDispatchResolution.RETAIN_FENCE
+                ):
+                    disposition = (
+                        AmbiguousDispatchReconciliationDisposition.FENCE_RETAINED
+                    )
+                else:
+                    await self._execute(
+                        cursor,
+                        "ambiguous_dispatch_reconcile_update",
+                        _UPDATE_IDEMPOTENCY_STATE_SQL,
+                        (
+                            IdempotencyRecordState.FAILED_NO_DISPATCH.value,
+                            now,
+                            authority_key,
+                            request.operation.value,
+                            request.idempotency_key,
+                        ),
+                    )
+                    disposition = (
+                        AmbiguousDispatchReconciliationDisposition.RESOLVED_NO_DISPATCH
+                    )
+            return AmbiguousDispatchReconciliationResult(
+                disposition=disposition
+            )
+
+        return await self._transaction(
+            "ambiguous_dispatch_reconcile",
+            operation,
+        )
+
     async def _settle_owned_idempotency(
         self,
         identity: RequestIdempotencyIdentity,
@@ -2494,6 +2608,57 @@ class PgsqlConversationStore:
             "attempt_delete_staging",
             _DELETE_EXECUTION_STAGING_ALL_OWNER_SQL,
             (owner_token,),
+        )
+
+    async def prepare_deletion(
+        self,
+        public_response_id: PublicResponseId,
+        authority: AuthorityScope,
+    ) -> LocalDeletionPreparation:
+        """Resolve one authorized deletion without disclosing private state."""
+        validate_identifier(public_response_id, "public_response_id")
+        if type(authority) is not AuthorityScope:
+            raise ConversationValidationError()
+        await self._reach_store(StoreAwaitBoundary.PREPARE_DELETE)
+        authority_key = authority_digest(authority)
+        public = await self._read_one(
+            "deletion_prepare_public",
+            _SELECT_PUBLIC_RESPONSE_SQL,
+            (public_response_id, authority_key),
+        )
+        if public is not None:
+            tombstoned = _row_bool(public, "tombstoned")
+            checkpoint = await self._load_checkpoint_lifecycle(
+                CheckpointId(_row_str(public, "checkpoint_id")),
+                authority,
+                (
+                    CheckpointLifecycle.TOMBSTONED
+                    if tombstoned
+                    else CheckpointLifecycle.COMMITTED
+                ),
+            )
+            return LocalDeletionPreparation(
+                state=(
+                    LocalDeletionState.TOMBSTONED
+                    if tombstoned
+                    else LocalDeletionState.ACTIVE
+                ),
+                checkpoint=checkpoint,
+            )
+        terminal = await self._read_one(
+            "deletion_prepare_terminal",
+            _SELECT_DELETION_TERMINAL_SQL,
+            (public_response_id, authority_key),
+        )
+        if (
+            terminal is None
+            or _row_str(terminal, "terminal_state")
+            != CheckpointLifecycle.DELETED.value
+        ):
+            raise ConversationAuthorizationError()
+        return LocalDeletionPreparation(
+            state=LocalDeletionState.DELETED,
+            checkpoint=None,
         )
 
     async def tombstone(
@@ -3264,12 +3429,27 @@ class PgsqlConversationStore:
         limit: int,
     ) -> tuple[ReconciliationWorkRecord, ...]:
         """Claim bounded upstream-deletion or key-rewrap work."""
+        return await self._claim_reconciliation(
+            authority,
+            limit=limit,
+            provider_lifecycle_only=False,
+        )
+
+    async def _claim_reconciliation(
+        self,
+        authority: AuthorityScope,
+        *,
+        limit: int,
+        provider_lifecycle_only: bool,
+    ) -> tuple[ReconciliationWorkRecord, ...]:
+        """Claim one bounded exact reconciliation work class."""
         if type(authority) is not AuthorityScope:
             raise ConversationValidationError()
         if (
             type(limit) is not int
             or limit <= 0
             or limit > self._policy.max_batch_size
+            or type(provider_lifecycle_only) is not bool
         ):
             raise ConversationLimitError()
         now = await self._clock.now()
@@ -3281,8 +3461,16 @@ class PgsqlConversationStore:
         ) -> tuple[ReconciliationWorkRecord, ...]:
             rows = await self._fetchall(
                 cursor,
-                "reconciliation_claim_select",
-                _SELECT_RECONCILIATION_SQL,
+                (
+                    "provider_lifecycle_claim_select"
+                    if provider_lifecycle_only
+                    else "reconciliation_claim_select"
+                ),
+                (
+                    _SELECT_PROVIDER_LIFECYCLE_SQL
+                    if provider_lifecycle_only
+                    else _SELECT_RECONCILIATION_SQL
+                ),
                 (authority_key, now, limit),
             )
             result: list[ReconciliationWorkRecord] = []
@@ -3316,6 +3504,12 @@ class PgsqlConversationStore:
                         upstream_response_id=upstream_response_id,
                         lease_owner=owner_token,
                         lease_expires_at=lease_expires_at,
+                        binding_digest=IntegrityDigest(
+                            _row_str(row, "binding_digest")
+                        ),
+                        checkpoint_lifecycle=CheckpointLifecycle(
+                            _row_str(row, "checkpoint_lifecycle_state")
+                        ),
                     )
                 )
             return tuple(result)
@@ -3345,6 +3539,161 @@ class PgsqlConversationStore:
             raise ConversationStorageError() from error
         validate_identifier(target, "upstream_response_id")
         return UpstreamResponseId(target)
+
+    async def claim_provider_lifecycle(
+        self,
+        authority: AuthorityScope,
+        *,
+        limit: int,
+    ) -> tuple[ProviderLifecycleWorkRecord, ...]:
+        """Claim bounded provider deletion work for one authority."""
+        records = await self._claim_reconciliation(
+            authority,
+            limit=limit,
+            provider_lifecycle_only=True,
+        )
+        result: list[ProviderLifecycleWorkRecord] = []
+        for record in records:
+            upstream_response_id = record.upstream_response_id
+            binding_digest = record.binding_digest
+            lifecycle = record.checkpoint_lifecycle
+            if (
+                record.work_kind != "delete_upstream"
+                or upstream_response_id is None
+                or binding_digest is None
+                or lifecycle is None
+            ):
+                raise ConversationStorageError()
+            origin = (
+                ProviderLifecycleOrigin.COMMIT_QUARANTINE
+                if str(record.checkpoint_id).startswith("quarantine-")
+                else (
+                    ProviderLifecycleOrigin.LOCAL_EXPIRY
+                    if lifecycle is CheckpointLifecycle.EXPIRED
+                    else ProviderLifecycleOrigin.LOCAL_TOMBSTONE
+                )
+            )
+            result.append(
+                ProviderLifecycleWorkRecord(
+                    work_id=record.reconciliation_id,
+                    checkpoint_id=record.checkpoint_id,
+                    lane_id=record.lane_id,
+                    binding_digest=binding_digest,
+                    upstream_response_id=upstream_response_id,
+                    origin=origin,
+                    state=ProviderLifecycleWorkState.CLAIMED,
+                    attempts=record.attempts,
+                    lease_owner=record.lease_owner,
+                    lease_expires_at=record.lease_expires_at,
+                )
+            )
+        return tuple(result)
+
+    async def quarantine_provider_checkpoint(
+        self,
+        request: ProviderQuarantineRequest,
+    ) -> ProviderQuarantineReceipt:
+        """Persist one private cleanup checkpoint and outbox atomically."""
+        if type(request) is not ProviderQuarantineRequest:
+            raise ConversationValidationError()
+        candidates = (request.candidate, *request.additional_candidates)
+        prepared = tuple(
+            [
+                await self._prepare_checkpoint(
+                    candidate,
+                    committed_at=request.created_at,
+                    output_candidates=(),
+                )
+                for candidate in candidates
+            ]
+        )
+
+        async def operation(cursor: PgsqlCursor) -> None:
+            for item in prepared:
+                checkpoint = item.checkpoint
+                authority_key = str(authority_digest(checkpoint.authority))
+                existing = await self._fetchone(
+                    cursor,
+                    "provider_quarantine_existing",
+                    _SELECT_CHECKPOINT_FOR_UPDATE_SQL,
+                    (checkpoint.identity.checkpoint_id,),
+                )
+                if existing is not None:
+                    if _row_str(
+                        existing, "authority_digest"
+                    ) != authority_key or _row_str(
+                        existing, "conversation_id"
+                    ) != str(
+                        checkpoint.identity.conversation_id
+                    ):
+                        raise ConversationConflictError()
+                    payload = await self._fetchone(
+                        cursor,
+                        "provider_quarantine_existing_payload",
+                        _SELECT_CHECKPOINT_PAYLOAD_SQL,
+                        (checkpoint.identity.checkpoint_id, authority_key),
+                    )
+                    if (
+                        payload is None
+                        or _row_str(payload, "lifecycle_state")
+                        != CheckpointLifecycle.COMMITTED.value
+                    ):
+                        raise ConversationStorageError()
+                    self._validate_payload_reference_row(
+                        payload,
+                        checkpoint_id=checkpoint.identity.checkpoint_id,
+                        authority=AuthorityDigest(authority_key),
+                        kind=ConversationPayloadKind.CHECKPOINT,
+                        lane_id=_CHECKPOINT_ENVELOPE_LANE,
+                        sequence=0,
+                    )
+                    restored = self._checkpoint_codec.decode(
+                        await self._decrypt_payload_row(payload)
+                    )
+                    if restored != checkpoint:
+                        raise ConversationConflictError()
+                    continue
+                await self._insert_checkpoint(
+                    cursor,
+                    item,
+                    enforce_capacity=False,
+                )
+                await self._insert_deletion_reconciliation(
+                    cursor,
+                    checkpoint.identity.checkpoint_id,
+                    authority_key,
+                )
+
+        await self._transaction("provider_quarantine", operation)
+        return ProviderQuarantineReceipt(
+            checkpoint_id=prepared[0].checkpoint.identity.checkpoint_id,
+            target_count=len(prepared),
+        )
+
+    async def acknowledge_provider_lifecycle(
+        self,
+        record: ProviderLifecycleWorkRecord,
+        *,
+        succeeded: bool,
+    ) -> None:
+        """Settle one exact provider deletion attempt."""
+        if type(record) is not ProviderLifecycleWorkRecord:
+            raise ConversationValidationError()
+        await self.acknowledge_reconciliation(
+            ReconciliationWorkRecord(
+                reconciliation_id=record.work_id,
+                checkpoint_id=record.checkpoint_id,
+                lane_id=record.lane_id,
+                work_kind="delete_upstream",
+                state=ReconciliationWorkState.CLAIMED,
+                attempts=record.attempts,
+                upstream_response_id=record.upstream_response_id,
+                lease_owner=record.lease_owner,
+                lease_expires_at=record.lease_expires_at,
+                binding_digest=record.binding_digest,
+            ),
+            succeeded=succeeded,
+        )
 
     async def acknowledge_reconciliation(
         self,
@@ -4002,6 +4351,7 @@ _COUNT_CHECKPOINTS_SQL = """
 SELECT COUNT(*)::BIGINT AS "record_count"
 FROM "conversation_checkpoints"
 WHERE "lifecycle_state" <> 'deleted'
+  AND "checkpoint_id" NOT LIKE 'quarantine-%'
 """
 
 _SELECT_CHECKPOINT_FOR_UPDATE_SQL = """
@@ -4656,6 +5006,15 @@ SELECT COUNT(*)::BIGINT AS "record_count"
 FROM "conversation_terminal_metadata"
 """
 
+_SELECT_DELETION_TERMINAL_SQL = """
+SELECT t."terminal_state"
+FROM "conversation_terminal_metadata" AS t
+JOIN "conversation_checkpoints" AS c
+  ON c."checkpoint_id" = t."checkpoint_id"
+WHERE t."public_response_id" = %s
+  AND c."authority_digest" = %s
+"""
+
 _DELETE_OLDEST_TERMINAL_SQL = """
 DELETE FROM "conversation_terminal_metadata"
 WHERE "checkpoint_id" = (
@@ -4771,10 +5130,12 @@ WHERE "intent_id" = %s
 _SELECT_RECONCILIATION_SQL = """
 SELECT
     o.*, p.*, k."key_status",
+    l."binding_digest",
     c."conversation_id" AS "checkpoint_conversation_id",
     c."authority_digest" AS "checkpoint_authority_digest",
     c."payload_schema_version" AS "checkpoint_payload_schema_version",
     c."checkpoint_codec_version" AS "checkpoint_codec_version",
+    c."lifecycle_state" AS "checkpoint_lifecycle_state",
     r."checkpoint_id" AS "reference_checkpoint_id",
     r."conversation_id" AS "reference_conversation_id",
     r."authority_digest" AS "reference_authority_digest",
@@ -4793,6 +5154,9 @@ JOIN "conversation_checkpoints" AS c
   ON c."checkpoint_id" = o."checkpoint_id"
  AND c."conversation_id" = o."target_conversation_id"
  AND c."authority_digest" = o."authority_digest"
+JOIN "conversation_lanes" AS l
+  ON l."checkpoint_id" = o."checkpoint_id"
+ AND l."lane_id" = o."lane_id"
 JOIN "conversation_checkpoint_payload_refs" AS r
   ON r."checkpoint_id" = o."checkpoint_id"
  AND r."conversation_id" = o."target_conversation_id"
@@ -4817,6 +5181,12 @@ LIMIT %s
 FOR UPDATE OF o SKIP LOCKED
 """
 
+_SELECT_PROVIDER_LIFECYCLE_SQL = _SELECT_RECONCILIATION_SQL.replace(
+    'WHERE o."authority_digest" = %s',
+    "WHERE o.\"work_kind\" = 'delete_upstream'\n"
+    '  AND o."authority_digest" = %s',
+)
+
 _CLAIM_RECONCILIATION_SQL = """
 UPDATE "conversation_reconciliation_outbox"
 SET
@@ -4831,10 +5201,12 @@ WHERE "reconciliation_id" = %s
 _SELECT_RECONCILIATION_FOR_UPDATE_SQL = """
 SELECT
     o.*, p.*, k."key_status",
+    l."binding_digest",
     c."conversation_id" AS "checkpoint_conversation_id",
     c."authority_digest" AS "checkpoint_authority_digest",
     c."payload_schema_version" AS "checkpoint_payload_schema_version",
     c."checkpoint_codec_version" AS "checkpoint_codec_version",
+    c."lifecycle_state" AS "checkpoint_lifecycle_state",
     r."checkpoint_id" AS "reference_checkpoint_id",
     r."conversation_id" AS "reference_conversation_id",
     r."authority_digest" AS "reference_authority_digest",
@@ -4853,6 +5225,9 @@ JOIN "conversation_checkpoints" AS c
   ON c."checkpoint_id" = o."checkpoint_id"
  AND c."conversation_id" = o."target_conversation_id"
  AND c."authority_digest" = o."authority_digest"
+JOIN "conversation_lanes" AS l
+  ON l."checkpoint_id" = o."checkpoint_id"
+ AND l."lane_id" = o."lane_id"
 JOIN "conversation_checkpoint_payload_refs" AS r
   ON r."checkpoint_id" = o."checkpoint_id"
  AND r."conversation_id" = o."target_conversation_id"

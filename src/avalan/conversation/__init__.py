@@ -272,6 +272,57 @@ from .items import ProviderItemSemanticRule as ProviderItemSemanticRule
 from .items import VisibleTranscript as VisibleTranscript
 from .items import VisibleTranscriptEntry as VisibleTranscriptEntry
 from .items import VisibleTranscriptRole as VisibleTranscriptRole
+from .lifecycle import (
+    AmbiguousDispatchReconciliationDisposition as AmbiguousDispatchReconciliationDisposition,  # noqa: E501
+)
+from .lifecycle import (
+    AmbiguousDispatchReconciliationRequest as AmbiguousDispatchReconciliationRequest,  # noqa: E501
+)
+from .lifecycle import (
+    AmbiguousDispatchReconciliationResult as AmbiguousDispatchReconciliationResult,  # noqa: E501
+)
+from .lifecycle import (
+    AmbiguousDispatchResolution as AmbiguousDispatchResolution,
+)
+from .lifecycle import DirectDeletionResult as DirectDeletionResult
+from .lifecycle import LocalDeletionPreparation as LocalDeletionPreparation
+from .lifecycle import (
+    ProviderLifecycleOrigin as ProviderLifecycleOrigin,
+)
+from .lifecycle import (
+    ProviderLifecycleReconciler as ProviderLifecycleReconciler,
+)
+from .lifecycle import (
+    ProviderLifecycleStore as ProviderLifecycleStore,
+)
+from .lifecycle import (
+    ProviderLifecycleWorkRecord as ProviderLifecycleWorkRecord,
+)
+from .lifecycle import (
+    ProviderLifecycleWorkState as ProviderLifecycleWorkState,
+)
+from .lifecycle import ProviderQuarantineReceipt as ProviderQuarantineReceipt
+from .lifecycle import ProviderQuarantineRequest as ProviderQuarantineRequest
+from .lifecycle import (
+    RetrievedUpstreamResponse as RetrievedUpstreamResponse,
+)
+from .lifecycle import (
+    StoredProviderResolver as StoredProviderResolver,
+)
+from .lifecycle import (
+    StoredProviderResolverEntry as StoredProviderResolverEntry,
+)
+from .lifecycle import (
+    StoredResponseLifecycleAdapter as StoredResponseLifecycleAdapter,
+)
+from .lifecycle import UpstreamAvailability as UpstreamAvailability
+from .lifecycle import (
+    UpstreamDeleteDisposition as UpstreamDeleteDisposition,
+)
+from .lifecycle import UpstreamDeleteResult as UpstreamDeleteResult
+from .lifecycle import (
+    UpstreamRetentionMetadata as UpstreamRetentionMetadata,
+)
 from .observability import ConversationObservation as ConversationObservation
 from .observability import (
     ConversationRequestSemantics as ConversationRequestSemantics,
@@ -320,6 +371,21 @@ from .providers import (
 )
 from .providers import (
     NativeOpenAIStatelessProvider as NativeOpenAIStatelessProvider,
+)
+from .providers import (
+    NativeOpenAIStoredExecution as NativeOpenAIStoredExecution,
+)
+from .providers import (
+    NativeOpenAIStoredLaneRuntime as NativeOpenAIStoredLaneRuntime,
+)
+from .providers import (
+    NativeOpenAIStoredProfile as NativeOpenAIStoredProfile,
+)
+from .providers import (
+    NativeOpenAIStoredProvider as NativeOpenAIStoredProvider,
+)
+from .providers import (
+    native_openai_stored_execution_digest as native_openai_stored_execution_digest,  # noqa: E501
 )
 from .runtime import (
     AtomicCommitReceipt as AtomicCommitReceipt,

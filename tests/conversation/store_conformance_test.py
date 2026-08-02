@@ -2057,6 +2057,11 @@ async def test_cancellation_at_every_store_boundary_is_state_safe(
                 await store.retrieve_output_candidates(
                     base.checkpoint.identity.checkpoint_id, authority()
                 )
+            case conversation.StoreAwaitBoundary.PREPARE_DELETE:
+                assert base_commit.public_response_id is not None
+                await store.prepare_deletion(
+                    base_commit.public_response_id, authority()
+                )
             case conversation.StoreAwaitBoundary.TOMBSTONE:
                 assert base_commit.public_response_id is not None
                 await store.tombstone(

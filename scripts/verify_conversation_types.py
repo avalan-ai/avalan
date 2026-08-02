@@ -56,6 +56,7 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     3: "203d278171cd5246cb2b6a018a039ce4871d2920cc65a0f9c88ca724046f9eb9",
     4: "cdfea565d3441c07a7fe02cebf3a61c6690c59a79a1b183d676ceaf752bbe0e5",
     5: "c290884561e74464e74d4ad44c113b97fd7c2094aa5b0b32fc11b0b16f97d719",
+    6: "b7f61f1c466cdba692d17ff69b1b1cf5ac21c0821b563fbc02c21711b17953fd",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
@@ -64,6 +65,7 @@ _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     3: "660f4748cd74131df44512cffe4abd2c94b2f9156bc582abe2bd717a635cf2b9",
     4: "dd5b10c4b3aca6136f9a59f484c3637bc72326aed35237a25dc2c6adde0da899",
     5: "2dd076e03d294e393754c8986e2b28ab86058919b87ac345f818d1ac78e57fbd",
+    6: "3f55518be6be220aad79c6470a7f1ed372a4c857ece5845f4a02a112b96c8c56",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -87,6 +89,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
     5: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    6: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -162,6 +168,19 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             + "phase5_sync_provider_negative.py"
         ): "25bdb4902a8fa7f5e46a8b57d266871d74e7a50b0c74170808aaca7fa44ed0ab",
     },
+    6: {
+        "tests/conversation_type_contracts/phase6_positive.py": (
+            "ec084e828ff1fe0ec68cfdadd4e2ba3b66cc9b9e1f15a500ef3ea5100db0cd2d"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase6_sync_lifecycle_negative.py"
+        ): "316cca4b0689ba167cb046bbae121211c6f2298046519e63dcb143b3c28b4d7f",
+        (
+            "tests/conversation_type_contracts/"
+            + "phase6_sync_reconciliation_negative.py"
+        ): "a8e320be78ad32fbc8dfbb70c6d7fb29fb94c5cf376016024a488457583dbe24",
+    },
 }
 
 
@@ -212,7 +231,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.phase5.json"
+        / "type_contract_manifest.phase6.json"
     )
 
 

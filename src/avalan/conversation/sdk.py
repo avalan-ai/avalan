@@ -10,6 +10,7 @@ from .contract import (
     ConversationId,
     ConversationOperation,
     ExecutionSegmentId,
+    LocalDeletionState,
     LogicalTurnId,
     ProviderLaneStorage,
     ProvisionalResponseId,
@@ -18,12 +19,31 @@ from .contract import (
     RetentionLimits,
 )
 from .coordinator import RunScopedConversationCoordinator
-from .errors import ConversationError, ConversationValidationError
+from .errors import (
+    ConversationAuthorizationError,
+    ConversationBindingDriftError,
+    ConversationCapabilityError,
+    ConversationConflictError,
+    ConversationError,
+    ConversationTransitionError,
+    ConversationValidationError,
+)
 from .items import (
     ProviderItem,
     VisibleTranscriptEntry,
     VisibleTranscriptRole,
     public_provider_item_projection,
+)
+from .lifecycle import (
+    AmbiguousDispatchReconciliationDisposition,
+    AmbiguousDispatchReconciliationRequest,
+    AmbiguousDispatchReconciliationResult,
+    AmbiguousDispatchResolution,
+    DirectDeletionResult,
+    ProviderLifecycleReconciler,
+    ProviderLifecycleStore,
+    StoredProviderResolver,
+    UpstreamAvailability,
 )
 from .observability import ConversationRequestSemantics
 from .protocols import ConversationProviderStateSink, ConversationStore
@@ -42,8 +62,10 @@ from .runtime import (
 from .settings import (
     ConversationHandle,
     ConversationMode,
+    ConversationModeConversion,
     ConversationParent,
     ConversationResetIntent,
+    ConversationResult,
     DisabledCompaction,
     EffectiveReasoningMetadata,
     ProviderUsage,
@@ -55,13 +77,19 @@ from .settings import (
     StoredConversationHandle,
     StoredConversationSettings,
     StoredParent,
+    validate_mode_transition_authority,
 )
-from .state import ConversationCheckpoint
+from .state import (
+    ConversationCheckpoint,
+    StoredProviderLaneSnapshot,
+    validate_upstream_identifier_separation,
+)
 from .value import validate_identifier
 
 from asyncio import CancelledError, Queue, Task, create_task, shield
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from enum import StrEnum
 from typing import Literal, TypeAlias, cast, final, overload
 from uuid import uuid4
@@ -180,6 +208,8 @@ class DirectConversationRuntime:
     lane: ProviderLaneBinding
     retention: RetentionLimits
     id_namespace: str | None = None
+    provider_resolver: StoredProviderResolver | None = None
+    lifecycle_reconciler: ProviderLifecycleReconciler | None = None
 
     def __post_init__(self) -> None:
         if type(self.coordinator) is not RunScopedConversationCoordinator:
@@ -202,6 +232,28 @@ class DirectConversationRuntime:
             raise ConversationValidationError()
         if self.id_namespace is not None:
             validate_identifier(self.id_namespace, "id_namespace")
+        if (
+            self.lifecycle_reconciler is not None
+            and self.provider_resolver is None
+        ):
+            raise ConversationValidationError()
+        if (
+            self.provider_resolver is not None
+            and type(self.provider_resolver) is not StoredProviderResolver
+        ):
+            raise ConversationValidationError()
+        if self.lifecycle_reconciler is not None:
+            if (
+                type(self.lifecycle_reconciler)
+                is not ProviderLifecycleReconciler
+            ):
+                raise ConversationValidationError()
+            assert self.provider_resolver is not None
+            self.lifecycle_reconciler.assert_runtime(
+                store=cast(ProviderLifecycleStore, self.store),
+                resolver=self.provider_resolver,
+                authority=self.authority,
+            )
         self.coordinator.validate_direct_runtime(self.store, self.lane)
 
 
@@ -266,9 +318,11 @@ class DirectConversationStream(AsyncIterator[DirectConversationStreamItem]):
         self,
         coordinator: RunScopedConversationCoordinator,
         request: ConversationRunRequest,
+        provider_resolver: StoredProviderResolver | None = None,
     ) -> None:
         self._coordinator = coordinator
         self._request = request
+        self._provider_resolver = provider_resolver
         self._queue: Queue[object] = Queue()
         self._task: Task[None] | None = None
         self._state = DirectConversationStreamState.PENDING
@@ -347,10 +401,17 @@ class DirectConversationStream(AsyncIterator[DirectConversationStreamItem]):
     async def _run(self) -> None:
         sink = _DirectStreamSink(self._queue)
         try:
-            receipt = await self._coordinator.stream_with_sink(
-                self._request,
-                sink,
-            )
+            if self._provider_resolver is None:
+                receipt = await self._coordinator.stream_with_sink(
+                    self._request,
+                    sink,
+                )
+            else:
+                receipt = await self._coordinator.stream_with_sink(
+                    self._request,
+                    sink,
+                    stored_provider_resolver=self._provider_resolver,
+                )
             result = _direct_result(receipt)
             terminal = DirectConversationStreamTerminal(result=result)
             self._terminal = terminal
@@ -422,6 +483,180 @@ class DirectConversationClient:
         self._idempotency_ids: dict[
             tuple[str, RequestIdempotencyKey], _RequestIds
         ] = {}
+
+    async def retrieve(
+        self,
+        public_response_id: PublicResponseId,
+    ) -> DirectConversationResult:
+        """Retrieve local output and prove stored upstream availability."""
+        validate_identifier(public_response_id, "public_response_id")
+        result = await self._runtime.store.retrieve(
+            public_response_id,
+            self._runtime.authority,
+        )
+        checkpoint = await self._runtime.store.load(
+            result.handle.checkpoint_id,
+            self._runtime.authority,
+        )
+        validate_upstream_identifier_separation(
+            checkpoint,
+            additional_public_identifiers=(str(public_response_id),),
+        )
+        stored_lanes = tuple(
+            lane
+            for lane in checkpoint.content.lanes
+            if isinstance(lane, StoredProviderLaneSnapshot)
+        )
+        if stored_lanes:
+            resolver = self._runtime.provider_resolver
+            if resolver is None:
+                raise ConversationCapabilityError()
+            for lane in stored_lanes:
+                adapter = await resolver.resolve(lane.binding.integrity_digest)
+                lane.binding.assert_compatible(adapter.binding)
+                if lane.binding.execution_definition_digest is None:
+                    raise ConversationBindingDriftError()
+                retrieved = await adapter.retrieve(lane.upstream_response_id)
+                if (
+                    retrieved.availability
+                    is not UpstreamAvailability.AVAILABLE
+                ):
+                    raise ConversationAuthorizationError()
+                if (
+                    retrieved.upstream_response_id != lane.upstream_response_id
+                    or retrieved.binding_digest
+                    != lane.binding.integrity_digest
+                    or retrieved.execution_definition_digest
+                    != lane.binding.execution_definition_digest
+                    or retrieved.effective_reasoning_context
+                    != lane.reasoning.effective
+                ):
+                    raise ConversationBindingDriftError()
+        return _direct_result_from_resource(result, checkpoint)
+
+    async def reconcile_ambiguous_dispatch(
+        self,
+        operation: ConversationOperation,
+        idempotency_key: RequestIdempotencyKey,
+        resolution: AmbiguousDispatchResolution,
+    ) -> AmbiguousDispatchReconciliationResult:
+        """Apply one explicit durable decision to a fenced dispatch."""
+        if not isinstance(operation, ConversationOperation) or not isinstance(
+            resolution, AmbiguousDispatchResolution
+        ):
+            raise ConversationValidationError()
+        validate_identifier(idempotency_key, "idempotency_key")
+        result = await self._runtime.store.reconcile_ambiguous_dispatch(
+            AmbiguousDispatchReconciliationRequest(
+                authority=self._runtime.authority,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                resolution=resolution,
+            )
+        )
+        if result.disposition is (
+            AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
+        ):
+            raise ConversationAuthorizationError()
+        return result
+
+    async def delete(
+        self,
+        public_response_id: PublicResponseId,
+    ) -> DirectDeletionResult:
+        """Tombstone locally first and reconcile upstream deletion."""
+        validate_identifier(public_response_id, "public_response_id")
+        preparation = await self._runtime.store.prepare_deletion(
+            public_response_id,
+            self._runtime.authority,
+        )
+        if preparation.state is LocalDeletionState.DELETED:
+            return DirectDeletionResult(
+                public_response_id=public_response_id,
+                local_tombstoned=True,
+                upstream_pending=False,
+            )
+        checkpoint = preparation.checkpoint
+        assert checkpoint is not None
+        stored_lane_count = sum(
+            isinstance(lane, StoredProviderLaneSnapshot)
+            for lane in checkpoint.content.lanes
+        )
+        reconciler = self._runtime.lifecycle_reconciler
+        at = datetime.now(UTC)
+        if preparation.state is LocalDeletionState.ACTIVE:
+            try:
+                await self._runtime.store.tombstone(
+                    public_response_id,
+                    self._runtime.authority,
+                    at,
+                )
+            except (
+                ConversationAuthorizationError,
+                ConversationConflictError,
+            ):
+                preparation = await self._runtime.store.prepare_deletion(
+                    public_response_id,
+                    self._runtime.authority,
+                )
+                if preparation.state is LocalDeletionState.DELETED:
+                    return DirectDeletionResult(
+                        public_response_id=public_response_id,
+                        local_tombstoned=True,
+                        upstream_pending=False,
+                    )
+                if preparation.state is LocalDeletionState.ACTIVE:
+                    raise
+        if reconciler is not None and stored_lane_count:
+            await reconciler.run_once(limit=stored_lane_count)
+        elif stored_lane_count:
+            return DirectDeletionResult(
+                public_response_id=public_response_id,
+                local_tombstoned=True,
+                upstream_pending=True,
+            )
+        upstream_pending = False
+        try:
+            await self._runtime.store.delete(
+                public_response_id,
+                self._runtime.authority,
+                at,
+            )
+        except ConversationTransitionError:
+            upstream_pending = True
+        except ConversationAuthorizationError:
+            preparation = await self._runtime.store.prepare_deletion(
+                public_response_id,
+                self._runtime.authority,
+            )
+            if preparation.state is not LocalDeletionState.DELETED:
+                raise
+        return DirectDeletionResult(
+            public_response_id=public_response_id,
+            local_tombstoned=True,
+            upstream_pending=upstream_pending,
+        )
+
+    async def convert(
+        self,
+        input: str,
+        transition: ConversationModeConversion,
+        settings: ActiveConversationSettings,
+    ) -> DirectConversationResult:
+        """Reject unproven continuity-preserving mode conversion."""
+        _validate_input(input)
+        _validate_active_settings(settings)
+        if type(transition) is not ConversationModeConversion:
+            raise ConversationValidationError()
+        authorization = transition.authorization
+        validate_mode_transition_authority(
+            transition,
+            current_checkpoint_id=authorization.checkpoint_id,
+            current_parent=authorization.parent,
+            current_authority=self._runtime.authority,
+            current_binding=self._runtime.lane,
+        )
+        raise ConversationCapabilityError()
 
     @overload
     async def create(
@@ -690,8 +925,17 @@ class DirectConversationClient:
             return DirectConversationStream(
                 self._runtime.coordinator,
                 request,
+                self._runtime.provider_resolver,
             )
-        return _direct_result(await self._runtime.coordinator.execute(request))
+        resolver = self._runtime.provider_resolver
+        if resolver is None:
+            receipt = await self._runtime.coordinator.execute(request)
+        else:
+            receipt = await self._runtime.coordinator.execute(
+                request,
+                stored_provider_resolver=resolver,
+            )
+        return _direct_result(receipt)
 
     async def _load_parent(
         self,
@@ -716,7 +960,19 @@ class DirectConversationClient:
         lane = lanes.get(self._runtime.lane.lane_id)
         if lane is None:
             raise ConversationValidationError()
-        lane.binding.assert_compatible(self._runtime.lane)
+        if lane.binding != self._runtime.lane:
+            if (
+                not isinstance(lane, StoredProviderLaneSnapshot)
+                or mode is not ConversationMode.STORED
+                or self._runtime.provider_resolver is None
+            ):
+                raise ConversationBindingDriftError()
+            resolver = self._runtime.provider_resolver
+            resolved = await resolver.resolve_continuation_runtime(
+                lane.binding.integrity_digest,
+            )
+            if getattr(resolved, "binding", None) != lane.binding:
+                raise ConversationBindingDriftError()
         return checkpoint
 
     def _root_request(
@@ -981,6 +1237,19 @@ def _direct_result(receipt: AtomicCommitReceipt) -> DirectConversationResult:
     outputs = receipt.output_candidates
     if not outputs:
         raise ConversationValidationError()
+    public_response_id = receipt.result.public_response_id
+    additional_public_identifiers = (
+        (str(public_response_id),) if public_response_id is not None else ()
+    )
+    validate_upstream_identifier_separation(
+        receipt.checkpoint,
+        additional_public_identifiers=additional_public_identifiers,
+        additional_upstream_response_ids=tuple(
+            str(output.upstream_response_id)
+            for output in outputs
+            if output.upstream_response_id is not None
+        ),
+    )
     usage = ProviderUsage(
         input_tokens=sum(item.usage.input_tokens for item in outputs),
         output_tokens=sum(item.usage.output_tokens for item in outputs),
@@ -996,4 +1265,44 @@ def _direct_result(receipt: AtomicCommitReceipt) -> DirectConversationResult:
         usage=usage,
         reasoning=outputs[-1].reasoning,
         handle=receipt.result.handle,
+    )
+
+
+def _direct_result_from_resource(
+    result: ConversationResult,
+    checkpoint: ConversationCheckpoint,
+) -> DirectConversationResult:
+    """Project one retrieved local resource into the direct SDK result."""
+    if (
+        type(result) is not ConversationResult
+        or type(checkpoint) is not ConversationCheckpoint
+        or not result.lane_outputs
+        or result.handle.checkpoint_id != checkpoint.identity.checkpoint_id
+    ):
+        raise ConversationValidationError()
+    public_response_id = result.public_response_id
+    validate_upstream_identifier_separation(
+        checkpoint,
+        additional_public_identifiers=(
+            (str(public_response_id),)
+            if public_response_id is not None
+            else ()
+        ),
+    )
+    return DirectConversationResult(
+        output="".join(
+            entry.content
+            for lane in result.lane_outputs
+            for entry in lane.items
+        ),
+        usage=ProviderUsage(
+            input_tokens=sum(
+                lane.usage.input_tokens for lane in result.lane_outputs
+            ),
+            output_tokens=sum(
+                lane.usage.output_tokens for lane in result.lane_outputs
+            ),
+        ),
+        reasoning=result.reasoning,
+        handle=result.handle,
     )

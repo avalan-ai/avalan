@@ -53,6 +53,7 @@ from .state import (
     StandaloneCompactCheckpointCandidate,
     StoredProviderLaneSnapshot,
     SuspensionCheckpointCandidate,
+    validate_upstream_identifier_separation,
 )
 from .value import AuthorityDigest, validate_identifier, validate_revision
 
@@ -752,6 +753,13 @@ class AtomicConversationCommit:
             )
         if self.public_response_id is not None:
             validate_identifier(self.public_response_id, "public_response_id")
+            if any(
+                output.upstream_response_id is not None
+                and str(output.upstream_response_id)
+                == str(self.public_response_id)
+                for output in self.output_candidates
+            ):
+                raise ConversationValidationError()
         if self.outbox_intent_id is not None:
             validate_identifier(self.outbox_intent_id, "outbox_intent_id")
         expected_result_mode = (
@@ -772,6 +780,35 @@ class AtomicConversationCommit:
             validate_revision(
                 self.expected_head_revision, "expected_head_revision"
             )
+        public_identifiers = (
+            str(self.idempotency.key),
+            *(
+                (str(self.provisional_response_id),)
+                if self.provisional_response_id is not None
+                else ()
+            ),
+            *(
+                (str(self.public_response_id),)
+                if self.public_response_id is not None
+                else ()
+            ),
+            *(
+                (self.outbox_intent_id,)
+                if self.outbox_intent_id is not None
+                else ()
+            ),
+            *((str(self.head_id),) if self.head_id is not None else ()),
+        )
+        upstream_response_ids = tuple(
+            str(output.upstream_response_id)
+            for output in self.output_candidates
+            if output.upstream_response_id is not None
+        )
+        validate_upstream_identifier_separation(
+            self.candidate.checkpoint,
+            additional_public_identifiers=public_identifiers,
+            additional_upstream_response_ids=upstream_response_ids,
+        )
 
 
 @final
@@ -819,6 +856,17 @@ class AtomicCommitReceipt:
         ):
             raise ConversationValidationError()
         if self.outbox is None:
+            validate_upstream_identifier_separation(
+                self.checkpoint,
+                additional_public_identifiers=(
+                    str(self.result.public_response_id),
+                ),
+                additional_upstream_response_ids=tuple(
+                    str(candidate.upstream_response_id)
+                    for candidate in self.output_candidates
+                    if candidate.upstream_response_id is not None
+                ),
+            )
             return
         intent = self.outbox.intent
         if (
@@ -827,6 +875,18 @@ class AtomicCommitReceipt:
             or intent.lane_outputs != public_outputs
         ):
             raise ConversationValidationError()
+        validate_upstream_identifier_separation(
+            self.checkpoint,
+            additional_public_identifiers=(
+                str(self.result.public_response_id),
+                str(intent.intent_id),
+            ),
+            additional_upstream_response_ids=tuple(
+                str(candidate.upstream_response_id)
+                for candidate in self.output_candidates
+                if candidate.upstream_response_id is not None
+            ),
+        )
 
 
 @final
