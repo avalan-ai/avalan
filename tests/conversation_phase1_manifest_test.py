@@ -49,8 +49,8 @@ def _payload(name: str) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
 
 
-def test_phase4_defaults_select_the_complete_snapshot_family() -> None:
-    """Select Phase 4 acceptance, type, failure, and threat snapshots."""
+def test_phase5_defaults_select_the_complete_snapshot_family() -> None:
+    """Select Phase 5 acceptance, type, failure, and threat snapshots."""
     type_verifier = _load(
         "_phase1_type_verifier",
         "scripts/verify_conversation_types.py",
@@ -65,38 +65,38 @@ def test_phase4_defaults_select_the_complete_snapshot_family() -> None:
     )
 
     acceptance_path = acceptance.default_manifest_path()
-    assert acceptance_path.name == "acceptance_manifest.phase4.json"
+    assert acceptance_path.name == "acceptance_manifest.phase5.json"
     assert (
         type_verifier.default_manifest_path().name
-        == "type_contract_manifest.phase4.json"
+        == "type_contract_manifest.phase5.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "failure_matrix"
         ).name
-        == "failure_matrix.phase4.json"
+        == "failure_matrix.phase5.json"
     )
     assert (
         acceptance.companion_fixture_path(acceptance_path, "threat_model").name
-        == "threat_model.phase4.json"
+        == "threat_model.phase5.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "type_contract_manifest"
         ).name
-        == "type_contract_manifest.phase4.json"
+        == "type_contract_manifest.phase5.json"
     )
-    assert acceptance.load_manifest(acceptance_path).current_phase == 4
+    assert acceptance.load_manifest(acceptance_path).current_phase == 5
     assert (
         type_verifier.load_manifest(
             type_verifier.default_manifest_path()
         ).current_phase
-        == 4
+        == 5
     )
-    assert runner._CONVERSATION_CURRENT_PHASE == 4
-    runner._validate_through_phase(_ROOT, 4)
+    assert runner._CONVERSATION_CURRENT_PHASE == 5
+    runner._validate_through_phase(_ROOT, 5)
     with pytest.raises(runner.ContractGateError):
-        runner._validate_through_phase(_ROOT, 5)
+        runner._validate_through_phase(_ROOT, 6)
 
 
 def test_phase1_acceptance_validates_selected_companions() -> None:
@@ -286,6 +286,144 @@ def test_phase4_snapshots_append_to_phase3_without_rewriting_history() -> None:
     assert isinstance(threats4_items, list)
     assert threats4_items[: len(threats3_items)] == threats3_items
     assert len(threats4_items) == len(threats3_items) + 1
+
+
+def test_phase5_snapshots_activate_native_stateless_evidence_append_only() -> (
+    None
+):
+    """Preserve Phase 4 history while activating native replay evidence."""
+    acceptance4 = _payload("acceptance_manifest.phase4.json")
+    acceptance5 = _payload("acceptance_manifest.phase5.json")
+    history4 = acceptance4["activation_history"]
+    history5 = acceptance5["activation_history"]
+    nodes4 = acceptance4["nodes"]
+    nodes5 = acceptance5["nodes"]
+    assert isinstance(history4, list) and isinstance(history5, list)
+    assert isinstance(nodes4, list) and isinstance(nodes5, list)
+    assert history5[: len(history4)] == history4
+    assert len(history5) == len(history4) + 1
+    assert len(nodes5) == len(nodes4) + 16
+    nodes5_by_id = {
+        node["id"]: node for node in nodes5 if isinstance(node, dict)
+    }
+    for previous in nodes4:
+        assert isinstance(previous, dict)
+        current = nodes5_by_id[previous["id"]]
+        if previous.get("id") == "phase5-stateless-wire":
+            assert previous.get("lifecycle") == "planned"
+            assert current.get("lifecycle") == "replaced"
+            assert current.get("provider") == [
+                "native_openai",
+                "native_azure",
+                "incapable_generic_compatible",
+            ]
+            assert current.get("provider_mode") == [
+                "stateless_encrypted_replay"
+            ]
+            assert current.get("turn_topology") == [
+                "first_turn",
+                "ordinary_child",
+            ]
+        else:
+            assert current == previous
+    active_phase5 = [
+        node
+        for node in nodes5
+        if isinstance(node, dict)
+        and node.get("active_from_phase") == 5
+        and node.get("lifecycle") == "active"
+    ]
+    assert len(active_phase5) == 16
+    assert all(
+        isinstance(node, dict)
+        and node.get("active_from_phase") == 5
+        and node.get("lifecycle") == "active"
+        for node in active_phase5
+    )
+    assert {
+        node["id"] for node in active_phase5 if isinstance(node, dict)
+    } == {
+        "phase5-openai-replay-private",
+        "phase5-concurrent-branch-isolation",
+        "phase5-openai-durable-fresh-process",
+        "phase5-public-provider-projection",
+        "phase5-reasoning-context-matrix",
+        "phase5-reasoning-capability-rejection",
+        "phase5-azure-exact-loopback-wire",
+        "phase5-generic-compatible-rejection",
+        "phase5-provider-item-limit",
+        "phase5-provider-byte-limit",
+        "phase5-provider-segment-validation",
+        "phase5-native-close-cancellation",
+        "phase5-legacy-facade-ownership",
+        "phase5-sdk-failure-mapping",
+        "phase5-stream-failure-boundaries",
+        "phase5-stream-item-integrity",
+    }
+    active_requirements = [
+        requirement_id
+        for node in active_phase5
+        if isinstance(node, dict)
+        for requirement_id in node["requirement_ids"]
+    ]
+    assert len(active_requirements) == 18
+    assert len(set(active_requirements)) == 18
+    concurrent = nodes5_by_id["phase5-concurrent-branch-isolation"]
+    assert concurrent.get("turn_topology") == ["explicit_branch"]
+    assert concurrent.get("reasoning_context") == ["all_turns"]
+    assert concurrent.get("limit") == ["branch_count", "concurrency"]
+    assert concurrent.get("requirement_ids") == ["CONV-N-037"]
+
+    types4 = _payload("type_contract_manifest.phase4.json")
+    types5 = _payload("type_contract_manifest.phase5.json")
+    fixtures4 = types4["fixtures"]
+    fixtures5 = types5["fixtures"]
+    type_history4 = types4["activation_history"]
+    type_history5 = types5["activation_history"]
+    assert isinstance(fixtures4, list) and isinstance(fixtures5, list)
+    assert isinstance(type_history4, list) and isinstance(type_history5, list)
+    assert fixtures5[: len(fixtures4)] == fixtures4
+    assert len(fixtures5) == len(fixtures4) + 2
+    assert type_history5[: len(type_history4)] == type_history4
+
+    failure4 = _payload("failure_matrix.phase4.json")
+    failure5 = _payload("failure_matrix.phase5.json")
+    assert failure5["boundaries"] == failure4["boundaries"]
+    assert failure5["surfaces"] == failure4["surfaces"]
+    cells4 = failure4["cells"]
+    cells5 = failure5["cells"]
+    assert isinstance(cells4, list) and isinstance(cells5, list)
+    assert len(cells5) == len(cells4)
+    activated = {
+        "durable_transaction_failure--provider_adapter",
+        "durable_transaction_failure--stream",
+    }
+    for previous, current in zip(cells4, cells5, strict=True):
+        assert isinstance(previous, dict) and isinstance(current, dict)
+        if previous.get("id") in activated:
+            assert previous.get("lifecycle") == "planned"
+            assert current == {**previous, "lifecycle": "active"}
+        else:
+            assert current == previous
+
+    threats4 = _payload("threat_model.phase4.json")
+    threats5 = _payload("threat_model.phase5.json")
+    assert threats5["assets"] == threats4["assets"]
+    assert threats5["trust_boundaries"] == threats4["trust_boundaries"]
+    threat_items4 = threats4["threats"]
+    threat_items5 = threats5["threats"]
+    assert isinstance(threat_items4, list) and isinstance(threat_items5, list)
+    assert threat_items5[: len(threat_items4)] == threat_items4
+    assert len(threat_items5) == len(threat_items4) + 1
+
+    conformance0 = _payload("provider_conformance.json")
+    conformance5 = _payload("provider_conformance.phase5.json")
+    profiles0 = conformance0["profiles"]
+    profiles5 = conformance5["profiles"]
+    assert isinstance(profiles0, list) and isinstance(profiles5, list)
+    assert profiles5[: len(profiles0)] == profiles0
+    assert len(profiles5) == len(profiles0) + 4
+    assert conformance5["activation_state"] == "test_only"
 
 
 def test_phase0_manifests_remain_byte_pinned_and_history_is_retained() -> None:

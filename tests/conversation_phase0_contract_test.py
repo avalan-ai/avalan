@@ -62,6 +62,7 @@ _PHASE0_PROVIDER_TEST_SHA256 = (
 _PHASE0_PROVIDER_SOURCE_SHA256 = (
     "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
 )
+_PHASE5_PROVIDER_TRANSITION = "provider_transition.phase5.json"
 
 
 def _object(path: Path) -> dict[str, object]:
@@ -109,6 +110,23 @@ def _validate_scoped_digest(payload: dict[str, object]) -> None:
     assert scope and all(isinstance(field, str) for field in scope)
     scoped = {str(field): payload[str(field)] for field in scope}
     assert digest["value"] == _canonical_digest(scoped)
+
+
+def _provider_transition() -> dict[str, dict[str, object]]:
+    payload = _object(_FIXTURES / _PHASE5_PROVIDER_TRANSITION)
+    assert payload["schema_version"] == 1
+    assert payload["feature"] == "conversation_continuity"
+    assert payload["phase"] == 5
+    assert payload["kind"] == "reviewed_provider_source_transition"
+    assert payload["reviewed_by"] == "phase5-native-provider-review"
+    assert payload["canonical_sha256"] == _canonical_digest(
+        _without_digest(payload, "canonical_sha256")
+    )
+    transitions = [
+        _mapping(value) for value in _sequence(payload["transitions"])
+    ]
+    assert len(transitions) == 4
+    return {str(item["path"]): item for item in transitions}
 
 
 def test_phase0_contract_fixtures_are_frozen(
@@ -230,18 +248,35 @@ def test_provider_contract_evidence_is_typed_and_dormant(
     provider_source_path = _ROOT / "src/avalan/model/nlp/text/vendor/openai.py"
     contract = _object(contract_path)
     conformance = _object(_FIXTURES / "provider_conformance.json")
+    transitions = _provider_transition()
     assert len(contract_path.read_bytes()) == 34_882
     assert sha256(contract_path.read_bytes()).hexdigest() == (
         _PHASE0_PROVIDER_CONTRACT_SHA256
     )
-    assert len(provider_test_path.read_bytes()) == 96_247
-    assert sha256(provider_test_path.read_bytes()).hexdigest() == (
-        _PHASE0_PROVIDER_TEST_SHA256
-    )
-    assert len(provider_source_path.read_bytes()) == 336_124
-    assert sha256(provider_source_path.read_bytes()).hexdigest() == (
-        _PHASE0_PROVIDER_SOURCE_SHA256
-    )
+    expected_from = {
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
+            96_247,
+            _PHASE0_PROVIDER_TEST_SHA256,
+        ),
+        "src/avalan/model/nlp/text/vendor/openai.py": (
+            336_124,
+            _PHASE0_PROVIDER_SOURCE_SHA256,
+        ),
+    }
+    for relative, path in (
+        (
+            "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
+            provider_test_path,
+        ),
+        ("src/avalan/model/nlp/text/vendor/openai.py", provider_source_path),
+    ):
+        transition = transitions[relative]
+        size, digest = expected_from[relative]
+        assert transition["from_size"] == size
+        assert transition["from_sha256"] == digest
+        payload = path.read_bytes()
+        assert transition["to_size"] == len(payload)
+        assert transition["to_sha256"] == sha256(payload).hexdigest()
     assert contract["current_phase"] == 0
     assert contract["activation_state"] == "dormant"
     assert conformance["current_phase"] == 0

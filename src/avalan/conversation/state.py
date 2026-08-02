@@ -248,7 +248,7 @@ class SafeCheckpointCounts:
 
 
 @final
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class StatelessProviderLaneSnapshot:
     """Store one exact stateless ledger without an upstream response ID."""
 
@@ -291,6 +291,22 @@ class StatelessProviderLaneSnapshot:
     def lane_id(self) -> ProviderLaneId:
         """Return the bound provider lane identifier."""
         return self.binding.lane_id
+
+    def __repr__(self) -> str:
+        """Return a representation without private provider identifiers."""
+        opaque_bytes = sum(
+            item.opaque_state.byte_count
+            for item in self.ledger.items
+            if item.opaque_state is not None
+        )
+        return (
+            "StatelessProviderLaneSnapshot("
+            f"lane_id={self.lane_id!r}, lifecycle={self.lifecycle.value!r}, "
+            f"provider_item_count={self.ledger.item_count}, "
+            f"opaque_byte_count={opaque_bytes}, "
+            "provider_items=<redacted>, "
+            f"execution_receipt={self.execution_receipt!r})"
+        )
 
 
 @final

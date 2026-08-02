@@ -1,0 +1,508 @@
+{
+  "schema_version": 1,
+  "profile_schema_version": "conversation-provider-profile-v1",
+  "feature": "conversation_continuity",
+  "owner": "provider_runtime",
+  "current_phase": 5,
+  "activation_state": "test_only",
+  "production_dispatch_enabled": false,
+  "production_advertisement_enabled": false,
+  "capability_names": [
+    "stored_responses_chaining",
+    "stateless_encrypted_reasoning_replay",
+    "reasoning_context_current_turn",
+    "reasoning_context_all_turns",
+    "inline_compaction",
+    "standalone_compaction",
+    "streaming_item_fidelity",
+    "stored_response_retrieval",
+    "stored_response_deletion"
+  ],
+  "capability_states": [
+    "test_only",
+    "incapable"
+  ],
+  "identity_dimensions": [
+    "adapter_type",
+    "provider_family",
+    "normalized_endpoint",
+    "azure_resource_identity",
+    "model_or_deployment",
+    "provider_api_revision",
+    "sdk_revision",
+    "model_configuration_revision",
+    "capability_profile_revision",
+    "tool_schema_revision",
+    "execution_definition_revision",
+    "continuation_codec_version",
+    "transport"
+  ],
+  "inference_policy": {
+    "default_state": "incapable",
+    "rejected_inputs": [
+      "provider_name",
+      "provider_family",
+      "base_url",
+      "endpoint_shape",
+      "model_name",
+      "sdk_method_presence",
+      "sdk_type_presence",
+      "schema_acceptance_without_round_trip",
+      "one_live_success"
+    ],
+    "activation_rule": "Every identity dimension must match one complete active profile and every requested capability must have active conformance evidence for that exact transport.",
+    "profile_name_is_not_evidence": true,
+    "sdk_shape_is_not_evidence": true,
+    "url_shape_is_not_evidence": true
+  },
+  "profiles": [
+    {
+      "profile_id": "native-openai-responses-non-streaming-unproven",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "activation_state": "dormant",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "avalan.model.nlp.text.vendor.openai.OpenAIClient",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "non_streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "dormant",
+        "stateless_encrypted_reasoning_replay": "dormant",
+        "reasoning_context_current_turn": "dormant",
+        "reasoning_context_all_turns": "dormant",
+        "inline_compaction": "dormant",
+        "standalone_compaction": "dormant",
+        "streaming_item_fidelity": "dormant",
+        "stored_response_retrieval": "dormant",
+        "stored_response_deletion": "dormant"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_capability_profiles_are_exact_and_dormant"
+      ]
+    },
+    {
+      "profile_id": "native-openai-responses-streaming-unproven",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "activation_state": "dormant",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "avalan.model.nlp.text.vendor.openai.OpenAIClient",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "dormant",
+        "stateless_encrypted_reasoning_replay": "dormant",
+        "reasoning_context_current_turn": "dormant",
+        "reasoning_context_all_turns": "dormant",
+        "inline_compaction": "dormant",
+        "standalone_compaction": "dormant",
+        "streaming_item_fidelity": "dormant",
+        "stored_response_retrieval": "dormant",
+        "stored_response_deletion": "dormant"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_capability_profiles_are_exact_and_dormant"
+      ]
+    },
+    {
+      "profile_id": "native-azure-openai-responses-non-streaming-unbound",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "activation_state": "dormant",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "avalan.model.nlp.text.vendor.openai.OpenAIClient",
+        "provider_family": "azure_openai",
+        "normalized_endpoint": "unbound",
+        "azure_resource_identity": "unbound",
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "azure-openai-v1",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "non_streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "dormant",
+        "stateless_encrypted_reasoning_replay": "dormant",
+        "reasoning_context_current_turn": "dormant",
+        "reasoning_context_all_turns": "dormant",
+        "inline_compaction": "dormant",
+        "standalone_compaction": "dormant",
+        "streaming_item_fidelity": "dormant",
+        "stored_response_retrieval": "dormant",
+        "stored_response_deletion": "dormant"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_capability_profiles_are_exact_and_dormant"
+      ]
+    },
+    {
+      "profile_id": "native-azure-openai-responses-streaming-unbound",
+      "lifecycle": "planned",
+      "active_from_phase": 12,
+      "activation_state": "dormant",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "avalan.model.nlp.text.vendor.openai.OpenAIClient",
+        "provider_family": "azure_openai",
+        "normalized_endpoint": "unbound",
+        "azure_resource_identity": "unbound",
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "azure-openai-v1",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "dormant",
+        "stateless_encrypted_reasoning_replay": "dormant",
+        "reasoning_context_current_turn": "dormant",
+        "reasoning_context_all_turns": "dormant",
+        "inline_compaction": "dormant",
+        "standalone_compaction": "dormant",
+        "streaming_item_fidelity": "dormant",
+        "stored_response_retrieval": "dormant",
+        "stored_response_deletion": "dormant"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_provider_contract_evidence_is_typed_and_dormant",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_capability_profiles_are_exact_and_dormant"
+      ]
+    },
+    {
+      "profile_id": "generic-openai-compatible-non-streaming-default",
+      "lifecycle": "incapable",
+      "active_from_phase": null,
+      "activation_state": "incapable",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "unbound-compatible-adapter",
+        "provider_family": "openai_compatible",
+        "normalized_endpoint": "unbound",
+        "azure_resource_identity": null,
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "unbound",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "non_streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "incapable",
+        "reasoning_context_current_turn": "incapable",
+        "reasoning_context_all_turns": "incapable",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_identity_hints_never_activate_conversation_capabilities",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_no_production_conversation_dispatch_or_advertisement"
+      ]
+    },
+    {
+      "profile_id": "generic-openai-compatible-streaming-default",
+      "lifecycle": "incapable",
+      "active_from_phase": null,
+      "activation_state": "incapable",
+      "identity_complete": false,
+      "binding": {
+        "adapter_type": "unbound-compatible-adapter",
+        "provider_family": "openai_compatible",
+        "normalized_endpoint": "unbound",
+        "azure_resource_identity": null,
+        "model_or_deployment": "unbound",
+        "provider_api_revision": "unbound",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "unbound",
+        "capability_profile_revision": "conversation-provider-profile-v1",
+        "tool_schema_revision": "unbound",
+        "execution_definition_revision": "unbound",
+        "continuation_codec_version": "unimplemented",
+        "transport": "streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "incapable",
+        "reasoning_context_current_turn": "incapable",
+        "reasoning_context_all_turns": "incapable",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [],
+      "evidence_node_ids": [
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_identity_hints_never_activate_conversation_capabilities",
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_no_production_conversation_dispatch_or_advertisement"
+      ]
+    },
+    {
+      "profile_id": "native-openai-stateless-non-streaming-phase5-test",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "gpt-5",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-phase5",
+        "capability_profile_revision": "capability-phase5",
+        "tool_schema_revision": "tools-phase5",
+        "execution_definition_revision": "execution-phase5",
+        "continuation_codec_version": "1",
+        "transport": "non_streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [
+        "phase5-exact-request-matrix",
+        "phase5-loopback-postgresql-fresh-process"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_exact_profile_request_matrix",
+        "tests/conversation/openai_stateless_e2e_test.py::test_native_openai_fresh_process_durable_replay"
+      ]
+    },
+    {
+      "profile_id": "native-openai-stateless-streaming-phase5-test",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "gpt-5",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-phase5",
+        "capability_profile_revision": "capability-phase5",
+        "tool_schema_revision": "tools-phase5",
+        "execution_definition_revision": "execution-phase5",
+        "continuation_codec_version": "1",
+        "transport": "streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "test_only",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [
+        "phase5-exact-request-matrix"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_exact_profile_request_matrix"
+      ]
+    },
+    {
+      "profile_id": "native-azure-stateless-non-streaming-phase5-test",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "azure_openai",
+        "normalized_endpoint": "https://resource.openai.azure.com/openai/v1",
+        "azure_resource_identity": "resource.openai.azure.com",
+        "model_or_deployment": "deployment-native",
+        "provider_api_revision": "azure-openai-v1-preview",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-phase5",
+        "capability_profile_revision": "capability-phase5",
+        "tool_schema_revision": "tools-phase5",
+        "execution_definition_revision": "execution-phase5",
+        "continuation_codec_version": "1",
+        "transport": "non_streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [
+        "phase5-exact-request-matrix",
+        "phase5-exact-azure-loopback-postgresql-wire"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_exact_profile_request_matrix",
+        "tests/conversation/openai_stateless_e2e_test.py::test_native_azure_exact_identity_over_loopback_transport"
+      ]
+    },
+    {
+      "profile_id": "native-azure-stateless-streaming-phase5-test",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "azure_openai",
+        "normalized_endpoint": "https://resource.openai.azure.com/openai/v1",
+        "azure_resource_identity": "resource.openai.azure.com",
+        "model_or_deployment": "deployment-native",
+        "provider_api_revision": "azure-openai-v1-preview",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-phase5",
+        "capability_profile_revision": "capability-phase5",
+        "tool_schema_revision": "tools-phase5",
+        "execution_definition_revision": "execution-phase5",
+        "continuation_codec_version": "1",
+        "transport": "streaming"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "incapable",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "test_only",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable"
+      },
+      "activation_evidence": [
+        "phase5-exact-request-matrix",
+        "phase5-exact-azure-loopback-postgresql-wire"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_exact_profile_request_matrix",
+        "tests/conversation/openai_stateless_e2e_test.py::test_native_azure_exact_identity_over_loopback_transport"
+      ]
+    }
+  ],
+  "rejected_inference_cases": [
+    {
+      "case_id": "provider-name-and-native-url",
+      "inputs": [
+        "provider_name",
+        "base_url",
+        "sdk_method_presence"
+      ],
+      "expected_state": "dormant"
+    },
+    {
+      "case_id": "azure-shaped-url-and-model-label",
+      "inputs": [
+        "endpoint_shape",
+        "model_name",
+        "sdk_type_presence"
+      ],
+      "expected_state": "dormant"
+    },
+    {
+      "case_id": "generic-compatible-sdk-shape",
+      "inputs": [
+        "provider_family",
+        "base_url",
+        "sdk_method_presence",
+        "schema_acceptance_without_round_trip"
+      ],
+      "expected_state": "incapable"
+    },
+    {
+      "case_id": "single-deployment-success",
+      "inputs": [
+        "one_live_success"
+      ],
+      "expected_state": "dormant"
+    }
+  ],
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": [
+      "schema_version",
+      "profile_schema_version",
+      "feature",
+      "owner",
+      "current_phase",
+      "activation_state",
+      "production_dispatch_enabled",
+      "production_advertisement_enabled",
+      "capability_names",
+      "capability_states",
+      "identity_dimensions",
+      "inference_policy",
+      "profiles",
+      "rejected_inference_cases"
+    ],
+    "value": "74f243dc47de3e6c8411b91cd111136c70d82d46f812d9bcc2e3734a195ee287"
+  }
+}

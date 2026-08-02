@@ -5,6 +5,7 @@ from .binding import (
     ConversationCapabilityProfile,
     ProviderFamily,
     ProviderLaneBinding,
+    ProviderTransport,
 )
 from .codec import with_checkpoint_integrity
 from .contract import (
@@ -25,10 +26,13 @@ from .contract import (
 from .errors import (
     ConversationAmbiguousDispatchError,
     ConversationAuthorizationError,
+    ConversationBindingDriftError,
     ConversationCapabilityError,
     ConversationCommitError,
     ConversationConflictError,
     ConversationError,
+    ConversationLimitError,
+    ConversationProviderResponseError,
     ConversationPublicationError,
     ConversationValidationError,
 )
@@ -63,6 +67,8 @@ from .items import (
     ProviderItemLedger,
     ProviderItemPhase,
     VisibleTranscript,
+    provider_item_byte_count,
+    validate_provider_item_sequence,
 )
 from .observability import (
     authority_digest,
@@ -74,6 +80,7 @@ from .protocols import (
     ConversationClock,
     ConversationObserver,
     ConversationProviderStateSink,
+    ConversationProviderStream,
     ConversationPublisher,
     ConversationRetryWaiter,
     ConversationStore,
@@ -83,6 +90,11 @@ from .protocols import (
     ProviderResult,
     StatelessProviderPlan,
     StoredProviderPlan,
+)
+from .providers.openai import (
+    NativeOpenAIConversationLaneRuntime,
+    NativeOpenAIProviderDiagnostics,
+    NativeOpenAIStatelessProvider,
 )
 from .runtime import (
     AtomicCommitReceipt,
@@ -132,13 +144,16 @@ from .state import (
     StoredProviderLaneSnapshot,
 )
 from .value import (
+    ProviderItemId,
+    ProviderItemIndex,
+    ProviderItemOrder,
     canonical_json_bytes,
     freeze_json_value,
     validate_identifier,
 )
 
 from asyncio import CancelledError, Task, create_task, wait
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from hashlib import sha256
@@ -260,6 +275,55 @@ def _validate_lane_runtime(
     return runtime
 
 
+def _validate_native_lane_runtime(
+    runtime: object,
+) -> NativeOpenAIConversationLaneRuntime:
+    if type(runtime) is not NativeOpenAIConversationLaneRuntime:
+        raise ConversationValidationError()
+    try:
+        binding = runtime.binding
+        capability_profile = runtime.capability_profile
+        provider = runtime.provider
+        retention_policy = runtime.retention_policy
+        max_output_items = runtime.max_output_items
+        max_output_bytes = runtime.max_output_bytes
+        max_output_segments = runtime.max_output_segments
+    except AttributeError as exc:
+        raise ConversationValidationError() from exc
+    if (
+        type(binding) is not ProviderLaneBinding
+        or type(capability_profile) is not ConversationCapabilityProfile
+        or type(provider) is not NativeOpenAIStatelessProvider
+        or provider.binding != binding
+        or provider.capability_profile != capability_profile
+        or type(retention_policy) is not ChildLaneRetentionPolicy
+        or type(max_output_items) is not int
+        or max_output_items <= 0
+        or type(max_output_bytes) is not int
+        or max_output_bytes <= 0
+        or type(max_output_segments) is not int
+        or max_output_segments <= 0
+    ):
+        raise ConversationValidationError()
+    capability_profile.assert_binding(binding)
+    if binding.provider_family not in {
+        ProviderFamily.OPENAI,
+        ProviderFamily.AZURE_OPENAI,
+    }:
+        raise ConversationCapabilityError()
+    return runtime
+
+
+def _validate_any_lane_runtime(
+    runtime: object,
+) -> ConversationLaneRuntime | NativeOpenAIConversationLaneRuntime:
+    if type(runtime) is ConversationLaneRuntime:
+        return _validate_lane_runtime(runtime)
+    if type(runtime) is NativeOpenAIConversationLaneRuntime:
+        return _validate_native_lane_runtime(runtime)
+    raise ConversationValidationError()
+
+
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class CoordinatorDiagnostics:
@@ -322,9 +386,17 @@ class _AttemptStaging:
 @dataclass(slots=True)
 class _DispatchProgress:
     may_have_dispatched: bool = False
+    provider_output: bool = False
+    tool_effect: bool = False
 
     def mark_possible_dispatch(self) -> None:
         self.may_have_dispatched = True
+
+    def mark_provider_output(self) -> None:
+        self.provider_output = True
+
+    def mark_tool_effect(self) -> None:
+        self.tool_effect = True
 
 
 @final
@@ -421,9 +493,14 @@ def _apply_provider_state_cleanup_failure(
     primary_failure.add_note("conversation provider-state cleanup failed")
 
 
+LaneRuntime: TypeAlias = (
+    ConversationLaneRuntime | NativeOpenAIConversationLaneRuntime
+)
+
+
 LanePlan: TypeAlias = tuple[
     ConversationLaneRequest,
-    ConversationLaneRuntime,
+    LaneRuntime,
     ProviderPlan,
 ]
 
@@ -441,7 +518,7 @@ class RunScopedConversationCoordinator:
         publisher: ConversationPublisher,
         observer: ConversationObserver,
         retry_waiter: ConversationRetryWaiter,
-        lanes: tuple[ConversationLaneRuntime, ...],
+        lanes: tuple[LaneRuntime, ...],
         max_attempts: int = 2,
         max_active_executions: int = 128,
         boundary_hook: CoordinatorBoundaryHook | None = None,
@@ -449,11 +526,18 @@ class RunScopedConversationCoordinator:
         if (
             type(lanes) is not tuple
             or not lanes
-            or any(type(item) is not ConversationLaneRuntime for item in lanes)
+            or any(
+                type(item)
+                not in {
+                    ConversationLaneRuntime,
+                    NativeOpenAIConversationLaneRuntime,
+                }
+                for item in lanes
+            )
         ):
             raise ConversationValidationError()
         for item in lanes:
-            _validate_lane_runtime(item)
+            _validate_any_lane_runtime(item)
         lane_ids = tuple(item.binding.lane_id for item in lanes)
         if len(lane_ids) != len(set(lane_ids)):
             raise ConversationValidationError()
@@ -472,7 +556,9 @@ class RunScopedConversationCoordinator:
         self._retry_waiter = retry_waiter
         self._lanes = {item.binding.lane_id: item for item in lanes}
         self._fake_runtimes = {
-            item.binding.lane_id: item._provider_runtime for item in lanes
+            item.binding.lane_id: item._provider_runtime
+            for item in lanes
+            if type(item) is ConversationLaneRuntime
         }
         self._max_attempts = max_attempts
         self._max_active_executions = max_active_executions
@@ -507,7 +593,7 @@ class RunScopedConversationCoordinator:
         validate_identifier(str(lane_id), "lane_id")
         runtime = self._lanes.get(lane_id)
         state = self._fake_runtimes.get(lane_id)
-        if runtime is None or state is None:
+        if type(runtime) is not ConversationLaneRuntime or state is None:
             raise ConversationValidationError()
         _validate_runtime(runtime)
         return _provider_diagnostics(state, runtime.provider_script)
@@ -523,7 +609,19 @@ class RunScopedConversationCoordinator:
         runtime = self._lanes.get(binding.lane_id)
         if runtime is None or runtime.binding != binding:
             raise ConversationValidationError()
-        _validate_lane_runtime(runtime)
+        _validate_any_lane_runtime(runtime)
+
+    def native_provider_diagnostics(
+        self,
+        lane_id: ProviderLaneId,
+    ) -> NativeOpenAIProviderDiagnostics:
+        """Return content-free diagnostics for one exact native lane."""
+        validate_identifier(str(lane_id), "lane_id")
+        runtime = self._lanes.get(lane_id)
+        if type(runtime) is not NativeOpenAIConversationLaneRuntime:
+            raise ConversationValidationError()
+        _validate_native_lane_runtime(runtime)
+        return runtime.provider.diagnostics
 
     async def execute(
         self, request: ConversationRunRequest
@@ -570,6 +668,14 @@ class RunScopedConversationCoordinator:
             if cancellation is not None:
                 raise cancellation
             return
+        provider_error: BaseException | None = None
+        try:
+            await self._close_native_providers()
+        except CancelledError as exc:
+            cancellation = cancellation or exc
+            provider_error = exc.__cause__
+        except BaseException as exc:
+            provider_error = exc
         action: StoreCloseResolution | None = None
         action_error: BaseException | None = None
         try:
@@ -595,7 +701,10 @@ class RunScopedConversationCoordinator:
             consistency_error = ConversationValidationError()
         else:
             assert probe is not None
-            if probe.disposition is StoreCloseDisposition.CLOSED:
+            if (
+                probe.disposition is StoreCloseDisposition.CLOSED
+                and provider_error is None
+            ):
                 self._closed = True
             if action_error is None:
                 if type(action) is not StoreCloseResolution:
@@ -612,15 +721,54 @@ class RunScopedConversationCoordinator:
             )
             if cause is None and action_error is not cancellation:
                 cause = action_error
+            if cause is None:
+                cause = provider_error
             if cause is not None:
                 raise cancellation from cause
             raise cancellation
+        if provider_error is not None:
+            if action_error is not None:
+                raise provider_error from action_error
+            if consistency_error is not None:
+                raise provider_error from consistency_error
+            raise provider_error
         if action_error is not None:
             if consistency_error is not None:
                 raise action_error from consistency_error
             raise action_error
         if consistency_error is not None:
             raise consistency_error
+
+    async def _close_native_providers(self) -> None:
+        closed: set[int] = set()
+        cancellation: CancelledError | None = None
+        cleanup_error: BaseException | None = None
+        for runtime in self._lanes.values():
+            if type(runtime) is not NativeOpenAIConversationLaneRuntime:
+                continue
+            provider = runtime.provider
+            identity = id(provider)
+            if identity in closed:
+                continue
+            closed.add(identity)
+            try:
+                await provider.aclose()
+            except CancelledError as exc:
+                cancellation = cancellation or exc
+                try:
+                    await provider.aclose()
+                except CancelledError:
+                    cleanup_error = cleanup_error or ConversationCommitError()
+                except BaseException:
+                    cleanup_error = cleanup_error or ConversationCommitError()
+            except BaseException:
+                cleanup_error = cleanup_error or ConversationCommitError()
+        if cancellation is not None:
+            if cleanup_error is not None:
+                raise cancellation from cleanup_error
+            raise cancellation
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def _run(
         self,
@@ -941,11 +1089,18 @@ class RunScopedConversationCoordinator:
                         items=(),
                     )
                 )
+                new_input = None
+                if type(runtime) is NativeOpenAIConversationLaneRuntime:
+                    semantic_input = request.semantics.semantic_input
+                    if not isinstance(semantic_input, Mapping):
+                        raise ConversationValidationError()
+                    new_input = semantic_input
                 plan: ProviderPlan = StatelessProviderPlan(
                     binding=runtime.binding,
                     ledger=ledger,
                     reasoning=reasoning,
                     compaction=lane_request.compaction,
+                    new_input=new_input,
                 )
             else:
                 if prior is not None and not isinstance(
@@ -969,11 +1124,21 @@ class RunScopedConversationCoordinator:
     @staticmethod
     def _require_capabilities(
         lane: ConversationLaneRequest,
-        runtime: ConversationLaneRuntime,
+        runtime: LaneRuntime,
         *,
         streaming: bool,
         standalone_compaction: bool,
     ) -> None:
+        expected_transport = (
+            ProviderTransport.STREAMING
+            if streaming
+            else ProviderTransport.NON_STREAMING
+        )
+        if (
+            type(runtime) is NativeOpenAIConversationLaneRuntime
+            and runtime.binding.transport is not expected_transport
+        ):
+            raise ConversationBindingDriftError()
         required = [
             (
                 ConversationCapability.STATELESS_ENCRYPTED_REASONING_REPLAY
@@ -1060,11 +1225,9 @@ class RunScopedConversationCoordinator:
         outputs: list[ProviderLaneOutputCandidate] = []
         attestations: list[ProviderLaneExecutionAttestation] = []
         for lane_request, runtime, plan in plans:
-            staging = _AttemptStaging(lane_id=lane_request.lane_id, items=[])
-            result = await self._dispatch_with_retry(
+            result = await self._dispatch_complete_lane(
                 runtime,
                 plan,
-                staging,
                 streaming=streaming,
                 progress=progress,
                 sink=sink,
@@ -1122,9 +1285,221 @@ class RunScopedConversationCoordinator:
             )
         return tuple(snapshots), tuple(outputs), tuple(attestations)
 
+    async def _dispatch_complete_lane(
+        self,
+        runtime: LaneRuntime,
+        plan: ProviderPlan,
+        *,
+        streaming: bool,
+        progress: _DispatchProgress,
+        sink: _ProviderStateSinkOwner | None,
+    ) -> ProviderResult:
+        if type(runtime) is ConversationLaneRuntime:
+            staging = _AttemptStaging(
+                lane_id=runtime.binding.lane_id,
+                items=[],
+            )
+            return await self._dispatch_with_retry(
+                runtime,
+                plan,
+                staging,
+                streaming=streaming,
+                progress=progress,
+                sink=sink,
+            )
+        native = _validate_native_lane_runtime(runtime)
+        if type(plan) is not StatelessProviderPlan:
+            staging = _AttemptStaging(
+                lane_id=native.binding.lane_id,
+                items=[],
+            )
+            return await self._dispatch_with_retry(
+                native,
+                plan,
+                staging,
+                streaming=streaming,
+                progress=progress,
+                sink=sink,
+            )
+        original = plan
+        current = plan
+        completed: list[ProviderItem] = []
+        input_tokens = 0
+        output_tokens = 0
+        reasoning = plan.reasoning
+        segments = 0
+        output_item_count = 0
+        output_byte_count = 0
+        while True:
+            segments += 1
+            if segments > native.max_output_segments:
+                raise ConversationLimitError()
+            staging = _AttemptStaging(
+                lane_id=native.binding.lane_id,
+                items=[],
+            )
+            result = await self._dispatch_with_retry(
+                native,
+                current,
+                staging,
+                streaming=streaming,
+                progress=progress,
+                sink=sink,
+            )
+            next_item_count = output_item_count + len(result.items)
+            next_byte_count = output_byte_count + sum(
+                provider_item_byte_count(item) for item in result.items
+            )
+            if (
+                next_item_count > native.max_output_items
+                or next_byte_count > native.max_output_bytes
+            ):
+                raise ConversationLimitError()
+            self._validate_native_provider_segment(
+                original,
+                tuple(completed),
+                result,
+            )
+            calls = tuple(
+                item
+                for item in result.items
+                if item.kind is ProviderItemKind.FUNCTION_CALL
+            )
+            next_item_count += len(calls)
+            if next_item_count > native.max_output_items:
+                raise ConversationLimitError()
+            tool_items: list[ProviderItem] = []
+            for call in calls:
+                progress.mark_tool_effect()
+                output = await native.provider.execute_tool(call)
+                call_id = call.call_id
+                assert call_id is not None
+                tool_item = ProviderItem(
+                    item_id=ProviderItemId(
+                        "tool-output-"
+                        + sha256(str(call_id).encode("utf-8")).hexdigest()[:24]
+                    ),
+                    lane_id=native.binding.lane_id,
+                    model_call_id=call.model_call_id,
+                    kind=ProviderItemKind.FUNCTION_CALL_OUTPUT,
+                    order=ProviderItemOrder(
+                        len(original.ledger.items)
+                        + len(completed)
+                        + len(result.items)
+                        + len(tool_items)
+                    ),
+                    provider_index=ProviderItemIndex(
+                        sum(
+                            item.model_call_id == call.model_call_id
+                            for item in (
+                                *completed,
+                                *result.items,
+                                *tool_items,
+                            )
+                        )
+                    ),
+                    phase=ProviderItemPhase.TOOL,
+                    caller=ProviderItemCaller.TOOL,
+                    canonical_input={
+                        "type": "function_call_output",
+                        "call_id": call_id,
+                        "output": output,
+                    },
+                    normalization_version=(
+                        native.binding.continuation_codec_version
+                    ),
+                    call_id=call_id,
+                )
+                next_byte_count += provider_item_byte_count(tool_item)
+                if next_byte_count > native.max_output_bytes:
+                    raise ConversationLimitError()
+                tool_items.append(tool_item)
+            output_item_count = next_item_count
+            output_byte_count = next_byte_count
+            segment_items = result.items + tuple(tool_items)
+            completed.extend(segment_items)
+            if sink is not None:
+                for item in segment_items:
+                    await sink.stage(item)
+            input_tokens += result.usage.input_tokens
+            output_tokens += result.usage.output_tokens
+            reasoning = result.reasoning
+            if not calls:
+                return ProviderResult(
+                    items=tuple(completed),
+                    reasoning=reasoning,
+                    usage=ProviderUsage(
+                        input_tokens=input_tokens,
+                        output_tokens=output_tokens,
+                    ),
+                )
+            ledger = ProviderItemLedger(
+                lane_id=native.binding.lane_id,
+                normalization_version=(
+                    native.binding.continuation_codec_version
+                ),
+                items=original.ledger.items + tuple(completed),
+            )
+            current = StatelessProviderPlan(
+                binding=native.binding,
+                ledger=ledger,
+                reasoning=original.reasoning,
+                compaction=original.compaction,
+                new_input=None,
+            )
+
+    @staticmethod
+    def _validate_native_provider_segment(
+        original: StatelessProviderPlan,
+        completed: tuple[ProviderItem, ...],
+        result: ProviderResult,
+    ) -> None:
+        """Validate a complete provider segment before any tool effect."""
+        if (
+            type(original) is not StatelessProviderPlan
+            or type(completed) is not tuple
+            or type(result) is not ProviderResult
+            or result.upstream_response_id is not None
+            or result.reasoning.requested is not original.reasoning.requested
+            or any(
+                item.caller is not ProviderItemCaller.PROVIDER
+                for item in result.items
+            )
+        ):
+            raise ConversationProviderResponseError()
+        prior = original.ledger.items + completed
+        prior_model_calls = {item.model_call_id for item in prior}
+        segment_model_calls = {item.model_call_id for item in result.items}
+        if result.items and (
+            len(segment_model_calls) != 1
+            or not segment_model_calls.isdisjoint(prior_model_calls)
+            or tuple(item.provider_index for item in result.items)
+            != tuple(
+                ProviderItemIndex(index) for index in range(len(result.items))
+            )
+        ):
+            raise ConversationProviderResponseError()
+        permitted_open_calls = frozenset(
+            item.call_id
+            for item in result.items
+            if item.kind is ProviderItemKind.FUNCTION_CALL
+            and item.call_id is not None
+        )
+        try:
+            validate_provider_item_sequence(
+                lane_id=original.binding.lane_id,
+                normalization_version=(
+                    original.binding.continuation_codec_version
+                ),
+                items=prior + result.items,
+                permitted_open_call_ids=permitted_open_calls,
+            )
+        except ConversationValidationError:
+            raise ConversationProviderResponseError() from None
+
     async def _dispatch_with_retry(
         self,
-        runtime: ConversationLaneRuntime,
+        runtime: LaneRuntime,
         plan: ProviderPlan,
         staging: _AttemptStaging,
         *,
@@ -1146,53 +1521,86 @@ class RunScopedConversationCoordinator:
         attempt = 1
         while True:
             try:
-                _validate_runtime(runtime)
-                provider_runtime = self._fake_runtimes.get(
-                    runtime.binding.lane_id
-                )
-                if (
-                    type(provider_runtime)
-                    is not _DETERMINISTIC_FAKE_RUNTIME_TYPE
-                ):
-                    raise ConversationValidationError()
-                # The lane contributes only inert script data. Provider
-                # effects always cross the closed repository executor below;
-                # no method or awaitable is resolved from caller-owned data.
-                if streaming:
-                    result = await self._stream_once(
-                        runtime,
-                        provider_runtime,
-                        plan,
-                        staging,
-                        progress,
-                        sink,
+                if type(runtime) is ConversationLaneRuntime:
+                    _validate_runtime(runtime)
+                    provider_runtime = self._fake_runtimes.get(
+                        runtime.binding.lane_id
                     )
+                    if (
+                        type(provider_runtime)
+                        is not _DETERMINISTIC_FAKE_RUNTIME_TYPE
+                    ):
+                        raise ConversationValidationError()
+                    # The lane contributes only inert script data. Provider
+                    # effects always cross the closed repository executor;
+                    # no awaitable is resolved from caller-owned data.
+                    if streaming:
+                        result = await self._stream_once(
+                            runtime,
+                            provider_runtime,
+                            plan,
+                            staging,
+                            progress,
+                            sink,
+                        )
+                    else:
+                        await self._hook.reach(
+                            CoordinatorAwaitBoundary.PROVIDER_DISPATCH
+                        )
+                        progress.mark_possible_dispatch()
+                        result = await _dispatch_provider(
+                            provider_runtime,
+                            runtime.provider_script,
+                            plan,
+                        )
+                        for item in result.items:
+                            staging.accept(item)
+                        staging.finish(result)
                 else:
-                    await self._hook.reach(
-                        CoordinatorAwaitBoundary.PROVIDER_DISPATCH
-                    )
-                    progress.mark_possible_dispatch()
-                    result = await _dispatch_provider(
-                        provider_runtime,
-                        runtime.provider_script,
-                        plan,
-                    )
-                    for item in result.items:
-                        staging.accept(item)
-                    staging.finish(result)
+                    native = _validate_native_lane_runtime(runtime)
+                    if streaming:
+                        result = await self._stream_native_once(
+                            native,
+                            plan,
+                            staging,
+                            progress,
+                            sink,
+                        )
+                    else:
+                        await self._hook.reach(
+                            CoordinatorAwaitBoundary.PROVIDER_DISPATCH
+                        )
+                        progress.mark_possible_dispatch()
+                        result = await native.provider.dispatch(plan)
+                        try:
+                            for item in result.items:
+                                staging.accept(item)
+                            staging.finish(result)
+                        except ConversationValidationError:
+                            raise ConversationProviderResponseError() from None
+                progress.mark_provider_output()
                 return result
             except ConversationError as exc:
                 disposition = reduce_failure(
                     exc.boundary,
                     visible_output=staging.visible_output,
                     tool_effect=(
-                        staging.tool_effect or staging.provider_output
+                        staging.tool_effect
+                        or staging.provider_output
+                        or progress.tool_effect
+                        or progress.provider_output
                     ),
                     committed=False,
                     ambiguous=isinstance(
                         exc, ConversationAmbiguousDispatchError
                     )
-                    or progress.may_have_dispatched,
+                    or (
+                        progress.may_have_dispatched
+                        and not isinstance(
+                            exc,
+                            ConversationProviderResponseError,
+                        )
+                    ),
                 )
                 staging.rollback()
                 if (
@@ -1203,6 +1611,78 @@ class RunScopedConversationCoordinator:
                 await self._hook.reach(CoordinatorAwaitBoundary.RETRY_WAIT)
                 await self._retry_waiter.wait(attempt)
                 attempt += 1
+
+    async def _stream_native_once(
+        self,
+        runtime: NativeOpenAIConversationLaneRuntime,
+        plan: ProviderPlan,
+        staging: _AttemptStaging,
+        progress: _DispatchProgress,
+        _sink: _ProviderStateSinkOwner | None,
+    ) -> ProviderResult:
+        await self._hook.reach(CoordinatorAwaitBoundary.PROVIDER_STREAM_OPEN)
+        progress.mark_possible_dispatch()
+        stream = await runtime.provider.stream(plan)
+        try:
+            async for item in stream:
+                await self._hook.reach(
+                    CoordinatorAwaitBoundary.PROVIDER_STREAM_ITEM
+                )
+                try:
+                    staging.accept(item)
+                except ConversationValidationError:
+                    raise ConversationProviderResponseError() from None
+            await self._hook.reach(
+                CoordinatorAwaitBoundary.PROVIDER_STREAM_TERMINAL
+            )
+            result = await stream.terminal()
+            try:
+                staging.finish(result)
+            except ConversationValidationError:
+                raise ConversationProviderResponseError() from None
+            return result
+        finally:
+            await self._close_native_stream(stream)
+
+    async def _close_native_stream(
+        self,
+        stream: ConversationProviderStream,
+    ) -> None:
+        """Settle one native stream close while preserving cancellation."""
+        primary_error: BaseException | None = None
+        cancellation: CancelledError | None = None
+        try:
+            await self._hook.reach(
+                CoordinatorAwaitBoundary.PROVIDER_STREAM_CLOSE
+            )
+        except CancelledError as exc:
+            cancellation = exc
+        except BaseException as exc:
+            primary_error = exc
+        cleanup_error: BaseException | None = None
+        try:
+            await stream.aclose()
+        except CancelledError as exc:
+            cancellation = cancellation or exc
+            try:
+                await stream.aclose()
+            except BaseException as retry_exc:
+                cleanup_error = retry_exc
+        except BaseException as exc:
+            cleanup_error = exc
+        if cancellation is not None:
+            cause = primary_error or cleanup_error
+            if primary_error is not None and cleanup_error is not None:
+                primary_error.__cause__ = cleanup_error
+            if cause is not None:
+                raise cancellation from cause
+            raise cancellation
+        if primary_error is not None:
+            if cleanup_error is not None:
+                raise primary_error from cleanup_error
+            raise primary_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def _stream_once(
         self,
@@ -1333,7 +1813,7 @@ class RunScopedConversationCoordinator:
     @staticmethod
     def _lane_snapshot(
         lane_request: ConversationLaneRequest,
-        runtime: ConversationLaneRuntime,
+        runtime: LaneRuntime,
         plan: ProviderPlan,
         result: ProviderResult,
         execution_receipt: ProviderLaneExecutionReceipt,

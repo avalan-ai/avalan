@@ -1,4 +1,4 @@
-"""Expose the fake-only typed asynchronous direct conversation SDK."""
+"""Expose the typed asynchronous direct conversation SDK."""
 
 from .binding import ProviderFamily, ProviderLaneBinding
 from .contract import (
@@ -21,10 +21,9 @@ from .coordinator import RunScopedConversationCoordinator
 from .errors import ConversationError, ConversationValidationError
 from .items import (
     ProviderItem,
-    ProviderItemKind,
-    ProviderItemPhase,
     VisibleTranscriptEntry,
     VisibleTranscriptRole,
+    public_provider_item_projection,
 )
 from .observability import ConversationRequestSemantics
 from .protocols import ConversationProviderStateSink, ConversationStore
@@ -61,7 +60,7 @@ from .state import ConversationCheckpoint
 from .value import validate_identifier
 
 from asyncio import CancelledError, Queue, Task, create_task, shield
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Literal, TypeAlias, cast, final, overload
@@ -173,7 +172,7 @@ ActiveConversationSettings: TypeAlias = (
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DirectConversationRuntime:
-    """Bind direct operations to trusted fake-only run-scoped authority."""
+    """Bind direct operations to trusted run-scoped lane authority."""
 
     coordinator: RunScopedConversationCoordinator
     store: ConversationStore
@@ -192,7 +191,12 @@ class DirectConversationRuntime:
         if type(self.retention) is not RetentionLimits:
             raise ConversationValidationError()
         if (
-            self.lane.provider_family is not ProviderFamily.SYNTHETIC
+            self.lane.provider_family
+            not in {
+                ProviderFamily.SYNTHETIC,
+                ProviderFamily.OPENAI,
+                ProviderFamily.AZURE_OPENAI,
+            }
             or self.lane.agent_id != self.authority.agent_id
         ):
             raise ConversationValidationError()
@@ -224,10 +228,9 @@ class _DirectStreamSink(ConversationProviderStateSink):
     async def stage(self, item: ProviderItem) -> None:
         if self._finalized or self._cleaned or type(item) is not ProviderItem:
             raise ConversationValidationError()
-        text = _visible_provider_item_text(item)
-        if text:
+        for entry in public_provider_item_projection((item,)):
             self._queue.put_nowait(
-                DirectConversationOutputDelta(text_delta=text)
+                DirectConversationOutputDelta(text_delta=entry.content)
             )
 
     async def finalize(
@@ -408,7 +411,7 @@ class DirectConversationStream(AsyncIterator[DirectConversationStreamItem]):
 
 @final
 class DirectConversationClient:
-    """Execute typed fake-only direct conversation operations."""
+    """Execute typed direct conversation operations."""
 
     def __init__(self, runtime: DirectConversationRuntime) -> None:
         if type(runtime) is not DirectConversationRuntime:
@@ -984,35 +987,13 @@ def _direct_result(receipt: AtomicCommitReceipt) -> DirectConversationResult:
     )
     return DirectConversationResult(
         output="".join(
-            _visible_provider_item_text(item)
+            entry.content
             for output in outputs
-            for item in output.completed_items
+            for entry in public_provider_item_projection(
+                output.completed_items
+            )
         ),
         usage=usage,
         reasoning=outputs[-1].reasoning,
         handle=receipt.result.handle,
     )
-
-
-def _visible_provider_item_text(item: ProviderItem) -> str:
-    if (
-        type(item) is not ProviderItem
-        or item.kind is not ProviderItemKind.MESSAGE
-        or item.phase
-        not in {
-            ProviderItemPhase.ASSISTANT,
-            ProviderItemPhase.FINAL,
-        }
-    ):
-        return ""
-    content = item.canonical_input.get("content")
-    if type(content) is not tuple:
-        return ""
-    pieces: list[str] = []
-    for part in content:
-        if not isinstance(part, Mapping) or part.get("type") != "output_text":
-            continue
-        text = part.get("text")
-        if type(text) is str:
-            pieces.append(text)
-    return "".join(pieces)

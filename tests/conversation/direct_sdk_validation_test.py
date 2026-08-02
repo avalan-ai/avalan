@@ -956,7 +956,7 @@ async def test_inline_compaction_requires_explicit_capability() -> None:
 
 
 def test_internal_result_and_visible_item_guards_are_closed() -> None:
-    """Reject impossible receipts and ignore non-visible provider payloads."""
+    """Reject impossible receipts and malformed visible projections."""
     with pytest.raises(conversation.ConversationValidationError):
         direct_sdk._direct_result(
             cast(conversation.AtomicCommitReceipt, object())
@@ -972,17 +972,21 @@ def test_internal_result_and_visible_item_guards_are_closed() -> None:
     with pytest.raises(conversation.ConversationValidationError):
         direct_sdk._direct_result(receipt)
 
-    assert (
-        direct_sdk._visible_provider_item_text(
-            cast(conversation.ProviderItem, object())
+    with pytest.raises(conversation.ConversationValidationError):
+        direct_sdk.public_provider_item_projection(
+            (cast(conversation.ProviderItem, object()),)
         )
-        == ""
-    )
     item = object.__new__(conversation.ProviderItem)
     object.__setattr__(item, "kind", conversation.ProviderItemKind.MESSAGE)
     object.__setattr__(item, "phase", conversation.ProviderItemPhase.ASSISTANT)
+    object.__setattr__(
+        item,
+        "caller",
+        conversation.ProviderItemCaller.PROVIDER,
+    )
     object.__setattr__(item, "canonical_input", {"content": []})
-    assert direct_sdk._visible_provider_item_text(item) == ""
+    with pytest.raises(conversation.ConversationValidationError):
+        direct_sdk.public_provider_item_projection((item,))
     object.__setattr__(
         item,
         "canonical_input",
@@ -995,4 +999,16 @@ def test_internal_result_and_visible_item_guards_are_closed() -> None:
             )
         },
     )
-    assert direct_sdk._visible_provider_item_text(item) == "visible"
+    with pytest.raises(conversation.ConversationValidationError):
+        direct_sdk.public_provider_item_projection((item,))
+    object.__setattr__(
+        item,
+        "canonical_input",
+        {"content": ({"type": "output_text", "text": "visible"},)},
+    )
+    assert direct_sdk.public_provider_item_projection((item,)) == (
+        conversation.VisibleTranscriptEntry(
+            role=conversation.VisibleTranscriptRole.ASSISTANT,
+            content="visible",
+        ),
+    )

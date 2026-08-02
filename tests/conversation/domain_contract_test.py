@@ -1567,9 +1567,25 @@ def test_public_core_sources_have_no_dynamic_or_synchronous_escape_hatch() -> (
     provider_source = (
         _ROOT / "src/avalan/model/nlp/text/vendor/openai.py"
     ).read_bytes()
+    transition_payload = cast(
+        dict[str, object],
+        loads(
+            (
+                _ROOT
+                / "tests/fixtures/conversation/provider_transition.phase5.json"
+            ).read_text(encoding="utf-8")
+        ),
+    )
+    transitions = cast(
+        list[dict[str, object]], transition_payload["transitions"]
+    )
+    provider_transition = next(
+        item
+        for item in transitions
+        if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
+    )
     assert (
-        sha256(provider_source).hexdigest()
-        == "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
+        sha256(provider_source).hexdigest() == provider_transition["to_sha256"]
     )
 
 

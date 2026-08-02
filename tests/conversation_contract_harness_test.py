@@ -57,8 +57,8 @@ def _repository(tmp_path: Path) -> Path:
         ("src/sample.py", "VALUE = 1\n"),
         ("tests/sample_test.py", "def test_value() -> None:\n    pass\n"),
         (
-            "tests/fixtures/conversation/acceptance_manifest.phase4.json",
-            '{"current_phase":4}\n',
+            "tests/fixtures/conversation/acceptance_manifest.phase5.json",
+            '{"current_phase":5}\n',
         ),
         ("scripts/gate.py", "VALUE = 1\n"),
         ("Makefile", "test:\n\ttrue\n"),
@@ -473,7 +473,7 @@ def test_input_acceptance_command_owns_exact_current_inventory() -> None:
     )
 
 
-def test_phase_four_owns_database_across_entire_mirrored_gate(
+def test_phase_five_owns_database_across_entire_mirrored_gate(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -481,9 +481,9 @@ def test_phase_four_owns_database_across_entire_mirrored_gate(
     root = _repository(tmp_path)
     _initialize_git(root)
     manifest = (
-        root / "tests/fixtures/conversation/acceptance_manifest.phase4.json"
+        root / "tests/fixtures/conversation/acceptance_manifest.phase5.json"
     )
-    manifest.write_text('{"current_phase":4}\n', encoding="utf-8")
+    manifest.write_text('{"current_phase":5}\n', encoding="utf-8")
     calls: list[tuple[tuple[str, ...], dict[str, str]]] = []
     events: list[str] = []
 
@@ -522,9 +522,7 @@ def test_phase_four_owns_database_across_entire_mirrored_gate(
 
     monkeypatch.setattr(_RUNNER, "run", run_command)
     monkeypatch.setattr(_RUNNER, "_owned_postgresql_database", owned_database)
-    monkeypatch.setattr(_RUNNER, "_CONVERSATION_CURRENT_PHASE", 4)
-
-    assert _RUNNER.run_gate(4, repo_root=root) == 0
+    assert _RUNNER.run_gate(5, repo_root=root) == 0
     assert len(calls) == 6
     assert events == [
         "database-enter",
@@ -538,7 +536,7 @@ def test_phase_four_owns_database_across_entire_mirrored_gate(
     ]
 
 
-@pytest.mark.parametrize("through_phase", (-1, 5))
+@pytest.mark.parametrize("through_phase", (-1, 6))
 def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -556,7 +554,7 @@ def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
         lambda *args, **kwargs: calls.append(args[0]),
     )
 
-    with pytest.raises(_RUNNER.ContractGateError, match="range 0..4"):
+    with pytest.raises(_RUNNER.ContractGateError, match="range 0..5"):
         _RUNNER.run_gate(through_phase, repo_root=root)
     assert report.read_text(encoding="utf-8") == "stale\n"
     assert calls == []
@@ -674,7 +672,7 @@ def test_makefile_exposes_explicit_conversation_gates() -> None:
     ("target", "phase"),
     (
         ("test-conversation-exact", "-1"),
-        ("test-conversation-pgsql-exact", "5"),
+        ("test-conversation-pgsql-exact", "6"),
     ),
 )
 def test_make_preflight_rejects_closed_phase_before_installation(

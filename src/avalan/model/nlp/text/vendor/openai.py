@@ -2564,7 +2564,14 @@ def _stable_replay_json_fingerprint(
 
 
 @dataclass(slots=True, repr=False)
-class _OpenAIReplayOwner:
+class _OpenAIDirectReplayExecutionState:
+    """Own one legacy no-conversation tool-cycle execution state.
+
+    Durable conversation replay is owned exclusively by the conversation
+    coordinator's provider ledger. This state remains scoped to the older
+    direct-generation tool loop and structured-input suspension contract.
+    """
+
     policy: StreamRetentionPolicy
     _items: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _ledger: list[_ReplayItemAccounting] = field(
@@ -2589,6 +2596,11 @@ class _OpenAIReplayOwner:
 
     def __post_init__(self) -> None:
         assert isinstance(self.policy, StreamRetentionPolicy)
+
+    @property
+    def owns_conversation_state(self) -> bool:
+        """Return false for the legacy no-conversation compatibility path."""
+        return False
 
     def __repr__(self) -> str:
         return (
@@ -2737,7 +2749,7 @@ class _OpenAIReplayOwner:
     def _reasoning_accounting(
         item: dict[str, Any],
     ) -> _ReplayItemAccounting:
-        generic = _OpenAIReplayOwner._generic_accounting(item)
+        generic = _OpenAIDirectReplayExecutionState._generic_accounting(item)
         summary_fields = {
             key: value
             for key, value in item.items()
@@ -2823,6 +2835,24 @@ class _OpenAIReplayOwner:
         self._summary_serialized_byte_count += (
             direction * accounting.summary_serialized_bytes
         )
+
+
+class _OpenAIDirectReplayCompatibilityFacade:
+    """Create isolated state for the legacy direct-generation wire path."""
+
+    __slots__ = ()
+
+    @staticmethod
+    def create_execution_state(
+        policy: StreamRetentionPolicy,
+    ) -> _OpenAIDirectReplayExecutionState:
+        """Create one execution-local legacy replay state owner."""
+        return _OpenAIDirectReplayExecutionState(policy)
+
+
+# Deprecated private test compatibility only. Production construction goes
+# through the stateless facade above and never gives it execution ownership.
+_OpenAIReplayOwner = _OpenAIDirectReplayExecutionState
 
 
 class OpenAIStream(TextGenerationVendorStream):
@@ -6136,7 +6166,9 @@ class OpenAIClient(TextGenerationVendor):
                 "continuation_snapshot.payload",
                 "OpenAI replay destination is unavailable or ambiguous",
             )
-        owner = _OpenAIReplayOwner(self._stream_retention_policy)
+        owner = _OpenAIDirectReplayCompatibilityFacade.create_execution_state(
+            self._stream_retention_policy
+        )
         owner.begin_attempt()
         try:
             owner.restore_provider_idempotency_key(provider_idempotency_key)
@@ -7369,7 +7401,9 @@ class OpenAIClient(TextGenerationVendor):
                 del registry[call_id]
                 active_registry[call_id] = owner
             return owner
-        owner = _OpenAIReplayOwner(self._stream_retention_policy)
+        owner = _OpenAIDirectReplayCompatibilityFacade.create_execution_state(
+            self._stream_retention_policy
+        )
         self._activate_replay_owner(owner)
         return owner
 

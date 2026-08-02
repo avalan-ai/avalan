@@ -651,7 +651,7 @@ _EXPECTED_OUTPUT_KINDS = MappingProxyType(
 
 
 @final
-@dataclass(frozen=True, slots=True, kw_only=True)
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class ProviderItem:
     """Store one complete canonical item at an exact provider position."""
 
@@ -712,6 +712,30 @@ class ProviderItem:
             if self.phase in rule.phases and self.caller in rule.callers:
                 return rule.normalization
         raise ConversationValidationError()
+
+    def __repr__(self) -> str:
+        """Return content-free provider-item accounting metadata."""
+        opaque_byte_count = (
+            self.opaque_state.byte_count if self.opaque_state else 0
+        )
+        return (
+            "ProviderItem("
+            f"kind={self.kind.value!r}, order={self.order}, "
+            f"provider_index={self.provider_index}, "
+            f"phase={self.phase.value!r}, "
+            f"caller={self.caller.value!r}, "
+            f"opaque_byte_count={opaque_byte_count}, "
+            "identifiers=<redacted>, canonical_input=<redacted>)"
+        )
+
+
+def provider_item_byte_count(item: ProviderItem) -> int:
+    """Return canonical and opaque bytes retained for one provider item."""
+    if type(item) is not ProviderItem:
+        raise ConversationValidationError()
+    return len(canonical_json_bytes(item.canonical_input)) + (
+        item.opaque_state.byte_count if item.opaque_state else 0
+    )
 
 
 def _validate_canonical_input(
@@ -1762,6 +1786,69 @@ def _validate_mcp_call_result(
         raise ConversationValidationError()
 
 
+def validate_provider_item_sequence(
+    *,
+    lane_id: ProviderLaneId,
+    normalization_version: ConversationCodecVersion,
+    items: tuple[ProviderItem, ...],
+    permitted_open_call_ids: frozenset[ProviderCallId] = frozenset(),
+) -> None:
+    """Validate exact provider order and explicitly permitted open calls."""
+    validate_identifier(lane_id, "lane_id")
+    validate_revision(normalization_version, "normalization_version")
+    if (
+        normalization_version != PROVIDER_ITEM_NORMALIZATION_VERSION
+        or type(items) is not tuple
+        or type(permitted_open_call_ids) is not frozenset
+    ):
+        raise ConversationValidationError()
+    for call_id in permitted_open_call_ids:
+        validate_identifier(call_id, "permitted_open_call_id")
+    item_ids: set[ProviderItemId] = set()
+    registered_calls: set[ProviderCallId] = set()
+    open_calls: dict[
+        ProviderCallId,
+        tuple[ProviderItemKind, ConversationModelCallId],
+    ] = {}
+    model_call_indexes: dict[ConversationModelCallId, int] = {}
+    for index, item in enumerate(items):
+        if type(item) is not ProviderItem:
+            raise ConversationValidationError()
+        if (
+            item.lane_id != lane_id
+            or item.normalization_version != normalization_version
+            or item.order != index
+            or item.item_id in item_ids
+        ):
+            raise ConversationValidationError()
+        expected_provider_index = model_call_indexes.get(
+            item.model_call_id,
+            0,
+        )
+        if item.provider_index != expected_provider_index:
+            raise ConversationValidationError()
+        model_call_indexes[item.model_call_id] = expected_provider_index + 1
+        item_ids.add(item.item_id)
+        if item.kind in _CALL_KINDS:
+            assert item.call_id is not None
+            if item.call_id in registered_calls:
+                raise ConversationValidationError()
+            registered_calls.add(item.call_id)
+            if item.kind not in _TERMINAL_CALL_KINDS:
+                open_calls[item.call_id] = (
+                    _EXPECTED_OUTPUT_KINDS[item.kind],
+                    item.model_call_id,
+                )
+        elif item.kind in _OUTPUT_KINDS:
+            assert item.call_id is not None
+            expected = open_calls.get(item.call_id)
+            if expected != (item.kind, item.model_call_id):
+                raise ConversationValidationError()
+            del open_calls[item.call_id]
+    if frozenset(open_calls) != permitted_open_call_ids:
+        raise ConversationValidationError()
+
+
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class ProviderItemLedger:
@@ -1772,58 +1859,11 @@ class ProviderItemLedger:
     items: tuple[ProviderItem, ...]
 
     def __post_init__(self) -> None:
-        validate_identifier(self.lane_id, "lane_id")
-        validate_revision(self.normalization_version, "normalization_version")
-        if (
-            self.normalization_version != PROVIDER_ITEM_NORMALIZATION_VERSION
-            or type(self.items) is not tuple
-        ):
-            raise ConversationValidationError()
-        item_ids: set[ProviderItemId] = set()
-        registered_calls: set[ProviderCallId] = set()
-        open_calls: dict[
-            ProviderCallId,
-            tuple[ProviderItemKind, ConversationModelCallId],
-        ] = {}
-        model_call_indexes: dict[ConversationModelCallId, int] = {}
-        for index, item in enumerate(self.items):
-            if type(item) is not ProviderItem:
-                raise ConversationValidationError()
-            if (
-                item.lane_id != self.lane_id
-                or item.normalization_version != self.normalization_version
-                or item.order != index
-                or item.item_id in item_ids
-            ):
-                raise ConversationValidationError()
-            expected_provider_index = model_call_indexes.get(
-                item.model_call_id,
-                0,
-            )
-            if item.provider_index != expected_provider_index:
-                raise ConversationValidationError()
-            model_call_indexes[item.model_call_id] = (
-                expected_provider_index + 1
-            )
-            item_ids.add(item.item_id)
-            if item.kind in _CALL_KINDS:
-                assert item.call_id is not None
-                if item.call_id in registered_calls:
-                    raise ConversationValidationError()
-                registered_calls.add(item.call_id)
-                if item.kind not in _TERMINAL_CALL_KINDS:
-                    open_calls[item.call_id] = (
-                        _EXPECTED_OUTPUT_KINDS[item.kind],
-                        item.model_call_id,
-                    )
-            elif item.kind in _OUTPUT_KINDS:
-                assert item.call_id is not None
-                expected = open_calls.get(item.call_id)
-                if expected != (item.kind, item.model_call_id):
-                    raise ConversationValidationError()
-                del open_calls[item.call_id]
-        if open_calls:
-            raise ConversationValidationError()
+        validate_provider_item_sequence(
+            lane_id=self.lane_id,
+            normalization_version=self.normalization_version,
+            items=self.items,
+        )
 
     @property
     def item_count(self) -> int:
@@ -1890,6 +1930,50 @@ class VisibleTranscriptEntry:
         validate_identifier(
             self.content, "visible transcript content", max_length=1_048_576
         )
+
+
+def public_provider_item_projection(
+    items: tuple[ProviderItem, ...],
+) -> tuple[VisibleTranscriptEntry, ...]:
+    """Return display-only assistant text without provider replay state."""
+    if type(items) is not tuple or any(
+        type(item) is not ProviderItem for item in items
+    ):
+        raise ConversationValidationError()
+    entries: list[VisibleTranscriptEntry] = []
+    for item in items:
+        if (
+            item.kind is not ProviderItemKind.MESSAGE
+            or item.phase
+            not in {
+                ProviderItemPhase.ASSISTANT,
+                ProviderItemPhase.FINAL,
+            }
+            or item.caller is not ProviderItemCaller.PROVIDER
+        ):
+            continue
+        content = item.canonical_input.get("content")
+        if type(content) is not tuple:
+            raise ConversationValidationError()
+        pieces: list[str] = []
+        for part in content:
+            if not isinstance(part, Mapping):
+                raise ConversationValidationError()
+            if part.get("type") != "output_text":
+                continue
+            text = part.get("text")
+            if type(text) is not str:
+                raise ConversationValidationError()
+            pieces.append(text)
+        text = "".join(pieces)
+        if text:
+            entries.append(
+                VisibleTranscriptEntry(
+                    role=VisibleTranscriptRole.ASSISTANT,
+                    content=text,
+                )
+            )
+    return tuple(entries)
 
 
 @final
