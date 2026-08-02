@@ -39,8 +39,11 @@ from .runtime import (
     SweepReceipt,
 )
 from .settings import (
+    CompactionPolicy,
     ConversationResult,
+    DisabledCompaction,
     EffectiveReasoningMetadata,
+    InlineCompaction,
     ProviderUsage,
 )
 from .state import (
@@ -64,6 +67,7 @@ class StatelessProviderPlan:
     binding: ProviderLaneBinding
     ledger: ProviderItemLedger
     reasoning: EffectiveReasoningMetadata
+    compaction: CompactionPolicy = DisabledCompaction()
 
     def __post_init__(self) -> None:
         if (
@@ -71,6 +75,10 @@ class StatelessProviderPlan:
             or type(self.ledger) is not ProviderItemLedger
             or type(self.reasoning) is not EffectiveReasoningMetadata
             or self.binding.lane_id != self.ledger.lane_id
+            or not isinstance(
+                self.compaction,
+                DisabledCompaction | InlineCompaction,
+            )
         ):
             raise ConversationValidationError()
 
@@ -165,6 +173,25 @@ class ConversationProvider(Protocol):
 
     async def stream(self, plan: ProviderPlan) -> ConversationProviderStream:
         """Open one owned asynchronous provider stream."""
+        ...
+
+
+class ConversationProviderStateSink(Protocol):
+    """Privately stage provider items for one streamed logical turn."""
+
+    async def stage(self, item: ProviderItem) -> None:
+        """Stage one complete provider item without publishing it."""
+        ...
+
+    async def finalize(
+        self,
+        outputs: tuple[ProviderLaneOutputCandidate, ...],
+    ) -> None:
+        """Finalize complete private state before checkpoint commit."""
+        ...
+
+    async def cleanup(self) -> None:
+        """Release the single-owner private staging sidecar."""
         ...
 
 
@@ -439,6 +466,21 @@ class ConversationCoordinator(Protocol):
         request: ConversationRunRequest,
     ) -> AtomicCommitReceipt:
         """Execute and commit one streaming fake-lane operation."""
+        ...
+
+    async def stream_with_sink(
+        self,
+        request: ConversationRunRequest,
+        sink: ConversationProviderStateSink,
+    ) -> AtomicCommitReceipt:
+        """Stream through one private sink and commit after finalization."""
+        ...
+
+    async def compact(
+        self,
+        request: ConversationRunRequest,
+    ) -> AtomicCommitReceipt:
+        """Execute one standalone fake-provider compaction."""
         ...
 
 

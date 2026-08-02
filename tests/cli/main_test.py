@@ -115,6 +115,51 @@ def _find_parser_with_suffix(
     raise AssertionError(f"Parser ending with {prog_suffix!r} was not found.")
 
 
+class CliConversationBoundaryTestCase(TestCase):
+    def test_agent_run_exposes_only_message_loop_conversation_flags(
+        self,
+    ) -> None:
+        """Keep provider continuation unavailable through the CLI."""
+        with patch.object(sys, "argv", ["prog"]):
+            cli = CLI(MagicMock())
+        parser = _find_parser_with_suffix(cli._parser, "agent run")
+        actions = {action.dest: action for action in parser._actions}
+
+        self.assertIn(
+            "repeated-message agent loop",
+            actions["conversation"].help,
+        )
+        self.assertIn(
+            "does not enable provider conversation continuation",
+            actions["conversation"].help,
+        )
+        self.assertIn(
+            "persistent message-memory session",
+            actions["session"].help,
+        )
+        parsed = cli._parser.parse_args(
+            [
+                "agent",
+                "run",
+                "--conversation",
+                "--session",
+                "messages",
+            ]
+        )
+        self.assertTrue(parsed.conversation)
+        self.assertEqual(parsed.session, "messages")
+        self.assertFalse(
+            {
+                "conversation_handle",
+                "conversation_mode",
+                "conversation_parent",
+                "conversation_retention",
+                "provider_conversation",
+            }
+            & vars(parsed).keys()
+        )
+
+
 class CliInitTestCase(TestCase):
     def test_main_startup_does_not_require_agent_renderer(self):
         root_path = Path(__file__).resolve().parents[2]

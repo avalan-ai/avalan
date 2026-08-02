@@ -12,6 +12,7 @@ from ..audio.classification import AudioClassificationModel
 from ..audio.generation import AudioGenerationModel
 from ..audio.speech import TextToSpeechModel
 from ..audio.speech_recognition import SpeechRecognitionModel
+from ..call import ModelCallContext
 from ..capability import ModelCapabilityCatalog
 from .registry import ModalityRegistry
 
@@ -65,6 +66,7 @@ class AudioClassificationModality:
         model: AudioClassificationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -122,6 +124,7 @@ class AudioSpeechRecognitionModality:
         model: SpeechRecognitionModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -181,6 +184,7 @@ class AudioTextToSpeechModality:
         model: TextToSpeechModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.parameters["audio"]
@@ -246,6 +250,7 @@ class AudioGenerationModality:
         model: AudioGenerationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.input

@@ -249,6 +249,7 @@ from .fakes import FakeCoordinatorBoundaryHook as FakeCoordinatorBoundaryHook
 from .fakes import FakeStoreBoundaryHook as FakeStoreBoundaryHook
 from .fakes import FaultAction as FaultAction
 from .fakes import fake_capability_profile as fake_capability_profile
+from .fakes import fake_compaction_result as fake_compaction_result
 from .fakes import fake_provider_result as fake_provider_result
 from .items import (
     PROVIDER_ITEM_NORMALIZATION_VERSION as PROVIDER_ITEM_NORMALIZATION_VERSION,
@@ -287,6 +288,9 @@ from .protocols import (
     ConversationOutboxRecoveryWorker as ConversationOutboxRecoveryWorker,
 )
 from .protocols import ConversationProvider as ConversationProvider
+from .protocols import (
+    ConversationProviderStateSink as ConversationProviderStateSink,
+)
 from .protocols import ConversationProviderStream as ConversationProviderStream
 from .protocols import ConversationPublisher as ConversationPublisher
 from .protocols import ConversationRetryWaiter as ConversationRetryWaiter
@@ -347,8 +351,33 @@ from .runtime import StoreCloseDisposition as StoreCloseDisposition
 from .runtime import StoreCloseResolution as StoreCloseResolution
 from .runtime import StoreLimits as StoreLimits
 from .runtime import SweepReceipt as SweepReceipt
+from .sdk import ActiveConversationSettings as ActiveConversationSettings
+from .sdk import (
+    ConversationHandleUnavailableError as ConversationHandleUnavailableError,
+)
+from .sdk import (
+    DirectConversationCancelledError as DirectConversationCancelledError,
+)
+from .sdk import DirectConversationClient as DirectConversationClient
+from .sdk import DirectConversationOutputDelta as DirectConversationOutputDelta
+from .sdk import DirectConversationResult as DirectConversationResult
+from .sdk import DirectConversationRuntime as DirectConversationRuntime
+from .sdk import DirectConversationStream as DirectConversationStream
+from .sdk import (
+    DirectConversationStreamError as DirectConversationStreamError,
+)
+from .sdk import (
+    DirectConversationStreamItem as DirectConversationStreamItem,
+)
+from .sdk import (
+    DirectConversationStreamState as DirectConversationStreamState,
+)
+from .sdk import (
+    DirectConversationStreamTerminal as DirectConversationStreamTerminal,
+)
 from .settings import CompactionOperation as CompactionOperation
 from .settings import CompactionPolicy as CompactionPolicy
+from .settings import ConversationBranchIntent as ConversationBranchIntent
 from .settings import ConversationHandle as ConversationHandle
 from .settings import ConversationMode as ConversationMode
 from .settings import (
@@ -364,6 +393,7 @@ from .settings import ConversationParent as ConversationParent
 from .settings import (
     ConversationResetDisposition as ConversationResetDisposition,
 )
+from .settings import ConversationResetIntent as ConversationResetIntent
 from .settings import ConversationResult as ConversationResult
 from .settings import ConversationSettings as ConversationSettings
 from .settings import ConversationStreamTerminal as ConversationStreamTerminal

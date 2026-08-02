@@ -54,12 +54,14 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     1: "3c956beb448e555794ee940c1abb6dac26ea3dbe3b613bfd06aaa808901d7feb",
     2: "332ca232bcd07b433eee48d0a6a79036f7b730fb5405e3dc6458a0717779de74",
     3: "203d278171cd5246cb2b6a018a039ce4871d2920cc65a0f9c88ca724046f9eb9",
+    4: "cdfea565d3441c07a7fe02cebf3a61c6690c59a79a1b183d676ceaf752bbe0e5",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
     1: "549af2d3dc75ed1b38f477410671db03a4a55764424f7da78e9b2974d2c0541c",
     2: "b0bc7dc13fa87f53d10523d5565c9d27dcd96004b67b696e38925a734090f2df",
     3: "660f4748cd74131df44512cffe4abd2c94b2f9156bc582abe2bd717a635cf2b9",
+    4: "dd5b10c4b3aca6136f9a59f484c3637bc72326aed35237a25dc2c6adde0da899",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -75,6 +77,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
     3: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    4: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -132,6 +138,15 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             + "phase3_sync_crypto_negative.py"
         ): "ab3f4ee06fbd0c80c387b825540a596d775b89b37cae6aa7a1289bc6602a7a99",
     },
+    4: {
+        "tests/conversation_type_contracts/phase4_positive.py": (
+            "015ba4958cec9878c1cb8bf86e1d0533de4dcbbf3dd00c2b64ce14b839e15152"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase4_sync_sdk_negative.py"
+        ): "15e2f7ca55f5212bddbde37e2b20868f83790e950639d0192f82d9aecc36d5d6",
+    },
 }
 
 
@@ -182,7 +197,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.phase3.json"
+        / "type_contract_manifest.phase4.json"
     )
 
 

@@ -1078,12 +1078,14 @@ options:
   --participant PARTICIPANT
                         If specified, this is the participant ID interacting
                         with the agent
-  --conversation        Activate conversation mode with the agent
+  --conversation        Run a repeated-message agent loop; this does not
+                        enable provider conversation continuation
   --watch               Reload agent when the specification file changes (only
                         with --conversation)
   --no-session          If specified, don't use sessions in persistent message
                         memory
-  --session SESSION     Continue the conversation on the given session
+  --session SESSION     Select a persistent message-memory session for the
+                        agent loop
   --skip-load-recent-messages
                         If specified, skips loading recent messages
   --load-recent-messages-limit LOAD_RECENT_MESSAGES_LIMIT

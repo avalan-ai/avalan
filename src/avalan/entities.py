@@ -1,3 +1,4 @@
+from .conversation.errors import ConversationValidationError
 from .types import (
     LooseJsonValue,
     SkillRegistryProtocol,
@@ -591,6 +592,7 @@ def merge_generation_settings_options(
     overrides: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Merge explicit nested generation overrides field by field."""
+    _reject_conversation_generation_overrides(overrides)
     merged = dict(base or {})
     for key, value in overrides.items():
         current = merged.get(key)
@@ -605,6 +607,29 @@ def merge_generation_settings_options(
         else:
             merged[key] = value
     return merged
+
+
+def _reject_conversation_generation_overrides(
+    overrides: Mapping[str, Any],
+) -> None:
+    """Reject authority-bearing state from generic generation mappings."""
+    reserved = {
+        "authority",
+        "checkpoint",
+        "checkpoint_id",
+        "conversation",
+        "conversation_coordinator",
+        "conversation_lane",
+        "envelope",
+        "parent_handle",
+        "previous_response_id",
+        "provider_items",
+        "provider_ledger",
+        "provider_state",
+        "upstream_response_id",
+    }
+    if any(key in overrides for key in reserved):
+        raise ConversationValidationError()
 
 
 @final

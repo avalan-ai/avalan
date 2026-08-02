@@ -14,6 +14,7 @@ from ...entities import (
     OperationTextParameters,
     TransformerEngineSettings,
 )
+from ..call import ModelCallContext
 from ..capability import ModelCapabilityCatalog
 from ..criteria import KeywordStoppingCriteria
 from ..reasoning import validate_reasoning_summary_request
@@ -340,6 +341,7 @@ class TextGenerationModality:
         model: TextGenerationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         generation_settings = (
             operation.generation_settings or GenerationSettings()
@@ -360,9 +362,7 @@ class TextGenerationModality:
                     instructions=text_params.instructions,
                     system_prompt=text_params.system_prompt,
                     developer_prompt=text_params.developer_prompt,
-                    settings=(
-                        operation.generation_settings or GenerationSettings()
-                    ),
+                    settings=generation_settings,
                     stopping_criterias=[criteria] if criteria else None,
                     manual_sampling=text_params.manual_sampling or False,
                     pick=text_params.pick_tokens,
@@ -375,7 +375,7 @@ class TextGenerationModality:
                 operation.input,
                 system_prompt=text_params.system_prompt,
                 developer_prompt=text_params.developer_prompt,
-                settings=operation.generation_settings or GenerationSettings(),
+                settings=generation_settings,
                 stopping_criterias=[criteria] if criteria else None,
                 manual_sampling=text_params.manual_sampling or False,
                 pick=text_params.pick_tokens,
@@ -389,9 +389,7 @@ class TextGenerationModality:
                     instructions=text_params.instructions,
                     system_prompt=text_params.system_prompt,
                     developer_prompt=text_params.developer_prompt,
-                    settings=(
-                        operation.generation_settings or GenerationSettings()
-                    ),
+                    settings=generation_settings,
                     manual_sampling=text_params.manual_sampling or False,
                     pick=text_params.pick_tokens,
                     capability=capability,
@@ -400,7 +398,7 @@ class TextGenerationModality:
                 operation.input,
                 system_prompt=text_params.system_prompt,
                 developer_prompt=text_params.developer_prompt,
-                settings=operation.generation_settings or GenerationSettings(),
+                settings=generation_settings,
                 manual_sampling=text_params.manual_sampling or False,
                 pick=text_params.pick_tokens,
                 capability=capability,
@@ -411,14 +409,14 @@ class TextGenerationModality:
                 instructions=text_params.instructions,
                 system_prompt=text_params.system_prompt,
                 developer_prompt=text_params.developer_prompt,
-                settings=operation.generation_settings or GenerationSettings(),
+                settings=generation_settings,
                 capability=capability,
             )
         return await model(
             operation.input,
             system_prompt=text_params.system_prompt,
             developer_prompt=text_params.developer_prompt,
-            settings=operation.generation_settings or GenerationSettings(),
+            settings=generation_settings,
             capability=capability,
         )
 
@@ -478,6 +476,7 @@ class TextQuestionAnsweringModality:
         model: QuestionAnsweringModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.input
@@ -541,6 +540,7 @@ class TextSequenceClassificationModality:
         model: SequenceClassificationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert operation.input
         return await model(operation.input)
@@ -599,6 +599,7 @@ class TextSequenceToSequenceModality:
         model: SequenceToSequenceModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
         criteria = _stopping_criteria(operation, model)
@@ -664,6 +665,7 @@ class TextTokenClassificationModality:
         model: TokenClassificationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert operation.input and operation.parameters["text"]
         return await model(
@@ -730,6 +732,7 @@ class TextTranslationModality:
         model: TranslationModel,
         operation: Operation,
         capability: ModelCapabilityCatalog | None = None,
+        context: ModelCallContext | None = None,
     ) -> Any:
         assert (
             operation.input
