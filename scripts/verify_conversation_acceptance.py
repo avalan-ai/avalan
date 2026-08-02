@@ -140,6 +140,10 @@ _ACTIVE_INTEGRATED_FIXTURES = (
     "provider_conformance.json",
 )
 _PHASE5_PROVIDER_CONFORMANCE = "provider_conformance.phase5.json"
+_PHASE6_PROVIDER_CONFORMANCE = "provider_conformance.phase6.json"
+_PHASE5_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
+    "c2cee698687f15d6147ba367450b68e863ec579866f6fc63982db8e73b7bf2f4"
+)
 _THREAT_IDS = _frozen(
     "opaque-state-disclosure",
     "envelope-theft",
@@ -216,6 +220,89 @@ _PHASE5_PROVIDER_TARGET_BYTE_ANCHORS = {
         "da96d1a90cf07648d33cba6c3b8701dc9dfe3e8116729071a3660fcdc584a6b5",
     ),
 }
+_PHASE6_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase6.json"
+)
+_PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
+    "src/avalan/__init__.py": (
+        9_617,
+        "2b41467ac4dc6d6e637d342e69e5efc96a344e15097a24f693b9b045e2ee5498",
+        9_978,
+        "496ce5f01ed2c12d3bb37712c37e5a97cf0a5a814acbf05f54a70ebf68518847",
+    ),
+    "src/avalan/conversation/__init__.py": (
+        26_055,
+        "044b5d410f12222266e623ed04b05ce7c0fe8288553ef436d860aed67237e0fa",
+        28_421,
+        "1c157fe247d198e07dff583eead46f21de8c70c9cefdc1abe80991ddd8667ddb",
+    ),
+    "src/avalan/conversation/coordinator.py": (
+        86_533,
+        "4239e49d847faee802a92da6b1089f0e4db1779973d2812abd946db4a4c4efd3",
+        111_286,
+        "b586445a0d5910238d191508a5a534cc8f0b8910e72081c5551e9038021e2547",
+    ),
+    "src/avalan/conversation/lifecycle.py": (
+        0,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        21_054,
+        "fddefa4f3c8f62450f5de68531bb7a1d9f5fc348b12a00d28fc1a19aef1c2df7",
+    ),
+    "src/avalan/conversation/protocols.py": (
+        17_492,
+        "061ab8bbba83a8fef21143ab56af6b9b8a529267d58055d75ed1cbd8422b02b9",
+        20_226,
+        "f9faba0869f6f156139d5e88c384fbfe61caa32d5d72f2439d8914698ef37db0",
+    ),
+    "src/avalan/conversation/providers/__init__.py": (
+        626,
+        "edb3542550c21497a599ba31956a0d8054dd98715e458d948078a5d6769e8230",
+        1_133,
+        "4c6c408a95d86e0f254a19d70a9fd77ba98524a13da73c20f7cec28491035aa4",
+    ),
+    "src/avalan/conversation/providers/openai.py": (
+        39_320,
+        "eaf92e24c7e57bc6ba4d8db7868cd36e97489d4b4b42e5de94c9a9ce154c1fa9",
+        41_406,
+        "4081b066e549a014a3dd3b9b1210d0c9ca51e4b9e0c720330073d66db04e347c",
+    ),
+    "src/avalan/conversation/providers/openai_stored.py": (
+        0,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        29_169,
+        "9c0132bb7c48669c1ee157f7a58fb8582d4f51bca116db65ff4543856cda6019",
+    ),
+    "src/avalan/conversation/sdk.py": (
+        34_109,
+        "bd650c6f99f98b896a2d0b7bde64b41c5a88d57a9c613b064b4f1273480ea1f5",
+        46_113,
+        "fdadba814639ce92e08e79be36dafff25e4cd793c2f94b69de109f05a8b2884d",
+    ),
+    "src/avalan/conversation/store.py": (
+        86_275,
+        "572c48d0528552a8c4fe1e8217174c700da3496c70fb120defc33c2730c14936",
+        99_760,
+        "6718b06f63d1ea7e097dd78aebdcbaeca85ead83277f7019114aa89b0f34e222",
+    ),
+    "src/avalan/conversation/stores/pgsql.py": (
+        175_913,
+        "351eb6d72d7f19624d83d30721cba47742ae26e3f2e4c1e98467e5201fe42c1f",
+        190_583,
+        "8e3afd42d2e3455400bfd19bd1329a6c2267155b5b9d8899535a7083ce49c29c",
+    ),
+    "src/avalan/sdk.py": (
+        76_975,
+        "114d6540ab9ef0c4ca3a025f0550a2c716993f90b19e551be342db4d0f23e51c",
+        77_463,
+        "afdf0f4056e33a39d00bf0d5b5587a26ac0d40eacf47f53bb67f278b8aecf162",
+    ),
+    "tests/conversation/pgsql_conformance_test.py": (
+        42_709,
+        "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5",
+        47_586,
+        "2e6ab3c8048ddc6461ad13e214ca0c47a67bb94f2655d686bf22a59280328090",
+    ),
+}
 _PHASE0_ACTIVE_SOURCE_SHA256 = {
     "tests/conversation_contract_gate_test.py": (
         "c014a962f1e0384370bc70113acc7189de48bbd0e7ecba54c041054eee4de349"
@@ -284,6 +371,20 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "3e9d28ace23a848add8cd479d1060a86f77c0abb9d0e34f979197098f32accb2"
         ),
     },
+    6: {
+        "tests/conversation/native_openai_stored_provider_test.py": (
+            "9688ce9407c1b33940aafec26d1a108b74c59579ee7d0e77bf79a013b75723ef"
+        ),
+        "tests/conversation/openai_stored_e2e_test.py": (
+            "a0fcaa163b736849392e9c51f32de70a95a7da0b5b5b903e17ca44a8db540892"
+        ),
+        "tests/conversation/pgsql_conformance_test.py": (
+            "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5"
+        ),
+        "tests/conversation/phase6_validation_test.py": (
+            "43c337c9f430a36c2472b2b5f40f5d5513b804c86d71e961afd2724f7b2a2d08"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -292,6 +393,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     3: "a0f3d780942570e794f1134e2da69754f6c8eabbd419285481653839104126ef",
     4: "4882ad8775ecb064daf399f2f83c32c913f4a0d5168396d18c5936936075a3eb",
     5: "b520005336f99a95a381c18887e5d319daf71dcc9bd7e03e2cc8fde05f2143f0",
+    6: "c975653c7ae9bcd020f91be6785ddeb9a28ca9e8f39fa17e0a906e2cfee1a701",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -300,6 +402,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     3: "3b1d94a50ca44b715a02b989646bef9daea8d471d649491465a1431cf277194f",
     4: "869ac471b5bd88df84ff12ccae1d4c7929a70aa8e339a410a7ab031c873cf0b1",
     5: "b9d2247bc0db892b1e6da8b5b718fb814a19cc2641cb3a5ec54dc9d17e4b4bc5",
+    6: "9e21f629f5fa6f3023321a873af7ccd934621fb55d398e52a7aa69abd4e2b3fa",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -326,6 +429,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         6,
         "188ba85ef7d6039495c5814f68e5ffbfa1e0581f73102b13a12b21770332123a",
     ),
+    6: (
+        12,
+        "292080771fdfc270bf429b31b265371982b0b9b8b037f0541cce7eb47f99d870",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
     0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
@@ -349,6 +456,12 @@ _FAILURE_STRUCTURE_BY_PHASE = {
         120,
         "dc99eabb897899280ae9ce8a9ea20c377edda2fae0c838fc824d90e6d5ec543b",
     ),
+    6: (
+        13,
+        10,
+        130,
+        "83cb33eeb336ce865843cbf5b7872f47f428ef8c68ff90805a96b857a807a0d0",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
@@ -371,6 +484,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         8,
         16,
         "57e2cd5e05338824a56132b2011292897a34b9c2bc5673f9c14ef9176b364667",
+    ),
+    6: (
+        10,
+        9,
+        23,
+        "0e90f43443ae9106ebb1f371db0f250417856c73db1ff4c9fb2e9170f9cef8c1",
     ),
 }
 _PHASE0_NODE_INVENTORY = (
@@ -623,7 +742,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase5.json"
+    return fixture_root() / "acceptance_manifest.phase6.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1150,6 +1269,14 @@ def verify_gate_source_isolation(
 ) -> None:
     """Reject Markdown dependencies from tracked gate and active tests."""
     transitions = _phase5_provider_transitions(root)
+    phase6_transitions = _phase6_provider_transitions(root)
+    overlap = set(transitions) & set(phase6_transitions)
+    if overlap:
+        raise ConversationAcceptanceError(
+            "Phase 6 provider transitions overlap frozen Phase 5 "
+            f"transitions: {sorted(overlap)}"
+        )
+    transitions.update(phase6_transitions)
     _require_phase_anchor_keys(
         _ACTIVE_SOURCE_SHA256_BY_PHASE,
         manifest.current_phase,
@@ -1711,6 +1838,8 @@ def _validate_integrated_fixtures(
     names: tuple[str, ...] = _ACTIVE_INTEGRATED_FIXTURES
     if current_phase >= 5:
         names += (_PHASE5_PROVIDER_CONFORMANCE,)
+    if current_phase >= 6:
+        names += (_PHASE6_PROVIDER_CONFORMANCE,)
     authoritative = fixtures.resolve() == fixture_root().resolve()
     if authoritative:
         missing = tuple(
@@ -1734,12 +1863,23 @@ def _validate_integrated_fixtures(
             _validate_provider_contract(payload)
         elif name == "provider_conformance.json":
             _validate_provider_conformance(payload)
-        else:
+        elif name == _PHASE5_PROVIDER_CONFORMANCE:
             base = _strict_mapping(
                 fixtures / "provider_conformance.json",
                 "Phase 0 provider conformance",
             )
             _validate_phase5_provider_conformance(payload, base)
+        else:
+            phase5_path = fixtures / _PHASE5_PROVIDER_CONFORMANCE
+            phase5 = _strict_mapping(
+                phase5_path,
+                "Phase 5 provider conformance",
+            )
+            _validate_phase6_provider_conformance(
+                payload,
+                phase5,
+                phase5_path=phase5_path,
+            )
 
 
 def _validate_phase0_provider_byte_anchors(root: Path) -> None:
@@ -1885,6 +2025,164 @@ def _phase5_provider_transitions(
     if set(transitions) != set(_PHASE5_PROVIDER_TARGET_BYTE_ANCHORS):
         raise ConversationAcceptanceError(
             "Phase 5 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase6_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact reviewed Phase 6 stored-provider source transitions."""
+    path = root / _PHASE6_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE6_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 6 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 6 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 6
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase6-native-stored-provider-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if observed_digest != canonical_sha256(canonical):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 6 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_stored_public_upstream_alias_never_commits_pgsql_mapping"
+        ),
+        (
+            "tests/conversation/native_openai_stored_provider_test.py::"
+            "test_unproven_lifecycle_and_conversion_fail_closed"
+        ),
+        (
+            "tests/conversation/native_openai_stored_provider_test.py::"
+            "test_execution_definition_bytes_fail_before_dispatch"
+        ),
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_stored_quarantine_survives_pgsql_capacity_and_restart"
+        ),
+        (
+            "tests/conversation/native_openai_stored_provider_test.py::"
+            "test_known_provider_rejection_releases_idempotency_fence"
+        ),
+        (
+            "tests/conversation/pgsql_conformance_test.py::"
+            "test_pgsql_ambiguous_dispatch_reconciliation_survives_restart_race"
+        ),
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_retired_runtime_continues_after_pgsql_store_restart"
+        ),
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_stream_close_quarantine_survives_pgsql_restart_capacity"
+        ),
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_generated_checkpoint_alias_fails_pgsql_codec_and_sdk"
+        ),
+        (
+            "tests/conversation/openai_stored_e2e_test.py::"
+            "test_retrieve_execution_drift_fails_over_tcp_and_pgsql"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 6 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 6 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 6 provider byte transition",
+        )
+        relative = _nonempty_string(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"),
+            "transition source digest",
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"),
+            "transition target digest",
+        )
+        if (
+            type(from_size) is not int
+            or from_size < 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 6 provider byte transition is invalid"
+            )
+        transition = (from_size, from_sha256, to_size, to_sha256)
+        if transition != _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS.get(relative):
+            raise ConversationAcceptanceError(
+                "Phase 6 provider transition differs from its independent "
+                f"anchor: {relative}"
+            )
+        target = root / relative
+        if not target.is_file():
+            target = repository_root() / relative
+        if target.is_symlink() or not target.is_file():
+            raise ConversationAcceptanceError(
+                f"Phase 6 provider transition target is missing: {relative}"
+            )
+        target_bytes = target.read_bytes()
+        if (
+            len(target_bytes) != to_size
+            or sha256(target_bytes).hexdigest() != to_sha256
+        ):
+            raise ConversationAcceptanceError(
+                f"Phase 6 provider transition target changed: {relative}"
+            )
+        transitions[relative] = transition
+    if set(transitions) != set(_PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider transition inventory is invalid"
         )
     return transitions
 
@@ -2575,6 +2873,402 @@ def _validate_phase5_provider_conformance(
                 "Phase 5 provider evidence node is invalid"
             )
     _validate_scoped_digest(payload, "Phase 5 provider conformance")
+
+
+def _validate_phase6_provider_conformance(
+    payload: dict[str, object],
+    phase5: dict[str, object],
+    *,
+    phase5_path: Path,
+) -> None:
+    """Validate exact stored profiles against independently pinned evidence."""
+    _exact_keys(
+        payload,
+        {
+            "activation_state",
+            "base",
+            "canonical_digest",
+            "capability_names",
+            "capability_states",
+            "current_phase",
+            "feature",
+            "generic_compatible_state",
+            "identity_dimensions",
+            "owner",
+            "production_advertisement_enabled",
+            "production_dispatch_enabled",
+            "profile_schema_version",
+            "profiles",
+            "rejected_profile_evidence",
+            "schema_version",
+        },
+        "Phase 6 provider conformance",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("profile_schema_version")
+        != "conversation-provider-profile-v1"
+        or payload.get("feature") != _FEATURE
+        or payload.get("owner") != "provider_runtime"
+        or payload.get("current_phase") != 6
+        or payload.get("activation_state") != "test_only"
+        or payload.get("production_advertisement_enabled") is not False
+        or payload.get("production_dispatch_enabled") is not False
+        or payload.get("generic_compatible_state") != "incapable"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider conformance must remain exact and test-only"
+        )
+    if _string_list(
+        payload.get("capability_names"),
+        "Phase 6 provider capability names",
+    ) != _string_list(
+        phase5.get("capability_names"),
+        "Phase 5 provider capability names",
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider capabilities differ from the frozen Phase 5 axes"
+        )
+    phase5_identity_dimensions = _string_list(
+        phase5.get("identity_dimensions"),
+        "Phase 5 provider identity dimensions",
+    )
+    if _string_list(
+        payload.get("identity_dimensions"),
+        "Phase 6 provider identity dimensions",
+    ) != (*phase5_identity_dimensions, "execution_definition_digest"):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider identity axes must append the exact execution "
+            "definition digest to the frozen Phase 5 axes"
+        )
+    if _string_list(
+        payload.get("capability_states"),
+        "Phase 6 provider capability states",
+    ) != ("test_only", "incapable"):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider capability states are invalid"
+        )
+    base = mapping(payload.get("base"), "Phase 6 provider base")
+    _exact_keys(
+        base,
+        {"path", "byte_sha256", "canonical_digest"},
+        "Phase 6 provider base",
+    )
+    phase5_digest = mapping(
+        phase5.get("canonical_digest"),
+        "Phase 5 provider canonical digest",
+    )
+    if (
+        base.get("path") != _PHASE5_PROVIDER_CONFORMANCE
+        or base.get("byte_sha256") != _PHASE5_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or sha256(phase5_path.read_bytes()).hexdigest()
+        != _PHASE5_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or base.get("canonical_digest") != phase5_digest.get("value")
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 6 provider base is not the frozen Phase 5 evidence"
+        )
+
+    profiles = object_list(payload.get("profiles"), "Phase 6 profiles")
+    expected_identities = (
+        (
+            "native-openai-stored-non-streaming-phase6-test",
+            "openai",
+            "https://api.openai.com/v1",
+            None,
+            "gpt-5",
+            "openapi-2.3.0",
+            "non_streaming",
+        ),
+        (
+            "native-openai-stored-streaming-phase6-test",
+            "openai",
+            "https://api.openai.com/v1",
+            None,
+            "gpt-5",
+            "openapi-2.3.0",
+            "streaming",
+        ),
+        (
+            "native-azure-stored-non-streaming-phase6-test",
+            "azure_openai",
+            "https://resource.openai.azure.com/openai/v1",
+            "resource.openai.azure.com",
+            "deployment-stored",
+            "azure-openai-v1",
+            "non_streaming",
+        ),
+        (
+            "native-azure-stored-streaming-phase6-test",
+            "azure_openai",
+            "https://resource.openai.azure.com/openai/v1",
+            "resource.openai.azure.com",
+            "deployment-stored",
+            "azure-openai-v1",
+            "streaming",
+        ),
+    )
+    exact_evidence = {
+        "native-openai-stored-non-streaming-phase6-test": (
+            (
+                "phase6-exact-stored-reasoning-transport-matrix",
+                "phase6-exact-stored-lifecycle-matrix",
+                "phase6-loopback-postgresql-fresh-process",
+                "phase6-execution-definition-digest",
+            ),
+            (
+                (
+                    "tests/conversation/phase6_validation_test.py::"
+                    "test_stored_reasoning_context_is_sent_explicitly"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_exact_stored_lifecycle_profile_matrix"
+                ),
+                (
+                    "tests/conversation/openai_stored_e2e_test.py::"
+                    "test_stored_restart_retrieval_and_deletion"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_execution_definition_bytes_fail_before_dispatch"
+                ),
+            ),
+        ),
+        "native-openai-stored-streaming-phase6-test": (
+            (
+                "phase6-exact-stored-reasoning-transport-matrix",
+                "phase6-exact-stored-lifecycle-matrix",
+                "phase6-loopback-postgresql-streaming-tool-cycle",
+                "phase6-execution-definition-digest",
+            ),
+            (
+                (
+                    "tests/conversation/phase6_validation_test.py::"
+                    "test_stored_reasoning_context_is_sent_explicitly"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_exact_stored_lifecycle_profile_matrix"
+                ),
+                (
+                    "tests/conversation/openai_stored_e2e_test.py::"
+                    "test_stored_streaming_tool_cycle_uses_terminal_id"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_execution_definition_bytes_fail_before_dispatch"
+                ),
+            ),
+        ),
+        "native-azure-stored-non-streaming-phase6-test": (
+            (
+                "phase6-exact-stored-reasoning-transport-matrix",
+                "phase6-exact-stored-lifecycle-matrix",
+                "phase6-exact-azure-loopback-postgresql-wire",
+                "phase6-execution-definition-digest",
+            ),
+            (
+                (
+                    "tests/conversation/phase6_validation_test.py::"
+                    "test_stored_reasoning_context_is_sent_explicitly"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_exact_stored_lifecycle_profile_matrix"
+                ),
+                (
+                    "tests/conversation/openai_stored_e2e_test.py::"
+                    "test_native_azure_stored_exact_identity_over_loopback_transport"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_execution_definition_bytes_fail_before_dispatch"
+                ),
+            ),
+        ),
+        "native-azure-stored-streaming-phase6-test": (
+            (
+                "phase6-exact-stored-reasoning-transport-matrix",
+                "phase6-exact-stored-lifecycle-matrix",
+                "phase6-exact-azure-loopback-postgresql-wire",
+                "phase6-execution-definition-digest",
+            ),
+            (
+                (
+                    "tests/conversation/phase6_validation_test.py::"
+                    "test_stored_reasoning_context_is_sent_explicitly"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_exact_stored_lifecycle_profile_matrix"
+                ),
+                (
+                    "tests/conversation/openai_stored_e2e_test.py::"
+                    "test_native_azure_stored_exact_identity_over_loopback_transport"
+                ),
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_execution_definition_bytes_fail_before_dispatch"
+                ),
+            ),
+        ),
+    }
+    execution_definition_digests = {
+        "native-openai-stored-non-streaming-phase6-test": (
+            "6942129db4435f33c3aa67d1b86be64adec98a272912961c46a1fddc8618878e"
+        ),
+        "native-openai-stored-streaming-phase6-test": (
+            "b49822dca816625835c6214e2df3f513e0681a84bc867b143b91c47cbcb116fd"
+        ),
+        "native-azure-stored-non-streaming-phase6-test": (
+            "084aaf6a2b0c994639e9786134421213678ca7af637a0f6af401243a20ae07d2"
+        ),
+        "native-azure-stored-streaming-phase6-test": (
+            "7d7c335aba635819c1b9f510f3305810832acff1464e73aaa073df3db9d71a63"
+        ),
+    }
+    if len(profiles) != len(expected_identities):
+        raise ConversationAcceptanceError(
+            "Phase 6 stored provider profile inventory is incomplete"
+        )
+    capability_names = set(
+        _string_list(
+            payload.get("capability_names"),
+            "Phase 6 provider capability names",
+        )
+    )
+    binding_keys = set(
+        _string_list(
+            payload.get("identity_dimensions"),
+            "Phase 6 provider identity dimensions",
+        )
+    )
+    for raw, identity in zip(profiles, expected_identities, strict=True):
+        profile = mapping(raw, "Phase 6 stored provider profile")
+        _exact_keys(
+            profile,
+            {
+                "profile_id",
+                "lifecycle",
+                "active_from_phase",
+                "activation_state",
+                "identity_complete",
+                "binding",
+                "capabilities",
+                "activation_evidence",
+                "evidence_node_ids",
+            },
+            "Phase 6 stored provider profile",
+        )
+        (
+            profile_id,
+            family,
+            endpoint,
+            azure_resource,
+            model,
+            api_revision,
+            transport,
+        ) = identity
+        if (
+            profile.get("profile_id") != profile_id
+            or profile.get("lifecycle") != "active"
+            or profile.get("active_from_phase") != 6
+            or profile.get("activation_state") != "test_only"
+            or profile.get("identity_complete") is not True
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 6 stored provider activation is invalid"
+            )
+        binding = mapping(profile.get("binding"), "Phase 6 stored binding")
+        _exact_keys(binding, binding_keys, "Phase 6 stored binding")
+        expected_binding = {
+            "adapter_type": (
+                "avalan.conversation.providers.openai_stored."
+                "NativeOpenAIStoredProvider"
+            ),
+            "provider_family": family,
+            "normalized_endpoint": endpoint,
+            "azure_resource_identity": azure_resource,
+            "model_or_deployment": model,
+            "provider_api_revision": api_revision,
+            "sdk_revision": "openai-python-2.42.0",
+            "model_configuration_revision": "model-config-phase6",
+            "capability_profile_revision": "capability-phase6",
+            "tool_schema_revision": "tools-phase6",
+            "execution_definition_revision": "execution-phase6",
+            "continuation_codec_version": "1",
+            "transport": transport,
+            "execution_definition_digest": execution_definition_digests[
+                profile_id
+            ],
+        }
+        if binding != expected_binding:
+            raise ConversationAcceptanceError(
+                "Phase 6 stored provider binding is not exact"
+            )
+        capabilities = mapping(
+            profile.get("capabilities"),
+            "Phase 6 stored provider capabilities",
+        )
+        if set(capabilities) != capability_names:
+            raise ConversationAcceptanceError(
+                "Phase 6 stored provider capability inventory is invalid"
+            )
+        required = {
+            "stored_responses_chaining",
+            "reasoning_context_current_turn",
+            "reasoning_context_all_turns",
+            "stored_response_retrieval",
+            "stored_response_deletion",
+        }
+        if transport == "streaming":
+            required.add("streaming_item_fidelity")
+        if any(capabilities.get(name) != "test_only" for name in required):
+            raise ConversationAcceptanceError(
+                "Phase 6 stored profile lacks required test evidence"
+            )
+        if any(
+            capabilities.get(name) != "incapable"
+            for name in capability_names - required
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 6 stored profile activates an unproven capability"
+            )
+        expected_activation, expected_nodes = exact_evidence[profile_id]
+        if (
+            _string_list(
+                profile.get("activation_evidence"),
+                "Phase 6 provider activation evidence",
+            )
+            != expected_activation
+            or _string_list(
+                profile.get("evidence_node_ids"),
+                "Phase 6 provider evidence nodes",
+            )
+            != expected_nodes
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 6 provider evidence is not independently pinned"
+            )
+    rejected = object_list(
+        payload.get("rejected_profile_evidence"),
+        "Phase 6 rejected provider evidence",
+    )
+    if rejected != [
+        {
+            "provider_family": "openai_compatible",
+            "expected_state": "incapable",
+            "evidence_node_id": (
+                "tests/conversation/phase6_validation_test.py::"
+                "test_stored_profile_rejects_unproven_provider_forms"
+            ),
+        }
+    ]:
+        raise ConversationAcceptanceError(
+            "generic compatible stored profiles must remain incapable"
+        )
+    _validate_scoped_digest(payload, "Phase 6 provider conformance")
 
 
 def _validate_provider_header(

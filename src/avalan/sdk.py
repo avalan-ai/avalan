@@ -9,6 +9,9 @@ from .agent.execution import (
     InteractionRuntime,
 )
 from .agent.orchestrator_contract import Orchestrator
+from .conversation.lifecycle import (
+    DirectDeletionResult as DirectDeletionResult,
+)
 from .conversation.sdk import (
     ActiveConversationSettings as ActiveConversationSettings,
 )
@@ -51,6 +54,15 @@ from .conversation.settings import (
 )
 from .conversation.settings import ConversationHandle as ConversationHandle
 from .conversation.settings import ConversationMode as ConversationMode
+from .conversation.settings import (
+    ConversationModeChangeOperation as ConversationModeChangeOperation,
+)
+from .conversation.settings import (
+    ConversationModeConversion as ConversationModeConversion,
+)
+from .conversation.settings import (
+    ConversationModeReset as ConversationModeReset,
+)
 from .conversation.settings import ConversationParent as ConversationParent
 from .conversation.settings import (
     ConversationResetIntent as ConversationResetIntent,
@@ -64,6 +76,9 @@ from .conversation.settings import (
     EffectiveReasoningMetadata as EffectiveReasoningMetadata,
 )
 from .conversation.settings import InlineCompaction as InlineCompaction
+from .conversation.settings import (
+    ModeTransitionAuthority as ModeTransitionAuthority,
+)
 from .conversation.settings import NamedHeadParent as NamedHeadParent
 from .conversation.settings import (
     OneShotConversationSettings as OneShotConversationSettings,

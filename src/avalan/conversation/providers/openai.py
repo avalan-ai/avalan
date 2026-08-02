@@ -13,6 +13,7 @@ from ..contract import (
     ChildLaneRetentionPolicy,
     ConversationModelCallId,
     FailureBoundary,
+    UpstreamResponseId,
 )
 from ..errors import (
     ConversationAmbiguousDispatchError,
@@ -35,9 +36,11 @@ from ..items import (
 )
 from ..protocols import (
     ConversationProviderStream,
+    FirstStoredProviderPlan,
     ProviderPlan,
     ProviderResult,
     StatelessProviderPlan,
+    StoredProviderPlan,
 )
 from ..settings import (
     DisabledCompaction,
@@ -64,7 +67,7 @@ from dataclasses import dataclass
 from enum import StrEnum
 from inspect import iscoroutinefunction
 from json import JSONDecodeError, loads
-from typing import cast, final
+from typing import Protocol, TypeAlias, cast, final
 from urllib.parse import urlsplit
 
 from openai import (
@@ -101,6 +104,10 @@ _AZURE_API_REVISIONS = frozenset(
 )
 _ENCRYPTED_CONTENT_INCLUDE: ResponseIncludable = "reasoning.encrypted_content"
 _MAX_OPAQUE_BYTES = 1_048_576
+
+NativeOpenAIResponsePlan: TypeAlias = (
+    StatelessProviderPlan | FirstStoredProviderPlan | StoredProviderPlan
+)
 
 
 async def _owned_close_outcome(
@@ -271,6 +278,20 @@ class _NativeOpenAIDiagnosticsState:
     response_item_kinds: tuple[str, ...] = ()
     effective_context: EffectiveReasoningContext | None = None
     failure_boundary: str | None = None
+
+
+class _NativeOpenAIProviderOwner(Protocol):
+    """Record one native stream without constraining provider mode."""
+
+    _diagnostics: _NativeOpenAIDiagnosticsState
+
+    def _record_response(self, result: ProviderResult) -> None:
+        """Record one complete provider response."""
+        ...
+
+    def _record_stream_close(self) -> None:
+        """Record one settled SDK stream close."""
+        ...
 
 
 @final
@@ -559,8 +580,8 @@ class _NativeOpenAIProviderStream(AsyncIterator[ProviderItem]):
         self,
         *,
         source: AsyncStream[ResponseStreamEvent],
-        plan: StatelessProviderPlan,
-        owner: NativeOpenAIStatelessProvider,
+        plan: NativeOpenAIResponsePlan,
+        owner: _NativeOpenAIProviderOwner,
     ) -> None:
         self._source = source
         self._iterator = source.__aiter__()
@@ -831,7 +852,7 @@ def _provider_result(
 
 def _provider_result_mapping(
     payload: Mapping[str, JsonValue],
-    plan: StatelessProviderPlan,
+    plan: NativeOpenAIResponsePlan,
 ) -> ProviderResult:
     if (
         payload.get("object") != "response"
@@ -850,13 +871,35 @@ def _provider_result_mapping(
         raise _provider_failure(boundary="failure_before_output")
     reasoning = _effective_reasoning(payload, plan)
     usage = _provider_usage(payload)
-    return ProviderResult(items=items, reasoning=reasoning, usage=usage)
+    upstream_response_id = None
+    if isinstance(plan, FirstStoredProviderPlan | StoredProviderPlan):
+        raw_response_id = payload.get("id")
+        expected_parent = (
+            plan.upstream_response_id
+            if type(plan) is StoredProviderPlan
+            else None
+        )
+        if (
+            type(raw_response_id) is not str
+            or not raw_response_id
+            or payload.get("store") is not True
+            or payload.get("previous_response_id") != expected_parent
+        ):
+            raise _provider_failure(boundary="failure_before_output")
+        validate_identifier(raw_response_id, "upstream_response_id")
+        upstream_response_id = UpstreamResponseId(raw_response_id)
+    return ProviderResult(
+        items=items,
+        reasoning=reasoning,
+        usage=usage,
+        upstream_response_id=upstream_response_id,
+    )
 
 
 def _provider_item(
     raw: Mapping[str, JsonValue],
     *,
-    plan: StatelessProviderPlan,
+    plan: NativeOpenAIResponsePlan,
     provider_index: int,
 ) -> ProviderItem:
     raw_type = raw.get("type")
@@ -912,13 +955,18 @@ def _provider_item(
             raise _provider_failure(boundary="failure_before_output")
         _validate_opaque_text(encrypted)
         opaque = OpaqueProviderState(_value=encrypted.encode("utf-8"))
+    order_offset = (
+        len(plan.ledger.items)
+        if type(plan) is StatelessProviderPlan
+        else plan.item_order_offset
+    )
     try:
         return ProviderItem(
             item_id=item_id,
             lane_id=plan.binding.lane_id,
             model_call_id=model_call_id,
             kind=kind,
-            order=ProviderItemOrder(len(plan.ledger.items) + provider_index),
+            order=ProviderItemOrder(order_offset + provider_index),
             provider_index=ProviderItemIndex(provider_index),
             phase=phase,
             caller=ProviderItemCaller.PROVIDER,
@@ -947,14 +995,20 @@ def _provider_phase(
     return ProviderItemPhase.ASSISTANT
 
 
-def _model_call_id(plan: StatelessProviderPlan) -> ConversationModelCallId:
-    prior = {item.model_call_id for item in plan.ledger.items}
-    return ConversationModelCallId(f"native-model-call-{len(prior) + 1}")
+def _model_call_id(
+    plan: NativeOpenAIResponsePlan,
+) -> ConversationModelCallId:
+    index = (
+        len({item.model_call_id for item in plan.ledger.items}) + 1
+        if type(plan) is StatelessProviderPlan
+        else plan.model_call_index
+    )
+    return ConversationModelCallId(f"native-model-call-{index}")
 
 
 def _effective_reasoning(
     payload: Mapping[str, JsonValue],
-    plan: StatelessProviderPlan,
+    plan: NativeOpenAIResponsePlan,
 ) -> EffectiveReasoningMetadata:
     raw_reasoning = payload.get("reasoning")
     if not isinstance(raw_reasoning, Mapping):
@@ -1025,7 +1079,22 @@ def _validate_sdk_client(
     profile: NativeOpenAIStatelessProfile,
     capability_profile: ConversationCapabilityProfile,
 ) -> None:
-    binding = profile.binding
+    _validate_sdk_client_binding(
+        client,
+        binding=profile.binding,
+        scripted_tcp_test=profile.scripted_tcp_test,
+        capability_profile=capability_profile,
+    )
+
+
+def _validate_sdk_client_binding(
+    client: AsyncOpenAI,
+    *,
+    binding: ProviderLaneBinding,
+    scripted_tcp_test: bool,
+    capability_profile: ConversationCapabilityProfile,
+) -> None:
+    """Validate one exact native SDK client and endpoint binding."""
     capability_profile.assert_binding(binding)
     if (
         openai_version != "2.42.0"
@@ -1038,7 +1107,7 @@ def _validate_sdk_client(
         raise ConversationBindingDriftError()
     default_query = dict(client.default_query)
     parsed = urlsplit(base_url)
-    if profile.scripted_tcp_test:
+    if scripted_tcp_test:
         if (
             not capability_profile.test_only
             or parsed.scheme != "http"

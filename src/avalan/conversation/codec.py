@@ -549,7 +549,7 @@ def _decode_execution_receipt(
 
 
 def _encode_binding(value: ProviderLaneBinding) -> dict[str, object]:
-    return {
+    encoded: dict[str, object] = {
         "lane_id": value.lane_id,
         "adapter_type": value.adapter_type,
         "provider_family": value.provider_family.value,
@@ -566,29 +566,35 @@ def _encode_binding(value: ProviderLaneBinding) -> dict[str, object]:
         "transport": value.transport.value,
         "agent_id": value.agent_id,
     }
+    if value.execution_definition_digest is not None:
+        encoded["execution_definition_digest"] = (
+            value.execution_definition_digest
+        )
+    return encoded
 
 
 def _decode_binding(value: object) -> ProviderLaneBinding:
-    item = _mapping(
-        _json(value),
-        {
-            "lane_id",
-            "adapter_type",
-            "provider_family",
-            "normalized_endpoint",
-            "azure_resource_identity",
-            "model_or_deployment",
-            "provider_api_revision",
-            "sdk_revision",
-            "model_configuration_revision",
-            "capability_profile_revision",
-            "tool_schema_revision",
-            "execution_definition_revision",
-            "continuation_codec_version",
-            "transport",
-            "agent_id",
-        },
-    )
+    raw = _mapping_unchecked(_json(value))
+    keys = {
+        "lane_id",
+        "adapter_type",
+        "provider_family",
+        "normalized_endpoint",
+        "azure_resource_identity",
+        "model_or_deployment",
+        "provider_api_revision",
+        "sdk_revision",
+        "model_configuration_revision",
+        "capability_profile_revision",
+        "tool_schema_revision",
+        "execution_definition_revision",
+        "continuation_codec_version",
+        "transport",
+        "agent_id",
+    }
+    if "execution_definition_digest" in raw:
+        keys.add("execution_definition_digest")
+    item = _mapping(raw, keys)
     return ProviderLaneBinding(
         lane_id=ProviderLaneId(_string(item["lane_id"])),
         adapter_type=_string(item["adapter_type"]),
@@ -619,6 +625,11 @@ def _decode_binding(value: object) -> ProviderLaneBinding:
         ),
         transport=ProviderTransport(_string(item["transport"])),
         agent_id=ConversationAgentId(_string(item["agent_id"])),
+        execution_definition_digest=(
+            IntegrityDigest(_string(item["execution_definition_digest"]))
+            if "execution_definition_digest" in item
+            else None
+        ),
     )
 
 

@@ -1,0 +1,385 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "current_phase": 6,
+  "activation_history": [
+    {
+      "phase": 0,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative"
+      ],
+      "sha256": "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491"
+    },
+    {
+      "phase": 1,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative"
+      ],
+      "sha256": "549af2d3dc75ed1b38f477410671db03a4a55764424f7da78e9b2974d2c0541c"
+    },
+    {
+      "phase": 2,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative",
+        "phase2-contract-positive",
+        "phase2-sync-effects-negative"
+      ],
+      "sha256": "b0bc7dc13fa87f53d10523d5565c9d27dcd96004b67b696e38925a734090f2df"
+    },
+    {
+      "phase": 3,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative",
+        "phase2-contract-positive",
+        "phase2-sync-effects-negative",
+        "phase3-contract-positive",
+        "phase3-sync-crypto-negative"
+      ],
+      "sha256": "660f4748cd74131df44512cffe4abd2c94b2f9156bc582abe2bd717a635cf2b9"
+    },
+    {
+      "phase": 4,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative",
+        "phase2-contract-positive",
+        "phase2-sync-effects-negative",
+        "phase3-contract-positive",
+        "phase3-sync-crypto-negative",
+        "phase4-contract-positive",
+        "phase4-sync-sdk-negative"
+      ],
+      "sha256": "dd5b10c4b3aca6136f9a59f484c3637bc72326aed35237a25dc2c6adde0da899"
+    },
+    {
+      "phase": 5,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative",
+        "phase2-contract-positive",
+        "phase2-sync-effects-negative",
+        "phase3-contract-positive",
+        "phase3-sync-crypto-negative",
+        "phase4-contract-positive",
+        "phase4-sync-sdk-negative",
+        "phase5-contract-positive",
+        "phase5-sync-provider-negative"
+      ],
+      "sha256": "2dd076e03d294e393754c8986e2b28ab86058919b87ac345f818d1ac78e57fbd"
+    },
+    {
+      "phase": 6,
+      "fixture_ids": [
+        "phase0-contract-positive",
+        "phase0-identity-interchange-negative",
+        "phase0-storage-axis-negative",
+        "phase1-contract-positive",
+        "phase1-identity-interchange-negative",
+        "phase1-mode-mixing-negative",
+        "phase1-sync-protocol-negative",
+        "phase1-untyped-payload-negative",
+        "phase1-mutable-checkpoint-negative",
+        "phase2-contract-positive",
+        "phase2-sync-effects-negative",
+        "phase3-contract-positive",
+        "phase3-sync-crypto-negative",
+        "phase4-contract-positive",
+        "phase4-sync-sdk-negative",
+        "phase5-contract-positive",
+        "phase5-sync-provider-negative",
+        "phase6-contract-positive",
+        "phase6-sync-lifecycle-negative",
+        "phase6-sync-reconciliation-negative"
+      ],
+      "sha256": "3f55518be6be220aad79c6470a7f1ed372a4c857ece5845f4a02a112b96c8c56"
+    }
+  ],
+  "replacements": [
+    {
+      "phase": 2,
+      "old_fixture_id": "phase1-contract-positive",
+      "replacement_fixture_ids": [
+        "phase2-contract-positive"
+      ],
+      "reviewed_by": "independent-phase2-review",
+      "evidence": "Phase 2 async coordinator and store protocol contract"
+    }
+  ],
+  "fixtures": [
+    {
+      "id": "phase0-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/phase0_positive.py",
+      "source_sha256": "1879433067170cd90c801a91c9f79d3a7a6ab8d84f041bf4df03e0d4b0c519b3",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase0-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/identity_interchange_negative.py",
+      "source_sha256": "ee66184ddc28485cbce7520bef6b4769e16875deceac4f30a25b6872deb51344",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/identity_interchange_negative.py:12:39: error: Argument 1 to \"checkpoint_id\" has incompatible type \"ConversationId\"; expected \"CheckpointId\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase0-storage-axis-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/conversation_type_contracts/storage_axis_negative.py",
+      "source_sha256": "3ae41df1c8a31798bfce91808a1fcf295f8e3a7e6b0fba11c909be2906f72f5b",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/storage_axis_negative.py:6:11: error: Argument \"local\" to \"StoragePolicy\" has incompatible type \"str\"; expected \"LocalResponseStorage\"  [arg-type]",
+        "tests/conversation_type_contracts/storage_axis_negative.py:7:14: error: Argument \"upstream\" to \"StoragePolicy\" has incompatible type \"str\"; expected \"ProviderLaneStorage\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase1-contract-positive",
+      "kind": "positive",
+      "lifecycle": "replaced",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_positive.py",
+      "source_sha256": "1222219ebed59ee2d1f97526b16ccb5cdbcde31a07f20dc154247fc3ceee9826",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase1-identity-interchange-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_identity_interchange_negative.py",
+      "source_sha256": "34a32980eb653003246ad67fa53bb773111af32dda8cf54fcb95b058869e1f42",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:69:39: error: Argument 1 to \"checkpoint_id\" has incompatible type \"PublicResponseId\"; expected \"CheckpointId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:70:57: error: Argument 1 to \"upstream_response_id\" has incompatible type \"CheckpointId\"; expected \"UpstreamResponseId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:71:53: error: Argument 1 to \"upstream_response_id\" has incompatible type \"PublicResponseId\"; expected \"UpstreamResponseId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:72:51: error: Argument 1 to \"public_response_id\" has incompatible type \"UpstreamResponseId\"; expected \"PublicResponseId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:73:43: error: Argument 1 to \"conversation_id\" has incompatible type \"CheckpointId\"; expected \"ConversationId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:74:36: error: Argument 1 to \"provider_lane_id\" has incompatible type \"ConversationModelCallId\"; expected \"ProviderLaneId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:75:40: error: Argument 1 to \"conversation_task_id\" has incompatible type \"ConversationAgentId\"; expected \"ConversationTaskId\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:76:45: error: Argument 1 to \"named_head_revision\" has incompatible type \"CheckpointSequence\"; expected \"NamedHeadRevision\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_identity_interchange_negative.py:77:46: error: Argument 1 to \"provider_sdk_revision\" has incompatible type \"ProviderApiRevision\"; expected \"ProviderSdkRevision\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase1-mode-mixing-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_mode_mixing_negative.py",
+      "source_sha256": "413efb785be9096d57fe136bf2cf6c536550266fd7d847f9ef640dc90c13ac4c",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py:41:26: error: Argument 1 to \"require_reset\" has incompatible type \"ConversationModeConversion\"; expected \"ConversationModeReset\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py:55:12: error: Argument \"parent\" to \"StatelessConversationSettings\" has incompatible type \"StoredParent\"; expected \"StatelessParent | None\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py:59:12: error: Argument \"parent\" to \"StoredConversationSettings\" has incompatible type \"StatelessParent\"; expected \"StoredParent | None\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py:61:28: error: Argument 1 to \"accept_mode\" has incompatible type \"str\"; expected \"ConversationMode\"  [arg-type]",
+        "tests/conversation_type_contracts/phase1_mode_mixing_negative.py:62:50: error: Argument 1 to \"reject_handle_as_transition\" has incompatible type \"StatelessConversationHandle\"; expected \"ConversationModeReset | ConversationModeConversion\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase1-sync-protocol-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_sync_protocol_negative.py",
+      "source_sha256": "5ec7e9ff3a113be71328b03edc2066d4b32d2a055387bcabf3cc78d085d87720",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py:109:48: error: Incompatible types in assignment (expression has type \"SyncCoordinator\", variable has type \"ConversationCoordinator\")  [assignment]",
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py:110:36: error: Incompatible types in assignment (expression has type \"SyncStore\", variable has type \"ConversationStore\")  [assignment]",
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py:111:42: error: Incompatible types in assignment (expression has type \"SyncProvider\", variable has type \"ConversationProvider\")  [assignment]",
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py:112:55: error: Incompatible types in assignment (expression has type \"SyncProviderStream\", variable has type \"ConversationProviderStream\")  [assignment]",
+        "tests/conversation_type_contracts/phase1_sync_protocol_negative.py:113:42: error: Incompatible types in assignment (expression has type \"SyncObserver\", variable has type \"ConversationObserver\")  [assignment]"
+      ]
+    },
+    {
+      "id": "phase1-untyped-payload-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_untyped_payload_negative.py",
+      "source_sha256": "5eb9f6bc20b1e22d7d55a6f2ab6d765e94c245ab40d6cf51519459d4fcf44290",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase1_untyped_payload_negative.py:26:21: error: Argument \"canonical_input\" to \"ProviderItem\" has incompatible type \"dict[str, object]\"; expected \"Mapping[str, JsonValue]\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase1-mutable-checkpoint-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/conversation_type_contracts/phase1_mutable_checkpoint_negative.py",
+      "source_sha256": "8a69c01cae054bd2217839ffacadcac856a96db996191526cf094e69b28f18e0",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase1_mutable_checkpoint_negative.py:11:5: error: Property \"lifecycle\" defined in \"ConversationCheckpoint\" is read-only  [misc]"
+      ]
+    },
+    {
+      "id": "phase2-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/conversation_type_contracts/phase2_positive.py",
+      "source_sha256": "c08af99e2023fb8599a65661993f01436fd9fce20b797ee5916d446aff7edf61",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase2-sync-effects-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/conversation_type_contracts/phase2_sync_effects_negative.py",
+      "source_sha256": "c21e162a44b273a61531fbafadba9da419f715987bdf2bb0714707feb0211ef9",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:101:44: error: Incompatible types in assignment (expression has type \"SyncAuthorityResolver\", variable has type \"ConversationAuthorityResolver\")  [assignment]",
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:102:28: error: Incompatible types in assignment (expression has type \"SyncClock\", variable has type \"ConversationClock\")  [assignment]",
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:103:35: error: Incompatible types in assignment (expression has type \"SyncRetryWaiter\", variable has type \"ConversationRetryWaiter\")  [assignment]",
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:104:36: error: Incompatible types in assignment (expression has type \"SyncPublisher\", variable has type \"ConversationPublisher\")  [assignment]",
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:105:30: error: Incompatible types in assignment (expression has type \"SyncOutbox\", variable has type \"ConversationOutbox\")  [assignment]",
+        "tests/conversation_type_contracts/phase2_sync_effects_negative.py:106:40: error: Incompatible types in assignment (expression has type \"SyncUnitOfWork\", variable has type \"ConversationUnitOfWork\")  [assignment]"
+      ]
+    },
+    {
+      "id": "phase3-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "path": "tests/conversation_type_contracts/phase3_positive.py",
+      "source_sha256": "b14d8feee7e9068cf26e94a2cf6fa1acfea2eb55a63a86f91861bbaf2a0146b9",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase3-sync-crypto-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "path": "tests/conversation_type_contracts/phase3_sync_crypto_negative.py",
+      "source_sha256": "ab3f4ee06fbd0c80c387b825540a596d775b89b37cae6aa7a1289bc6602a7a99",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase3_sync_crypto_negative.py:68:41: error: Incompatible types in assignment (expression has type \"SyncKeyResolver\", variable has type \"ConversationKeyResolver\")  [assignment]",
+        "tests/conversation_type_contracts/phase3_sync_crypto_negative.py:69:30: error: Incompatible types in assignment (expression has type \"SyncCipher\", variable has type \"ConversationCipher\")  [assignment]"
+      ]
+    },
+    {
+      "id": "phase4-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/conversation_type_contracts/phase4_positive.py",
+      "source_sha256": "015ba4958cec9878c1cb8bf86e1d0533de4dcbbf3dd00c2b64ce14b839e15152",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase4-sync-sdk-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/conversation_type_contracts/phase4_sync_sdk_negative.py",
+      "source_sha256": "15e2f7ca55f5212bddbde37e2b20868f83790e950639d0192f82d9aecc36d5d6",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:96:40: error: Incompatible types in assignment (expression has type \"SyncCoordinator\", variable has type \"ConversationCoordinator\")  [assignment]",
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:97:52: error: Incompatible types in assignment (expression has type \"SyncConversationSink\", variable has type \"ConversationProviderStateSink\")  [assignment]",
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:98:36: error: Incompatible types in assignment (expression has type \"SyncResponseSink\", variable has type \"ProviderStateSink\")  [assignment]",
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:101:5: error: Incompatible types in assignment (expression has type \"Callable[[StandaloneCompactRequest], StandaloneCompactResult]\", variable has type \"Callable[[StandaloneCompactRequest], Awaitable[StandaloneCompactResult]]\")  [assignment]",
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:103:5: error: Incompatible types in assignment (expression has type \"Callable[[DirectConversationOutputDelta | DirectConversationStreamTerminal], None]\", variable has type \"Callable[[DirectConversationOutputDelta | DirectConversationStreamTerminal], Awaitable[None]]\")  [assignment]",
+        "tests/conversation_type_contracts/phase4_sync_sdk_negative.py:105:42: error: Incompatible types in assignment (expression has type \"Callable[[], None]\", variable has type \"Callable[[], Awaitable[None]]\")  [assignment]"
+      ]
+    },
+    {
+      "id": "phase5-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/conversation_type_contracts/phase5_positive.py",
+      "source_sha256": "2cefa80804de1cf7b6026fb9ab982c0446fd08d77b3c444d9f718db99e6bdc9f",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase5-sync-provider-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 5,
+      "path": "tests/conversation_type_contracts/phase5_sync_provider_negative.py",
+      "source_sha256": "25bdb4902a8fa7f5e46a8b57d266871d74e7a50b0c74170808aaca7fa44ed0ab",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase5_sync_provider_negative.py:17:13: error: Argument \"handler\" to \"NativeOpenAIFunctionTool\" has incompatible type \"Callable[[Mapping[str, JsonValue]], str]\"; expected \"Callable[[Mapping[str, JsonValue]], Awaitable[str]]\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase6-contract-positive",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "path": "tests/conversation_type_contracts/phase6_positive.py",
+      "source_sha256": "ec084e828ff1fe0ec68cfdadd4e2ba3b66cc9b9e1f15a500ef3ea5100db0cd2d",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "phase6-sync-lifecycle-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "path": "tests/conversation_type_contracts/phase6_sync_lifecycle_negative.py",
+      "source_sha256": "316cca4b0689ba167cb046bbae121211c6f2298046519e63dcb143b3c28b4d7f",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase6_sync_lifecycle_negative.py:38:17: error: Argument \"adapter\" to \"StoredProviderResolverEntry\" has incompatible type \"SynchronousLifecycleAdapter\"; expected \"StoredResponseLifecycleAdapter\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "phase6-sync-reconciliation-negative",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "path": "tests/conversation_type_contracts/phase6_sync_reconciliation_negative.py",
+      "source_sha256": "a8e320be78ad32fbc8dfbb70c6d7fb29fb94c5cf376016024a488457583dbe24",
+      "expected_diagnostics": [
+        "tests/conversation_type_contracts/phase6_sync_reconciliation_negative.py:17:12: error: Incompatible return value type (got \"Coroutine[Any, Any, AmbiguousDispatchReconciliationResult]\", expected \"AmbiguousDispatchReconciliationResult\")  [return-value]"
+      ]
+    }
+  ],
+  "manifest_sha256": "e2ef3e99ee1d57f26c0b9ab89f64f130a2c97760ff19184ee8adfbe58d6b0e42"
+}

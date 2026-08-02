@@ -563,8 +563,6 @@ class RetentionLimits:
     @property
     def effective_ttl_seconds(self) -> int | None:
         """Return the minimum lifetime that is known and applicable."""
-        if self.upstream_lifetime_status is UpstreamLifetimeStatus.UNKNOWN:
-            return None
         applicable = tuple(
             value
             for value in (

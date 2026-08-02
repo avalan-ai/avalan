@@ -476,6 +476,55 @@ class ConversationCheckpoint:
             self.timestamps.deleted_at is not None
         ):
             raise ConversationValidationError()
+        validate_upstream_identifier_separation(self)
+
+
+def validate_upstream_identifier_separation(
+    checkpoint: ConversationCheckpoint,
+    *,
+    additional_public_identifiers: tuple[str, ...] = (),
+    additional_upstream_response_ids: tuple[str, ...] = (),
+) -> None:
+    """Reject private upstream IDs that alias Avalan public identifiers."""
+    if (
+        type(checkpoint) is not ConversationCheckpoint
+        or type(additional_public_identifiers) is not tuple
+        or type(additional_upstream_response_ids) is not tuple
+    ):
+        raise ConversationValidationError()
+    identity = checkpoint.identity
+    public_identifiers = {
+        str(identity.conversation_id),
+        str(identity.logical_turn_id),
+        str(identity.execution_segment_id),
+        str(identity.checkpoint_id),
+        str(identity.branch_id),
+        str(checkpoint.authority.principal_id),
+        str(checkpoint.authority.agent_id),
+        str(checkpoint.authority.endpoint_id),
+    }
+    if identity.parent_checkpoint_id is not None:
+        public_identifiers.add(str(identity.parent_checkpoint_id))
+    if checkpoint.authority.tenant_id is not None:
+        public_identifiers.add(str(checkpoint.authority.tenant_id))
+    if checkpoint.head is not None:
+        public_identifiers.add(str(checkpoint.head.head_id))
+    for lane in checkpoint.content.lanes:
+        public_identifiers.add(str(lane.lane_id))
+        public_identifiers.add(str(lane.binding.safe_alias))
+    for identifier in additional_public_identifiers:
+        validate_identifier(identifier, "public_identifier")
+        public_identifiers.add(identifier)
+    upstream_response_ids = {
+        str(lane.upstream_response_id)
+        for lane in checkpoint.content.lanes
+        if isinstance(lane, StoredProviderLaneSnapshot)
+    }
+    for identifier in additional_upstream_response_ids:
+        validate_identifier(identifier, "upstream_response_id")
+        upstream_response_ids.add(identifier)
+    if public_identifiers & upstream_response_ids:
+        raise ConversationValidationError()
 
 
 @final
@@ -507,6 +556,12 @@ class SuspensionCheckpointCandidate:
         )
         if type(self.continuation) is not PortableContinuationReference:
             raise ConversationValidationError()
+        validate_upstream_identifier_separation(
+            self.checkpoint,
+            additional_public_identifiers=(
+                str(self.continuation.continuation_id),
+            ),
+        )
 
 
 @final
@@ -523,13 +578,10 @@ class OutwardTurnCheckpointCandidate:
             CheckpointKind.COMPLETED_OUTWARD_TURN,
         )
         validate_identifier(self.public_response_id, "public_response_id")
-        upstream_ids = {
-            str(lane.upstream_response_id)
-            for lane in self.checkpoint.content.lanes
-            if isinstance(lane, StoredProviderLaneSnapshot)
-        }
-        if str(self.public_response_id) in upstream_ids:
-            raise ConversationValidationError()
+        validate_upstream_identifier_separation(
+            self.checkpoint,
+            additional_public_identifiers=(str(self.public_response_id),),
+        )
 
 
 @final

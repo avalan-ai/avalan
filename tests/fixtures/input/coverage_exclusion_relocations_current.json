@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "18686af598d259de01df5fededeae4f98f230e43b4fda1e3d8fa7dac4d684abd",
+  "current_snapshot_sha256": "61367c167a1ee6b27dc80836ad6cab52f67c272b06a86a2790178f45af57cf1a",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1232,
+    "added": 1258,
     "removed": 284,
-    "sha256": "e7b88377332a8638b9e79564f851169be0f4bd9c7d3280965838e71273ab4ef1"
+    "sha256": "259baf373d488a289d8b3f183289890c8884ff6f00cf793a07b3e40b04cf9473"
   },
   "review": {
-    "reviewed_by": "conversation Phase 5 exclusion inventory audit",
-    "rationale": "The current snapshot retains every reviewed directive and records parser-only line relocations caused by the Phase 5 provider plan and SDK configuration additions."
+    "reviewed_by": "conversation Phase 6 exclusion inventory audit",
+    "rationale": "The current snapshot retains every reviewed directive and records parser-only line additions and relocations caused by the Phase 6 stored-response lifecycle, provider, and SDK additions."
   },
-  "ledger_sha256": "535f9857758ba6407e9fc97a9b45b4cb22b1d8a0b31a32839fe445155707e4de"
+  "ledger_sha256": "69d227189a4254908e1118bb5dd3a90f02bce0030b737c3b297b9faeb3514727"
 }
