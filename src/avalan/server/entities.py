@@ -41,19 +41,36 @@ from .authority import (
     responses_replay_authority_payload,
 )
 from .responses_schema import (
+    ResponsesApplyPatchCallItem,
+    ResponsesApplyPatchCallOutputItem,
     ResponsesCompactionControl,
+    ResponsesComputerCallItem,
+    ResponsesComputerCallOutputItem,
     ResponsesContainerSelection,
+    ResponsesCustomToolCallItem,
+    ResponsesCustomToolCallOutputItem,
     ResponsesEasyInputMessage,
+    ResponsesFunctionCallItem,
+    ResponsesFunctionCallOutputItem,
     ResponsesFunctionTool,
     ResponsesInclude,
     ResponsesInputFile,
     ResponsesInputImage,
     ResponsesInputItem,
     ResponsesInputText,
+    ResponsesItemReference,
+    ResponsesLocalShellCallItem,
+    ResponsesLocalShellCallOutputItem,
+    ResponsesMCPApprovalRequestItem,
+    ResponsesMCPApprovalResponseItem,
     ResponsesMessageItem,
     ResponsesReasoningConfig,
     ResponsesRequestExtensions,
+    ResponsesShellCallItem,
+    ResponsesShellCallOutputItem,
     ResponsesStreamOptions,
+    ResponsesToolSearchCallItem,
+    ResponsesToolSearchOutputItem,
 )
 
 from base64 import b64decode
@@ -202,23 +219,21 @@ _SKILL_BODY_HEADING_SEPARATOR_PATTERN = compile_pattern(r"\s*\n")
 _URL_SCHEME_PATTERN = compile_pattern(r"(?i)[A-Za-z][A-Za-z0-9+.-]*:")
 _SKILLS_TOOL_PREFIX = "skills."
 _SKILL_CONTENT_KEYS = frozenset({"content"})
-_ORDINARY_TITLE_HEADING_WORDS = frozenset(
-    {
-        "answer",
-        "conclusion",
-        "intro",
-        "introduction",
-        "notes",
-        "overview",
-        "plan",
-        "reason",
-        "reasoning",
-        "report",
-        "results",
-        "summary",
-        "update",
-    }
-)
+_ORDINARY_TITLE_HEADING_WORDS = frozenset({
+    "answer",
+    "conclusion",
+    "intro",
+    "introduction",
+    "notes",
+    "overview",
+    "plan",
+    "reason",
+    "reasoning",
+    "report",
+    "results",
+    "summary",
+    "update",
+})
 
 
 @dataclass(kw_only=True, frozen=True)
@@ -1464,7 +1479,7 @@ ResponsesInput = str | list[ResponsesInputItem]
 
 
 class ResponsesRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
 
     model: str | None = Field(
         None,
@@ -1591,14 +1606,17 @@ class ResponsesRequest(BaseModel):
             if len(names) != len(set(names)):
                 raise ValueError("tool names must be unique")
         idempotency_key = None
+        caller_held = False
         if (
             self.extensions is not None
             and self.extensions.avalan is not None
             and self.extensions.avalan.conversation is not None
         ):
-            idempotency_key = (
-                self.extensions.avalan.conversation.idempotency_key
-            )
+            conversation = self.extensions.avalan.conversation
+            idempotency_key = conversation.idempotency_key
+            caller_held = conversation.mode == "caller_held"
+            if conversation.lane_id is not None:
+                raise ValueError("lane_id is supported only by compact")
         if self.include is not None:
             raise ValueError("include is not supported")
         if (
@@ -1608,10 +1626,20 @@ class ResponsesRequest(BaseModel):
             or self.max_tool_calls is not None
         ):
             raise ValueError("Responses tools are not supported")
-        if not self.store and (
-            (self.reasoning is not None and self.reasoning.context is not None)
-            or self.context_management is not None
-            or idempotency_key is not None
+        if self.store and caller_held:
+            raise ValueError("caller-held continuation requires store=false")
+        if not self.store and self.context_management is not None:
+            raise ValueError("inline compaction requires store=true")
+        if (
+            not self.store
+            and not caller_held
+            and (
+                (
+                    self.reasoning is not None
+                    and self.reasoning.context is not None
+                )
+                or idempotency_key is not None
+            )
         ):
             raise ValueError("conversation controls require store=true")
         if self.background:
@@ -1621,6 +1649,96 @@ class ResponsesRequest(BaseModel):
             or any(not key or len(key) > 64 for key in self.metadata)
         ):
             raise ValueError("metadata exceeds configured wire limits")
+        return self
+
+
+class ResponsesCompactRequest(BaseModel):
+    """Carry one strict complete-context stateless compact request."""
+
+    model_config = ConfigDict(extra="forbid", hide_input_in_errors=True)
+
+    model: str
+    input: list[ResponsesInputItem] | None = None
+    instructions: str | None = None
+    previous_response_id: str | None = None
+    extensions: ResponsesRequestExtensions | None = None
+
+    @model_validator(mode="before")
+    @classmethod
+    def validate_remote_runtime_authority(cls, value: object) -> object:
+        _reject_request_remote_runtime_authority(
+            (
+                responses_replay_authority_payload(value)
+                if isinstance(value, Mapping)
+                else value
+            ),
+            allowed_fields=frozenset(cls.model_fields),
+            path="responses.compact",
+        )
+        if isinstance(value, Mapping):
+            reject_remote_runtime_authority_model_identifier(
+                value.get("model"),
+                path="responses.compact.model",
+            )
+        return value
+
+    @model_validator(mode="after")
+    def validate_complete_context(self) -> "ResponsesCompactRequest":
+        """Reject references, incomplete items, and malformed tool pairs."""
+        conversation = None
+        if self.extensions is not None and self.extensions.avalan is not None:
+            conversation = self.extensions.avalan.conversation
+        if self.previous_response_id is not None:
+            raise ValueError(
+                "compact requires complete context or caller-held state"
+            )
+        if conversation is not None and (
+            conversation.idempotency_key is not None
+            or conversation.operation not in (None, "continue")
+            or conversation.branch_id is not None
+            or conversation.head_id is not None
+            or conversation.expected_head_revision is not None
+        ):
+            raise ValueError("compact accepts only envelope and lane controls")
+        if self.input is None:
+            if (
+                conversation is None
+                or conversation.mode != "caller_held"
+                or conversation.continuation_envelope is None
+            ):
+                raise ValueError("compact requires complete canonical context")
+            return self
+        if not self.input:
+            raise ValueError("compact input cannot be empty")
+        seen_call_ids: set[str] = set()
+        index = 0
+        while index < len(self.input):
+            item = self.input[index]
+            if isinstance(item, ResponsesItemReference):
+                raise ValueError("compact item references are unsupported")
+            if isinstance(item, ResponsesEasyInputMessage) and not (
+                isinstance(item, ResponsesMessageItem)
+            ):
+                raise ValueError("compact input must use tagged items")
+            status = getattr(item, "status", None)
+            if status is not None and status != "completed":
+                raise ValueError("compact input items must be complete")
+            pair = _compact_pair(item)
+            if pair is None:
+                index += 1
+                continue
+            role, pair_kind, call_id = pair
+            if role == "output":
+                raise ValueError("compact tool output lacks adjacent call")
+            if call_id in seen_call_ids:
+                raise ValueError("compact tool call identity is duplicated")
+            if index + 1 >= len(self.input):
+                raise ValueError("compact tool call lacks adjacent output")
+            output_pair = _compact_pair(self.input[index + 1])
+            if output_pair != ("output", pair_kind, call_id):
+                raise ValueError("compact tool adjacency is invalid")
+            seen_call_ids.add(call_id)
+            index += 2
         return self
 
 
@@ -1677,6 +1795,49 @@ def _responses_input_message(item: ResponsesInputItem) -> ChatMessage:
         separators=(",", ":"),
     )
     return ChatMessage(role=role, content=content)
+
+
+def _compact_pair(item: object) -> tuple[str, str, str] | None:
+    """Return one strict compact call/output correlation identity."""
+    pair: tuple[str, str, str] | None
+    match item:
+        case ResponsesFunctionCallItem(call_id=call_id):
+            pair = ("call", "function", call_id)
+        case ResponsesFunctionCallOutputItem(call_id=call_id):
+            pair = ("output", "function", call_id)
+        case ResponsesComputerCallItem(call_id=call_id):
+            pair = ("call", "computer", call_id)
+        case ResponsesComputerCallOutputItem(call_id=call_id):
+            pair = ("output", "computer", call_id)
+        case ResponsesToolSearchCallItem(call_id=call_id):
+            pair = ("call", "tool_search", call_id or "")
+        case ResponsesToolSearchOutputItem(call_id=call_id):
+            pair = ("output", "tool_search", call_id or "")
+        case ResponsesLocalShellCallItem(call_id=call_id):
+            pair = ("call", "local_shell", call_id)
+        case ResponsesLocalShellCallOutputItem(id=call_id):
+            pair = ("output", "local_shell", call_id)
+        case ResponsesShellCallItem(call_id=call_id):
+            pair = ("call", "shell", call_id)
+        case ResponsesShellCallOutputItem(call_id=call_id):
+            pair = ("output", "shell", call_id)
+        case ResponsesApplyPatchCallItem(call_id=call_id):
+            pair = ("call", "apply_patch", call_id)
+        case ResponsesApplyPatchCallOutputItem(call_id=call_id):
+            pair = ("output", "apply_patch", call_id)
+        case ResponsesMCPApprovalRequestItem(id=call_id):
+            pair = ("call", "mcp_approval", call_id)
+        case ResponsesMCPApprovalResponseItem(approval_request_id=call_id):
+            pair = ("output", "mcp_approval", call_id)
+        case ResponsesCustomToolCallItem(call_id=call_id):
+            pair = ("call", "custom_tool", call_id)
+        case ResponsesCustomToolCallOutputItem(call_id=call_id):
+            pair = ("output", "custom_tool", call_id)
+        case _:
+            return None
+    if not call_id:
+        raise ValueError("compact tool pair requires a correlation identity")
+    return pair
 
 
 def _responses_content_part(

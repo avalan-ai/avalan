@@ -1,0 +1,133 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 10,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase10-stateless-responses-review",
+  "reason": "Bind caller-held served Responses continuation, native compaction, terminal publication, and transient non-retention to exact source bytes.",
+  "transitions": [
+    {
+      "path": "src/avalan/conversation/__init__.py",
+      "from_size": 31365,
+      "from_sha256": "36935d16f5ee5fd01bd79f87068b61f19accf7dcf3fde2eae913af5b80ec2b5d",
+      "to_size": 32712,
+      "to_sha256": "2cb7b7ec4c85ca5ddb5b93ce530715d68ea6b114e94e3d96d37da3931d456860"
+    },
+    {
+      "path": "src/avalan/conversation/agent.py",
+      "from_size": 39216,
+      "from_sha256": "dd55e149f724b772e405b7c5615983bbabe6a7fefbf9065cf55f1146668e8bbc",
+      "to_size": 40790,
+      "to_sha256": "cd8c9fc8d0b01efff82114cf96878d56ec2837200784af928e98f6bca7912693"
+    },
+    {
+      "path": "src/avalan/conversation/envelope.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 37841,
+      "to_sha256": "c8d58ffbdb040bfc2bb4154e1b4a4fecf23ebe4122b1924cc676434cfafd0909"
+    },
+    {
+      "path": "src/avalan/conversation/errors.py",
+      "from_size": 10454,
+      "from_sha256": "de33d6a765a1f4df805b5b1c0e71ee219e3fd77c757fe0c393db5cd6a3171ea4",
+      "to_size": 10868,
+      "to_sha256": "768bc13a0fc5f63c133aba67a13c782eb296192dd2972d80eccd3f523f59ea56"
+    },
+    {
+      "path": "src/avalan/conversation/store.py",
+      "from_size": 111526,
+      "from_sha256": "74809dcabb1c054e31f54a199639cfe8bdf0be1227cb6ee11a2859670c87b28e",
+      "to_size": 114168,
+      "to_sha256": "3b6e24f1715e30ca9a7d9b3bbe56c2268247fc6510744ae0dfd848055be27c3b"
+    },
+    {
+      "path": "src/avalan/server/__init__.py",
+      "from_size": 19414,
+      "from_sha256": "bdebfcfa26424017feaca9dd652c9a10c6bc34e0611bece0f27c0a4d8c2febdc",
+      "to_size": 19921,
+      "to_sha256": "00d942b87b99b590a8557dc6180e146278bc4a74d3a72c0a7588485b444c1393"
+    },
+    {
+      "path": "src/avalan/server/authority.py",
+      "from_size": 13316,
+      "from_sha256": "5eec4c67368a7e2575ac5211fd35273fac8b4f104b626306b6eceed3c0ad1c5c",
+      "to_size": 13944,
+      "to_sha256": "47fe055ee717bc92f69d1a9cbf40c76fdaf2e9062011ba77058a815c7b9f25af"
+    },
+    {
+      "path": "src/avalan/server/entities.py",
+      "from_size": 63664,
+      "from_sha256": "7bb4d2f8e210fe557e425dfa2214f0605dc2d2ff121b1e7695ae07005fb1791e",
+      "to_size": 70776,
+      "to_sha256": "96e9fb847b2adfffe9e4464a0a8fdd8adfe0c995a527e5f05e1de40e8cc78a40"
+    },
+    {
+      "path": "src/avalan/server/responses_schema.py",
+      "from_size": 20666,
+      "from_sha256": "ea006d774949798130dea546ba5de845a67f85b8497558b7c4ac6b4831b52c93",
+      "to_size": 25398,
+      "to_sha256": "1fb0368a77e31cf13c5a7b0eddcde90747e5dfa22bac4e3eff82ddd656b55ce3"
+    },
+    {
+      "path": "src/avalan/server/routers/responses.py",
+      "from_size": 111721,
+      "from_sha256": "58ff1830a208b415fa7c952b7ea3d46cdb2e79844e7b51d14e61f48212a343b6",
+      "to_size": 137925,
+      "to_sha256": "e2de8e730d29f6c7945e5a1d9fcba92a30d24e8e5dfd71f907972ca8a8e549ea"
+    },
+    {
+      "path": "src/avalan/server/stateless_responses.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 46829,
+      "to_sha256": "4b1ce1ee9afecebbf36780f90badba0152777c058f7a5a54d6596d67d85c6b56"
+    },
+    {
+      "path": "tests/conversation/agent_integration_contract_test.py",
+      "from_size": 37613,
+      "from_sha256": "220a35d7f920094502ddd4330f683095223481e7ed75cc23d84af04e568c7cc9",
+      "to_size": 37874,
+      "to_sha256": "8ff657bb3396ebefe96bbecb754ce3be15f39b9a3e1b42402ac562000ca750d0"
+    },
+    {
+      "path": "tests/conversation/server_stateless_e2e_test.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 164800,
+      "to_sha256": "9fd1e90c5f723c73f76f2ce3ed03c8a22e0c8721457ba713bb6539ed1c1f3e5e"
+    },
+    {
+      "path": "tests/conversation/server_stored_e2e_test.py",
+      "from_size": 96539,
+      "from_sha256": "a31dc8d287b8f0752d344940db0eb533727bcccaec8efe11b919d22218b5d163",
+      "to_size": 97091,
+      "to_sha256": "f0cfbc664524d7378bafcd4a9a38bb8748e91d5cbadf207e659a55f487380a9c"
+    },
+    {
+      "path": "tests/conversation/stateless_envelope_test.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 38718,
+      "to_sha256": "465efb3496b07a006999e2e90516c3016d6b178158fae6dc5cdf985433f4e69a"
+    },
+    {
+      "path": "tests/server/responses_phase7_contract_test.py",
+      "from_size": 122616,
+      "from_sha256": "2dcce141a416873cadea54f907846bd16a92d3cadb3a35f513fc0940939e460a",
+      "to_size": 122607,
+      "to_sha256": "8771d3479b8376795d04ed97fd7d62429be2c9553d36cd8578d5ab1732a3363b"
+    },
+    {
+      "path": "tests/server/responses_test.py",
+      "from_size": 33117,
+      "from_sha256": "602346e31e6ebb80985accc0afb04aea386e30eb7e582ce068c2eb0c5cc94a66",
+      "to_size": 33118,
+      "to_sha256": "a3d212cd2384bfd797647782c1f2b6b36ac46a3d95453772ce96b3da3ea0df04"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
+  ],
+  "canonical_sha256": "607948018a995c00e326e09733243e189e7ac2f51a2696c8c4591ccd97945de7"
+}

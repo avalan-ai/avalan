@@ -1,18 +1,61 @@
 """Define strict OpenAI Responses request item schemas."""
 
+from ..conversation.envelope import ContinuationEnvelopeToken
+from ..conversation.errors import ConversationError
 from ..conversation.settings import ReasoningContext
 from ..entities import MessageRole, ReasoningEffort, ReasoningSummaryMode
 from ..types import LooseJsonValue
 
 from typing import Annotated, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PlainValidator,
+    WithJsonSchema,
+    model_validator,
+)
 
 
 class _StrictResponsesValue(BaseModel):
     """Forbid unrecognized fields at a state-bearing wire boundary."""
 
-    model_config = ConfigDict(extra="forbid", from_attributes=True)
+    model_config = ConfigDict(
+        extra="forbid",
+        from_attributes=True,
+        hide_input_in_errors=True,
+    )
+
+
+def _continuation_envelope_token(value: object) -> ContinuationEnvelopeToken:
+    """Wrap one request token without retaining a printable string field."""
+    if type(value) is ContinuationEnvelopeToken:
+        return value
+    if type(value) is not str:
+        raise ValueError("invalid continuation envelope")
+    try:
+        return ContinuationEnvelopeToken.from_request(
+            value,
+            max_chars=6_000_000,
+        )
+    except ConversationError:
+        raise ValueError("invalid continuation envelope") from None
+
+
+ResponsesContinuationEnvelope: TypeAlias = Annotated[
+    ContinuationEnvelopeToken,
+    PlainValidator(_continuation_envelope_token, json_schema_input_type=str),
+    WithJsonSchema(
+        {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 6_000_000,
+            "pattern": r"^avl_ce1\.[A-Za-z0-9_-]+$",
+        },
+        mode="validation",
+    ),
+]
 
 
 class ResponsesInputText(_StrictResponsesValue):
@@ -582,6 +625,61 @@ class ResponsesConversationExtension(_StrictResponsesValue):
 
     version: Literal["1"]
     idempotency_key: str | None = Field(None, min_length=1, max_length=256)
+    mode: Literal["caller_held"] | None = None
+    continuation_envelope: ResponsesContinuationEnvelope | None = None
+    operation: Literal["continue", "branch", "named_head"] | None = None
+    branch_id: str | None = Field(None, min_length=1, max_length=256)
+    head_id: str | None = Field(None, min_length=1, max_length=256)
+    expected_head_revision: int | None = Field(None, ge=0)
+    lane_id: str | None = Field(None, min_length=1, max_length=256)
+
+    @model_validator(mode="after")
+    def validate_continuation(self) -> "ResponsesConversationExtension":
+        """Require one closed caller-held continuation operation."""
+        state_fields = (
+            self.continuation_envelope,
+            self.operation,
+            self.branch_id,
+            self.head_id,
+            self.expected_head_revision,
+            self.lane_id,
+        )
+        if self.mode is None:
+            if any(value is not None for value in state_fields):
+                raise ValueError("caller-held state requires its exact mode")
+            return self
+        operation = self.operation or "continue"
+        if operation == "continue":
+            if any(
+                value is not None
+                for value in (
+                    self.branch_id,
+                    self.head_id,
+                    self.expected_head_revision,
+                )
+            ):
+                raise ValueError("continue cannot carry branch or head state")
+            return self
+        if operation == "branch":
+            if (
+                self.continuation_envelope is None
+                or self.branch_id is None
+                or self.head_id is not None
+                or self.expected_head_revision is not None
+            ):
+                raise ValueError("branch requires an envelope and branch_id")
+            return self
+        if (
+            self.head_id is None
+            or self.expected_head_revision is None
+            or self.branch_id is not None
+            or (
+                self.continuation_envelope is None
+                and self.expected_head_revision != 0
+            )
+        ):
+            raise ValueError("named_head requires exact head coordinates")
+        return self
 
 
 class ResponsesAvalanExtension(_StrictResponsesValue):
@@ -594,7 +692,11 @@ class ResponsesAvalanExtension(_StrictResponsesValue):
 class ResponsesRequestExtensions(BaseModel):
     """Carry strict owned extensions beside unrelated future namespaces."""
 
-    model_config = ConfigDict(extra="allow", from_attributes=True)
+    model_config = ConfigDict(
+        extra="allow",
+        from_attributes=True,
+        hide_input_in_errors=True,
+    )
 
     task_input: ResponsesTaskInputExtension | None = None
     avalan: ResponsesAvalanExtension | None = None
@@ -664,6 +766,26 @@ class ResponsesPublicMetadata(_StrictResponsesValue):
     avalan_checkpoint_digest: str
 
 
+class ResponsesContinuationResponseExtension(_StrictResponsesValue):
+    """Return terminal-only caller-held continuation state."""
+
+    version: Literal["1"]
+    continuation_envelope: str
+
+
+class ResponsesAvalanResponseExtension(_StrictResponsesValue):
+    """Return versioned Avalan response extensions."""
+
+    version: Literal["1"]
+    conversation: ResponsesContinuationResponseExtension
+
+
+class ResponsesResponseExtensions(_StrictResponsesValue):
+    """Return the exact supported response extension namespace."""
+
+    avalan: ResponsesAvalanResponseExtension
+
+
 class ResponsesResource(_StrictResponsesValue):
     """Describe one committed Avalan-served Responses resource."""
 
@@ -680,6 +802,28 @@ class ResponsesResource(_StrictResponsesValue):
     output: list[ResponsesPublicOutputMessage]
     metadata: ResponsesPublicMetadata
     usage: ResponsesUsage
+    extensions: ResponsesResponseExtensions | None = None
+
+
+class ResponsesCompactUsage(_StrictResponsesValue):
+    """Describe official compact token accounting."""
+
+    input_tokens: int = Field(ge=0)
+    input_tokens_details: ResponsesInputTokenDetails
+    output_tokens: int = Field(ge=0)
+    output_tokens_details: ResponsesOutputTokenDetails
+    total_tokens: int = Field(ge=0)
+
+
+class ResponsesCompactResource(_StrictResponsesValue):
+    """Describe one provider-canonical stateless compact result."""
+
+    id: str
+    created_at: int
+    object: Literal["response.compaction"]
+    output: list[ResponsesTaggedInputItem]
+    usage: ResponsesCompactUsage
+    extensions: ResponsesResponseExtensions | None = None
 
 
 class ResponsesDeletionMetadata(_StrictResponsesValue):

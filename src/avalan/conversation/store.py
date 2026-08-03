@@ -193,6 +193,62 @@ class StoreDiagnostics:
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class StoreNonRetentionAudit:
+    """Report content-free reconstructable-state counts after disposal."""
+
+    checkpoints: int
+    provider_ledgers: int
+    public_mappings: int
+    provisional_mappings: int
+    idempotency_records: int
+    named_heads: int
+    queues: int
+    outbox_records: int
+    task_state: int
+    envelope_plaintexts: int
+    temporary_files: int
+
+    def __post_init__(self) -> None:
+        if any(
+            type(value) is not int or value < 0
+            for value in (
+                self.checkpoints,
+                self.provider_ledgers,
+                self.public_mappings,
+                self.provisional_mappings,
+                self.idempotency_records,
+                self.named_heads,
+                self.queues,
+                self.outbox_records,
+                self.task_state,
+                self.envelope_plaintexts,
+                self.temporary_files,
+            )
+        ):
+            raise ConversationValidationError()
+
+    @property
+    def reconstructable_state_count(self) -> int:
+        """Return the total reconstructable-state resource count."""
+        return sum(
+            (
+                self.checkpoints,
+                self.provider_ledgers,
+                self.public_mappings,
+                self.provisional_mappings,
+                self.idempotency_records,
+                self.named_heads,
+                self.queues,
+                self.outbox_records,
+                self.task_state,
+                self.envelope_plaintexts,
+                self.temporary_files,
+            )
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class _StoredCheckpoint:
     checkpoint: ConversationCheckpoint
     encoded: bytes
@@ -382,6 +438,27 @@ class InMemoryConversationStore:
             locked=self._lock.locked(),
             closed=self._closed,
         )
+
+    async def audit_non_retention(self) -> StoreNonRetentionAudit:
+        """Return counts for every reconstructable store surface."""
+        async with self._lock:
+            return StoreNonRetentionAudit(
+                checkpoints=len(self._checkpoints),
+                provider_ledgers=len(self._outputs),
+                public_mappings=len(self._public) + len(self._results),
+                provisional_mappings=len(self._provisional),
+                idempotency_records=len(self._idempotency),
+                named_heads=len(self._heads),
+                queues=len(self._outbox_ready_order),
+                outbox_records=len(self._outbox),
+                task_state=(
+                    len(self._execution_staging)
+                    + len(self._execution_stage_keys)
+                    + len(self._provider_lifecycle)
+                ),
+                envelope_plaintexts=0,
+                temporary_files=0,
+            )
 
     async def create(
         self, candidate: CheckpointCandidate
@@ -1873,6 +1950,7 @@ class InMemoryConversationStore:
                 self._outbox.clear()
                 self._outbox_ready_order.clear()
                 self._terminal.clear()
+                self._provider_lifecycle.clear()
                 self._idempotency_changed.notify_all()
                 resolution = StoreCloseResolution(
                     disposition=StoreCloseDisposition.CLOSED

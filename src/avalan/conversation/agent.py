@@ -54,7 +54,9 @@ from .runtime import (
     ConversationCommitBoundary,
     ConversationLaneRequest,
     ConversationRunRequest,
+    ExplicitBranchAdvance,
     FirstTurnAdvance,
+    NamedHeadAdvance,
     OrdinaryChildAdvance,
 )
 from .settings import (
@@ -104,7 +106,7 @@ _SURFACE_DISPOSITIONS: Mapping[
         ConversationSurface.FLOW: SurfaceDisposition.DEFERRED,
         ConversationSurface.MCP: SurfaceDisposition.DEFERRED,
         ConversationSurface.A2A: SurfaceDisposition.DEFERRED,
-        ConversationSurface.SERVED_RESPONSES: SurfaceDisposition.DEFERRED,
+        ConversationSurface.SERVED_RESPONSES: SurfaceDisposition.ACTIVATED,
     }
 )
 
@@ -617,6 +619,7 @@ class AgentConversationTurn:
     idempotency_key: RequestIdempotencyKey
     retention: RetentionLimits
     parent: ConversationCheckpoint | None = None
+    advance: ExplicitBranchAdvance | NamedHeadAdvance | None = None
 
     def __post_init__(self) -> None:
         if (
@@ -676,8 +679,27 @@ class AgentConversationTurn:
                 type(self.parent) is not ConversationCheckpoint
                 or self.parent.lifecycle is not CheckpointLifecycle.COMMITTED
                 or self.parent.authority != self.authority
-                or self.parent.identity.branch_id != self.branch_id
             ):
+                raise ConversationValidationError()
+            if self.advance is None:
+                if self.parent.identity.branch_id != self.branch_id:
+                    raise ConversationValidationError()
+            elif isinstance(self.advance, ExplicitBranchAdvance):
+                if (
+                    self.advance.parent_checkpoint_id
+                    != self.parent.identity.checkpoint_id
+                    or self.advance.branch_id != self.branch_id
+                    or self.parent.identity.branch_id == self.branch_id
+                ):
+                    raise ConversationValidationError()
+            elif isinstance(self.advance, NamedHeadAdvance):
+                if (
+                    self.advance.parent_checkpoint_id
+                    != self.parent.identity.checkpoint_id
+                    or self.parent.identity.branch_id != self.branch_id
+                ):
+                    raise ConversationValidationError()
+            else:
                 raise ConversationValidationError()
             if (
                 self.parent.content.lane_topology is not None
@@ -693,6 +715,8 @@ class AgentConversationTurn:
                 if expected is None:
                     raise ConversationValidationError()
                 snapshot.binding.assert_compatible(expected.binding)
+        elif self.advance is not None:
+            raise ConversationValidationError()
 
     @property
     def conversation_id(self) -> ConversationId:
@@ -929,11 +953,19 @@ class AgentConversationTurn:
                 parent.identity.sequence if parent is not None else None
             ),
         )
-        advance: FirstTurnAdvance | OrdinaryChildAdvance = (
+        advance: (
+            FirstTurnAdvance
+            | OrdinaryChildAdvance
+            | ExplicitBranchAdvance
+            | NamedHeadAdvance
+        ) = (
             FirstTurnAdvance()
             if parent is None
-            else OrdinaryChildAdvance(
-                parent_checkpoint_id=parent.identity.checkpoint_id
+            else (
+                self.advance
+                or OrdinaryChildAdvance(
+                    parent_checkpoint_id=parent.identity.checkpoint_id
+                )
             )
         )
         child_text = "\n".join(entry.content for entry in child_results)
@@ -981,7 +1013,12 @@ class AgentConversationTurn:
         *,
         input: str,
         identity: CheckpointIdentity,
-        advance: FirstTurnAdvance | OrdinaryChildAdvance,
+        advance: (
+            FirstTurnAdvance
+            | OrdinaryChildAdvance
+            | ExplicitBranchAdvance
+            | NamedHeadAdvance
+        ),
         selected: set[ProviderLaneId],
         boundary: ConversationCommitBoundary,
         visible_delta: tuple[VisibleTranscriptEntry, ...],
@@ -995,7 +1032,11 @@ class AgentConversationTurn:
                 operation=(
                     ConversationOperation.CREATE
                     if parent_checkpoint_id is None
-                    else ConversationOperation.CONTINUE
+                    else (
+                        ConversationOperation.BRANCH
+                        if isinstance(advance, ExplicitBranchAdvance)
+                        else ConversationOperation.CONTINUE
+                    )
                 ),
                 mode=self._aggregate_mode(selected),
                 reasoning_context=ReasoningContext.AUTO,

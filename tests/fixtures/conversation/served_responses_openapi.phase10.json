@@ -1,0 +1,215 @@
+{
+  "schema_version": 1,
+  "feature": "served_responses_lifecycle",
+  "operations": {
+    "create": {
+      "method": "post",
+      "path": "/responses",
+      "request": "#/components/schemas/ResponsesRequest",
+      "response": "#/components/schemas/ResponsesResource",
+      "stream": {
+        "type": "string"
+      },
+      "error": "#/components/schemas/ResponsesErrorEnvelope"
+    },
+    "compact": {
+      "method": "post",
+      "path": "/responses/compact",
+      "request": "#/components/schemas/ResponsesCompactRequest",
+      "response": "#/components/schemas/ResponsesCompactResource",
+      "error": "#/components/schemas/ResponsesErrorEnvelope"
+    },
+    "retrieve": {
+      "method": "get",
+      "path": "/responses/{response_id}",
+      "response": "#/components/schemas/ResponsesResource",
+      "error": "#/components/schemas/ResponsesErrorEnvelope"
+    },
+    "delete": {
+      "method": "delete",
+      "path": "/responses/{response_id}",
+      "response": "#/components/schemas/ResponsesDeletedResource",
+      "error": "#/components/schemas/ResponsesErrorEnvelope"
+    }
+  },
+  "examples": {
+    "request": {
+      "input": "hello",
+      "store": true,
+      "previous_response_id": "resp_avl_0123456789abcdef0123456789abcdef",
+      "reasoning": {
+        "context": "auto"
+      },
+      "context_management": [
+        {
+          "type": "compaction",
+          "compact_threshold": 4096
+        }
+      ],
+      "stream": true,
+      "stream_options": {
+        "include_obfuscation": false
+      },
+      "extensions": {
+        "avalan": {
+          "version": "1",
+          "conversation": {
+            "version": "1",
+            "idempotency_key": "request-1"
+          }
+        }
+      }
+    },
+    "response": {
+      "id": "resp_avl_0123456789abcdef0123456789abcdef",
+      "object": "response",
+      "type": "response",
+      "created_at": 1785729600,
+      "created": 1785729600,
+      "model": "served-model",
+      "status": "completed",
+      "parallel_tool_calls": false,
+      "tool_choice": "auto",
+      "tools": [],
+      "output": [
+        {
+          "id": "msg_avl_0123456789abcdef0123456789abcdef",
+          "type": "message",
+          "status": "completed",
+          "role": "assistant",
+          "content": [
+            {
+              "type": "output_text",
+              "text": "done",
+              "annotations": []
+            }
+          ]
+        }
+      ],
+      "metadata": {
+        "avalan_lifecycle": "published",
+        "avalan_checkpoint_digest": "0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "usage": {
+        "input_tokens": 1,
+        "input_tokens_details": {
+          "cached_tokens": 0
+        },
+        "output_tokens": 1,
+        "output_tokens_details": {
+          "reasoning_tokens": 0
+        },
+        "total_tokens": 2,
+        "input_text_tokens": 1,
+        "output_text_tokens": 1
+      }
+    },
+    "stream": [
+      {
+        "type": "response.created",
+        "response": {
+          "id": "provisional-avl-0123456789abcdef0123456789abcdef",
+          "status": "in_progress"
+        }
+      },
+      {
+        "type": "response.completed",
+        "response_id": "resp_avl_0123456789abcdef0123456789abcdef",
+        "status": "completed"
+      }
+    ],
+    "retrieval": {
+      "method": "GET",
+      "path": "/responses/resp_avl_0123456789abcdef0123456789abcdef",
+      "result": "response"
+    },
+    "deletion": {
+      "id": "resp_avl_0123456789abcdef0123456789abcdef",
+      "object": "response.deleted",
+      "deleted": true,
+      "metadata": {
+        "avalan_local_deletion": "tombstoned",
+        "avalan_upstream_deletion": "pending_outbox_reconciliation"
+      }
+    },
+    "error": {
+      "error": {
+        "message": "Request validation failed.",
+        "type": "invalid_request_error",
+        "code": "conversation_validation_failed",
+        "param": null
+      }
+    }
+  },
+  "schema_sha256": {
+    "ResponsesAdditionalToolsItem": "37999e1ea5d1dc0c9b35901fe7b722316787ea4bd27c4eedba9951cac80f86c2",
+    "ResponsesApplyPatchCallItem": "f1f7aec35f947d7ea0f98794c9a7ff5bc2823ba1e9168511f8b498e0d7645c31",
+    "ResponsesApplyPatchCallOutputItem": "b1c38ea706eebcfae94923b4ed6ea34e6127333f2feb6635d4b7bdf748c0fb81",
+    "ResponsesAvalanExtension": "e7d3e9fc3514bf666e7c592c90e5bf72bc4fcdfd28da1f68325e021b74f1ec09",
+    "ResponsesAvalanResponseExtension": "02cf864978ae26507af1ae80a848318ce17400f5d8bbaca9b58babf18be19998",
+    "ResponsesCodeInterpreterCallItem": "cd53187ba1fc22c8a2b94cf7e26db17d036cf92e6e687465090ffa3b95c06950",
+    "ResponsesCompactRequest": "0813a9497a5f93ece46abb8ed3254495272793105bc79defea4b42a56deaa174",
+    "ResponsesCompactResource": "354cf11b5c7c3f1ffc24f415015b63f957eeb0f930c2aafb84ea74a9849e009d",
+    "ResponsesCompactUsage": "7a09db9e3face48e9eed69b06cc2f8b9d5dbd6ad74000f07b3e5a373d81cf1d1",
+    "ResponsesCompactionControl": "dc4077cca2f15ad6428f3e5b4a5d6ac757854dac84d771f19e20068e5aed8ed5",
+    "ResponsesCompactionItem": "27a921a1adf0e3208464cd60a251b49eedc06f1d6b739b42ee8e6f30973ec2e1",
+    "ResponsesCompactionTriggerItem": "6fd08b6db7438176936ded460fe6ac2bc9d067232593bf5cb885fdf2607cff6f",
+    "ResponsesComputerCallItem": "6a10b194825cbfd0d56ee16ceb7a24dbd163fc94a29d010e9a7f5107fd39a635",
+    "ResponsesComputerCallOutputItem": "2b3f3a6b32b07e15a135fccab77f230d97c8440fd8c26c28e53bd504b806aebb",
+    "ResponsesContainerSelection": "ec628ecfb198bb4b54d268fb8b39f1f1ddab3b5e0b296c684ab8f431a5b4b52c",
+    "ResponsesContinuationResponseExtension": "a71e1ba9c6f2db17c7c49c936e282d910a3a25bde6b04f42d31e2c9badad9f9c",
+    "ResponsesConversationExtension": "c28ee44a81080a8e11f55c121bad46fa1a4dfa91a5962363cd704b87a568b322",
+    "ResponsesCustomToolCallItem": "9a5c3da32d0a8bd49167e6f52976ec8025e046f6f5e9770b67604c43cadeecd3",
+    "ResponsesCustomToolCallOutputItem": "8b5c5edc3474dd3b50cd55948e1f4619388b4385145fde28be52776fa6e39120",
+    "ResponsesDeletedResource": "3f3aed8e2c6b388db28f9157c872bc0afbd2a79c2f4008ee45e8458215ee258d",
+    "ResponsesDeletionMetadata": "3c61225b48b2c696f73e9b6270a95382aee6944a75704af5e57c365263c59b37",
+    "ResponsesEasyInputMessage": "4742f4227c5e15bcad3115fef421c66797d13b26fa592deeb5bcb670bf9d7613",
+    "ResponsesError": "60be4198f3c5a684337ff95cc5ae454711e6b2fab49e5b412b1a5cbc192efdaa",
+    "ResponsesErrorEnvelope": "4b159a784f37be882125f36d56e3686a629a93a58519a5b394c9f21bb98a40e2",
+    "ResponsesFileSearchCallItem": "15d74a8b5fd77fd7c2aad1c92a2aab0ef1042444f36ecc1cacbbe9822740f4e7",
+    "ResponsesFunctionCallItem": "1de23edb2a3a763472234a32b6becc3f78f497ff35946e1a62cdc521424a167f",
+    "ResponsesFunctionCallOutputItem": "8bcb0ffab342e129523bc5ed1d88459db8e416257ea9c577c40f0d7ba9fba7dd",
+    "ResponsesFunctionTool": "ba51bdcc037de6f33148f56153d94861644a2c908000d9daced01a366f152b21",
+    "ResponsesImageGenerationCallItem": "96a5fe3dff1738c716e272bc2cbf1422ba2cde765f4c5303e41e17f39fca3a52",
+    "ResponsesInputFile": "fa7e2f8fd819506dc872e1a7a401c645215a0fa47721240bffa55be7eb5ebb63",
+    "ResponsesInputImage": "628e46a2a759054e86ce657901b378d1858d78c2c14d749e11a6b496d22497a7",
+    "ResponsesInputText": "5a5330100e3e43a67cd1144d080ab8d9212ce7cf8a15e01c62fe51548fc1a046",
+    "ResponsesInputTokenDetails": "018a41190cf42c93c667aac2287f892946862cd90b158e9e7dcf3f5c3e5423e2",
+    "ResponsesItemReference": "fefcea578fa1d918e927c28c36ed16840edde45042350fb66936357db708726e",
+    "ResponsesLocalShellAction": "ada11ef922e821640f3d6eb2ac8e3081e738c5df2ac2b97858d465fb04a9dea5",
+    "ResponsesLocalShellCallItem": "76c08a0fdb4716b03a0fe25935e0d0e8195680ec5f45208d7185565e6d8e60c5",
+    "ResponsesLocalShellCallOutputItem": "cf14ec99ae5f0067e285a70c541e59258d839c48bf0e71b37dbce7901ac415df",
+    "ResponsesMCPApprovalRequestItem": "75f0eae5fe2aead87bd827cc65c490ee73fc3d5214ed96778666e13ca8e03029",
+    "ResponsesMCPApprovalResponseItem": "087a437a67e240883b9e99738504412d7813f4611835da21dc2d925ac76aa30a",
+    "ResponsesMCPCallItem": "47331a3a1a844d37a4f7073714e1475c034789d961a8532e3ddaac10176e9dad",
+    "ResponsesMCPListToolsItem": "af70ced87695d9fd042477be288aa4d90a1fa48b3b4a790889741759bd7f3759",
+    "ResponsesMessageItem": "2e7f745f7aac350a4fe149708aaa3dc85972e2c0330b5be762db3f726c931473",
+    "ResponsesOutputText": "6b1d0997f6c9a6616aba8650a62e8388bb6d1f1c1475a3e13e316f0f60a965ba",
+    "ResponsesOutputTokenDetails": "40bff277439300e7e37331b8cfe99b8f6d3b6941c876e839337b98a7edf7d4cd",
+    "ResponsesPublicMetadata": "d6e61d92fef4a865cf72d2fa2a5a971ab6e1492935425f2fef56a6e052c540df",
+    "ResponsesPublicOutputMessage": "499dc22faff6d6ebebae47a02c146c2989f14a31b37d91786ed7428d8776ce93",
+    "ResponsesPublicOutputText": "5f4e057bcd15e1356cf7f281046a540c1a22f64d7d9dd394dbc3c8738f30fd6b",
+    "ResponsesReasoningConfig": "3626316f0a050f3341bec8df0e2bd16a3d055b14bd612462562f33b320be648f",
+    "ResponsesReasoningItem": "49d5181887e7b874ddb556b164dc4b1d7c55de401e4f453a2d64f6d12569adc3",
+    "ResponsesRefusal": "894e74a598d63a21cde40f9fb7bec0064c2fc30a8714cedddcec3301e8358484",
+    "ResponsesRequest": "e9a783a6aa0fdbfe8bd51c5cec19d8f7ce8cf64e1f02062e85fd6ba13ba2c483",
+    "ResponsesRequestExtensions": "cac441b0106070ef77630e4396ba388e95f8891b345050b8ff9d8046252a3f59",
+    "ResponsesResource": "f28bc9f12db83406cd9b402a0bc7f54bc3ac0ebc3bad2aa4fc26b75099b1822b",
+    "ResponsesResponseExtensions": "aa89e5e2e04725016a2cd6f9b587f4cbe9c64b55ff16f6e92cc8cd1b3d1ecb33",
+    "ResponsesShellAction": "3c98ca11f67ca8c912aa63ab38c3cec91432b7767986bb2689769a7ff9a0763a",
+    "ResponsesShellCallItem": "babae21e7684587c36b4ac79d0c091e862ff7ffb288a7d077477583cfccd8708",
+    "ResponsesShellCallOutputItem-Input": "948b20033cd069b674f7d7508e6387c7d393d8ff4d207712de9e346168ecc346",
+    "ResponsesShellCallOutputItem-Output": "948b20033cd069b674f7d7508e6387c7d393d8ff4d207712de9e346168ecc346",
+    "ResponsesShellExitOutcome": "93c6e9aa05f1c614cec2b2af33a33a420a57e47b4d34f50294bf0c1ec952c2ad",
+    "ResponsesShellOutputContent": "2cf748f3f5dc66e501c2f6f69a75833d6888a9ee9ab3743bfa4c6f61730eea7f",
+    "ResponsesShellTimeoutOutcome": "96f7b11d9aa5338028d833ce0411297369d8ff970cc275bebccfe33c30d0e030",
+    "ResponsesStreamOptions": "623e03c8e0b09078b175a44c2ce162d79796faabfff8d5893091c2cff69de58a",
+    "ResponsesTaskInputExtension": "c7098842708f64c43fa77db0c7cbdc218bdf7e272a3ef3a8e98979c1aa68b223",
+    "ResponsesTextConfig": "cb89eacefd1f3ca1155251cb16f3e4b91c8d67a51bb59ad02edf5ed197d97d47",
+    "ResponsesToolSearchCallItem": "7301decea4001c1ff9e01848c596a230eb1d974659cad2ed6d1bfd5198cf1f77",
+    "ResponsesToolSearchOutputItem": "e7f706baf0fa15a21e420c1e1453f5970d7e4fe65f52975370f8d8c652158454",
+    "ResponsesUsage": "ba86829dfba6d4a1f1df3fcca02b7dc44d75ec1cd68c6365910590593a862ba3",
+    "ResponsesWebSearchCallItem": "400de3bc8741ee0d3c071ad4ad9734d575c83bd3661e12f56a5d000900fc130a"
+  },
+  "canonical_sha256": "f0663afb9aac56707d24c2b309edbc727a8f575a377937a27f22469cc19db626"
+}

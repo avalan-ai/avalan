@@ -442,7 +442,7 @@ def test_agent_topology_rejects_wrong_parent_drift_and_duplicate_lanes() -> (
 def test_agent_conversation_surfaces_are_explicit_and_fail_closed(
     record_property: Callable[[str, object], None],
 ) -> None:
-    """Activate the agent SDK while deferred integrations reject state."""
+    """Activate SDK and served Responses while other surfaces reject."""
     record_property(
         "conversation_acceptance_evidence", "pre_dispatch_rejection"
     )
@@ -455,12 +455,20 @@ def test_agent_conversation_surfaces_are_explicit_and_fail_closed(
     conversation.require_agent_conversation_surface(
         conversation.ConversationSurface.AGENT_SDK
     )
+    assert (
+        conversation.agent_conversation_surface_disposition(
+            conversation.ConversationSurface.SERVED_RESPONSES
+        )
+        is conversation.SurfaceDisposition.ACTIVATED
+    )
+    conversation.require_agent_conversation_surface(
+        conversation.ConversationSurface.SERVED_RESPONSES
+    )
     for surface in (
         conversation.ConversationSurface.CLI,
         conversation.ConversationSurface.FLOW,
         conversation.ConversationSurface.MCP,
         conversation.ConversationSurface.A2A,
-        conversation.ConversationSurface.SERVED_RESPONSES,
     ):
         assert (
             conversation.agent_conversation_surface_disposition(surface)

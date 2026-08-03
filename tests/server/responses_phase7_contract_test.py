@@ -530,7 +530,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
                 ],
             },
         )
-        sync_messages.assert_awaited_once()
+        sync_messages.assert_not_awaited()
 
     async def test_native_reasoning_remains_reasoning_text(self) -> None:
         response_id = "resp-native"
@@ -834,8 +834,8 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
             [item["input"] for item in body["output"]],
             ['{"a":1}', '{"b":2}'],
         )
-        stream_sync.assert_awaited_once()
-        non_stream_sync.assert_awaited_once()
+        stream_sync.assert_not_awaited()
+        non_stream_sync.assert_not_awaited()
 
     async def test_summary_coalescing_stops_at_part_identity(self) -> None:
         response_id = "resp-coalesce"
@@ -1724,7 +1724,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
         ]
         self.assertEqual(terminals, ["response.completed"])
         self.assertEqual(source.close_count, 1)
-        sync_messages.assert_awaited_once()
+        sync_messages.assert_not_awaited()
 
     async def test_streaming_retention_failure_wins_over_cleanup_error(
         self,
@@ -2400,7 +2400,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
         self.assertNotIn(summary, dumps(output[1:]))
         self.assertNotIn(native, dumps((output[0], output[2], output[3])))
         self.assertNotIn(summary, dumps(output[3]))
-        sync_messages.assert_awaited_once()
+        sync_messages.assert_not_awaited()
 
     async def test_non_stream_rebases_sparse_summary_emission_order(
         self,
@@ -2442,7 +2442,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
                 for index, provider_index in enumerate(provider_order)
             ],
         )
-        sync_messages.assert_awaited_once()
+        sync_messages.assert_not_awaited()
 
     async def test_non_stream_repeated_provider_ids_stay_response_unique(
         self,
@@ -2529,7 +2529,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(set(reasoning_ids)), 2)
         self.assertNotIn("provider-reused", reasoning_ids)
-        sync_messages.assert_awaited_once()
+        sync_messages.assert_not_awaited()
 
     async def test_non_stream_abnormal_status_and_sync_ownership(self) -> None:
         cases = (
@@ -2863,7 +2863,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
             ],
             [2, 1],
         )
-        non_stream_sync.assert_awaited_once()
+        non_stream_sync.assert_not_awaited()
 
     async def test_non_stream_summary_isolated_from_json_answer(self) -> None:
         response_id = "resp-non-stream"
@@ -2935,7 +2935,7 @@ class ResponsesPhase7ContractTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(loads(output[1]["content"][0]["text"]), {"ok": True})
         self.assertNotIn(summary, dumps(output[1]))
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     def test_legacy_adapter_flushes_pending_text_at_state_boundaries(
         self,

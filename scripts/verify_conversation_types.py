@@ -60,6 +60,7 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     7: "3233186579fe2425b5b017fdd0d663e324c62e2f779d36e4c2f9ba42d26273cf",
     8: "982334e8a0e44a2aa67b76b2102ab029dcafcf2ba926c4fa0f6416155f2ad192",
     9: "21e29fe78f7b4d440823ebbaee67cf6860b39bd56ff5d9991f7f705e6d1de3ba",
+    10: "83fbf7cc9f79eb58b9726e428c53e5efcba49b06a34b01781b1eacd3ec1386e5",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
@@ -72,6 +73,7 @@ _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     7: "1846eec90730345dce5d1328ace214c7d6db955cd3b72fb21e62b7ece2f1d3e6",
     8: "7f0608577a2fa99880ba4e7a9af997e00bc28f47a6c1c1217ad85c5a68a77237",
     9: "37e7f1d8febe592d8d74b5685144ee3d0d723b12372c3dcb81b4a45d580cab5f",
+    10: "faf38741233053a0d2c13d1e6f14049672a67b5991d3952ec936a3fb2b1c6302",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -111,6 +113,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
     9: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    10: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -238,6 +244,15 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             + "phase9_sync_server_negative.py"
         ): "666458887d73f54185953e2268c5d6c865b5e016a07eac5507eb656cbc4538ad",
     },
+    10: {
+        "tests/conversation_type_contracts/phase10_positive.py": (
+            "3ba7a72165238970cb4a2fb129cf84cdf1771ce78303c382cb34b9435257849e"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase10_sync_server_negative.py"
+        ): "3664e620d77a18b4aad27e1e06c4511a29255f5198dafdcf8f39edd7f72b31fa",
+    },
 }
 
 
@@ -288,7 +303,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.phase9.json"
+        / "type_contract_manifest.phase10.json"
     )
 
 

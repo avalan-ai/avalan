@@ -1,4 +1,4 @@
-"""Expose dormant conversation contract definitions."""
+"""Expose conversation continuity contracts."""
 
 from . import state as _state
 from .agent import AgentConversationLane as AgentConversationLane
@@ -194,6 +194,39 @@ from .durable_codec import (
 from .durable_codec import (
     execution_reservation_digest as execution_reservation_digest,
 )
+from .envelope import (
+    CONTINUATION_ENVELOPE_NAMESPACE as CONTINUATION_ENVELOPE_NAMESPACE,
+)
+from .envelope import (
+    CONTINUATION_ENVELOPE_PREFIX as CONTINUATION_ENVELOPE_PREFIX,
+)
+from .envelope import (
+    CONTINUATION_ENVELOPE_VERSION as CONTINUATION_ENVELOPE_VERSION,
+)
+from .envelope import (
+    ContinuationEnvelopeAdvance as ContinuationEnvelopeAdvance,
+)
+from .envelope import (
+    ContinuationEnvelopeAuthority as ContinuationEnvelopeAuthority,
+)
+from .envelope import ContinuationEnvelopeCodec as ContinuationEnvelopeCodec
+from .envelope import ContinuationEnvelopeKey as ContinuationEnvelopeKey
+from .envelope import (
+    ContinuationEnvelopeKeyResolver as ContinuationEnvelopeKeyResolver,
+)
+from .envelope import (
+    ContinuationEnvelopeKeyStatus as ContinuationEnvelopeKeyStatus,
+)
+from .envelope import (
+    ContinuationEnvelopeLimits as ContinuationEnvelopeLimits,
+)
+from .envelope import ContinuationEnvelopeToken as ContinuationEnvelopeToken
+from .envelope import (
+    InMemoryContinuationEnvelopeKeyResolver as InMemoryContinuationEnvelopeKeyResolver,  # noqa: E501
+)
+from .envelope import (
+    OpenedContinuationEnvelope as OpenedContinuationEnvelope,
+)
 from .errors import (
     ConversationAmbiguousDispatchError as ConversationAmbiguousDispatchError,
 )
@@ -216,6 +249,9 @@ from .errors import (
     ConversationFeatureUnavailableError as ConversationFeatureUnavailableError,
 )
 from .errors import ConversationIntegrityError as ConversationIntegrityError
+from .errors import (
+    ConversationKeyCompromisedError as ConversationKeyCompromisedError,
+)
 from .errors import ConversationKeyMissingError as ConversationKeyMissingError
 from .errors import ConversationKeyPolicyError as ConversationKeyPolicyError
 from .errors import ConversationKeyRetiredError as ConversationKeyRetiredError
@@ -625,6 +661,7 @@ from .store import (
 )
 from .store import StoreAwaitBoundary as StoreAwaitBoundary
 from .store import StoreDiagnostics as StoreDiagnostics
+from .store import StoreNonRetentionAudit as StoreNonRetentionAudit
 from .stores import (
     CONVERSATION_PGSQL_HEAD_REVISION as CONVERSATION_PGSQL_HEAD_REVISION,
 )

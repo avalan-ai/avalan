@@ -25,6 +25,10 @@ from .responses_lifecycle import (
     configure_served_responses,
 )
 from .routers import mcp as mcp_router
+from .stateless_responses import (
+    StatelessResponsesConfiguration,
+    configure_stateless_responses,
+)
 
 from collections.abc import AsyncIterator, Callable
 from contextlib import (
@@ -354,6 +358,9 @@ def register_agent_endpoints(
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
     interaction_configuration: ServerInteractionConfiguration | None = None,
     responses_configuration: ServedResponsesConfiguration | None = None,
+    stateless_responses_configuration: (
+        StatelessResponsesConfiguration | None
+    ) = None,
 ) -> None:
     assert (specs_path is None) ^ (
         settings is None
@@ -361,6 +368,10 @@ def register_agent_endpoints(
 
     selected_protocols = _normalize_protocols(protocols)
     configure_served_responses(app, responses_configuration)
+    configure_stateless_responses(
+        app,
+        stateless_responses_configuration,
+    )
 
     lifespan = _create_lifespan(
         hub=hub,
@@ -434,6 +445,9 @@ def agents_server(
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
     interaction_configuration: ServerInteractionConfiguration | None = None,
     responses_configuration: ServedResponsesConfiguration | None = None,
+    stateless_responses_configuration: (
+        StatelessResponsesConfiguration | None
+    ) = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
@@ -464,6 +478,10 @@ def agents_server(
     )
     app = FastAPI(title=name, version=version, lifespan=lifespan)
     configure_served_responses(app, responses_configuration)
+    configure_stateless_responses(
+        app,
+        stateless_responses_configuration,
+    )
 
     _configure_cors(
         app,

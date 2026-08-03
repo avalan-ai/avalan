@@ -412,7 +412,7 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
 
         self.assertIn("event: response.completed", lines)
         self.assertEqual(lines[-1], "")
-        self.assertEqual(orchestrator.sync_count, 1)
+        self.assertEqual(orchestrator.sync_count, 0)
 
     async def test_non_streaming_response(self):
         app = self.FastAPI()
@@ -430,7 +430,7 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
         body = resp.json()
         self.assertEqual(body["model"], "server-model")
         self.assertEqual(body["output"][0]["content"][0]["text"], "c")
-        self.assertTrue(orchestrator.synced)
+        self.assertFalse(orchestrator.synced)
         self.assertEqual(
             body["usage"],
             {
@@ -520,7 +520,7 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                             }
                         ],
                     )
-                self.assertEqual(orchestrator.synced, 1)
+                self.assertEqual(orchestrator.synced, 0)
                 self.assertEqual(orchestrator.adapter.attempts, 1)
                 self.assertEqual(orchestrator.adapter.dispatches, 1)
                 self.assertEqual(orchestrator.adapter.retries, 0)
