@@ -18,30 +18,30 @@ class ConfiguredChildOrchestrator(Protocol):
     @property
     def id(self) -> UUID:
         """Return the configured child agent identifier."""
-        ...
+        raise NotImplementedError
 
     @property
     def operations(self) -> list[AgentOperation]:
         """Return configured child operations."""
-        ...
+        raise NotImplementedError
 
     @property
     def tool(self) -> ToolManager:
         """Return the configured child tool manager."""
-        ...
+        raise NotImplementedError
 
     @property
     def event_manager(self) -> EventManager:
         """Return the configured child event manager."""
-        ...
+        raise NotImplementedError
 
     def conversation_engine_args(self) -> dict[str, object]:
         """Return isolated configured arguments for a child invocation."""
-        ...
+        raise NotImplementedError
 
     def engine_agent_for_operation(self, operation_index: int) -> EngineAgent:
         """Return the loaded engine agent for one operation."""
-        ...
+        raise NotImplementedError
 
 
 @final

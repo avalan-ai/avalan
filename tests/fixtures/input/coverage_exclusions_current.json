@@ -370,21 +370,6 @@
       341,
       342
     ],
-    "src/avalan/agent/conversation_child.py": [
-      21,
-      22,
-      26,
-      27,
-      31,
-      32,
-      36,
-      37,
-      40,
-      41,
-      44,
-      45,
-      46
-    ],
     "src/avalan/agent/conversation_trace.py": [
       45,
       46,
@@ -662,11 +647,6 @@
       517,
       524,
       531
-    ],
-    "src/avalan/conversation/agent.py": [
-      494,
-      495,
-      496
     ],
     "src/avalan/conversation/crypto.py": [
       74,
@@ -2900,5 +2880,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "fb48c6412e47854825da97ebe06a22ad8ee990480b5e2a7c212ce83425208acf"
+  "snapshot_sha256": "5f5903f20309952a4da71f7bbf3729f5dff2a7b2d437acecb0a3e1bea0118a4b"
 }

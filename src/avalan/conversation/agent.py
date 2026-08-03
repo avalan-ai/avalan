@@ -491,7 +491,7 @@ class AgentConversationInvocationAdapter(Protocol):
         invoke_model: Callable[[object], Awaitable[object]],
     ) -> AgentConversationResult:
         """Run one invocation without retaining its callbacks."""
-        ...
+        raise NotImplementedError
 
 
 def agent_conversation_provider_result(

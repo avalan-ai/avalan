@@ -213,8 +213,8 @@
       "path": "src/avalan/conversation/agent.py",
       "from_size": 0,
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "to_size": 39216,
-      "to_sha256": "dd55e149f724b772e405b7c5615983bbabe6a7fefbf9065cf55f1146668e8bbc"
+      "to_size": 39238,
+      "to_sha256": "69a07550e949f2bd56e123df7636881333970ce62d3c08617d443b4656ffe101"
     },
     {
       "path": "tests/conversation/agent_integration_contract_test.py",
@@ -234,8 +234,8 @@
       "path": "src/avalan/agent/conversation_child.py",
       "from_size": 0,
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "to_size": 3203,
-      "to_sha256": "79624f08b7f5b9da240a330306dfb75e4d4941038760fcc2975f61a0fa92bf8a"
+      "to_size": 3335,
+      "to_sha256": "a5c76caa3306c91319b44aa6677ea8baa080da444f211e822d98932e5fbddd23"
     },
     {
       "path": "src/avalan/agent/conversation_trace.py",
@@ -331,5 +331,5 @@
     "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
     "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
   ],
-  "canonical_sha256": "8f8a3353abe054cac946d5d763f0dfd211652217db9ea70b87904f433aacbe7f"
+  "canonical_sha256": "21a79fab5f09fe0d60179e74d67215bfb3bee6e9d4a633fbca904d43d9496570"
 }

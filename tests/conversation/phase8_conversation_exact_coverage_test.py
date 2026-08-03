@@ -30,7 +30,10 @@ import avalan.conversation.providers.openai as openai_provider
 import avalan.conversation.runtime as runtime_module
 import avalan.conversation.state as state_module
 from avalan.agent import Specification
-from avalan.agent.conversation_child import AgentConversationChildBinding
+from avalan.agent.conversation_child import (
+    AgentConversationChildBinding,
+    ConfiguredChildOrchestrator,
+)
 from avalan.agent.conversation_trace import (
     AgentProviderResponseTrace,
     AgentToolOutputTrace,
@@ -66,6 +69,37 @@ class _ChildOrchestrator:
 def _invalid() -> Any:
     """Return one deliberately invalid runtime contract value."""
     return object()
+
+
+@pytest.mark.anyio
+async def test_protocol_fallbacks_raise_explicitly() -> None:
+    """Keep direct protocol fallback execution explicit and covered."""
+    with pytest.raises(NotImplementedError):
+        await conversation_agent.AgentConversationInvocationAdapter.execute(
+            cast(Any, object()),
+            cast(Any, object()),
+            "coverage input",
+            object(),
+            cast(Any, AsyncMock()),
+        )
+
+    for name in ("id", "operations", "tool", "event_manager"):
+        descriptor = vars(ConfiguredChildOrchestrator)[name]
+        assert isinstance(descriptor, property)
+        getter = descriptor.fget
+        assert getter is not None
+        with pytest.raises(NotImplementedError):
+            getter(cast(Any, object()))
+
+    with pytest.raises(NotImplementedError):
+        ConfiguredChildOrchestrator.conversation_engine_args(
+            cast(Any, object())
+        )
+    with pytest.raises(NotImplementedError):
+        ConfiguredChildOrchestrator.engine_agent_for_operation(
+            cast(Any, object()),
+            0,
+        )
 
 
 def _idempotency(

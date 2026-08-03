@@ -58,7 +58,7 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     5: "c290884561e74464e74d4ad44c113b97fd7c2094aa5b0b32fc11b0b16f97d719",
     6: "b7f61f1c466cdba692d17ff69b1b1cf5ac21c0821b563fbc02c21711b17953fd",
     7: "3233186579fe2425b5b017fdd0d663e324c62e2f779d36e4c2f9ba42d26273cf",
-    8: "982334e8a0e44a2aa67b76b2102ab029dcafcf2ba926c4fa0f6416155f2ad192",
+    8: "b595fb576b56d91e0aedccbad9243580ec2d0f99242b8473a444d3ac3362e84a",
     9: "21e29fe78f7b4d440823ebbaee67cf6860b39bd56ff5d9991f7f705e6d1de3ba",
     10: "83fbf7cc9f79eb58b9726e428c53e5efcba49b06a34b01781b1eacd3ec1386e5",
     11: "b76b9fb644986f94835e7142e6216b336df74342770e4d9ce90156ce029c1796",
@@ -230,7 +230,7 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
     },
     8: {
         "tests/conversation_type_contracts/phase8_positive.py": (
-            "f3d0dc8263789a57c6f5758e07493004c6f5725a14fe4a67758ada3b56c0ef05"
+            "19fd2c9ff1b6e5179e466fef4f672ed37a45c762cacd628dbdf39163ff0390f9"
         ),
         (
             "tests/conversation_type_contracts/"

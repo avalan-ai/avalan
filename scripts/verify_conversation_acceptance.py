@@ -437,7 +437,7 @@ _PHASE8_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase8.json"
 )
 _PHASE8_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "8f8a3353abe054cac946d5d763f0dfd211652217db9ea70b87904f433aacbe7f"
+    "21a79fab5f09fe0d60179e74d67215bfb3bee6e9d4a633fbca904d43d9496570"
 )
 _PHASE9_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase9.json"
@@ -449,7 +449,7 @@ _PHASE10_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase10.json"
 )
 _PHASE10_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "607948018a995c00e326e09733243e189e7ac2f51a2696c8c4591ccd97945de7"
+    "7e1741ceaadcced8784fa5b1056f2aff8267c79b20b7c34983d4d4b26c41b3d4"
 )
 _PHASE11_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase11.json"
@@ -491,8 +491,8 @@ _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/conversation/fakes.py": (
         61_349,
         "feeab4cbcc14e4882d7b8de19481353cff60e0eb787655e22cab4faf2e782957",
-        61_544,
-        "4dcb484149f9998c2cf39b02f3ba38e852d0b8c9cfe1ad353a592493efce9ac6",
+        61_529,
+        "add73527adf4b488a13d80a618bfa060d1586db5fd9b4c31dbc68fafbe94bb81",
     ),
     "src/avalan/conversation/items.py": (
         69_302,
@@ -1999,13 +1999,7 @@ def verify_gate_source_isolation(
         (
             _phase11_provider_transitions(root)
             if manifest.current_phase >= 11
-            or (
-                root
-                / (
-                    "tests/fixtures/conversation/"
-                    "provider_transition.phase11.json"
-                )
-            ).is_file()
+            or (root / _PHASE11_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
     )
