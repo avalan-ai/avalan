@@ -15,10 +15,10 @@
     },
     {
       "path": "src/avalan/conversation/agent.py",
-      "from_size": 39216,
-      "from_sha256": "dd55e149f724b772e405b7c5615983bbabe6a7fefbf9065cf55f1146668e8bbc",
-      "to_size": 40790,
-      "to_sha256": "cd8c9fc8d0b01efff82114cf96878d56ec2837200784af928e98f6bca7912693"
+      "from_size": 39238,
+      "from_sha256": "69a07550e949f2bd56e123df7636881333970ce62d3c08617d443b4656ffe101",
+      "to_size": 40812,
+      "to_sha256": "f918b399ae495dbf3d849af7b23f0d38ce4bdb462348a76b4d3c406040f22cd5"
     },
     {
       "path": "src/avalan/conversation/envelope.py",
@@ -129,5 +129,5 @@
   "evidence_node_ids": [
     "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
   ],
-  "canonical_sha256": "607948018a995c00e326e09733243e189e7ac2f51a2696c8c4591ccd97945de7"
+  "canonical_sha256": "7e1741ceaadcced8784fa5b1056f2aff8267c79b20b7c34983d4d4b26c41b3d4"
 }

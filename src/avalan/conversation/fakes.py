@@ -1554,7 +1554,7 @@ async def _terminal_deterministic_fake_provider_stream(
     ] = (_validate_deterministic_fake_provider_runtime),
 ) -> ProviderResult:
     state = _validate_runtime(runtime, script)
-    stream_state = _owned_stream(state, stream)
+    _owned_stream(state, stream)
     await _reach(state.controller, "provider:terminal")
     state = _validate_runtime(runtime, script)
     stream_state = _owned_stream(state, stream)

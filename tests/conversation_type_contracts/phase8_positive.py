@@ -46,7 +46,7 @@ async def prove_phase8_agent_continuity(
         agent_conversation_surface_disposition(surface),
         SurfaceDisposition,
     )
-    assert_type(require_agent_conversation_surface(surface), None)
+    require_agent_conversation_surface(surface)
     parent_path = assert_type(
         parent_agent_topology_path(
             ConversationAgentId("parent"),

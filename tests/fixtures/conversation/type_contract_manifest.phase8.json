@@ -491,7 +491,7 @@
       "lifecycle": "active",
       "active_from_phase": 8,
       "path": "tests/conversation_type_contracts/phase8_positive.py",
-      "source_sha256": "f3d0dc8263789a57c6f5758e07493004c6f5725a14fe4a67758ada3b56c0ef05",
+      "source_sha256": "19fd2c9ff1b6e5179e466fef4f672ed37a45c762cacd628dbdf39163ff0390f9",
       "expected_diagnostics": []
     },
     {
@@ -519,5 +519,5 @@
       ]
     }
   ],
-  "manifest_sha256": "562e50a236fb4f8bdb8ddcaaeb437acaf209f1c31b39e5e001d136db2c3de275"
+  "manifest_sha256": "7ee76570d6dd29c1e5412f05d18035d089d3d74c9a4265481e647646c9e55370"
 }

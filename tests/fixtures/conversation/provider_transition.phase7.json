@@ -45,8 +45,8 @@
       "path": "src/avalan/conversation/fakes.py",
       "from_size": 61349,
       "from_sha256": "feeab4cbcc14e4882d7b8de19481353cff60e0eb787655e22cab4faf2e782957",
-      "to_size": 61544,
-      "to_sha256": "4dcb484149f9998c2cf39b02f3ba38e852d0b8c9cfe1ad353a592493efce9ac6"
+      "to_size": 61529,
+      "to_sha256": "add73527adf4b488a13d80a618bfa060d1586db5fd9b4c31dbc68fafbe94bb81"
     },
     {
       "path": "src/avalan/conversation/items.py",
@@ -155,5 +155,5 @@
     "tests/conversation/compaction_e2e_test.py::test_tool_cycles_across_two_boundaries_keep_exact_final_order",
     "tests/conversation/compaction_e2e_test.py::test_standalone_explicit_fork_restarts_and_original_parent_branches"
   ],
-  "canonical_sha256": "e5ee12994883f9ca6bb27ffefc7b0f32cf6ebe1abb8694cb8c963c447ddd8b6a"
+  "canonical_sha256": "04531438f539b4b1bd6f3e0594c8b472d58949bec08165fde3ea1c0fb77e1a9f"
 }
