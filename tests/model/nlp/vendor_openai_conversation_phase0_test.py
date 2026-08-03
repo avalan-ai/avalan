@@ -72,7 +72,7 @@ from openai.types.shared import Reasoning as ResponseReasoning
 from openai.types.shared_params import Reasoning as RequestReasoning
 from packaging.specifiers import SpecifierSet
 from packaging.version import Version
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from avalan.entities import GenerationSettings
 from avalan.model.capability import ProviderCapabilitySupport
@@ -1675,7 +1675,12 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
     assert stateful_request_fields.isdisjoint(
         GenerationSettings.__dataclass_fields__
     )
-    assert stateful_request_fields.isdisjoint(ResponsesRequest.model_fields)
+    assert stateful_request_fields & ResponsesRequest.model_fields.keys() == {
+        "background",
+        "context_management",
+        "previous_response_id",
+        "store",
+    }
     assert stateful_request_fields <= DORMANT_CONVERSATION_REQUEST_FIELDS
 
     provider_wire_paths = _strings(policy["provider_wire_paths"])
@@ -1812,17 +1817,14 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
         assert field_name in DORMANT_CONVERSATION_REQUEST_FIELDS
         assert field_name not in GenerationSettings.__dataclass_fields__
         assert field_name not in signature(GenerationSettings).parameters
-        assert field_name not in ResponsesRequest.model_fields
-        with pytest.raises(ValidationError) as exc_info:
-            ResponsesRequest.model_validate(
-                {
-                    "input": "phase-0",
-                    field_name: False,
-                }
-            )
-        error = exc_info.value.errors(include_url=False)[0]
-        assert error["type"] == "conversation_continuity_dormant"
-        assert error["ctx"] == {"field": field_name}
+        assert field_name in ResponsesRequest.model_fields
+        request = ResponsesRequest.model_validate(
+            {
+                "input": "phase-0",
+                field_name: False,
+            }
+        )
+        assert getattr(request, field_name) is False
 
     _assert_provider_adapter_transport_policy(adapter_source)
 

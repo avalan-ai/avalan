@@ -1500,6 +1500,47 @@ async def test_scripted_settlement_lifecycle_and_outbox_races(
         "checkpoint_id": str(checkpoint.identity.checkpoint_id),
         "tombstoned": False,
     }
+    authority_key = str(conversation.authority_digest(scope))
+    with monkeypatch.context() as context:
+        context.setattr(store, "_read_one", AsyncMock(return_value=None))
+        with pytest.raises(conversation.ConversationAuthorizationError):
+            await store.tombstone(
+                commit.public_response_id,
+                scope,
+                datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
+            )
+    raced_tombstone = conversation.with_checkpoint_integrity(
+        replace(
+            checkpoint,
+            lifecycle=conversation.CheckpointLifecycle.TOMBSTONED,
+            timestamps=replace(
+                checkpoint.timestamps,
+                tombstoned_at=datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
+            ),
+        )
+    )
+    with monkeypatch.context() as context:
+        context.setattr(store, "_read_one", AsyncMock(return_value=public_row))
+        context.setattr(
+            store,
+            "_load_checkpoint",
+            AsyncMock(side_effect=conversation.ConversationAuthorizationError),
+        )
+        load_lifecycle = AsyncMock(return_value=raced_tombstone)
+        context.setattr(store, "_load_checkpoint_lifecycle", load_lifecycle)
+
+        resolved = await store.tombstone(
+            commit.public_response_id,
+            scope,
+            datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
+        )
+
+        assert resolved is raced_tombstone
+        load_lifecycle.assert_awaited_once_with(
+            checkpoint.identity.checkpoint_id,
+            scope,
+            conversation.CheckpointLifecycle.TOMBSTONED,
+        )
     with monkeypatch.context() as context:
         context.setattr(store, "_read_one", AsyncMock(return_value=public_row))
         context.setattr(
@@ -1520,7 +1561,47 @@ async def test_scripted_settlement_lifecycle_and_outbox_races(
                 datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
             )
 
-    authority_key = str(conversation.authority_digest(scope))
+    for response_tombstoned, lifecycle in (
+        (True, "committed"),
+        (False, "tombstoned"),
+    ):
+        checkpoint_row = {
+            "authority_digest": authority_key,
+            "lifecycle_state": lifecycle,
+        }
+        locked_public_row = {
+            "authority_digest": authority_key,
+            "checkpoint_id": str(checkpoint.identity.checkpoint_id),
+            "tombstoned": response_tombstoned,
+        }
+        with monkeypatch.context() as context:
+            context.setattr(
+                store,
+                "_read_one",
+                AsyncMock(return_value=public_row),
+            )
+            context.setattr(
+                store,
+                "_load_checkpoint",
+                AsyncMock(return_value=checkpoint),
+            )
+            context.setattr(
+                store,
+                "_prepare_lifecycle_envelope",
+                AsyncMock(return_value=(prepared.envelope, prepared.key)),
+            )
+            context.setattr(
+                store,
+                "_fetchone",
+                AsyncMock(side_effect=(checkpoint_row, locked_public_row)),
+            )
+            with pytest.raises(conversation.ConversationConflictError):
+                await store.tombstone(
+                    commit.public_response_id,
+                    scope,
+                    datetime(2026, 8, 1, 12, 1, tzinfo=UTC),
+                )
+
     delete_rows = (
         (None,),
         (

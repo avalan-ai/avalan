@@ -317,6 +317,11 @@ class InMemoryConversationStore:
 
     _CONCEALED_DIGEST = "0" * 64
 
+    @property
+    def durable(self) -> bool:
+        """Return false because process-local state cannot survive restart."""
+        return False
+
     def __init__(
         self,
         *,

@@ -311,8 +311,8 @@
       "path": "tests/conversation/pgsql_store_test.py",
       "from_size": 71441,
       "from_sha256": "b585ff0ad94903b254b674112adadd55f7e2c9b42c69e312508288c7c88b6edb",
-      "to_size": 71550,
-      "to_sha256": "4eaf7c3ee9f26be4400befaf88c2f6b688c66dd3af0d7054a9d56e1c8eb76cc8"
+      "to_size": 72714,
+      "to_sha256": "51507cc14cf2b62d528f243b597157e829846f6be75657562a462be841f04579"
     }
   ],
   "evidence_node_ids": [
@@ -331,5 +331,5 @@
     "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
     "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
   ],
-  "canonical_sha256": "2ed5dc7274142e9dceef58c2049fb9732704ee63dddb370d5eda5eb7e5fcdd00"
+  "canonical_sha256": "8f8a3353abe054cac946d5d763f0dfd211652217db9ea70b87904f433aacbe7f"
 }

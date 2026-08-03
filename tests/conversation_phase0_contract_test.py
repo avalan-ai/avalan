@@ -242,10 +242,6 @@ def test_provider_contract_evidence_is_typed_and_dormant(
     """Bind provider claims to typed SDK evidence without activation."""
     record_property("conversation_acceptance_evidence", "wire")
     contract_path = _FIXTURES / "provider_contract.json"
-    provider_test_path = (
-        _ROOT / "tests/model/nlp/vendor_openai_conversation_phase0_test.py"
-    )
-    provider_source_path = _ROOT / "src/avalan/model/nlp/text/vendor/openai.py"
     contract = _object(contract_path)
     conformance = _object(_FIXTURES / "provider_conformance.json")
     transitions = _provider_transition()
@@ -263,20 +259,24 @@ def test_provider_contract_evidence_is_typed_and_dormant(
             _PHASE0_PROVIDER_SOURCE_SHA256,
         ),
     }
-    for relative, path in (
-        (
-            "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
-            provider_test_path,
+    expected_to = {
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
+            97_796,
+            "67614ab06d27b44fa49c8553b5f7a7a0cad2de3979dd3cd44ee8adf8c134e08b",
         ),
-        ("src/avalan/model/nlp/text/vendor/openai.py", provider_source_path),
-    ):
+        "src/avalan/model/nlp/text/vendor/openai.py": (
+            337_354,
+            "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5",
+        ),
+    }
+    for relative in expected_from:
         transition = transitions[relative]
         size, digest = expected_from[relative]
         assert transition["from_size"] == size
         assert transition["from_sha256"] == digest
-        payload = path.read_bytes()
-        assert transition["to_size"] == len(payload)
-        assert transition["to_sha256"] == sha256(payload).hexdigest()
+        to_size, to_digest = expected_to[relative]
+        assert transition["to_size"] == to_size
+        assert transition["to_sha256"] == to_digest
     assert contract["current_phase"] == 0
     assert contract["activation_state"] == "dormant"
     assert conformance["current_phase"] == 0
@@ -434,13 +434,27 @@ def test_phase0_public_surfaces_fail_closed() -> None:
 def test_one_shot_behavior_omits_conversation_state(
     record_property: Callable[[str, object], None],
 ) -> None:
-    """Preserve current one-shot request models in the dormant phase."""
+    """Preserve stateless defaults after explicit server activation."""
     record_property("conversation_acceptance_evidence", "runtime")
     generation_fields = {field.name for field in fields(GenerationSettings)}
     response_fields = set(ResponsesRequest.model_fields)
     prohibited = set(DORMANT_CONVERSATION_REQUEST_FIELDS)
     assert generation_fields.isdisjoint(prohibited)
-    assert response_fields.isdisjoint(prohibited)
+    assert response_fields & prohibited == {
+        "background",
+        "context_management",
+        "include",
+        "previous_response_id",
+        "store",
+    }
+    assert ResponsesRequest.model_fields["background"].default is False
+    assert ResponsesRequest.model_fields["store"].default is False
+    for field_name in (
+        "context_management",
+        "include",
+        "previous_response_id",
+    ):
+        assert ResponsesRequest.model_fields[field_name].default is None
 
 
 def test_tracked_gate_sources_do_not_depend_on_ignored_material(

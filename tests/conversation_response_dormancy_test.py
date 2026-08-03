@@ -77,6 +77,22 @@ _DORMANT_PAYLOADS: tuple[tuple[str, object], ...] = (
     ("upstream_response_id", "upstream-1"),
 )
 
+_ACTIVATED_PHASE9_FIELDS = frozenset(
+    {
+        "background",
+        "context_management",
+        "include",
+        "previous_response_id",
+        "reasoning.context",
+        "store",
+    }
+)
+_UNSUPPORTED_PAYLOADS = tuple(
+    (field, value)
+    for field, value in _DORMANT_PAYLOADS
+    if field not in _ACTIVATED_PHASE9_FIELDS
+)
+
 _NORMALIZED_ALIASES = (
     ("Previous-Response-ID", "previous_response_id"),
     ("CONVERSATION MODE", "conversation_mode"),
@@ -100,8 +116,8 @@ def _client(orchestrator: Orchestrator) -> TestClient:
 @pytest.mark.parametrize("stream", (False, True), ids=("body", "stream"))
 @pytest.mark.parametrize(
     ("field", "value"),
-    _DORMANT_PAYLOADS,
-    ids=tuple(field for field, _value in _DORMANT_PAYLOADS),
+    _UNSUPPORTED_PAYLOADS,
+    ids=tuple(field for field, _value in _UNSUPPORTED_PAYLOADS),
 )
 def test_responses_reject_dormant_conversation_fields_before_dispatch(
     field: str,
@@ -116,11 +132,9 @@ def test_responses_reject_dormant_conversation_fields_before_dispatch(
         "pre_dispatch_rejection",
     )
     expected_fields = {
-        candidate
-        for candidate, _value in _DORMANT_PAYLOADS
-        if candidate != "reasoning.context"
+        candidate for candidate, _value in _UNSUPPORTED_PAYLOADS
     }
-    assert expected_fields == set(
+    assert expected_fields < set(
         server_entities.DORMANT_CONVERSATION_REQUEST_FIELDS
     )
     dispatch_calls = 0
@@ -137,26 +151,24 @@ def test_responses_reject_dormant_conversation_fields_before_dispatch(
 
     monkeypatch.setattr(responses_router, "orchestrate", reject_dispatch)
     orchestrator = object.__new__(Orchestrator)
-    dormant_payload = (
-        {"reasoning": {"context": value}}
-        if field == "reasoning.context"
-        else {field: value}
-    )
     response = _client(orchestrator).post(
         "/responses",
         json={
             "input": "hello",
             "model": "probe-model",
             "stream": stream,
-            **dormant_payload,
+            field: value,
         },
     )
 
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert len(detail) == 1
-    assert detail[0]["type"] == "conversation_continuity_dormant"
-    assert detail[0]["ctx"] == {"field": field}
+    assert response.status_code == 400
+    assert response.json() == {
+        "error": {
+            "message": "Request validation failed.",
+            "type": "invalid_request_error",
+            "code": "conversation_validation_failed",
+        }
+    }
     assert dispatch_calls == 0
 
 
@@ -197,11 +209,8 @@ def test_responses_reject_normalized_conversation_field_aliases(
         },
     )
 
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert len(detail) == 1
-    assert detail[0]["type"] == "conversation_continuity_dormant"
-    assert detail[0]["ctx"] == {"field": field}
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "conversation_validation_failed"
     assert dispatch_calls == 0
 
 
@@ -232,11 +241,8 @@ def test_responses_reject_normalized_nested_reasoning_context(
         },
     )
 
-    assert response.status_code == 422
-    detail = response.json()["detail"]
-    assert len(detail) == 1
-    assert detail[0]["type"] == "conversation_continuity_dormant"
-    assert detail[0]["ctx"] == {"field": "reasoning.context"}
+    assert response.status_code == 400
+    assert response.json()["error"]["code"] == "conversation_validation_failed"
     assert dispatch_calls == 0
 
 

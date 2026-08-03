@@ -1,6 +1,7 @@
 from .authority import (
     REMOTE_CONTAINER_PROFILE_SELECTOR_KEYS,
     reject_remote_runtime_authority_extra_fields,
+    responses_replay_authority_payload,
 )
 from .container_policy import (
     RemoteContainerRequestError,
@@ -67,7 +68,7 @@ async def validate_remote_container_profile_selection(
             else None
         )
         reject_remote_runtime_authority_extra_fields(
-            payload,
+            responses_replay_authority_payload(payload),
             allowed_fields=_OPENAI_COMPATIBLE_REQUEST_FIELDS,
             allow_container_profile_selector=True,
             path="request",

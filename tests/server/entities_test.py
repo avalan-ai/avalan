@@ -16,6 +16,7 @@ from avalan.server.entities import (
     EngineRequest,
     MCPFileDescriptor,
     MCPToolRequest,
+    OpenAIRequestExtensions,
     ReasoningConfig,
     ResponseFormatJSONSchema,
     ResponsesRequest,
@@ -1391,6 +1392,21 @@ class ChatEntitiesTestCase(TestCase):
         self.assertEqual(req.text.stop, ["DONE"])
         self.assertEqual(req.text.format.type, "json_object")
 
+    def test_responses_request_normalizes_legacy_typed_fields(self) -> None:
+        req = ResponsesRequest.model_validate(
+            {
+                "input": "hi",
+                "reasoning": ReasoningConfig(
+                    summary=ReasoningSummaryMode.AUTO
+                ),
+                "extensions": OpenAIRequestExtensions(),
+            }
+        )
+
+        assert req.reasoning is not None
+        self.assertIs(req.reasoning.summary, ReasoningSummaryMode.AUTO)
+        self.assertIsNotNone(req.extensions)
+
     def test_responses_request_accepts_string_input(self) -> None:
         req = ResponsesRequest(
             input="summarize this",
@@ -1538,7 +1554,11 @@ class ChatEntitiesTestCase(TestCase):
     def test_responses_request_rejects_runtime_policy_extra_keys(
         self,
     ) -> None:
-        for key in _REMOTE_RUNTIME_POLICY_KEYS:
+        for key in (
+            candidate
+            for candidate in _REMOTE_RUNTIME_POLICY_KEYS
+            if candidate != "user"
+        ):
             with self.subTest(key=key):
                 with self.assertRaisesRegex(
                     ValidationError,
@@ -1550,6 +1570,16 @@ class ChatEntitiesTestCase(TestCase):
                             key: True,
                         }
                     )
+
+        request = ResponsesRequest.model_validate(
+            {
+                "input": "hi",
+                "user": "untrusted-end-user-metadata",
+            }
+        )
+        self.assertEqual(request.user, "untrusted-end-user-metadata")
+        with self.assertRaises(ValidationError):
+            ResponsesRequest.model_validate({"input": "hi", "user": True})
 
     def test_responses_request_accepts_safe_container_profile_selector_shape(
         self,

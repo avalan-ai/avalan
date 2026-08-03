@@ -7,7 +7,7 @@ from logging import getLogger
 from types import SimpleNamespace
 from typing import Any, AsyncIterator, cast
 from unittest.mock import AsyncMock, MagicMock, patch
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from fastapi import HTTPException
@@ -1430,6 +1430,54 @@ async def test_form_capable_tool_stream_uses_session_projection() -> None:
             mcp_router.MCPToolRequest(input_string="continue"),
             "progress",
             session=context,
+        )
+        messages = _sse_messages(await _response_chunks(response))
+    assert messages[-1]["id"] == "call"
+
+
+@pytest.mark.anyio
+async def test_mcp_shared_orchestration_retains_uuid_identity() -> None:
+    """Keep the shared Chat/MCP response ID parseable as a UUID."""
+    request = _Request()
+    chat_request = mcp_router.ChatCompletionRequest(
+        model="test",
+        messages=[
+            mcp_router.ChatMessage(
+                role=mcp_router.MessageRole.USER,
+                content="continue",
+            )
+        ],
+        stream=True,
+    )
+
+    async def recording_orchestrator(
+        messages: object,
+        **kwargs: object,
+    ) -> object:
+        del messages, kwargs
+        return object()
+
+    async def stream(**kwargs: object) -> AsyncIterator[bytes]:
+        response_id = kwargs["response_id"]
+        assert isinstance(response_id, UUID)
+        await sleep(0)
+        yield b'{"jsonrpc":"2.0","id":"call","result":{"content":[]}}\n'
+
+    with (
+        patch.object(
+            mcp_router,
+            "_build_chat_request",
+            return_value=chat_request,
+        ),
+        patch.object(mcp_router, "_stream_mcp_response", side_effect=stream),
+    ):
+        response = await mcp_router._start_tool_streaming_response(
+            cast(object, request),
+            getLogger("mcp-shared-response-id"),
+            cast(Orchestrator, recording_orchestrator),
+            "call",
+            mcp_router.MCPToolRequest(input_string="continue"),
+            "progress",
         )
         messages = _sse_messages(await _response_chunks(response))
     assert messages[-1]["id"] == "call"
