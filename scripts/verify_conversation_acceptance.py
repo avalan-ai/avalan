@@ -442,6 +442,12 @@ _PHASE9_PROVIDER_TRANSITION_PATH = (
 _PHASE9_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
     "24703b5cad97d8ba01f10d0167092f817874387a3a72ccf3e69db6749afbe4f1"
 )
+_PHASE10_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase10.json"
+)
+_PHASE10_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "607948018a995c00e326e09733243e189e7ac2f51a2696c8c4591ccd97945de7"
+)
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
         9_978,
@@ -688,6 +694,11 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "824e502fb7bcf9f6a97d720e20a5fd77e4ec41f4e1af10f69a0c268de45fb555"
         ),
     },
+    10: {
+        "tests/conversation/server_stateless_e2e_test.py": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -700,6 +711,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     7: "c791ea6bc92ad8ee8140bdddf2396c7f485306d946ce315723c274f654224227",
     8: "c922e9081f5944d65b923222372029f365f65e7a7ce4350cdbe43c74d0ce9110",
     9: "2002bcaa8330005dc9cd01574c75ee4f2be2ddaca3bbff93dd9d77996e4ff527",
+    10: "1f610ea0f07a58132dc7a829c44b31b8b4c697f680dd896836d3de5b8f63d1c2",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -712,6 +724,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     7: "b8fea5ce7efd5ef3f44913da597a7befec1a96084282a3524d58b807e88a2bc9",
     8: "f7dfd4dc132cd9007d09a73a6f884688e7084324ba01773b6be585b7ad261365",
     9: "3ba2b5064970f4fbfabd203b9fe0c453c2ddbd2751c511224df807850e1c3355",
+    10: "4cbc71ed23fca55866c3b2f0b5d2c1eb0efa2cb05c1649b0bd92ef0002a0cb4c",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -751,6 +764,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         "20bb89ea58062fd7588ecab0a2a2e7f7d33ffc7c2057157ca9969c2bdfcd976d",
     ),
     9: (
+        22,
+        "39fe2f2258df939cdf93338a2ed4bf797f9bfbdd1324dbe6856f1e8fe12d0395",
+    ),
+    10: (
         22,
         "39fe2f2258df939cdf93338a2ed4bf797f9bfbdd1324dbe6856f1e8fe12d0395",
     ),
@@ -902,6 +919,12 @@ _PHASE9_CORRECTED_FAILURE_STRUCTURE_BY_PHASE = {
         190,
         "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
     ),
+    10: (
+        19,
+        10,
+        190,
+        "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
@@ -944,6 +967,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         "045c3597d6633aeb595b5081e9944b52742d09fb132aae62cf6f4c73826192d8",
     ),
     9: (
+        15,
+        14,
+        29,
+        "045c3597d6633aeb595b5081e9944b52742d09fb132aae62cf6f4c73826192d8",
+    ),
+    10: (
         15,
         14,
         29,
@@ -1202,7 +1231,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase9.json"
+    return fixture_root() / "acceptance_manifest.phase10.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1829,6 +1858,7 @@ def verify_gate_source_isolation(
         _phase7_provider_transitions(root),
         _phase8_provider_transitions(root),
         _phase9_provider_transitions(root),
+        _phase10_provider_transitions(root),
     )
     transition_chains: dict[
         str,
@@ -2501,6 +2531,7 @@ def _validate_phase0_provider_byte_anchors(root: Path) -> None:
         _phase7_provider_transitions(root),
         _phase8_provider_transitions(root),
         _phase9_provider_transitions(root),
+        _phase10_provider_transitions(root),
     )
     for relative, (
         expected_size,
@@ -3193,6 +3224,117 @@ def _phase9_provider_transitions(
     if len(transitions) != 14:
         raise ConversationAcceptanceError(
             "Phase 9 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase10_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact caller-held Responses source transitions."""
+    path = root / _PHASE10_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE10_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 10 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 10 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 10
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase10-stateless-responses-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 10 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE10_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 10 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 10 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/server_stateless_e2e_test.py::"
+            "test_normative_server_stateless_contract"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 10 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    empty_sha256 = sha256(b"").hexdigest()
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 10 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 10 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 10 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"),
+            "transition source digest",
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"),
+            "transition target digest",
+        )
+        if (
+            type(from_size) is not int
+            or from_size < 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or (from_size == 0 and from_sha256 != empty_sha256)
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 10 provider byte transition is invalid"
+            )
+        transitions[relative] = (
+            from_size,
+            from_sha256,
+            to_size,
+            to_sha256,
+        )
+    if len(transitions) != 17:
+        raise ConversationAcceptanceError(
+            "Phase 10 provider transition inventory is invalid"
         )
     return transitions
 

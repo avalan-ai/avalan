@@ -32,6 +32,7 @@ class DurableConversationErrorCode(StrEnum):
 
     KEY_MISSING = "conversation_key_missing"
     KEY_RETIRED = "conversation_key_retired"
+    KEY_COMPROMISED = "conversation_key_compromised"
     KEY_POLICY_INVALID = "conversation_key_policy_invalid"
     CRYPTO_AUTHENTICATION_FAILED = "conversation_crypto_authentication_failed"
     FEATURE_UNAVAILABLE = "conversation_feature_unavailable"
@@ -87,6 +88,9 @@ _ERROR_MESSAGES: Mapping[
         ),
         DurableConversationErrorCode.KEY_RETIRED: (
             "conversation encryption key is retired"
+        ),
+        DurableConversationErrorCode.KEY_COMPROMISED: (
+            "conversation encryption key is compromised"
         ),
         DurableConversationErrorCode.KEY_POLICY_INVALID: (
             "conversation encryption key policy is invalid"
@@ -291,6 +295,13 @@ class ConversationKeyRetiredError(ConversationError):
 
     def __init__(self) -> None:
         super().__init__(DurableConversationErrorCode.KEY_RETIRED)
+
+
+class ConversationKeyCompromisedError(ConversationError):
+    """Report a key that policy revoked before its normal retirement."""
+
+    def __init__(self) -> None:
+        super().__init__(DurableConversationErrorCode.KEY_COMPROMISED)
 
 
 class ConversationKeyPolicyError(ConversationError):

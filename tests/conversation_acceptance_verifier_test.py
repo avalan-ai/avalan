@@ -408,6 +408,18 @@ def test_phase1_replacement_retains_tombstone_history_and_source(
         "_phase9_provider_transitions",
         lambda _root: phase9_transitions,
     )
+    phase10_transitions = {
+        relative: transition
+        for relative, transition in _VERIFIER._phase10_provider_transitions(
+            _ROOT
+        ).items()
+        if relative in relative_paths
+    }
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase10_provider_transitions",
+        lambda _root: phase10_transitions,
+    )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
 
@@ -609,6 +621,18 @@ def test_phase1_sources_append_without_rewriting_phase0_pins(
         _VERIFIER,
         "_phase9_provider_transitions",
         lambda _root: phase9_transitions,
+    )
+    phase10_transitions = {
+        relative: transition
+        for relative, transition in _VERIFIER._phase10_provider_transitions(
+            _ROOT
+        ).items()
+        if relative in relative_paths
+    }
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase10_provider_transitions",
+        lambda _root: phase10_transitions,
     )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
@@ -879,6 +903,11 @@ def test_active_source_drift_is_rejected_by_external_hash(
     monkeypatch.setattr(
         _VERIFIER,
         "_phase9_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase10_provider_transitions",
         lambda _root: {},
     )
 

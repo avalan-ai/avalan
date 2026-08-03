@@ -555,6 +555,37 @@ def test_agent_turn_construction_and_capabilities_fail_closed() -> None:
                 ),
             ),
         )
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(
+            turn,
+            parent=replace(
+                parent,
+                authority=replace(
+                    parent.authority,
+                    principal_id=conversation.AuthorityPrincipalId(
+                        "foreign-principal"
+                    ),
+                ),
+            ),
+        )
+
+    explicit_branch = conversation.ExplicitBranchAdvance(
+        parent_checkpoint_id=parent.identity.checkpoint_id,
+        branch_id=turn.branch_id,
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(turn, parent=parent, advance=explicit_branch)
+    named_head = conversation.NamedHeadAdvance(
+        head_id=conversation.NamedHeadId("coverage-head"),
+        parent_checkpoint_id=conversation.CheckpointId("wrong-parent"),
+        expected_revision=conversation.NamedHeadRevision(0),
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(turn, parent=parent, advance=named_head)
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(turn, parent=parent, advance=cast(Any, _invalid()))
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(turn, advance=named_head)
 
     _, public_turn, _, _, _ = _public_runtime()
     mismatched_topology = conversation.ProviderLaneTopology(

@@ -1,0 +1,727 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "current_phase": 10,
+  "assets": [
+    "opaque_provider_state",
+    "caller_held_envelopes",
+    "checkpoint_lineage",
+    "authority_bindings",
+    "upstream_retained_state",
+    "encrypted_payload_identity",
+    "monotonic_key_generation",
+    "atomic_suspension_state",
+    "global_store_capacity",
+    "native_stored_response_ancestry",
+    "provider_compaction_state",
+    "durable_tool_execution_segments",
+    "structured_input_answer_binding",
+    "agent_lane_topology",
+    "single_conversation_replay_owner"
+  ],
+  "trust_boundaries": [
+    "caller_to_server",
+    "server_to_provider",
+    "runtime_to_checkpoint_store",
+    "runtime_to_observability",
+    "local_delete_to_upstream_delete",
+    "payload_reference_to_ciphertext",
+    "shared_postgresql_transaction",
+    "store_lifecycle_to_owned_pool",
+    "local_checkpoint_to_provider_stored_response",
+    "compact_output_to_stateless_checkpoint",
+    "provider_segment_to_tool_effect",
+    "structured_answer_to_durable_resume",
+    "child_lane_to_parent_visible_context",
+    "agent_runtime_to_conversation_coordinator"
+  ],
+  "threats": [
+    {
+      "id": "opaque-state-disclosure",
+      "asset": "Opaque provider continuation state",
+      "actor": "Untrusted caller or operator",
+      "boundary": "Provider lane to logs and public output",
+      "attack": "Opaque state leaks through prompts, displays, logs, traces, errors, or representations.",
+      "controls": [
+        "opaque-value-type",
+        "content-safe-observability",
+        "sentinel-redaction-tests"
+      ],
+      "requirement_ids": [
+        "CONV-N-001",
+        "CONV-N-002",
+        "CONV-N-120",
+        "CONV-N-130"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "envelope-theft",
+      "asset": "Caller-held continuation envelope",
+      "actor": "Network or log reader",
+      "boundary": "Caller to served Responses API",
+      "attack": "A stolen envelope is replayed as bearer session state.",
+      "controls": [
+        "authenticated-encryption",
+        "authority-binding",
+        "short-ttl",
+        "anti-replay-ledger"
+      ],
+      "requirement_ids": [
+        "CONV-N-042",
+        "CONV-N-098",
+        "CONV-N-121",
+        "CONV-N-122"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "confused-deputy",
+      "asset": "Tenant and principal authority",
+      "actor": "Authenticated caller with unrelated authority",
+      "boundary": "Public response resolution",
+      "attack": "An untrusted request field is treated as authorization for another principal.",
+      "controls": [
+        "trusted-authority-source",
+        "authorize-before-existence",
+        "constant-disclosure-errors"
+      ],
+      "requirement_ids": [
+        "CONV-N-091",
+        "CONV-N-118",
+        "CONV-N-119"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "cross-tenant-equality",
+      "asset": "Checkpoint and envelope identity",
+      "actor": "Cross-tenant caller",
+      "boundary": "Lookup, compare, and error projection",
+      "attack": "Equality, timing, or error differences reveal another tenant's state.",
+      "controls": [
+        "tenant-scoped-digests",
+        "constant-disclosure-errors",
+        "no-cross-lane-comparison"
+      ],
+      "requirement_ids": [
+        "CONV-N-002",
+        "CONV-N-118",
+        "CONV-N-119"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "replay-and-rollback",
+      "asset": "Named head and immutable checkpoint lineage",
+      "actor": "Holder of stale valid state",
+      "boundary": "Continuation and branch advancement",
+      "attack": "A stale token advances a head twice or rolls sequence state backward.",
+      "controls": [
+        "head-cas",
+        "sequence-binding",
+        "explicit-branch-operation",
+        "stable-replay-error"
+      ],
+      "requirement_ids": [
+        "CONV-N-025",
+        "CONV-N-026",
+        "CONV-N-122"
+      ],
+      "owner_phase": 2,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "decompression-size-bomb",
+      "asset": "Checkpoint decoder and storage budget",
+      "actor": "Caller controlling encoded state",
+      "boundary": "Envelope and checkpoint decoding",
+      "attack": "Compressed, nested, or oversized state exhausts memory before limits are enforced.",
+      "controls": [
+        "preallocation-size-limit",
+        "bounded-depth",
+        "bounded-item-count",
+        "streaming-safe-decode"
+      ],
+      "requirement_ids": [
+        "CONV-N-098",
+        "CONV-N-117",
+        "CONV-N-137"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "orphaned-upstream-state",
+      "asset": "Provider-stored response ancestry",
+      "actor": "Provider or storage failure",
+      "boundary": "Local tombstone and upstream deletion outbox",
+      "attack": "Local deletion succeeds while upstream state remains without reconciliation.",
+      "controls": [
+        "local-first-tombstone",
+        "idempotent-deletion-outbox",
+        "partial-status",
+        "operator-reconciliation"
+      ],
+      "requirement_ids": [
+        "CONV-N-092",
+        "CONV-N-102",
+        "CONV-N-103"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "deletion-race",
+      "asset": "Stored checkpoint and descendants",
+      "actor": "Concurrent authorized callers",
+      "boundary": "Continue, branch, retrieve, and delete",
+      "attack": "Continuation races deletion and republishes a tombstoned response.",
+      "controls": [
+        "transactional-tombstone",
+        "head-cas",
+        "descendant-policy",
+        "post-commit-authorization"
+      ],
+      "requirement_ids": [
+        "CONV-N-025",
+        "CONV-N-101",
+        "CONV-N-103",
+        "CONV-N-118"
+      ],
+      "owner_phase": 11,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation_phase0_contract_test.py::test_phase0_threat_controls_are_complete"
+      ]
+    },
+    {
+      "id": "payload-reference-reassignment",
+      "asset": "Encrypted checkpoint and lane payload identity",
+      "actor": "Tenant peer or corrupted database writer",
+      "boundary": "Payload reference to encrypted payload",
+      "attack": "A reference is reassigned across checkpoint, lane, conversation, key, or authority before decryption.",
+      "controls": [
+        "exact-composite-foreign-key",
+        "immutable-reference-trigger",
+        "pre-decrypt-identity-validation",
+        "reference-count-invariant"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_payload_references_reject_identity_reassignment"
+      ]
+    },
+    {
+      "id": "deletion-target-loss",
+      "asset": "Provider-stored upstream deletion target",
+      "actor": "Crash, retry, tombstone, expiry, or garbage collector",
+      "boundary": "Local tombstone to upstream deletion reconciliation",
+      "attack": "The upstream target or encrypted target bytes disappear before deletion is acknowledged.",
+      "controls": [
+        "encrypted-deletion-target-payload",
+        "reconciliation-reference-foreign-key",
+        "nonterminal-reference-retention-trigger",
+        "delete-after-success-state-machine"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_tombstone_reconciliation_and_gc",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation"
+      ]
+    },
+    {
+      "id": "stale-key-generation-rollback",
+      "asset": "Current per-authority encryption-key generation",
+      "actor": "Stale process retaining an older current-key view",
+      "boundary": "Key resolver to durable key registry",
+      "attack": "A stale writer demotes the newer key and writes fresh payloads under an older generation.",
+      "controls": [
+        "authority-generation-row-lock",
+        "monotonic-generation-compare",
+        "same-generation-key-identity",
+        "transactional-key-cutover"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer"
+      ]
+    },
+    {
+      "id": "torn-structured-suspension",
+      "asset": "Conversation checkpoint, interaction continuation, and task suspension",
+      "actor": "Crash or downstream persistence failure",
+      "boundary": "Shared PostgreSQL suspension transaction",
+      "attack": "Only one durable surface commits, leaving an orphan checkpoint or unresumable task.",
+      "controls": [
+        "caller-owned-unit-of-work",
+        "exact-continuation-binding",
+        "settle-after-outer-commit",
+        "whole-transaction-rollback"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface"
+      ]
+    },
+    {
+      "id": "global-capacity-race",
+      "asset": "Durable checkpoint, reservation, staging, head, and outbox bounds",
+      "actor": "Concurrent writers on independent pool connections",
+      "boundary": "Count check to durable row insertion",
+      "attack": "Multiple transactions observe spare capacity and jointly exceed a configured global maximum.",
+      "controls": [
+        "transaction-advisory-capacity-lock",
+        "count-and-insert-same-transaction",
+        "loser-rollback",
+        "exact-post-race-count"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_checkpoint_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_idempotency_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_execution_staging_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_head_capacity_is_global_under_race",
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_outbox_capacity_is_global_under_race"
+      ]
+    },
+    {
+      "id": "premature-close-settlement",
+      "asset": "Durable store lifecycle and owned PostgreSQL pool",
+      "actor": "Resource failure or task cancellation",
+      "boundary": "Store close request to owned pool shutdown",
+      "attack": "The store reports open after pool shutdown succeeds or closed before it succeeds, inviting an unsafe retry or concealing a live resource.",
+      "controls": [
+        "resource-close-success-precedes-closed-state",
+        "closed-state-precedes-post-close-hook",
+        "resource-close-failure-preserves-open-state",
+        "cancellation-propagation",
+        "idempotent-final-close"
+      ],
+      "requirement_ids": [
+        "CONV-N-117"
+      ],
+      "owner_phase": 3,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_real_close_failure_remains_open_and_retriable",
+        "tests/conversation/pgsql_store_test.py::test_store_close_failure_or_cancellation_remains_retriable"
+      ]
+    },
+    {
+      "id": "direct-sdk-provider-sidecar-disclosure",
+      "asset": "Opaque provider continuation state on the public direct SDK",
+      "actor": "Untrusted direct SDK caller or exception observer",
+      "boundary": "Private provider-state sidecar to streamed public output and errors",
+      "attack": "A durable stream failure renders opaque continuation bytes through output, handles, exceptions, or nested exception chains.",
+      "controls": [
+        "private-sidecar-ownership",
+        "post-commit-handle-publication",
+        "content-safe-public-errors",
+        "encrypted-durable-payloads"
+      ],
+      "requirement_ids": [
+        "CONV-N-001",
+        "CONV-N-002",
+        "CONV-N-030",
+        "CONV-N-117"
+      ],
+      "owner_phase": 4,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_stream_failure_redacts_opaque_sidecar"
+      ]
+    },
+    {
+      "id": "native-stateless-ledger-disclosure",
+      "asset": "Native OpenAI and Azure private replay ledger",
+      "actor": "Untrusted SDK caller, operator, or sibling branch",
+      "boundary": "Provider response items to durable checkpoint and public SDK",
+      "attack": "Opaque reasoning bytes or upstream item identities escape through output, diagnostics, exceptions, representations, or another branch.",
+      "controls": [
+        "coordinator-owned-provider-ledger",
+        "opaque-value-type",
+        "content-free-native-diagnostics",
+        "redacted-checkpoint-representation",
+        "immutable-parent-branching"
+      ],
+      "requirement_ids": [
+        "CONV-N-035",
+        "CONV-N-036",
+        "CONV-N-037",
+        "CONV-N-041",
+        "CONV-N-074",
+        "CONV-N-075"
+      ],
+      "owner_phase": 5,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/coordinator_e2e_test.py::test_public_retrieval_is_lossy_but_private_replay_is_complete",
+        "tests/conversation/openai_stateless_e2e_test.py::test_native_openai_fresh_process_durable_replay",
+        "tests/conversation/native_openai_provider_test.py::test_native_openai_two_turn_replay_is_exact_and_private"
+      ]
+    },
+    {
+      "id": "stored-response-quarantine-loss",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Stream-close cancellation, database failure, capacity pressure, or process restart",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "A validated terminal provider response is lost during stream-close settlement or before local commit, then reused or evicted before cleanup can prove its disposition.",
+      "controls": [
+        "capacity-independent-quarantine",
+        "terminal-handoff-before-close-settlement",
+        "validated-terminal-only-ownership",
+        "durable-private-response-identity",
+        "exact-idempotent-replay",
+        "restart-safe-cleanup"
+      ],
+      "requirement_ids": [
+        "CONV-N-047"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_stored_quarantine_survives_pgsql_capacity_and_restart",
+        "tests/conversation/openai_stored_e2e_test.py::test_stream_close_quarantine_survives_pgsql_restart_capacity"
+      ]
+    },
+    {
+      "id": "unknown-retention-local-expiry-bypass",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Unavailable lifecycle resolver or upstream deletion worker",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "Unknown upstream retention suppresses the local TTL or prevents local-first deletion, keeping a public handle usable beyond its local policy.",
+      "controls": [
+        "local-ttl-always-enforced",
+        "effective-retention-minimum",
+        "local-first-idempotent-tombstone",
+        "content-free-delete-result"
+      ],
+      "requirement_ids": [
+        "CONV-N-046"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_stored_provider_test.py::test_unproven_lifecycle_and_conversion_fail_closed"
+      ]
+    },
+    {
+      "id": "public-private-id-alias",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Provider response or malicious store caller",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "A private upstream response identifier aliases any Avalan public identifier and becomes retrievable, observable, or confused with local authority.",
+      "controls": [
+        "all-public-identifier-disjointness",
+        "constructor-and-codec-rejection",
+        "atomic-memory-and-pg-rejection",
+        "store-boundary-rejection",
+        "sdk-publication-rejection"
+      ],
+      "requirement_ids": [
+        "CONV-N-043"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_stored_public_upstream_alias_never_commits_pgsql_mapping",
+        "tests/conversation/openai_stored_e2e_test.py::test_generated_checkpoint_alias_fails_pgsql_codec_and_sdk"
+      ]
+    },
+    {
+      "id": "execution-definition-drift",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Runtime configuration drift across a continuation or restart",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "A stored response is continued or retrieved under different instructions, tools, tool choice, safety fields, or generation settings while retaining the same coarse revision labels.",
+      "controls": [
+        "canonical-execution-definition-bytes",
+        "execution-definition-digest-binding",
+        "provider-returned-execution-field-validation",
+        "durable-binding-and-digest-reconciliation",
+        "pre-dispatch-drift-rejection"
+      ],
+      "requirement_ids": [
+        "CONV-N-045"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_stored_provider_test.py::test_execution_definition_bytes_fail_before_dispatch",
+        "tests/conversation/openai_stored_e2e_test.py::test_retrieve_execution_drift_fails_over_tcp_and_pgsql"
+      ]
+    },
+    {
+      "id": "retired-runtime-substitution",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Provider rotation or process restart",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "An old checkpoint is resumed using current runtime configuration or credentials instead of the exact retired runtime retained for its rotation window.",
+      "controls": [
+        "retired-runtime-registry",
+        "exact-binding-runtime-selection",
+        "restart-safe-runtime-resolution",
+        "expired-runtime-pre-dispatch-rejection"
+      ],
+      "requirement_ids": [
+        "CONV-N-048"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/openai_stored_e2e_test.py::test_retired_runtime_continues_after_pgsql_store_restart"
+      ]
+    },
+    {
+      "id": "definitive-rejection-fence-poisoning",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Known HTTP provider rejection",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "A definitive request rejection is misclassified as ambiguous dispatch and permanently poisons the idempotency key with an unnecessary retry fence.",
+      "controls": [
+        "typed-known-provider-rejection",
+        "reservation-release-on-definitive-rejection",
+        "no-ambiguity-record-on-http400",
+        "safe-corrected-retry"
+      ],
+      "requirement_ids": [
+        "CONV-N-047"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_stored_provider_test.py::test_known_provider_rejection_releases_idempotency_fence"
+      ]
+    },
+    {
+      "id": "ambiguous-dispatch-fence-loss",
+      "asset": "Native provider-stored response ancestry",
+      "actor": "Transport ambiguity, concurrent reconciler, or process restart",
+      "boundary": "Local checkpoint and provider-stored response lifecycle",
+      "attack": "A possibly dispatched request is retried, reconciled by an unauthorized caller, or resolved differently by competing workers after the ambiguity fence is lost.",
+      "controls": [
+        "durable-typed-ambiguity-record",
+        "authority-bound-reconciliation",
+        "idempotent-single-winner-resolution",
+        "no-retry-while-fenced"
+      ],
+      "requirement_ids": [
+        "CONV-N-047"
+      ],
+      "owner_phase": 6,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/pgsql_conformance_test.py::test_pgsql_ambiguous_dispatch_reconciliation_survives_restart_race"
+      ]
+    },
+    {
+      "id": "compaction-boundary-substitution",
+      "asset": "Provider compaction boundary and canonical suffix",
+      "actor": "Malformed provider output or local replay implementation",
+      "boundary": "Provider compact output to stateless replay ledger",
+      "attack": "A forged, stale, or reconstructed boundary removes canonical items, breaks tool adjacency, or substitutes a local summary.",
+      "controls": [
+        "latest-valid-boundary-selection",
+        "opaque-item-preservation",
+        "canonical-tool-adjacency",
+        "no-local-summarization",
+        "active-forbidden-transform-call-closure"
+      ],
+      "requirement_ids": [
+        "CONV-N-062",
+        "CONV-N-063",
+        "CONV-N-064",
+        "CONV-N-067",
+        "CONV-N-073"
+      ],
+      "owner_phase": 7,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/compaction_contract_test.py::test_latest_boundary_retains_exact_suffix_and_tool_adjacency",
+        "tests/conversation/compaction_e2e_test.py::test_tool_cycles_across_two_boundaries_keep_exact_final_order",
+        "tests/conversation/compaction_contract_test.py::test_compaction_execution_closure_has_no_local_substitute_calls"
+      ]
+    },
+    {
+      "id": "standalone-compact-state-disclosure",
+      "asset": "Provider-private standalone compact result",
+      "actor": "Untrusted SDK caller, observer, or incompatible parent",
+      "boundary": "Standalone compact output to explicit stateless commit",
+      "attack": "Opaque compact bytes become assistant content, a public parent, an exception detail, or an implicitly converted stored continuation.",
+      "controls": [
+        "private-compact-handle",
+        "content-free-representation",
+        "explicit-compatible-commit",
+        "mode-separated-parent-types",
+        "active-private-surface-canary"
+      ],
+      "requirement_ids": [
+        "CONV-N-068",
+        "CONV-N-069",
+        "CONV-N-070",
+        "CONV-N-071"
+      ],
+      "owner_phase": 7,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_compaction_test.py::test_native_inline_latest_replay_and_standalone_wire",
+        "tests/conversation/compaction_e2e_test.py::test_standalone_explicit_fork_restarts_and_original_parent_branches",
+        "tests/conversation/compaction_contract_test.py::test_compaction_private_canary_is_absent_from_active_public_surfaces"
+      ]
+    },
+    {
+      "id": "tool-effect-before-durable-segment",
+      "asset": "Durable provider tool-request segment and effect identity",
+      "actor": "Crash, retrying worker, or effectful tool",
+      "boundary": "Committed provider segment to external tool effect",
+      "attack": "A tool effect runs before its requesting segment is recoverable, or a retry repeats an effect without its frozen policy and idempotency identity.",
+      "controls": [
+        "commit-requested-segment-before-effect",
+        "canonical-tool-call-identity",
+        "effect-policy-recovery-decision",
+        "draft-2020-12-schema-before-effect",
+        "postgresql-crash-boundary-tests"
+      ],
+      "requirement_ids": [
+        "CONV-N-107",
+        "CONV-N-108"
+      ],
+      "owner_phase": 8,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_prepared_call_runs_real_tool_loop_once",
+        "tests/conversation/agent_integration_contract_test.py::test_durable_tool_crash_points_have_one_safe_recovery_action",
+        "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_nonlocal_schema_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_persists_only_validated_arguments"
+      ]
+    },
+    {
+      "id": "structured-answer-reference-replay",
+      "asset": "Checkpoint-bound structured-input answer and portable continuation reference",
+      "actor": "Concurrent answer submitter, stale worker, or corrupted durable record",
+      "boundary": "Typed answer resolution to durable conversation continuation",
+      "attack": "An answer is copied into a provider snapshot, rebound to another checkpoint or revision, or applied more than once after restart.",
+      "controls": [
+        "reference-only-portable-continuation",
+        "stable-binding-digest",
+        "exact-pending-to-answered-revision",
+        "atomic-answer-once-application"
+      ],
+      "requirement_ids": [
+        "CONV-N-109",
+        "CONV-N-110",
+        "CONV-N-111",
+        "CONV-N-112",
+        "CONV-N-113",
+        "CONV-N-114"
+      ],
+      "owner_phase": 8,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/interaction/headless_policy_test.py::test_conversation_handoff_fails_before_non_atomic_persistence",
+        "tests/agent/durable_continuation_resume_test.py::test_conversation_answer_applies_once_across_race_and_replay",
+        "tests/agent/durable_continuation_resume_test.py::test_resume_rejects_canonical_termination_before_provider_work",
+        "tests/agent/durable_continuation_resume_test.py::test_snapshot_call_tampering_rejects_before_provider_dispatch",
+        "tests/agent/durable_continuation_resume_test.py::test_portable_stager_binds_conversation_without_snapshot_copy",
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
+      ]
+    },
+    {
+      "id": "agent-lane-state-confusion",
+      "asset": "Deterministic parent and child provider-lane topology",
+      "actor": "Drifted provider runtime, sibling agent, or malformed child result",
+      "boundary": "Child provider lane to parent-visible canonical context",
+      "attack": "A child opaque ledger, upstream ID, or output from another provider or model is merged into the parent or sibling lane.",
+      "controls": [
+        "topology-derived-lane-identities",
+        "exact-provider-binding-validation",
+        "persisted-retention-policy",
+        "visible-child-result-only-merge"
+      ],
+      "requirement_ids": [
+        "CONV-N-115",
+        "CONV-N-116"
+      ],
+      "owner_phase": 8,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+        "tests/conversation/agent_integration_e2e_test.py::test_child_merge_rejects_wrong_provider_and_model_binding",
+        "tests/conversation/agent_integration_e2e_test.py::test_failed_child_never_dispatches_or_publishes_parent"
+      ]
+    },
+    {
+      "id": "duplicate-agent-replay-ownership",
+      "asset": "Single canonical conversation replay owner",
+      "actor": "Reusable agent, model wrapper, or tool-loop implementation",
+      "boundary": "Agent runtime to canonical conversation coordinator",
+      "attack": "An agent or model wrapper retains a second transcript and continues from state that diverges from the committed checkpoint.",
+      "controls": [
+        "immutable-per-invocation-agent-turn",
+        "coordinator-only-provider-state",
+        "no-model-manager-fallback",
+        "reusable-agent-isolation-check"
+      ],
+      "requirement_ids": [
+        "CONV-N-107",
+        "CONV-N-132"
+      ],
+      "owner_phase": 8,
+      "lifecycle": "active",
+      "evidence_node_ids": [
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_prepared_call_runs_real_tool_loop_once",
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart"
+      ]
+    }
+  ],
+  "threat_model_sha256": "ad3dda84779718865c90a46072dbda61c9d326091a1e557224309327c759390e"
+}

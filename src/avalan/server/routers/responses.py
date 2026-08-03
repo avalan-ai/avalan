@@ -1,4 +1,14 @@
 from ...agent.orchestrator import Orchestrator
+from ...conversation.contract import (
+    ConversationBranchId,
+    NamedHeadId,
+    NamedHeadRevision,
+    ParentAdvanceMode,
+)
+from ...conversation.envelope import (
+    ContinuationEnvelopeAdvance,
+    ContinuationEnvelopeToken,
+)
 from ...conversation.errors import (
     ConversationAuthorizationError,
     ConversationCapabilityError,
@@ -23,6 +33,7 @@ from ...model.stream import (
 from ...server.entities import (
     SKILL_CONTENT_REDACTION,
     ModelVisibleServerProtocolTextRedactor,
+    ResponsesCompactRequest,
     ResponsesRequest,
     ServerOutputRedactionChannel,
     ServerOutputRedactionSettings,
@@ -32,6 +43,7 @@ from ...server.entities import (
     sanitize_server_protocol_value,
     server_output_redaction_settings_from_state,
 )
+from ...types import JsonValue
 from ...utils import to_json
 from .. import di_get_logger, di_get_orchestrator
 from ..interaction import (
@@ -51,11 +63,19 @@ from ..responses_lifecycle import (
     StoredResponsesResource,
 )
 from ..responses_schema import (
+    ResponsesCompactResource,
+    ResponsesConversationExtension,
     ResponsesDeletedResource,
     ResponsesErrorEnvelope,
     ResponsesResource,
 )
 from ..sse import sse_headers, sse_message
+from ..stateless_responses import (
+    PreparedStatelessResponse,
+    StatelessResponseCommit,
+    StatelessResponseOutcome,
+    StatelessResponsesService,
+)
 from . import orchestrate, resolve_model_id
 from .streaming import (
     cleanup_stream_sources,
@@ -96,24 +116,20 @@ _RESPONSE_SSE_TOOL_ITEM_TYPES = {
     "function_call",
     "custom_tool_call_input",
 }
-_RESPONSE_SSE_OUTPUT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
-    {"output_index": 0}
-)
-_RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
-    {
-        "output_index": 0,
-        "content_index": 0,
-    }
-)
+_RESPONSE_SSE_OUTPUT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType({
+    "output_index": 0
+})
+_RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType({
+    "output_index": 0,
+    "content_index": 0,
+})
 _RESPONSE_SSE_UNSET = object()
-_RESPONSES_TERMINAL_STATUSES = MappingProxyType(
-    {
-        StreamTerminalOutcome.COMPLETED: "completed",
-        StreamTerminalOutcome.ERRORED: "failed",
-        StreamTerminalOutcome.CANCELLED: "cancelled",
-        StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
-    }
-)
+_RESPONSES_TERMINAL_STATUSES = MappingProxyType({
+    StreamTerminalOutcome.COMPLETED: "completed",
+    StreamTerminalOutcome.ERRORED: "failed",
+    StreamTerminalOutcome.CANCELLED: "cancelled",
+    StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
+})
 
 
 def _response_sse_index_value(
@@ -353,27 +369,23 @@ class _ResponsesSSEProjectionAdapter:
         assert isinstance(seq, int) and not isinstance(seq, bool)
         ordered_events: list[tuple[int, list[_ResponsesSSEEvent]]] = []
         if self.reasoning_redactor.has_pending:
-            ordered_events.append(
+            ordered_events.append((
                 (
-                    (
-                        seq
-                        if self.reasoning_pending_sequence is None
-                        else self.reasoning_pending_sequence
-                    ),
-                    self._flush_reasoning_text(seq),
-                )
-            )
+                    seq
+                    if self.reasoning_pending_sequence is None
+                    else self.reasoning_pending_sequence
+                ),
+                self._flush_reasoning_text(seq),
+            ))
         if self.answer_redactor.has_pending:
-            ordered_events.append(
+            ordered_events.append((
                 (
-                    (
-                        seq
-                        if self.answer_pending_sequence is None
-                        else self.answer_pending_sequence
-                    ),
-                    self._flush_answer_text(seq),
-                )
-            )
+                    seq
+                    if self.answer_pending_sequence is None
+                    else self.answer_pending_sequence
+                ),
+                self._flush_answer_text(seq),
+            ))
         events: list[_ResponsesSSEEvent] = []
         for _sequence, sequence_events in sorted(
             ordered_events,
@@ -532,6 +544,91 @@ _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE = (
     "Responses source failed after terminal outcome."
 )
 _RESPONSES_CLEANUP_ERROR_MESSAGE = "Responses stream cleanup failed."
+
+
+@dataclass(slots=True)
+class _StatelessResponseOwnership:
+    """Own transient state until disposal or terminal publication transfer."""
+
+    service: StatelessResponsesService | None = None
+    prepared: PreparedStatelessResponse | None = None
+    request_bytes: int = 0
+    input_items: int = 0
+    disposed: bool = False
+    transferred: bool = False
+
+    def acquire(
+        self,
+        service: StatelessResponsesService,
+        prepared: PreparedStatelessResponse,
+        *,
+        request_bytes: int,
+        input_items: int,
+    ) -> None:
+        """Acquire exactly one newly prepared request-local turn."""
+        if (
+            self.service is not None
+            or self.prepared is not None
+            or self.disposed
+            or type(service) is not StatelessResponsesService
+            or type(prepared) is not PreparedStatelessResponse
+            or type(request_bytes) is not int
+            or request_bytes < 0
+            or type(input_items) is not int
+            or input_items < 0
+        ):
+            raise ConversationValidationError()
+        self.service = service
+        self.prepared = prepared
+        self.request_bytes = request_bytes
+        self.input_items = input_items
+
+    def transfer(self) -> None:
+        """Transfer cleanup ownership into a returned stream generator."""
+        if self.prepared is not None and not self.disposed:
+            self.transferred = True
+
+    async def abort(self, outcome: StatelessResponseOutcome) -> bool:
+        """Dispose owned state once and report whether cleanup succeeded."""
+        if self.disposed or self.prepared is None or self.service is None:
+            return True
+        if outcome is StatelessResponseOutcome.COMPLETED:
+            raise ConversationValidationError()
+        try:
+            await self.service.abort(
+                self.prepared,
+                outcome=outcome,
+                request_bytes=self.request_bytes,
+                input_items=self.input_items,
+            )
+        except BaseException:
+            return False
+        finally:
+            self.disposed = True
+        return True
+
+    async def finalize(
+        self,
+        *,
+        response_bytes: int,
+        output_items: int,
+    ) -> StatelessResponseCommit:
+        """Finalize owned state and release cleanup ownership exactly once."""
+        if self.disposed or self.prepared is None or self.service is None:
+            raise ConversationValidationError()
+        try:
+            committed = await self.service.finalize(
+                self.prepared,
+                request_bytes=self.request_bytes,
+                response_bytes=response_bytes,
+                input_items=self.input_items,
+                output_items=output_items,
+            )
+        except BaseException:
+            await self.abort(StatelessResponseOutcome.FAILED)
+            raise
+        self.disposed = True
+        return committed
 
 
 @dataclass(slots=True)
@@ -1412,24 +1509,20 @@ class _ResponsesSSEProjector:
     ) -> _ResponsesSSEEvent:
         item: dict[str, Any] = {"id": state.item_id}
         if state.kind == "reasoning_summary":
-            item.update(
-                {
-                    "type": "reasoning",
-                    "status": "in_progress",
-                    "summary": [],
-                }
-            )
+            item.update({
+                "type": "reasoning",
+                "status": "in_progress",
+                "summary": [],
+            })
         elif state.kind == "reasoning_text":
             item.update({"type": "reasoning_text", "status": "in_progress"})
         elif state.kind == "output_text":
-            item.update(
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "status": "in_progress",
-                    "content": [],
-                }
-            )
+            item.update({
+                "type": "message",
+                "role": "assistant",
+                "status": "in_progress",
+                "content": [],
+            })
         else:
             item["type"] = state.kind
             if state.tool_name is not None:
@@ -1452,30 +1545,26 @@ class _ResponsesSSEProjector:
         if state.kind == "reasoning_summary":
             item.update({"type": "reasoning", "summary": list(state.summary)})
         elif state.kind == "reasoning_text":
-            item.update(
-                {
-                    "type": "reasoning_text",
-                    "content": [
-                        {
-                            "type": "reasoning_text",
-                            "text": "".join(state.text),
-                        }
-                    ],
-                }
-            )
+            item.update({
+                "type": "reasoning_text",
+                "content": [
+                    {
+                        "type": "reasoning_text",
+                        "text": "".join(state.text),
+                    }
+                ],
+            })
         elif state.kind == "output_text":
-            item.update(
-                {
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [
-                        {
-                            "type": "output_text",
-                            "text": "".join(state.text),
-                        }
-                    ],
-                }
-            )
+            item.update({
+                "type": "message",
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "output_text",
+                        "text": "".join(state.text),
+                    }
+                ],
+            })
         else:
             item["type"] = state.kind
             if state.kind == "function_call":
@@ -1770,6 +1859,13 @@ def _served_responses_service(
     return service if isinstance(service, ServedResponsesService) else None
 
 
+def _stateless_responses_service(
+    request: Request,
+) -> StatelessResponsesService | None:
+    service = getattr(request.app.state, "stateless_responses_service", None)
+    return service if isinstance(service, StatelessResponsesService) else None
+
+
 def _openai_error_response(
     status_code: int,
     code: str,
@@ -1852,6 +1948,100 @@ def _request_idempotency_key(request: ResponsesRequest) -> str | None:
     return conversation.idempotency_key
 
 
+def _request_caller_held_conversation(
+    request: ResponsesRequest,
+) -> ResponsesConversationExtension | None:
+    extensions = request.extensions
+    if extensions is None or extensions.avalan is None:
+        return None
+    conversation = extensions.avalan.conversation
+    return (
+        conversation
+        if conversation is not None and conversation.mode == "caller_held"
+        else None
+    )
+
+
+def _request_continuation_advance(
+    request: ResponsesRequest,
+) -> ContinuationEnvelopeAdvance:
+    conversation = _request_caller_held_conversation(request)
+    if conversation is None:
+        return ContinuationEnvelopeAdvance(
+            mode=ParentAdvanceMode.ORDINARY_CHILD
+        )
+    operation = conversation.operation or "continue"
+    if operation == "branch":
+        branch_id = conversation.branch_id
+        assert branch_id is not None
+        return ContinuationEnvelopeAdvance(
+            mode=ParentAdvanceMode.EXPLICIT_BRANCH,
+            branch_id=ConversationBranchId(branch_id),
+        )
+    if operation == "named_head":
+        head_id = conversation.head_id
+        revision = conversation.expected_head_revision
+        assert head_id is not None and revision is not None
+        return ContinuationEnvelopeAdvance(
+            mode=ParentAdvanceMode.NAMED_HEAD,
+            head_id=NamedHeadId(head_id),
+            expected_head_revision=NamedHeadRevision(revision),
+        )
+    return ContinuationEnvelopeAdvance(mode=ParentAdvanceMode.ORDINARY_CHILD)
+
+
+def _request_continuation_value(
+    request: ResponsesRequest,
+) -> ContinuationEnvelopeToken | None:
+    conversation = _request_caller_held_conversation(request)
+    value = (
+        conversation.continuation_envelope
+        if conversation is not None
+        else None
+    )
+    return value if type(value) is ContinuationEnvelopeToken else None
+
+
+def _responses_request_safe_payload(
+    request: ResponsesRequest,
+) -> dict[str, Any]:
+    """Serialize request controls with caller state replaced by a digest."""
+    payload = request.model_dump(
+        mode="json",
+        exclude_none=True,
+        exclude={
+            "extensions": {
+                "avalan": {
+                    "conversation": {"continuation_envelope"},
+                },
+            },
+        },
+    )
+    token = _request_continuation_value(request)
+    if token is None:
+        return payload
+    extensions = cast(dict[str, Any], payload.setdefault("extensions", {}))
+    avalan = cast(dict[str, Any], extensions.setdefault("avalan", {}))
+    conversation = cast(
+        dict[str, Any],
+        avalan.setdefault("conversation", {}),
+    )
+    conversation["continuation_envelope"] = {
+        "character_count": token.character_count,
+        "sha256": token.digest,
+    }
+    return payload
+
+
+def _responses_request_accounting(
+    request: ResponsesRequest,
+) -> tuple[int, int]:
+    payload = _responses_request_safe_payload(request)
+    return len(canonical_json_bytes(payload)), (
+        1 if isinstance(request.input, str) else len(request.input)
+    )
+
+
 def _request_compact_threshold(request: ResponsesRequest) -> int | None:
     policies = request.context_management
     return policies[0].compact_threshold if policies is not None else None
@@ -1859,28 +2049,13 @@ def _request_compact_threshold(request: ResponsesRequest) -> int | None:
 
 def _request_fingerprint(request: ResponsesRequest) -> str:
     """Digest every accepted request control before identity allocation."""
-    payload = request.model_dump(mode="json", exclude_none=True)
+    payload = _responses_request_safe_payload(request)
     return sha256(canonical_json_bytes(payload)).hexdigest()
 
 
-@router.post(
-    "/responses",
-    response_model=None,
-    dependencies=[Depends(validate_remote_container_profile_selection)],
-    responses={
-        200: {
-            "model": ResponsesResource,
-            "content": {"text/event-stream": {"schema": {"type": "string"}}},
-        },
-        400: {"model": ResponsesErrorEnvelope},
-        401: {"model": ResponsesErrorEnvelope},
-        404: {"model": ResponsesErrorEnvelope},
-        409: {"model": ResponsesErrorEnvelope},
-        500: {"model": ResponsesErrorEnvelope},
-    },
-)
-async def create_response(
+async def _create_response_impl(
     request: ResponsesRequest,
+    stateless_ownership: _StatelessResponseOwnership,
     logger: Logger = Depends(di_get_logger),
     orchestrator: Orchestrator = Depends(di_get_orchestrator),
     output_redaction_settings: ServerOutputRedactionSettings = Depends(
@@ -1889,15 +2064,34 @@ async def create_response(
     served_responses_service: ServedResponsesService | None = Depends(
         _served_responses_service
     ),
+    stateless_responses_service: StatelessResponsesService | None = Depends(
+        _stateless_responses_service
+    ),
     http_request: Request = _NO_HTTP_REQUEST,
 ) -> dict[str, Any] | JSONResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
+    if not isinstance(served_responses_service, ServedResponsesService):
+        served_responses_service = None
+    if not isinstance(stateless_responses_service, StatelessResponsesService):
+        stateless_responses_service = None
     model_id = resolve_model_id(orchestrator, request.model)
     authority = None
     prepared_turn = None
+    stateless_prepared: PreparedStatelessResponse | None = None
+    stateless_standard_authority = None
     committed_response_id: str | None = None
+    if (
+        not request.store
+        and _request_caller_held_conversation(request) is not None
+        and stateless_responses_service is None
+    ):
+        return _openai_error_response(
+            400,
+            ConversationErrorCode.CAPABILITY_UNSUPPORTED.value,
+            "Caller-held continuation is not configured.",
+        )
     if request.store:
         if served_responses_service is None:
             return _openai_error_response(
@@ -1961,6 +2155,57 @@ async def create_response(
             committed_response_id = str(prepared_turn.turn.public_response_id)
         except ConversationError as error:
             return _conversation_error_response(error)
+    elif stateless_responses_service is not None:
+        if not isinstance(http_request, Request):
+            return _openai_error_response(
+                401,
+                "authentication_required",
+                "Authentication is required.",
+            )
+        try:
+            authority = await stateless_responses_service.authenticate(
+                http_request
+            )
+        except ConversationAuthorizationError:
+            return _openai_error_response(
+                401,
+                "authentication_required",
+                "Authentication is required.",
+            )
+        caller_held = _request_caller_held_conversation(request)
+        if caller_held is not None:
+            reasoning_context = (
+                request.reasoning.context
+                if request.reasoning is not None
+                and request.reasoning.context is not None
+                else ReasoningContext.AUTO
+            )
+            request_bytes, input_items = _responses_request_accounting(request)
+            try:
+                stateless_prepared = (
+                    await stateless_responses_service.prepare_turn(
+                        authority=authority,
+                        input_text=_served_input_text(request),
+                        request_fingerprint=_request_fingerprint(request),
+                        reasoning_context=reasoning_context,
+                        streaming=bool(request.stream),
+                        idempotency_key=_request_idempotency_key(request),
+                        continuation_value=(
+                            _request_continuation_value(request)
+                        ),
+                        advance=_request_continuation_advance(request),
+                    )
+                )
+                stateless_ownership.acquire(
+                    stateless_responses_service,
+                    stateless_prepared,
+                    request_bytes=request_bytes,
+                    input_items=input_items,
+                )
+            except ConversationError as error:
+                return _conversation_error_response(error)
+        else:
+            stateless_standard_authority = authority
     interaction_run = None
     if isinstance(http_request, Request):
         try:
@@ -1973,7 +2218,23 @@ async def create_response(
             return _error_response(error)
 
     try:
-        if prepared_turn is not None:
+        if stateless_prepared is not None:
+            response, response_id, timestamp = await orchestrate(
+                request,
+                logger,
+                orchestrator,
+                interaction_runtime=(
+                    interaction_run.runtime
+                    if interaction_run is not None
+                    else None
+                ),
+                conversation_turn=stateless_prepared.prepared.turn,
+                conversation_children=stateless_prepared.prepared.children,
+                outward_response_id=str(
+                    stateless_prepared.plan.provisional_response_id
+                ),
+            )
+        elif prepared_turn is not None:
             response, response_id, timestamp = await orchestrate(
                 request,
                 logger,
@@ -2003,6 +2264,14 @@ async def create_response(
                 interaction_runtime=interaction_run.runtime,
             )
     except ConversationError as error:
+        if (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+        ):
+            request_bytes, input_items = _responses_request_accounting(request)
+            await stateless_ownership.abort(
+                outcome=StatelessResponseOutcome.FAILED,
+            )
         return _conversation_error_response(error)
     except ReasoningSummaryCapabilityError as error:
         raise HTTPException(
@@ -2066,6 +2335,9 @@ async def create_response(
             terminal_owned = False
             source_error: Exception | None = None
             retained = False
+            sources_cleaned = False
+            stateless_disposed = False
+            request_bytes, input_items = _responses_request_accounting(request)
 
             try:
                 yield projection_adapter.event_message(
@@ -2100,6 +2372,37 @@ async def create_response(
                             and token.kind
                             is StreamItemKind.INTERACTION_PENDING
                         ):
+                            if stateless_prepared is not None:
+                                cancelled = True
+                                for message in projection_adapter.enqueue(
+                                    _ResponsesSSEEvent(
+                                        event="response.failed",
+                                        data={
+                                            "type": "response.failed",
+                                            "error": {
+                                                "type": (
+                                                    "invalid_request_error"
+                                                ),
+                                                "code": (
+                                                    ConversationErrorCode.CAPABILITY_UNSUPPORTED.value
+                                                ),
+                                                "message": (
+                                                    "Caller-held continuation "
+                                                    "does not support "
+                                                    "detached "
+                                                    "interaction suspension."
+                                                ),
+                                            },
+                                        },
+                                    )
+                                ):
+                                    yield message
+                                terminal_owned = True
+                                for (
+                                    message
+                                ) in projection_adapter.flush_stream():
+                                    yield message
+                                return
                             assert segment is not None
                             await interaction_run.install_segment(segment)
                             yield extension_sse_message(
@@ -2146,9 +2449,104 @@ async def create_response(
                         "stream missing terminal outcome"
                     )
 
+                if (
+                    source_error is not None
+                    and stateless_prepared is not None
+                    and stream_terminal_succeeded(terminal_projection)
+                ):
+                    logger.error(_RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE)
+                    cancelled = True
+                    raise _ResponsesSourceAfterTerminalError(
+                        _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE
+                    ) from None
+
+                output_indices = sorted(projection_adapter.indexed_output)
+                if output_indices != list(range(len(output_indices))):
+                    raise StreamValidationError(
+                        "non-contiguous Responses outward output indices"
+                    )
+                output = [
+                    projection_adapter.indexed_output[index]
+                    for index in output_indices
+                ]
+                if (
+                    stateless_standard_authority is not None
+                    and stateless_responses_service is not None
+                ):
+                    await stateless_responses_service.record_standard_terminal(
+                        stateless_standard_authority,
+                        outcome=(
+                            StatelessResponseOutcome.COMPLETED
+                            if stream_terminal_succeeded(terminal_projection)
+                            else StatelessResponseOutcome.FAILED
+                        ),
+                        request_bytes=request_bytes,
+                        response_bytes=len(
+                            canonical_json_bytes(cast(JsonValue, output))
+                        ),
+                        input_items=input_items,
+                        output_items=len(output),
+                    )
+                if (
+                    stateless_prepared is not None
+                    and stateless_responses_service is not None
+                    and not stream_terminal_succeeded(terminal_projection)
+                ):
+                    await stateless_ownership.abort(
+                        outcome=StatelessResponseOutcome.FAILED,
+                    )
+                    stateless_disposed = True
+
+                stateless_body: Mapping[str, object] | None = None
+                if (
+                    stateless_prepared is not None
+                    and stateless_responses_service is not None
+                    and stream_terminal_succeeded(terminal_projection)
+                ):
+                    try:
+                        await cleanup_stream_sources(
+                            response,
+                            iterator,
+                            cancelled=False,
+                        )
+                        sources_cleaned = True
+                        commit = await stateless_ownership.finalize(
+                            response_bytes=len(
+                                canonical_json_bytes(cast(JsonValue, output))
+                            ),
+                            output_items=len(output),
+                        )
+                        stateless_body = commit.body
+                        stateless_disposed = True
+                    except ConversationError:
+                        cancelled = True
+                        for message in projection_adapter.enqueue(
+                            _ResponsesSSEEvent(
+                                event="response.failed",
+                                data={
+                                    "type": "response.failed",
+                                    "error": {
+                                        "type": "server_error",
+                                        "code": (
+                                            ConversationErrorCode.COMMIT_FAILED.value
+                                        ),
+                                        "message": (
+                                            "conversation state commit failed"
+                                        ),
+                                    },
+                                },
+                            )
+                        ):
+                            yield message
+                        terminal_owned = True
+                        for message in projection_adapter.flush_stream():
+                            yield message
+                        return
+
                 committed_resource: StoredResponsesResource | None = None
                 if (
-                    served_responses_service is not None
+                    request.store
+                    and served_responses_service is not None
                     and authority is not None
                     and stream_terminal_succeeded(terminal_projection)
                 ):
@@ -2195,6 +2593,11 @@ async def create_response(
                         and ev.event == "response.completed"
                     ):
                         data["response"] = committed_resource.response_body()
+                    if (
+                        stateless_body is not None
+                        and ev.event == "response.completed"
+                    ):
+                        data["response"] = dict(stateless_body)
                     for message in projection_adapter.enqueue(
                         _ResponsesSSEEvent(
                             event=ev.event,
@@ -2209,9 +2612,7 @@ async def create_response(
                     yield message
 
                 if source_error is not None:
-                    logger.error(
-                        _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE,
-                    )
+                    logger.error(_RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE)
                     raise _ResponsesSourceAfterTerminalError(
                         _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE
                     ) from None
@@ -2219,10 +2620,15 @@ async def create_response(
                 if source_error is None and stream_terminal_succeeded(
                     terminal_projection
                 ):
-                    await orchestrator.sync_messages(response)
+                    if request.store:
+                        await orchestrator.sync_messages(response)
             except CancelledError:
                 cancelled = True
-                if interaction_run is not None and segment is not None:
+                if (
+                    stateless_prepared is None
+                    and interaction_run is not None
+                    and segment is not None
+                ):
                     try:
                         await interaction_run.install_segment(segment)
                     except RuntimeError:
@@ -2231,7 +2637,22 @@ async def create_response(
                 raise
             finally:
                 cleanup_failed = False
-                if not retained:
+                if (
+                    stateless_prepared is not None
+                    and stateless_responses_service is not None
+                    and not stateless_disposed
+                ):
+                    cleaned = await stateless_ownership.abort(
+                        outcome=(
+                            StatelessResponseOutcome.CANCELLED
+                            if cancelled
+                            else StatelessResponseOutcome.FAILED
+                        ),
+                    )
+                    stateless_disposed = True
+                    if not cleaned:
+                        cleanup_failed = True
+                if not retained and not sources_cleaned:
                     try:
                         await cleanup_stream_sources(
                             response,
@@ -2300,6 +2721,8 @@ async def create_response(
     )
     cleanup_failed = False
     retained = False
+    stateless_disposed = False
+    request_bytes, input_items = _responses_request_accounting(request)
     try:
         while True:
             try:
@@ -2311,7 +2734,15 @@ async def create_response(
             except StopAsyncIteration:
                 break
             except CancelledError:
-                if interaction_run is not None and segment is not None:
+                if (
+                    stateless_prepared is not None
+                    and stateless_responses_service is not None
+                ):
+                    await stateless_ownership.abort(
+                        outcome=StatelessResponseOutcome.CANCELLED,
+                    )
+                    stateless_disposed = True
+                elif interaction_run is not None and segment is not None:
                     try:
                         await interaction_run.install_segment(segment)
                     except RuntimeError:
@@ -2330,6 +2761,20 @@ async def create_response(
                 and projection.kind is StreamItemKind.INTERACTION_PENDING
             ):
                 assert segment is not None
+                if (
+                    stateless_prepared is not None
+                    and stateless_responses_service is not None
+                ):
+                    await stateless_ownership.abort(
+                        outcome=StatelessResponseOutcome.FAILED,
+                    )
+                    stateless_disposed = True
+                    return _openai_error_response(
+                        400,
+                        ConversationErrorCode.CAPABILITY_UNSUPPORTED.value,
+                        "Caller-held continuation does not support "
+                        "detached interaction suspension.",
+                    )
                 await interaction_run.install_segment(segment)
                 retained = True
                 return JSONResponse(
@@ -2352,6 +2797,15 @@ async def create_response(
                 cleanup_failed = True
 
     if projector.failure is not None:
+        if (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+            and not stateless_disposed
+        ):
+            await stateless_ownership.abort(
+                outcome=StatelessResponseOutcome.FAILED,
+            )
+            stateless_disposed = True
         if cleanup_failed:
             logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
         return JSONResponse(
@@ -2359,15 +2813,42 @@ async def create_response(
             content=projector.failure,
         )
     if cleanup_failed:
+        if (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+            and not stateless_disposed
+        ):
+            await stateless_ownership.abort(
+                outcome=StatelessResponseOutcome.FAILED,
+            )
+            stateless_disposed = True
         logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
         if source_error is None:
             raise _ResponsesCleanupError(
                 _RESPONSES_CLEANUP_ERROR_MESSAGE
             ) from None
     if terminal_projection is None:
+        if (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+            and not stateless_disposed
+        ):
+            await stateless_ownership.abort(
+                outcome=StatelessResponseOutcome.FAILED,
+            )
+            stateless_disposed = True
         assert source_error is not None
         raise source_error
     if source_error is not None:
+        if (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+            and not stateless_disposed
+        ):
+            await stateless_ownership.abort(
+                outcome=StatelessResponseOutcome.FAILED,
+            )
+            stateless_disposed = True
         logger.error(_RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE)
         raise _ResponsesSourceAfterTerminalError(
             _RESPONSES_SOURCE_AFTER_TERMINAL_MESSAGE
@@ -2405,8 +2886,13 @@ async def create_response(
             if terminal_error is not None:
                 body["error"] = terminal_error
     if status == "completed" and source_error is None:
-        await orchestrator.sync_messages(response)
-        if served_responses_service is not None and authority is not None:
+        if request.store:
+            await orchestrator.sync_messages(response)
+        if (
+            request.store
+            and served_responses_service is not None
+            and authority is not None
+        ):
             try:
                 committed_resource = (
                     await served_responses_service.assert_committed(
@@ -2417,12 +2903,192 @@ async def create_response(
             except ConversationError as error:
                 return _conversation_error_response(error)
             body = committed_resource.response_body()
+        elif (
+            stateless_prepared is not None
+            and stateless_responses_service is not None
+        ):
+            try:
+                commit = await stateless_ownership.finalize(
+                    response_bytes=len(
+                        canonical_json_bytes(cast(JsonValue, output))
+                    ),
+                    output_items=len(output),
+                )
+            except ConversationError as error:
+                return _conversation_error_response(error)
+            stateless_disposed = True
+            body = dict(commit.body)
+        elif (
+            stateless_standard_authority is not None
+            and stateless_responses_service is not None
+        ):
+            await stateless_responses_service.record_standard_terminal(
+                stateless_standard_authority,
+                outcome=StatelessResponseOutcome.COMPLETED,
+                request_bytes=request_bytes,
+                response_bytes=len(
+                    canonical_json_bytes(cast(JsonValue, output))
+                ),
+                input_items=input_items,
+                output_items=len(output),
+            )
+    elif (
+        stateless_prepared is not None
+        and stateless_responses_service is not None
+        and not stateless_disposed
+    ):
+        await stateless_ownership.abort(
+            outcome=StatelessResponseOutcome.FAILED,
+        )
+        stateless_disposed = True
+    elif (
+        stateless_standard_authority is not None
+        and stateless_responses_service is not None
+    ):
+        await stateless_responses_service.record_standard_terminal(
+            stateless_standard_authority,
+            outcome=StatelessResponseOutcome.FAILED,
+            request_bytes=request_bytes,
+            response_bytes=len(canonical_json_bytes(cast(JsonValue, output))),
+            input_items=input_items,
+            output_items=len(output),
+        )
     if interaction_run is not None:
         return JSONResponse(
             body,
             headers=interaction_response_headers(interaction_run),
         )
     return body
+
+
+@router.post(
+    "/responses",
+    response_model=None,
+    dependencies=[Depends(validate_remote_container_profile_selection)],
+    responses={
+        200: {
+            "model": ResponsesResource,
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        400: {"model": ResponsesErrorEnvelope},
+        401: {"model": ResponsesErrorEnvelope},
+        404: {"model": ResponsesErrorEnvelope},
+        409: {"model": ResponsesErrorEnvelope},
+        500: {"model": ResponsesErrorEnvelope},
+    },
+)
+async def create_response(
+    request: ResponsesRequest,
+    logger: Logger = Depends(di_get_logger),
+    orchestrator: Orchestrator = Depends(di_get_orchestrator),
+    output_redaction_settings: ServerOutputRedactionSettings = Depends(
+        _server_output_redaction_settings
+    ),
+    served_responses_service: ServedResponsesService | None = Depends(
+        _served_responses_service
+    ),
+    stateless_responses_service: StatelessResponsesService | None = Depends(
+        _stateless_responses_service
+    ),
+    http_request: Request = _NO_HTTP_REQUEST,
+) -> dict[str, Any] | JSONResponse | StreamingResponse:
+    """Create one response while owning all transient cleanup exits."""
+    ownership = _StatelessResponseOwnership()
+    try:
+        result = await _create_response_impl(
+            request,
+            ownership,
+            logger=logger,
+            orchestrator=orchestrator,
+            output_redaction_settings=output_redaction_settings,
+            served_responses_service=served_responses_service,
+            stateless_responses_service=stateless_responses_service,
+            http_request=http_request,
+        )
+        if isinstance(result, StreamingResponse):
+            ownership.transfer()
+        return result
+    except CancelledError:
+        if not await ownership.abort(StatelessResponseOutcome.CANCELLED):
+            logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
+        raise
+    finally:
+        if not ownership.transferred and not await ownership.abort(
+            StatelessResponseOutcome.FAILED
+        ):
+            logger.error(_RESPONSES_CLEANUP_ERROR_MESSAGE)
+
+
+@router.post(
+    "/responses/compact",
+    response_model=None,
+    responses={
+        200: {"model": ResponsesCompactResource},
+        400: {"model": ResponsesErrorEnvelope},
+        401: {"model": ResponsesErrorEnvelope},
+        404: {"model": ResponsesErrorEnvelope},
+        500: {"model": ResponsesErrorEnvelope},
+    },
+)
+async def compact_response(
+    request: ResponsesCompactRequest,
+    http_request: Request,
+    stateless_responses_service: StatelessResponsesService | None = Depends(
+        _stateless_responses_service
+    ),
+) -> dict[str, object] | JSONResponse:
+    """Return one provider-native compact result without server retention."""
+    if stateless_responses_service is None:
+        return _openai_error_response(
+            400,
+            ConversationErrorCode.CAPABILITY_UNSUPPORTED.value,
+            "Stateless response compaction is not configured.",
+        )
+    try:
+        authority = await stateless_responses_service.authenticate(
+            http_request
+        )
+    except ConversationAuthorizationError:
+        return _openai_error_response(
+            401,
+            "authentication_required",
+            "Authentication is required.",
+        )
+    canonical_input: tuple[Mapping[str, JsonValue], ...] = tuple(
+        cast(
+            Mapping[str, JsonValue],
+            item.model_dump(mode="json", exclude_none=True),
+        )
+        for item in request.input or ()
+    )
+    conversation = None
+    if (
+        request.extensions is not None
+        and request.extensions.avalan is not None
+    ):
+        conversation = request.extensions.avalan.conversation
+    continuation_value = (
+        conversation.continuation_envelope
+        if conversation is not None and conversation.mode == "caller_held"
+        else None
+    )
+    lane_id = (
+        conversation.lane_id
+        if conversation is not None and conversation.mode == "caller_held"
+        else None
+    )
+    try:
+        commit = await stateless_responses_service.compact(
+            authority=authority,
+            model=request.model,
+            instructions=request.instructions,
+            canonical_input=canonical_input,
+            continuation_value=continuation_value,
+            lane_id=lane_id,
+        )
+    except ConversationError as error:
+        return _conversation_error_response(error)
+    return commit.response_body()
 
 
 @router.get(

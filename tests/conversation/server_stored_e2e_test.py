@@ -2312,7 +2312,7 @@ def test_openapi_exposes_closed_request_and_lifecycle_routes(
         Path(__file__).parents[1]
         / "fixtures"
         / "conversation"
-        / "served_responses_openapi.phase9.json"
+        / "served_responses_openapi.phase10.json"
     )
     fixture = loads(fixture_path.read_text(encoding="utf-8"))
     fixture_without_digest = {
@@ -2346,6 +2346,7 @@ def test_openapi_exposes_closed_request_and_lifecycle_routes(
     assert schema_hashes == fixture["schema_sha256"]
 
     create = schema["paths"]["/responses"]["post"]
+    compact = schema["paths"]["/responses/compact"]["post"]
     item = schema["paths"]["/responses/{response_id}"]
     assert fixture["operations"] == {
         "create": {
@@ -2363,6 +2364,19 @@ def test_openapi_exposes_closed_request_and_lifecycle_routes(
             "error": create["responses"]["400"]["content"]["application/json"][
                 "schema"
             ]["$ref"],
+        },
+        "compact": {
+            "method": "post",
+            "path": "/responses/compact",
+            "request": compact["requestBody"]["content"]["application/json"][
+                "schema"
+            ]["$ref"],
+            "response": compact["responses"]["200"]["content"][
+                "application/json"
+            ]["schema"]["$ref"],
+            "error": compact["responses"]["400"]["content"][
+                "application/json"
+            ]["schema"]["$ref"],
         },
         "retrieve": {
             "method": "get",

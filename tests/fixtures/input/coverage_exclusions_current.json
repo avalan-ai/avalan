@@ -664,9 +664,9 @@
       531
     ],
     "src/avalan/conversation/agent.py": [
-      492,
-      493,
-      494
+      494,
+      495,
+      496
     ],
     "src/avalan/conversation/crypto.py": [
       74,
@@ -696,6 +696,13 @@
       288,
       289,
       290
+    ],
+    "src/avalan/conversation/envelope.py": [
+      147,
+      148,
+      157,
+      158,
+      159
     ],
     "src/avalan/conversation/fakes.py": [
       98,
@@ -1631,8 +1638,8 @@
       29
     ],
     "src/avalan/server/__init__.py": [
-      44,
-      45
+      48,
+      49
     ],
     "src/avalan/server/interaction.py": [
       123,
@@ -1714,6 +1721,35 @@
       746,
       747,
       748
+    ],
+    "src/avalan/server/stateless_responses.py": [
+      143,
+      144,
+      145,
+      186,
+      187,
+      194,
+      195,
+      202,
+      203,
+      206,
+      207,
+      210,
+      211,
+      212,
+      259,
+      260,
+      268,
+      269,
+      275,
+      276,
+      277,
+      464,
+      465,
+      466,
+      551,
+      552,
+      553
     ],
     "src/avalan/skill/observability.py": [
       53
@@ -2851,5 +2887,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "ce3fca0e567aba481574d2a6957412607d0706e24d14ec80c07423f8f2bc5fa4"
+  "snapshot_sha256": "45f7b2f19f9229a61bc84193580f3c39a98af6cc2e7f9412cbb6aa33a0d35f4d"
 }

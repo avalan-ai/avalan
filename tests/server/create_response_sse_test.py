@@ -325,7 +325,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         answer_part = loads(data_lines[content_indices[2]][6:])
         self.assertEqual(answer_part["part"], {"type": "output_text"})
 
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_uses_response_projections(self) -> None:
         logger = getLogger()
@@ -441,7 +441,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             },
         )
         self.assertEqual(response.close_count, 1)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_yields_projector_close_events(self) -> None:
         logger = getLogger()
@@ -538,7 +538,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(events[-1], "response.completed")
         self.assertEqual(response.close_count, 1)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_flushes_pending_heading_before_item_done(
         self,
@@ -1176,7 +1176,6 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             model_ids = {"m"}
 
             def __init__(self) -> None:
-                self._pending_response: object | None = None
                 self.sync_count = 0
                 self.response_count = 0
 
@@ -1185,15 +1184,13 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 source = Source(self.response_count)
                 self.response_count += 1
                 source_refs.append(ref(source))
-                self._pending_response = source
                 return source
 
             async def sync_messages(  # type: ignore[override]
                 self,
                 response: object,
             ) -> None:
-                assert response is self._pending_response
-                self._pending_response = None
+                _ = response
                 self.sync_count += 1
 
         orchestrator = StreamingOrchestrator()
@@ -1218,7 +1215,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
 
         self.assertEqual(closed, list(range(6)))
         self.assertEqual(cancelled, [])
-        self.assertEqual(orchestrator.sync_count, 6)
+        self.assertEqual(orchestrator.sync_count, 0)
         self.assertEqual(
             [source_ref() for source_ref in source_refs],
             [None for _ in source_refs],
@@ -1517,7 +1514,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertIn("response.completed", "".join(chunks))
         self.assertEqual(stream.close_count, 1)
         self.assertEqual(stream.cancel_count, 0)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_response_disconnect_closes_source_before_pull(
         self,
@@ -1761,7 +1758,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             [max_delta_chars, 1],
         )
         self.assertEqual(stream.close_count, 1)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_emits_canonical_items(self) -> None:
         logger = getLogger()
@@ -1910,7 +1907,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(tool_data["id"], "call-1")
         self.assertEqual(answer_data["delta"], "answer")
         self.assertNotIn("stream.started", "".join(chunks))
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_keeps_same_tool_call_group_open(self) -> None:
         logger = getLogger()
@@ -2069,7 +2066,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
                 }
             ],
         )
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_owns_canonical_terminal_before_source_error(
         self,
@@ -2323,7 +2320,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             data_lines[events.index("response.usage.completed")][6:]
         )
         self.assertEqual(usage_data["usage"], {"total_tokens": 2})
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_allocates_response_local_sequence_numbers(
         self,
@@ -2435,7 +2432,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         self.assertLess(
             usage_data["sequence_number"], completed_data["sequence_number"]
         )
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_preserves_cancelled_terminal(self) -> None:
         logger = getLogger()
@@ -3167,7 +3164,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             loads(data_lines[i][6:])["part"] for i in content_indices
         ]
         self.assertEqual(actual_parts, expected_parts)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_includes_canonical_tool_error(self) -> None:
         logger = getLogger()
@@ -3334,7 +3331,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         output_data = loads(data_lines[output_index][6:])
         self.assertEqual(output_data["delta"], "final")
 
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_preserves_consecutive_tool_output_metadata(
         self,
@@ -3511,7 +3508,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
             [5],
         )
         self.assertTrue(all(index < completed_index for index in live_indexes))
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_preserves_falsy_tool_result(self) -> None:
         logger = getLogger()
@@ -3605,7 +3602,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         data = loads(result_blocks[0].split("\n")[1][6:])
         self.assertEqual(data["id"], "call-1")
         self.assertEqual(data["data"]["result"], 0)
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_includes_tool_diagnostic_event(self) -> None:
         logger = getLogger()
@@ -3718,7 +3715,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         output_index = events.index("response.output_text.delta")
         output_data = loads(data_lines[output_index][6:])
         self.assertEqual(output_data["delta"], "final")
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_serializes_tool_result_temporal_types(
         self,
@@ -4009,7 +4006,7 @@ class CreateResponseSSEEventsTestCase(IsolatedAsyncioTestCase):
         output_done_data = loads(data_lines[output_done_indices[1]][6:])
         self.assertEqual(output_done_data["item"]["id"], "c1")
 
-        orchestrator.sync_messages.assert_awaited_once()
+        orchestrator.sync_messages.assert_not_awaited()
 
     async def test_streaming_rejects_legacy_events(self) -> None:
         logger = getLogger()

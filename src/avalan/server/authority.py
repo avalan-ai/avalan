@@ -297,9 +297,20 @@ def responses_replay_authority_payload(
     payload: Mapping[object, object],
 ) -> Mapping[object, object]:
     """Exclude inert typed replay fields from host-authority inspection."""
+    safe_payload: dict[object, object] = dict(payload)
+    extensions = payload.get("extensions")
+    if isinstance(extensions, Mapping):
+        safe_extensions: dict[object, object] = dict(extensions)
+        avalan_extension = extensions.get("avalan")
+        if isinstance(avalan_extension, Mapping):
+            safe_avalan: dict[object, object] = dict(avalan_extension)
+            if isinstance(avalan_extension.get("conversation"), Mapping):
+                safe_avalan["conversation"] = {}
+            safe_extensions["avalan"] = safe_avalan
+        safe_payload["extensions"] = safe_extensions
     request_input = payload.get("input")
     if not isinstance(request_input, list):
-        return payload
+        return safe_payload
     safe_input: list[object] = []
     for item in request_input:
         if not isinstance(item, Mapping):
@@ -322,7 +333,8 @@ def responses_replay_authority_payload(
                 if key not in inert_fields
             }
         )
-    return {**payload, "input": safe_input}
+    safe_payload["input"] = safe_input
+    return safe_payload
 
 
 def _reject_remote_runtime_authority_fields(

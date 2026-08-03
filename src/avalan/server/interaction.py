@@ -1188,15 +1188,15 @@ def task_input_extension_from_request(request: object) -> object:
     extensions = getattr(request, "extensions", None)
     if extensions is None:
         return None
-    if hasattr(extensions, "model_dump"):
-        values = extensions.model_dump(exclude_none=True)
-    elif isinstance(extensions, Mapping):
-        values = dict(extensions)
+    if isinstance(extensions, Mapping):
+        task_input = extensions.get("task_input")
+    elif hasattr(extensions, "task_input"):
+        task_input = getattr(extensions, "task_input")
     else:
         raise _ServerHTTPError.validation()
-    task_input = values.get("task_input")
-    if hasattr(task_input, "model_dump"):
-        return task_input.model_dump(exclude_none=True)
+    dump = getattr(task_input, "model_dump", None)
+    if callable(dump):
+        return dump(exclude_none=True)
     return task_input
 
 
@@ -1451,16 +1451,14 @@ async def _resume_segment(
             state=record.request.state.value,
             surface=segment.protocol.value,
         )
-        yield extension_sse_message(
-            {
-                "type": "execution.resumed",
-                "request_id": str(record.request.request_id),
-                "run_id": str(record.request.origin.run_id),
-                "turn_id": str(record.request.origin.turn_id),
-                "previous_stream_session_id": previous_stream_session_id,
-                "stream_session_id": stream_session_id,
-            }
-        )
+        yield extension_sse_message({
+            "type": "execution.resumed",
+            "request_id": str(record.request.request_id),
+            "run_id": str(record.request.origin.run_id),
+            "turn_id": str(record.request.origin.turn_id),
+            "previous_stream_session_id": previous_stream_session_id,
+            "stream_session_id": stream_session_id,
+        })
         redactor = ModelVisibleServerProtocolTextRedactor(
             segment.output_redaction_settings,
             protocol="openai",
@@ -1631,21 +1629,19 @@ def _resume_text_message(
             event="response.output_text.delta",
         )
     return sse_message(
-        to_json(
-            {
-                "id": segment.response_id,
-                "object": "chat.completion.chunk",
-                "created": segment.created,
-                "model": segment.model_id,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {"content": text},
-                        "finish_reason": None,
-                    }
-                ],
-            }
-        )
+        to_json({
+            "id": segment.response_id,
+            "object": "chat.completion.chunk",
+            "created": segment.created,
+            "model": segment.model_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {"content": text},
+                    "finish_reason": None,
+                }
+            ],
+        })
     )
 
 
@@ -1672,34 +1668,30 @@ def _resume_terminal_message(
             else "chat.completion.failed"
         )
         return sse_message(
-            to_json(
-                {
-                    "id": segment.response_id,
-                    "object": "chat.completion.chunk",
-                    "created": segment.created,
-                    "model": segment.model_id,
-                    "type": event,
-                    "choices": [],
-                }
-            ),
-            event=event,
-        )
-    return sse_message(
-        to_json(
-            {
+            to_json({
                 "id": segment.response_id,
                 "object": "chat.completion.chunk",
                 "created": segment.created,
                 "model": segment.model_id,
-                "choices": [
-                    {
-                        "index": 0,
-                        "delta": {},
-                        "finish_reason": "stop",
-                    }
-                ],
-            }
+                "type": event,
+                "choices": [],
+            }),
+            event=event,
         )
+    return sse_message(
+        to_json({
+            "id": segment.response_id,
+            "object": "chat.completion.chunk",
+            "created": segment.created,
+            "model": segment.model_id,
+            "choices": [
+                {
+                    "index": 0,
+                    "delta": {},
+                    "finish_reason": "stop",
+                }
+            ],
+        })
     ) + sse_message("[DONE]")
 
 
