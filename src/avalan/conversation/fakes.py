@@ -30,6 +30,7 @@ from .protocols import (
     FirstStoredProviderPlan,
     ProviderPlan,
     ProviderResult,
+    StandaloneCompactProviderPlan,
     StatelessProviderPlan,
     StoredProviderPlan,
 )
@@ -1291,6 +1292,7 @@ def _is_provider_plan(
     _plan_types: frozenset[type[object]] = frozenset(
         {
             StatelessProviderPlan,
+            StandaloneCompactProviderPlan,
             FirstStoredProviderPlan,
             StoredProviderPlan,
         }
@@ -1660,7 +1662,10 @@ def fake_provider_result(
     """Return one deterministic complete assistant item for an exact plan."""
     if not isinstance(
         plan,
-        StatelessProviderPlan | FirstStoredProviderPlan | StoredProviderPlan,
+        StatelessProviderPlan
+        | StandaloneCompactProviderPlan
+        | FirstStoredProviderPlan
+        | StoredProviderPlan,
     ):
         raise ConversationValidationError()
     if type(turn) is not int or turn <= 0 or not text:
@@ -1713,13 +1718,15 @@ def fake_provider_result(
 
 
 def fake_compaction_result(
-    plan: StatelessProviderPlan,
+    plan: StatelessProviderPlan | StandaloneCompactProviderPlan,
     *,
     turn: int,
     opaque_state: bytes = b"synthetic-compaction",
 ) -> ProviderResult:
     """Return one deterministic fake standalone compaction result."""
-    if type(plan) is not StatelessProviderPlan:
+    if not isinstance(
+        plan, StatelessProviderPlan | StandaloneCompactProviderPlan
+    ):
         raise ConversationValidationError()
     if type(turn) is not int or turn <= 0:
         raise ConversationValidationError()
@@ -1731,7 +1738,7 @@ def fake_compaction_result(
             f"fake-compact-call-{plan.binding.lane_id}-{turn}"
         ),
         kind=ProviderItemKind.COMPACTION,
-        order=ProviderItemOrder(len(plan.ledger.items)),
+        order=ProviderItemOrder(0),
         provider_index=ProviderItemIndex(0),
         phase=ProviderItemPhase.COMPACTION,
         caller=ProviderItemCaller.PROVIDER,

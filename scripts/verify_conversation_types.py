@@ -57,6 +57,7 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     4: "cdfea565d3441c07a7fe02cebf3a61c6690c59a79a1b183d676ceaf752bbe0e5",
     5: "c290884561e74464e74d4ad44c113b97fd7c2094aa5b0b32fc11b0b16f97d719",
     6: "b7f61f1c466cdba692d17ff69b1b1cf5ac21c0821b563fbc02c21711b17953fd",
+    7: "3233186579fe2425b5b017fdd0d663e324c62e2f779d36e4c2f9ba42d26273cf",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
@@ -66,6 +67,7 @@ _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     4: "dd5b10c4b3aca6136f9a59f484c3637bc72326aed35237a25dc2c6adde0da899",
     5: "2dd076e03d294e393754c8986e2b28ab86058919b87ac345f818d1ac78e57fbd",
     6: "3f55518be6be220aad79c6470a7f1ed372a4c857ece5845f4a02a112b96c8c56",
+    7: "1846eec90730345dce5d1328ace214c7d6db955cd3b72fb21e62b7ece2f1d3e6",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -93,6 +95,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
     6: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    7: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -181,6 +187,23 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             + "phase6_sync_reconciliation_negative.py"
         ): "a8e320be78ad32fbc8dfbb70c6d7fb29fb94c5cf376016024a488457583dbe24",
     },
+    7: {
+        "tests/conversation_type_contracts/phase7_positive.py": (
+            "822210d0c9775dab7cf488371d2858e0cdf0e516fcc68eb3cdf1da90c4575215"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase7_sync_compaction_negative.py"
+        ): "ee24428824e281114c9e8eda4f15031089cd7ea30a955e1b63dba185925f6859",
+        (
+            "tests/conversation_type_contracts/"
+            + "phase7_private_parent_negative.py"
+        ): "64c23ad763fcd8ad76fd82597c6f485199624044873785a9335fb5d6abc5e3bc",
+        (
+            "tests/conversation_type_contracts/"
+            + "phase7_stored_parent_negative.py"
+        ): "ce4d7e3cb34d1d0968e12681f1c7710a70fc1fe2493cf0056a1bf03e5a47ca6e",
+    },
 }
 
 
@@ -231,7 +254,7 @@ def default_manifest_path() -> Path:
         / "tests"
         / "fixtures"
         / "conversation"
-        / "type_contract_manifest.phase6.json"
+        / "type_contract_manifest.phase7.json"
     )
 
 

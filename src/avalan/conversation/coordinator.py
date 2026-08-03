@@ -38,10 +38,13 @@ from .errors import (
     ConversationCommitError,
     ConversationConflictError,
     ConversationError,
+    ConversationErrorCode,
     ConversationLimitError,
     ConversationProviderResponseError,
     ConversationPublicationError,
+    ConversationTransitionError,
     ConversationValidationError,
+    DurableConversationErrorCode,
 )
 from .execution import (
     ConversationExecutionReservation,
@@ -96,6 +99,7 @@ from .protocols import (
     FirstStoredProviderPlan,
     ProviderPlan,
     ProviderResult,
+    StandaloneCompactProviderPlan,
     StatelessProviderPlan,
     StoredProviderPlan,
 )
@@ -132,13 +136,14 @@ from .runtime import (
     request_operation,
 )
 from .settings import (
+    CompactionOperation,
     ConversationMode,
     EffectiveReasoningMetadata,
     InlineCompaction,
     ProviderLaneOutputScope,
     ProviderUsage,
     ReasoningContext,
-    StatelessConversationHandle,
+    StandaloneCompactHandle,
 )
 from .state import (
     CheckpointCandidate,
@@ -369,6 +374,8 @@ NativeLaneRuntime: TypeAlias = (
     NativeOpenAIConversationLaneRuntime | NativeOpenAIStoredLaneRuntime
 )
 
+_MAX_COMPACTION_FAILURE_RECORDS = 128
+
 
 def _validate_any_native_lane_runtime(
     runtime: object,
@@ -394,11 +401,50 @@ def _validate_any_lane_runtime(
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class CompactionFailureRecord:
+    """Record one content-free failed compaction boundary."""
+
+    operation: CompactionOperation
+    boundary: FailureBoundary
+    error_code: ConversationErrorCode | DurableConversationErrorCode | str
+    cancelled: bool
+    committed: bool
+    streaming: bool
+
+    def __post_init__(self) -> None:
+        if (
+            self.operation
+            not in {
+                CompactionOperation.INLINE,
+                CompactionOperation.STANDALONE,
+            }
+            or not isinstance(self.boundary, FailureBoundary)
+            or type(self.cancelled) is not bool
+            or type(self.committed) is not bool
+            or type(self.streaming) is not bool
+        ):
+            raise ConversationValidationError()
+        if isinstance(
+            self.error_code,
+            ConversationErrorCode | DurableConversationErrorCode,
+        ):
+            return
+        if self.error_code not in {
+            "conversation_cancelled",
+            "conversation_internal_failure",
+        }:
+            raise ConversationValidationError()
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class CoordinatorDiagnostics:
     """Report content-free active attempt and resource counts."""
 
     active_attempts: int
     closed: bool
+    compaction_failure_count: int
+    compaction_failures: tuple[CompactionFailureRecord, ...]
 
 
 @final
@@ -665,6 +711,8 @@ class RunScopedConversationCoordinator:
         self._max_active_executions = max_active_executions
         self._hook = boundary_hook or _NoopCoordinatorBoundaryHook()
         self._active_attempts: set[str] = set()
+        self._compaction_failure_count = 0
+        self._compaction_failures: list[CompactionFailureRecord] = []
         self._execution_sequence = 0
         self._closed = False
 
@@ -674,7 +722,47 @@ class RunScopedConversationCoordinator:
         return CoordinatorDiagnostics(
             active_attempts=len(self._active_attempts),
             closed=self._closed,
+            compaction_failure_count=self._compaction_failure_count,
+            compaction_failures=tuple(self._compaction_failures),
         )
+
+    def _record_compaction_failure(
+        self,
+        operation: CompactionOperation,
+        boundary: FailureBoundary,
+        error: BaseException,
+        *,
+        committed: bool,
+        streaming: bool,
+    ) -> None:
+        """Retain only closed content-free compaction failure facts."""
+        if operation is CompactionOperation.NONE:
+            return
+        error_code: ConversationErrorCode | DurableConversationErrorCode | str
+        if isinstance(error, ConversationError):
+            error_code = error.code
+            if boundary not in {
+                FailureBoundary.CHECKPOINT_COMMIT,
+                FailureBoundary.OUTWARD_PUBLICATION,
+            }:
+                boundary = error.boundary
+        elif isinstance(error, CancelledError):
+            error_code = "conversation_cancelled"
+        else:
+            error_code = "conversation_internal_failure"
+        self._compaction_failure_count += 1
+        self._compaction_failures.append(
+            CompactionFailureRecord(
+                operation=operation,
+                boundary=boundary,
+                error_code=error_code,
+                cancelled=isinstance(error, CancelledError),
+                committed=committed,
+                streaming=streaming,
+            )
+        )
+        if len(self._compaction_failures) > _MAX_COMPACTION_FAILURE_RECORDS:
+            del self._compaction_failures[0]
 
     def fake_provider_diagnostics(
         self,
@@ -776,6 +864,173 @@ class RunScopedConversationCoordinator:
         if request.semantics.operation is not ConversationOperation.COMPACT:
             raise ConversationValidationError()
         return await self._run(request, streaming=False)
+
+    async def commit_compact_result(
+        self,
+        source: ConversationCheckpoint,
+        identity: CheckpointIdentity,
+        authority: AuthorityScope,
+        *,
+        advance: NamedHeadAdvance | None = None,
+    ) -> ConversationCheckpoint:
+        """Commit one explicit continuable child of private compact state."""
+        if (
+            self._closed
+            or type(source) is not ConversationCheckpoint
+            or source.kind is not CheckpointKind.STANDALONE_COMPACT_RESULT
+            or source.lifecycle is not CheckpointLifecycle.COMMITTED
+            or type(identity) is not CheckpointIdentity
+            or type(authority) is not AuthorityScope
+            or (advance is not None and type(advance) is not NamedHeadAdvance)
+            or source.authority != authority
+            or identity.conversation_id != source.identity.conversation_id
+            or identity.parent_checkpoint_id != source.identity.checkpoint_id
+            or identity.parent_sequence != source.identity.sequence
+            or identity.sequence != source.identity.sequence + 1
+            or any(
+                not isinstance(lane, StatelessProviderLaneSnapshot)
+                or lane.compaction_boundary is None
+                for lane in source.content.lanes
+            )
+        ):
+            raise ConversationValidationError()
+        if advance is not None and (
+            source.head is None
+            or source.head.head_id != advance.head_id
+            or source.head.revision != advance.expected_revision + 1
+            or source.identity.parent_checkpoint_id
+            != advance.parent_checkpoint_id
+        ):
+            raise ConversationValidationError()
+        now = await self._clock.now()
+        expires_at = source.timestamps.expires_at
+        if expires_at is not None and expires_at <= now:
+            raise ConversationTransitionError()
+        candidate = ExecutionSegmentCheckpointCandidate(
+            checkpoint=with_checkpoint_integrity(
+                ConversationCheckpoint(
+                    identity=identity,
+                    kind=CheckpointKind.INTERNAL_PROVIDER_BOUNDARY,
+                    lifecycle=CheckpointLifecycle.STAGED,
+                    authority=authority,
+                    content=source.content,
+                    timestamps=CheckpointTimestamps(
+                        created_at=now,
+                        expires_at=expires_at,
+                    ),
+                    retention=source.retention,
+                    head=source.head if advance is not None else None,
+                )
+            )
+        )
+        try:
+            if advance is None:
+                return await self._store.create(candidate)
+            return await self._store.create_with_named_head(
+                candidate,
+                advance,
+            )
+        except CancelledError as error:
+            recovered = await self._recover_compact_commit(
+                candidate.checkpoint,
+                authority,
+                advance=advance,
+            )
+            self._record_compaction_failure(
+                CompactionOperation.STANDALONE,
+                FailureBoundary.CHECKPOINT_COMMIT,
+                error,
+                committed=recovered is not None,
+                streaming=False,
+            )
+            raise
+        except ConversationConflictError as error:
+            recovered = await self._recover_compact_commit(
+                candidate.checkpoint,
+                authority,
+                advance=advance,
+            )
+            if recovered is not None:
+                return recovered
+            self._record_compaction_failure(
+                CompactionOperation.STANDALONE,
+                FailureBoundary.CHECKPOINT_COMMIT,
+                error,
+                committed=False,
+                streaming=False,
+            )
+            raise
+        except ConversationError as error:
+            self._record_compaction_failure(
+                CompactionOperation.STANDALONE,
+                FailureBoundary.CHECKPOINT_COMMIT,
+                error,
+                committed=False,
+                streaming=False,
+            )
+            raise
+        except Exception:
+            recovered = await self._recover_compact_commit(
+                candidate.checkpoint,
+                authority,
+                advance=advance,
+            )
+            if recovered is not None:
+                return recovered
+            commit_failure = ConversationCommitError()
+            self._record_compaction_failure(
+                CompactionOperation.STANDALONE,
+                FailureBoundary.CHECKPOINT_COMMIT,
+                commit_failure,
+                committed=False,
+                streaming=False,
+            )
+            raise commit_failure from None
+
+    async def _recover_compact_commit(
+        self,
+        expected: ConversationCheckpoint,
+        authority: AuthorityScope,
+        *,
+        advance: NamedHeadAdvance | None = None,
+    ) -> ConversationCheckpoint | None:
+        """Recover only one fully committed exact compact child."""
+        try:
+            recovered = await self._store.load(
+                expected.identity.checkpoint_id,
+                authority,
+            )
+        except Exception:
+            return None
+        if (
+            recovered.lifecycle is not CheckpointLifecycle.COMMITTED
+            or recovered.kind is not expected.kind
+            or recovered.identity != expected.identity
+            or recovered.authority != expected.authority
+            or recovered.content != expected.content
+            or recovered.retention != expected.retention
+            or recovered.head != expected.head
+            or recovered.timestamps.created_at
+            != expected.timestamps.created_at
+            or recovered.timestamps.expires_at
+            != expected.timestamps.expires_at
+            or recovered.integrity is None
+        ):
+            return None
+        if advance is not None:
+            try:
+                head = await self._store.load_head(
+                    advance.head_id,
+                    authority,
+                )
+            except Exception:
+                return None
+            if (
+                head.revision != advance.expected_revision + 1
+                or head.checkpoint_id != expected.identity.checkpoint_id
+            ):
+                return None
+        return recovered
 
     async def close(self) -> None:
         """Close the owned store after all run-scoped attempts finish."""
@@ -920,6 +1175,19 @@ class RunScopedConversationCoordinator:
             and type(stored_provider_resolver) is not StoredProviderResolver
         ):
             raise ConversationValidationError()
+        compaction_operation = (
+            CompactionOperation.STANDALONE
+            if request.semantics.operation is ConversationOperation.COMPACT
+            else (
+                CompactionOperation.INLINE
+                if any(
+                    type(lane.compaction) is InlineCompaction
+                    for lane in request.lanes
+                )
+                else CompactionOperation.NONE
+            )
+        )
+        failure_boundary = FailureBoundary.VALIDATION_BEFORE_DISPATCH
         sink_owner = (
             _ProviderStateSinkOwner(sink) if sink is not None else None
         )
@@ -971,6 +1239,7 @@ class RunScopedConversationCoordinator:
                 resolution.disposition
                 is IdempotencyDisposition.REPLAY_COMMITTED
             ):
+                committed = True
                 assert resolution.checkpoint_id is not None
                 checkpoint = await self._store.load(
                     resolution.checkpoint_id, authority
@@ -985,6 +1254,7 @@ class RunScopedConversationCoordinator:
                     result = await self._store.retrieve(
                         resolution.public_response_id, authority
                     )
+                    failure_boundary = FailureBoundary.OUTWARD_PUBLICATION
                     await self._publish_one(
                         checkpoint,
                         resolution.public_response_id,
@@ -1013,6 +1283,7 @@ class RunScopedConversationCoordinator:
             self._validate_limits_before_dispatch(request, parent, plans)
             await self._allocate(request, owner_token, authority)
             quarantine_at = await self._clock.now()
+            failure_boundary = FailureBoundary.FAILURE_BEFORE_OUTPUT
             (
                 snapshots,
                 output_candidates,
@@ -1065,14 +1336,19 @@ class RunScopedConversationCoordinator:
                 head_id=(
                     request.advance.head_id
                     if isinstance(request.advance, NamedHeadAdvance)
+                    and request.semantics.operation
+                    is not ConversationOperation.COMPACT
                     else None
                 ),
                 expected_head_revision=(
                     request.advance.expected_revision
                     if isinstance(request.advance, NamedHeadAdvance)
+                    and request.semantics.operation
+                    is not ConversationOperation.COMPACT
                     else None
                 ),
             )
+            failure_boundary = FailureBoundary.CHECKPOINT_COMMIT
             await self._hook.reach(CoordinatorAwaitBoundary.COMMIT)
             recovered_commit = False
             try:
@@ -1098,6 +1374,7 @@ class RunScopedConversationCoordinator:
                     raise ConversationCommitError() from commit_error
             committed = True
             await self._observe("checkpoint_committed", receipt.checkpoint)
+            failure_boundary = FailureBoundary.OUTWARD_PUBLICATION
             if receipt.outbox is not None:
                 await self._publish_one(
                     receipt.checkpoint,
@@ -1113,6 +1390,13 @@ class RunScopedConversationCoordinator:
             return receipt
         except BaseException as exc:
             primary_failure = exc
+            self._record_compaction_failure(
+                compaction_operation,
+                failure_boundary,
+                exc,
+                committed=committed,
+                streaming=streaming,
+            )
             quarantine_error: BaseException | None = None
             if owner_token is not None and not committed:
                 if completed_stored:
@@ -1327,6 +1611,12 @@ class RunScopedConversationCoordinator:
                 or not output.completed_items
                 or output.completed_items[-1].kind
                 is not ProviderItemKind.COMPACTION
+                or sum(
+                    item.kind is ProviderItemKind.COMPACTION
+                    for item in output.completed_items
+                )
+                != 1
+                or output.public_output.items
                 for output in outputs
             )
         ):
@@ -1503,13 +1793,28 @@ class RunScopedConversationCoordinator:
                     if not isinstance(semantic_input, Mapping):
                         raise ConversationValidationError()
                     new_input = semantic_input
-                plan: ProviderPlan = StatelessProviderPlan(
-                    binding=runtime.binding,
-                    ledger=ledger,
-                    reasoning=reasoning,
-                    compaction=lane_request.compaction,
-                    new_input=new_input,
-                )
+                plan: ProviderPlan
+                if (
+                    request.semantics.operation
+                    is ConversationOperation.COMPACT
+                ):
+                    plan = StandaloneCompactProviderPlan(
+                        binding=runtime.binding,
+                        ledger=ledger,
+                        reasoning=(
+                            prior.reasoning
+                            if isinstance(prior, StatelessProviderLaneSnapshot)
+                            else reasoning
+                        ),
+                    )
+                else:
+                    plan = StatelessProviderPlan(
+                        binding=runtime.binding,
+                        ledger=ledger,
+                        reasoning=reasoning,
+                        compaction=lane_request.compaction,
+                        new_input=new_input,
+                    )
             else:
                 if prior is not None and not isinstance(
                     prior, StoredProviderLaneSnapshot
@@ -1526,12 +1831,14 @@ class RunScopedConversationCoordinator:
                         binding=runtime.binding,
                         upstream_response_id=prior.upstream_response_id,
                         reasoning=reasoning,
+                        compaction=lane_request.compaction,
                         new_input=stored_new_input,
                     )
                 else:
                     plan = FirstStoredProviderPlan(
                         binding=runtime.binding,
                         reasoning=reasoning,
+                        compaction=lane_request.compaction,
                         new_input=stored_new_input,
                     )
             plans.append((lane_request, runtime, plan))
@@ -1605,6 +1912,25 @@ class RunScopedConversationCoordinator:
             > 10_000
         ):
             raise ConversationValidationError()
+        for lane, runtime, plan in plans:
+            if type(plan) is StandaloneCompactProviderPlan:
+                if type(runtime) is not NativeOpenAIConversationLaneRuntime:
+                    continue
+                runtime.provider.validate_compaction_request(
+                    plan,
+                    runtime.binding.transport,
+                )
+            elif type(lane.compaction) is InlineCompaction:
+                if type(runtime) is NativeOpenAIConversationLaneRuntime:
+                    runtime.provider.validate_compaction_request(
+                        plan,
+                        runtime.binding.transport,
+                    )
+                elif type(runtime) is NativeOpenAIStoredLaneRuntime:
+                    runtime.provider.validate_compaction_request(
+                        plan,
+                        runtime.binding.transport,
+                    )
 
     async def _allocate(
         self,
@@ -1726,6 +2052,23 @@ class RunScopedConversationCoordinator:
         completed_targets = (
             completed_stored if completed_stored is not None else []
         )
+        if type(plan) is StandaloneCompactProviderPlan:
+            if streaming or type(runtime) is NativeOpenAIStoredLaneRuntime:
+                raise ConversationCapabilityError()
+            staging = _AttemptStaging(
+                lane_id=runtime.binding.lane_id,
+                items=[],
+            )
+            result = await self._dispatch_with_retry(
+                runtime,
+                plan,
+                staging,
+                streaming=False,
+                progress=progress,
+                sink=sink,
+            )
+            self._validate_standalone_provider_result(plan, result)
+            return result
         if type(runtime) is ConversationLaneRuntime:
             staging = _AttemptStaging(
                 lane_id=runtime.binding.lane_id,
@@ -1847,6 +2190,47 @@ class RunScopedConversationCoordinator:
                 new_input=None,
             )
 
+    @staticmethod
+    def _validate_standalone_provider_result(
+        plan: StandaloneCompactProviderPlan,
+        result: ProviderResult,
+    ) -> None:
+        """Validate one complete canonical provider-private next context."""
+        if (
+            type(plan) is not StandaloneCompactProviderPlan
+            or type(result) is not ProviderResult
+            or result.upstream_response_id is not None
+            or result.reasoning != plan.reasoning
+            or not result.items
+            or result.items[-1].kind is not ProviderItemKind.COMPACTION
+            or sum(
+                item.kind is ProviderItemKind.COMPACTION
+                for item in result.items
+            )
+            != 1
+            or any(
+                item.lane_id != plan.binding.lane_id for item in result.items
+            )
+            or any(
+                item.kind is not ProviderItemKind.MESSAGE
+                or item.phase is not ProviderItemPhase.INPUT
+                or item.caller is not ProviderItemCaller.CALLER
+                for item in result.items[:-1]
+            )
+            or result.items[-1].caller is not ProviderItemCaller.PROVIDER
+        ):
+            raise ConversationProviderResponseError()
+        try:
+            ProviderItemLedger(
+                lane_id=plan.binding.lane_id,
+                normalization_version=(
+                    plan.binding.continuation_codec_version
+                ),
+                items=result.items,
+            )
+        except ConversationValidationError:
+            raise ConversationProviderResponseError() from None
+
     async def _dispatch_complete_stored_native_lane(
         self,
         native: NativeOpenAIStoredLaneRuntime,
@@ -1948,6 +2332,7 @@ class RunScopedConversationCoordinator:
                 binding=native.binding,
                 upstream_response_id=upstream_response_id,
                 reasoning=original.reasoning,
+                compaction=original.compaction,
                 new_input={
                     "items": tuple(item.canonical_input for item in tool_items)
                 },
@@ -2191,7 +2576,15 @@ class RunScopedConversationCoordinator:
                             CoordinatorAwaitBoundary.PROVIDER_DISPATCH
                         )
                         progress.mark_possible_dispatch()
-                        result = await native.provider.dispatch(plan)
+                        if type(plan) is StandaloneCompactProviderPlan:
+                            if (
+                                type(native)
+                                is not NativeOpenAIConversationLaneRuntime
+                            ):
+                                raise ConversationCapabilityError()
+                            result = await native.provider.compact(plan)
+                        else:
+                            result = await native.provider.dispatch(plan)
                         try:
                             for item in result.items:
                                 staging.accept(item)
@@ -2450,12 +2843,20 @@ class RunScopedConversationCoordinator:
             if item.lane_id != lane_request.lane_id:
                 raise ConversationValidationError()
         if lane_request.mode is ConversationMode.STATELESS:
-            if type(plan) is not StatelessProviderPlan:
+            if not isinstance(
+                plan,
+                StatelessProviderPlan | StandaloneCompactProviderPlan,
+            ):
                 raise ConversationValidationError()
+            prior_items = (
+                ()
+                if type(plan) is StandaloneCompactProviderPlan
+                else plan.ledger.items
+            )
             ledger = ProviderItemLedger(
                 lane_id=lane_request.lane_id,
                 normalization_version=runtime.binding.continuation_codec_version,
-                items=plan.ledger.items + result.items,
+                items=prior_items + result.items,
             )
             compactions = tuple(
                 item
@@ -2905,12 +3306,24 @@ def build_checkpoint_candidate(
         )
     )
     if request.semantics.operation is ConversationOperation.COMPACT:
+        assert checkpoint.identity.parent_checkpoint_id is not None
         return StandaloneCompactCheckpointCandidate(
             checkpoint=checkpoint,
-            handle=StatelessConversationHandle(
+            handle=StandaloneCompactHandle(
                 conversation_id=checkpoint.identity.conversation_id,
                 checkpoint_id=checkpoint.identity.checkpoint_id,
                 branch_id=checkpoint.identity.branch_id,
+                parent_checkpoint_id=checkpoint.identity.parent_checkpoint_id,
+                head_id=(
+                    request.advance.head_id
+                    if isinstance(request.advance, NamedHeadAdvance)
+                    else None
+                ),
+                expected_head_revision=(
+                    request.advance.expected_revision
+                    if isinstance(request.advance, NamedHeadAdvance)
+                    else None
+                ),
             ),
         )
     if request.boundary is ConversationCommitBoundary.INTERNAL_SEGMENT:

@@ -570,6 +570,8 @@ def _encode_binding(value: ProviderLaneBinding) -> dict[str, object]:
         encoded["execution_definition_digest"] = (
             value.execution_definition_digest
         )
+    if value.compaction_policy_digest is not None:
+        encoded["compaction_policy_digest"] = value.compaction_policy_digest
     return encoded
 
 
@@ -594,6 +596,8 @@ def _decode_binding(value: object) -> ProviderLaneBinding:
     }
     if "execution_definition_digest" in raw:
         keys.add("execution_definition_digest")
+    if "compaction_policy_digest" in raw:
+        keys.add("compaction_policy_digest")
     item = _mapping(raw, keys)
     return ProviderLaneBinding(
         lane_id=ProviderLaneId(_string(item["lane_id"])),
@@ -628,6 +632,11 @@ def _decode_binding(value: object) -> ProviderLaneBinding:
         execution_definition_digest=(
             IntegrityDigest(_string(item["execution_definition_digest"]))
             if "execution_definition_digest" in item
+            else None
+        ),
+        compaction_policy_digest=(
+            IntegrityDigest(_string(item["compaction_policy_digest"]))
+            if "compaction_policy_digest" in item
             else None
         ),
     )

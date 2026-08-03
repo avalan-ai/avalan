@@ -5,6 +5,7 @@ from .contract import (
     AuthorityScope,
     CheckpointId,
     CheckpointIdentity,
+    CheckpointKind,
     CheckpointSequence,
     ConversationBranchId,
     ConversationId,
@@ -28,6 +29,7 @@ from .errors import (
     ConversationTransitionError,
     ConversationValidationError,
 )
+from .execution import provider_lane_execution_receipt
 from .items import (
     ProviderItem,
     VisibleTranscriptEntry,
@@ -66,9 +68,10 @@ from .settings import (
     ConversationParent,
     ConversationResetIntent,
     ConversationResult,
-    DisabledCompaction,
     EffectiveReasoningMetadata,
+    ProviderLaneOutputScope,
     ProviderUsage,
+    StandaloneCompactHandle,
     StandaloneCompactRequest,
     StandaloneCompactResult,
     StatelessConversationHandle,
@@ -81,6 +84,7 @@ from .settings import (
 )
 from .state import (
     ConversationCheckpoint,
+    StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
     validate_upstream_identifier_separation,
 )
@@ -878,7 +882,7 @@ class DirectConversationClient:
         *,
         idempotency_key: RequestIdempotencyKey | None = None,
     ) -> StandaloneCompactResult:
-        """Compact one stateless parent through the fake provider."""
+        """Compact one stateless parent through its bound provider."""
         if type(request) is not StandaloneCompactRequest:
             raise ConversationValidationError()
         _validate_explicit_idempotency_key(idempotency_key)
@@ -888,14 +892,23 @@ class DirectConversationClient:
         )
         settings = StatelessConversationSettings(parent=request.parent)
         ids = self._ids("compact", idempotency_key=idempotency_key)
+        advance: OrdinaryChildAdvance | NamedHeadAdvance
+        if request.named_head is None:
+            advance = OrdinaryChildAdvance(
+                parent_checkpoint_id=parent.identity.checkpoint_id
+            )
+        else:
+            advance = NamedHeadAdvance(
+                head_id=request.named_head.head_id,
+                parent_checkpoint_id=parent.identity.checkpoint_id,
+                expected_revision=request.named_head.expected_revision,
+            )
         run_request = self._child_request(
             "compact",
             settings,
             parent,
             ids,
-            advance=OrdinaryChildAdvance(
-                parent_checkpoint_id=parent.identity.checkpoint_id
-            ),
+            advance=advance,
             operation=ConversationOperation.COMPACT,
             branch_id=parent.identity.branch_id,
             outward=False,
@@ -904,13 +917,169 @@ class DirectConversationClient:
         checkpoint = receipt.checkpoint
         if checkpoint.integrity is None:
             raise ConversationValidationError()
+        if (
+            len(checkpoint.content.lanes) != 1
+            or len(receipt.output_candidates) != 1
+        ):
+            raise ConversationValidationError()
+        lane = checkpoint.content.lanes[0]
+        output = receipt.output_candidates[0]
+        if (
+            type(lane) is not StatelessProviderLaneSnapshot
+            or output.lane_id != lane.lane_id
+            or output.reasoning != lane.reasoning
+        ):
+            raise ConversationValidationError()
         return StandaloneCompactResult(
-            handle=StatelessConversationHandle(
+            handle=StandaloneCompactHandle(
                 conversation_id=checkpoint.identity.conversation_id,
                 checkpoint_id=checkpoint.identity.checkpoint_id,
                 branch_id=checkpoint.identity.branch_id,
+                parent_checkpoint_id=parent.identity.checkpoint_id,
+                head_id=(
+                    request.named_head.head_id
+                    if request.named_head is not None
+                    else None
+                ),
+                expected_head_revision=(
+                    request.named_head.expected_revision
+                    if request.named_head is not None
+                    else None
+                ),
             ),
+            binding=lane.binding,
+            canonical_context=lane.ledger,
+            reasoning=lane.reasoning,
+            usage=output.usage,
             canonical_context_digest=checkpoint.integrity.digest,
+        )
+
+    async def commit_compact(
+        self,
+        result: StandaloneCompactResult,
+        *,
+        idempotency_key: RequestIdempotencyKey | None = None,
+    ) -> StatelessConversationHandle:
+        """Commit private compact state on its existing stateless branch."""
+        if type(result) is not StandaloneCompactResult:
+            raise ConversationValidationError()
+        return await self._commit_compact_result(
+            result,
+            branch_id=result.handle.branch_id,
+            operation="compact-commit",
+            idempotency_key=idempotency_key,
+        )
+
+    async def fork_compact(
+        self,
+        result: StandaloneCompactResult,
+        branch_id: ConversationBranchId,
+        *,
+        idempotency_key: RequestIdempotencyKey | None = None,
+    ) -> StatelessConversationHandle:
+        """Fork private compact state onto one explicit stateless branch."""
+        if type(result) is not StandaloneCompactResult:
+            raise ConversationValidationError()
+        validate_identifier(branch_id, "branch_id")
+        if branch_id == result.handle.branch_id:
+            raise ConversationValidationError()
+        return await self._commit_compact_result(
+            result,
+            branch_id=branch_id,
+            operation="compact-fork",
+            idempotency_key=idempotency_key,
+        )
+
+    async def _commit_compact_result(
+        self,
+        result: StandaloneCompactResult,
+        *,
+        branch_id: ConversationBranchId,
+        operation: str,
+        idempotency_key: RequestIdempotencyKey | None,
+    ) -> StatelessConversationHandle:
+        if type(result) is not StandaloneCompactResult:
+            raise ConversationValidationError()
+        _validate_explicit_idempotency_key(idempotency_key)
+        source = await self._runtime.store.load(
+            result.handle.checkpoint_id,
+            self._runtime.authority,
+        )
+        if (
+            source.kind is not CheckpointKind.STANDALONE_COMPACT_RESULT
+            or source.integrity is None
+            or source.integrity.digest != result.canonical_context_digest
+            or source.identity.conversation_id != result.handle.conversation_id
+            or source.identity.branch_id != result.handle.branch_id
+            or source.identity.parent_checkpoint_id
+            != result.handle.parent_checkpoint_id
+            or len(source.content.lanes) != 1
+        ):
+            raise ConversationValidationError()
+        if result.handle.head_id is None:
+            if source.head is not None:
+                raise ConversationValidationError()
+            named_head_advance = None
+        else:
+            expected_head_revision = result.handle.expected_head_revision
+            assert expected_head_revision is not None
+            if (
+                source.head is None
+                or source.head.head_id != result.handle.head_id
+                or source.head.revision != expected_head_revision + 1
+            ):
+                raise ConversationValidationError()
+            named_head_advance = NamedHeadAdvance(
+                head_id=result.handle.head_id,
+                parent_checkpoint_id=result.handle.parent_checkpoint_id,
+                expected_revision=expected_head_revision,
+            )
+        lane = source.content.lanes[0]
+        if (
+            type(lane) is not StatelessProviderLaneSnapshot
+            or lane.binding != self._runtime.lane
+            or lane.binding != result.binding
+            or lane.ledger != result.canonical_context
+            or lane.reasoning != result.reasoning
+            or lane.execution_receipt is None
+        ):
+            raise ConversationValidationError()
+        expected_receipt = provider_lane_execution_receipt(
+            authority=source.authority,
+            identity=source.identity,
+            binding=lane.binding,
+            mode=ConversationMode.STATELESS,
+            scope=ProviderLaneOutputScope.CURRENT_CALL,
+            completed_items=lane.ledger.items,
+            reasoning=lane.reasoning,
+            usage=result.usage,
+            upstream_response_id=None,
+        )
+        if lane.execution_receipt != expected_receipt:
+            raise ConversationValidationError()
+        ids = self._ids(operation, idempotency_key=idempotency_key)
+        identity = CheckpointIdentity(
+            conversation_id=source.identity.conversation_id,
+            logical_turn_id=ids.logical_turn_id,
+            execution_segment_id=ids.execution_segment_id,
+            checkpoint_id=ids.checkpoint_id,
+            branch_id=branch_id,
+            sequence=CheckpointSequence(source.identity.sequence + 1),
+            parent_checkpoint_id=source.identity.checkpoint_id,
+            parent_sequence=source.identity.sequence,
+        )
+        checkpoint = await self._runtime.coordinator.commit_compact_result(
+            source,
+            identity,
+            self._runtime.authority,
+            advance=(
+                named_head_advance if operation == "compact-commit" else None
+            ),
+        )
+        return StatelessConversationHandle(
+            conversation_id=checkpoint.identity.conversation_id,
+            checkpoint_id=checkpoint.identity.checkpoint_id,
+            branch_id=checkpoint.identity.branch_id,
         )
 
     async def _dispatch(
@@ -952,7 +1121,8 @@ class DirectConversationClient:
             self._runtime.authority,
         )
         if (
-            checkpoint.identity.conversation_id != handle.conversation_id
+            checkpoint.kind is CheckpointKind.STANDALONE_COMPACT_RESULT
+            or checkpoint.identity.conversation_id != handle.conversation_id
             or checkpoint.identity.branch_id != handle.branch_id
         ):
             raise ConversationValidationError()
@@ -1093,11 +1263,7 @@ class DirectConversationClient:
                     lane_id=self._runtime.lane.lane_id,
                     mode=settings.mode,
                     reasoning_context=settings.reasoning_context,
-                    compaction=(
-                        settings.compaction
-                        if isinstance(settings, StatelessConversationSettings)
-                        else DisabledCompaction()
-                    ),
+                    compaction=settings.compaction,
                 ),
             ),
             visible_delta=(

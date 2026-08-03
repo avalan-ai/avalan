@@ -209,6 +209,11 @@ async def test_stream_create_continue_branch_and_compact(
     compacted = await client.compact(
         avalan.StandaloneCompactRequest(parent=parent)
     )
+    assert type(compacted.handle) is avalan.StandaloneCompactHandle
+    assert compacted.canonical_context.item_count == 1
+    assert compacted.canonical_context.items[-1].kind is (
+        conversation.ProviderItemKind.COMPACTION
+    )
     compact_checkpoint = await store.load(
         compacted.handle.checkpoint_id,
         scope,
@@ -226,6 +231,19 @@ async def test_stream_create_continue_branch_and_compact(
     )
     assert compact_lane.ledger.items[-1].kind is (
         conversation.ProviderItemKind.COMPACTION
+    )
+    committed = await client.commit_compact(compacted)
+    committed_checkpoint = await store.load(committed.checkpoint_id, scope)
+    assert committed_checkpoint.kind is (
+        conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+    )
+    forked = await client.fork_compact(
+        compacted,
+        conversation.ConversationBranchId("compact-fork"),
+    )
+    assert forked.branch_id == "compact-fork"
+    assert await store.load(first.handle.checkpoint_id, scope) == (
+        parent_before_branch
     )
     assert (
         coordinator.fake_provider_diagnostics(

@@ -1,0 +1,159 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 7,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase7-native-compaction-provider-review",
+  "reason": "Layer exact inline and standalone native compaction over the frozen provider and direct SDK implementations.",
+  "transitions": [
+    {
+      "path": "src/avalan/__init__.py",
+      "from_size": 9978,
+      "from_sha256": "496ce5f01ed2c12d3bb37712c37e5a97cf0a5a814acbf05f54a70ebf68518847",
+      "to_size": 10046,
+      "to_sha256": "34094438bb8b6b2b3ba6197127c6903e5f8c7dc76cc6873f61976f58d1ab7ed3"
+    },
+    {
+      "path": "src/avalan/conversation/__init__.py",
+      "from_size": 28421,
+      "from_sha256": "1c157fe247d198e07dff583eead46f21de8c70c9cefdc1abe80991ddd8667ddb",
+      "to_size": 28960,
+      "to_sha256": "98a018f55684c85faca8eac4cc0e650a7f6ab6d0068d8f18ee6fe8c7cd0a04a0"
+    },
+    {
+      "path": "src/avalan/conversation/binding.py",
+      "from_size": 11628,
+      "from_sha256": "6677821422ae77ecef8ee2939d60ac8f11ce51b23d752974fea4b27df283f527",
+      "to_size": 12110,
+      "to_sha256": "d2a31bc6bf27a33cb41795eeb6dab6efffa1aaff5ccd071aaa6b9555d286c59d"
+    },
+    {
+      "path": "src/avalan/conversation/codec.py",
+      "from_size": 32829,
+      "from_sha256": "64d9fc44e494453625538a4250b46d83a686f8e406c3b6340f31eb6ae5ef92e9",
+      "to_size": 33233,
+      "to_sha256": "eb7dfd3f39946fe8bbad368f73082cb47acfcd9b130bdac51bba390e5aa3ce1a"
+    },
+    {
+      "path": "src/avalan/conversation/coordinator.py",
+      "from_size": 111286,
+      "from_sha256": "b586445a0d5910238d191508a5a534cc8f0b8910e72081c5551e9038021e2547",
+      "to_size": 127460,
+      "to_sha256": "7fd15c415a3a28a9f7fa477a9c01cfc076542fce1a2fe6fbb18686151630e838"
+    },
+    {
+      "path": "src/avalan/conversation/fakes.py",
+      "from_size": 61349,
+      "from_sha256": "feeab4cbcc14e4882d7b8de19481353cff60e0eb787655e22cab4faf2e782957",
+      "to_size": 61544,
+      "to_sha256": "4dcb484149f9998c2cf39b02f3ba38e852d0b8c9cfe1ad353a592493efce9ac6"
+    },
+    {
+      "path": "src/avalan/conversation/items.py",
+      "from_size": 69302,
+      "from_sha256": "dce99215796d7274fd8948bce9a1574cf8e5f34dc2087039208c7ef4809ef1f8",
+      "to_size": 71181,
+      "to_sha256": "8d5d2e2342513f688aa8d7478dec666a86d857ca21d23d79b734fba8062594e8"
+    },
+    {
+      "path": "src/avalan/conversation/protocols.py",
+      "from_size": 20226,
+      "from_sha256": "f9faba0869f6f156139d5e88c384fbfe61caa32d5d72f2439d8914698ef37db0",
+      "to_size": 21895,
+      "to_sha256": "35a00f98479afca3182663e9e2a8b8199b324a703650ffa6e8636b0b769a46ba"
+    },
+    {
+      "path": "src/avalan/conversation/providers/__init__.py",
+      "from_size": 1133,
+      "from_sha256": "4c6c408a95d86e0f254a19d70a9fd77ba98524a13da73c20f7cec28491035aa4",
+      "to_size": 1347,
+      "to_sha256": "c28bddfd6a1465d8539d852a7bbb0dca3e9543f8d40f03e95897b704e761098a"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai.py",
+      "from_size": 41406,
+      "from_sha256": "4081b066e549a014a3dd3b9b1210d0c9ca51e4b9e0c720330073d66db04e347c",
+      "to_size": 59231,
+      "to_sha256": "9ccca73e880c89dd7699482b730476fd920036d559ab076a430323f775832d2b"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai_stored.py",
+      "from_size": 29169,
+      "from_sha256": "9c0132bb7c48669c1ee157f7a58fb8582d4f51bca116db65ff4543856cda6019",
+      "to_size": 34824,
+      "to_sha256": "aed336669d63d4784f9facd901190951956f389bda16b06d033ac160a139857c"
+    },
+    {
+      "path": "src/avalan/conversation/runtime.py",
+      "from_size": 38395,
+      "from_sha256": "5c798ee3a69fc8dabed5b61fcabc59f9d3f026cbf3a646f294ca641c378eefe2",
+      "to_size": 38477,
+      "to_sha256": "a8bf7538728adb7999d698fcc18dc116785e3dd200363d7f5bd687719871fba9"
+    },
+    {
+      "path": "src/avalan/conversation/sdk.py",
+      "from_size": 46113,
+      "from_sha256": "fdadba814639ce92e08e79be36dafff25e4cd793c2f94b69de109f05a8b2884d",
+      "to_size": 52924,
+      "to_sha256": "0e127adcfd4677fb9184f0e9704f33906bc371e3629f1b79a07e30d38110a216"
+    },
+    {
+      "path": "src/avalan/conversation/settings.py",
+      "from_size": 22624,
+      "from_sha256": "30668a8c786172a7b3463c9bd898782029efcf354d0ec17a600495e016a415d7",
+      "to_size": 25654,
+      "to_sha256": "f8e6fdbc44356f65aeae175d0e4c353457909ecbe98c5965ce797d874a2ebef1"
+    },
+    {
+      "path": "src/avalan/conversation/state.py",
+      "from_size": 25490,
+      "from_sha256": "d852b5a9019ce18c5221757f00833b0f7d9ba5b03ec917f2ad74be24c8913265",
+      "to_size": 25880,
+      "to_sha256": "1cc077709f50104307c078e7304a11782059d7fdc322d4c0d6f80d1f1f445f82"
+    },
+    {
+      "path": "src/avalan/conversation/store.py",
+      "from_size": 99760,
+      "from_sha256": "6718b06f63d1ea7e097dd78aebdcbaeca85ead83277f7019114aa89b0f34e222",
+      "to_size": 102450,
+      "to_sha256": "92c0864f3eef0974f1eed606b802635aed6e51714bbabedfb211f2cabb010ce3"
+    },
+    {
+      "path": "src/avalan/conversation/stores/pgsql.py",
+      "from_size": 190583,
+      "from_sha256": "8e3afd42d2e3455400bfd19bd1329a6c2267155b5b9d8899535a7083ce49c29c",
+      "to_size": 193033,
+      "to_sha256": "20bcfc86a6d5a66a5fb6089ddf76e9598c3765ca05b2e596ae3a84469cf602e3"
+    },
+    {
+      "path": "src/avalan/sdk.py",
+      "from_size": 77463,
+      "from_sha256": "afdf0f4056e33a39d00bf0d5b5587a26ac0d40eacf47f53bb67f278b8aecf162",
+      "to_size": 77558,
+      "to_sha256": "00091d7b4092444777217918e04a30116792fa88617d3e80857a4e16a84b042b"
+    },
+    {
+      "path": "tests/conversation/direct_sdk_test.py",
+      "from_size": 25942,
+      "from_sha256": "a8a10e69b27842a3b0ec1138d04c1e758a618d091678623fff6e4f3a18d566a8",
+      "to_size": 26694,
+      "to_sha256": "a0a7aa6cddac7865eeefbefe4726c2112a9041170347ef85d6f658ae522e5295"
+    },
+    {
+      "path": "tests/conversation/domain_contract_test.py",
+      "from_size": 160196,
+      "from_sha256": "6a00228d6ab78a5e2ec6e29da5745f2fe6c083b93e1893e6e8f4fca4bafcce15",
+      "to_size": 161460,
+      "to_sha256": "3d20fe77585eed53afcddec0127de6a40e3af2971a42fb4d343db9a90853eb80"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/native_openai_compaction_test.py::test_native_inline_latest_replay_and_standalone_wire",
+    "tests/conversation/native_openai_compaction_test.py::test_streamed_compaction_commits_complete_done_items",
+    "tests/conversation/compaction_e2e_test.py::test_long_stateless_inline_compaction_restarts_at_latest_boundary",
+    "tests/conversation/compaction_e2e_test.py::test_stored_inline_compaction_uses_only_immediate_upstream_parent",
+    "tests/conversation/compaction_e2e_test.py::test_tool_cycles_across_two_boundaries_keep_exact_final_order",
+    "tests/conversation/compaction_e2e_test.py::test_standalone_explicit_fork_restarts_and_original_parent_branches"
+  ],
+  "canonical_sha256": "e5ee12994883f9ca6bb27ffefc7b0f32cf6ebe1abb8694cb8c963c447ddd8b6a"
+}

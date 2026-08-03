@@ -5,6 +5,7 @@ from .contract import (
     AuthorityScope,
     CheckpointId,
     CheckpointIdentity,
+    CheckpointKind,
     IdempotencyDisposition,
     IdempotencyRecordState,
     LocalDeletionState,
@@ -55,6 +56,7 @@ from .runtime import (
     IdempotencyResolution,
     IdempotencySettlementDisposition,
     IdempotencySettlementResolution,
+    NamedHeadAdvance,
     OutboxClaimDisposition,
     OutboxClaimResolution,
     OutboxClaimTarget,
@@ -86,6 +88,7 @@ from .state import (
     ConversationCheckpoint,
     ExecutionSegmentCheckpointCandidate,
     NamedHeadLifecycle,
+    NamedHeadMetadata,
     NamedHeadSnapshot,
     OutwardTurnCheckpointCandidate,
     StandaloneCompactCheckpointCandidate,
@@ -373,6 +376,67 @@ class InMemoryConversationStore:
     ) -> ConversationCheckpoint:
         await self._hook.reach(StoreAwaitBoundary.CREATE)
         return await self._commit_candidate(candidate)
+
+    async def create_with_named_head(
+        self,
+        candidate: CheckpointCandidate,
+        advance: NamedHeadAdvance,
+    ) -> ConversationCheckpoint:
+        """Create a checkpoint and advance an exact head atomically."""
+        if type(advance) is not NamedHeadAdvance:
+            raise ConversationValidationError()
+        await self._hook.reach(StoreAwaitBoundary.CREATE)
+        staged = self._candidate_checkpoint(candidate)
+        committed = self._committed_checkpoint(
+            staged,
+            staged.timestamps.created_at,
+        )
+        expected_head = NamedHeadMetadata(
+            head_id=advance.head_id,
+            revision=NamedHeadRevision(advance.expected_revision + 1),
+        )
+        if (
+            committed.head != expected_head
+            or committed.identity.parent_checkpoint_id
+            == advance.parent_checkpoint_id
+        ):
+            raise ConversationValidationError()
+        encoded = self._codec.encode(committed)
+        authority_key = str(authority_digest(committed.authority))
+        async with self._lock:
+            self._ensure_open_locked()
+            self._validate_checkpoint_write_locked(committed, encoded)
+            direct_parent_id = committed.identity.parent_checkpoint_id
+            assert direct_parent_id is not None
+            direct_parent = self._checkpoints[direct_parent_id].checkpoint
+            if (
+                direct_parent.kind
+                is not CheckpointKind.STANDALONE_COMPACT_RESULT
+                or direct_parent.identity.parent_checkpoint_id
+                != advance.parent_checkpoint_id
+            ):
+                raise ConversationValidationError()
+            current = self._heads.get((authority_key, advance.head_id))
+            if (
+                current is None
+                or current.lifecycle is not NamedHeadLifecycle.ACTIVE
+                or current.revision != advance.expected_revision
+                or current.checkpoint_id != advance.parent_checkpoint_id
+            ):
+                raise ConversationConflictError()
+            checkpoint_id = committed.identity.checkpoint_id
+            self._checkpoints[checkpoint_id] = _StoredCheckpoint(
+                checkpoint=committed,
+                encoded=encoded,
+                authority_digest=authority_key,
+            )
+            self._register_child_locked(committed)
+            self._heads[(authority_key, advance.head_id)] = NamedHeadSnapshot(
+                head_id=advance.head_id,
+                revision=NamedHeadRevision(advance.expected_revision + 1),
+                checkpoint_id=checkpoint_id,
+            )
+        return committed
 
     async def load(
         self,
@@ -883,6 +947,7 @@ class InMemoryConversationStore:
         """Apply one explicit durable ambiguity decision."""
         if type(request) is not AmbiguousDispatchReconciliationRequest:
             raise ConversationValidationError()
+        dispositions = AmbiguousDispatchReconciliationDisposition
         key = (
             str(authority_digest(request.authority)),
             request.operation.value,
@@ -893,31 +958,23 @@ class InMemoryConversationStore:
             current = self._idempotency.get(key)
             if current is None:
                 return AmbiguousDispatchReconciliationResult(
-                    disposition=(
-                        AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
-                    )
+                    disposition=(dispositions.NOT_FOUND_OR_UNAUTHORIZED)
                 )
             if current.state is IdempotencyRecordState.FAILED_NO_DISPATCH:
-                disposition = (
-                    AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH
-                )
+                disposition = dispositions.ALREADY_RESOLVED_NO_DISPATCH
             elif current.state is not IdempotencyRecordState.AMBIGUOUS:
                 raise ConversationConflictError()
             elif (
                 request.resolution is AmbiguousDispatchResolution.RETAIN_FENCE
             ):
-                disposition = (
-                    AmbiguousDispatchReconciliationDisposition.FENCE_RETAINED
-                )
+                disposition = dispositions.FENCE_RETAINED
             else:
                 self._idempotency[key] = replace(
                     current,
                     state=IdempotencyRecordState.FAILED_NO_DISPATCH,
                 )
                 self._idempotency_changed.notify_all()
-                disposition = (
-                    AmbiguousDispatchReconciliationDisposition.RESOLVED_NO_DISPATCH
-                )
+                disposition = dispositions.RESOLVED_NO_DISPATCH
         return AmbiguousDispatchReconciliationResult(disposition=disposition)
 
     async def inspect_idempotency_settlement(
@@ -1924,6 +1981,10 @@ class InMemoryConversationStore:
                 ):
                     raise ConversationValidationError()
                 if candidate.scope is ProviderLaneOutputScope.CUMULATIVE:
+                    expected_items = lane.ledger.items
+                elif (
+                    checkpoint.kind is CheckpointKind.STANDALONE_COMPACT_RESULT
+                ):
                     expected_items = lane.ledger.items
                 elif prior is None:
                     expected_items = lane.ledger.items

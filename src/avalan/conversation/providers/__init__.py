@@ -1,6 +1,9 @@
 """Expose closed native conversation provider adapters."""
 
 from .openai import (
+    NativeOpenAICompactionLimits as NativeOpenAICompactionLimits,
+)
+from .openai import (
     NativeOpenAIConversationLaneRuntime as NativeOpenAIConversationLaneRuntime,
 )
 from .openai import (
@@ -17,6 +20,9 @@ from .openai import (
 )
 from .openai import (
     NativeOpenAIStatelessProvider as NativeOpenAIStatelessProvider,
+)
+from .openai import (
+    native_openai_compaction_policy_digest as native_openai_compaction_policy_digest,  # noqa: E501
 )
 from .openai_stored import (
     NativeOpenAIStoredExecution as NativeOpenAIStoredExecution,

@@ -721,8 +721,23 @@ def test_settings_parents_handles_results_and_compaction_are_closed() -> None:
     compact_request = conversation.StandaloneCompactRequest(
         parent=stateless_parent
     )
+    compact_handle = conversation.StandaloneCompactHandle(
+        conversation_id=conversation.ConversationId("conversation-1"),
+        checkpoint_id=conversation.CheckpointId("compact-checkpoint"),
+        branch_id=conversation.ConversationBranchId("branch-1"),
+        parent_checkpoint_id=stateless_handle.checkpoint_id,
+    )
+    compact_ledger = conversation.ProviderItemLedger(
+        lane_id=conversation.ProviderLaneId("lane-1"),
+        normalization_version=conversation.ConversationCodecVersion(1),
+        items=(_item(conversation.ProviderItemKind.COMPACTION, 0),),
+    )
     compact_result = conversation.StandaloneCompactResult(
-        handle=stateless_handle,
+        handle=compact_handle,
+        binding=_binding(),
+        canonical_context=compact_ledger,
+        reasoning=_reasoning(),
+        usage=conversation.ProviderUsage(input_tokens=1),
         canonical_context_digest=conversation.IntegrityDigest("b" * 64),
     )
 
@@ -736,7 +751,7 @@ def test_settings_parents_handles_results_and_compaction_are_closed() -> None:
         compact_request.operation
         is conversation.CompactionOperation.STANDALONE
     )
-    assert compact_result.handle == stateless_handle
+    assert compact_result.handle == compact_handle
     assert conversation.DisabledCompaction().operation is (
         conversation.CompactionOperation.NONE
     )
@@ -1387,16 +1402,18 @@ def test_checkpoint_candidate_variants_enforce_exact_boundaries(
         )
     )
     staged_compact = conversation.with_checkpoint_integrity(
-        replace(
-            staged_internal,
+        _checkpoint(
             kind=conversation.CheckpointKind.STANDALONE_COMPACT_RESULT,
+            lifecycle=conversation.CheckpointLifecycle.STAGED,
+            parent_checkpoint_id="checkpoint-parent",
         )
     )
     continuation = _portable_continuation()
-    handle = conversation.StatelessConversationHandle(
-        conversation_id=conversation.ConversationId("conversation-1"),
-        checkpoint_id=conversation.CheckpointId("checkpoint-1"),
-        branch_id=conversation.ConversationBranchId("branch-1"),
+    handle = conversation.StandaloneCompactHandle(
+        conversation_id=staged_compact.identity.conversation_id,
+        checkpoint_id=staged_compact.identity.checkpoint_id,
+        branch_id=staged_compact.identity.branch_id,
+        parent_checkpoint_id=conversation.CheckpointId("checkpoint-parent"),
     )
     assert (
         conversation.ExecutionSegmentCheckpointCandidate(
@@ -1857,9 +1874,15 @@ def test_settings_validate_every_closed_union_boundary() -> None:
             operation=conversation.CompactionOperation.INLINE,
         ),
         lambda: conversation.StandaloneCompactResult(
-            handle=cast(
-                conversation.StatelessConversationHandle, stored_handle
+            handle=cast(conversation.StandaloneCompactHandle, stored_handle),
+            binding=_binding(),
+            canonical_context=conversation.ProviderItemLedger(
+                lane_id=conversation.ProviderLaneId("lane-1"),
+                normalization_version=conversation.ConversationCodecVersion(1),
+                items=(_item(conversation.ProviderItemKind.COMPACTION, 0),),
             ),
+            reasoning=_reasoning(),
+            usage=conversation.ProviderUsage(),
             canonical_context_digest=conversation.IntegrityDigest("a" * 64),
         ),
     )
@@ -2329,7 +2352,7 @@ def test_checkpoint_and_candidate_runtime_types_are_exact() -> None:
     with pytest.raises(conversation.ConversationValidationError):
         conversation.StandaloneCompactCheckpointCandidate(
             checkpoint=staged_compact,
-            handle=cast(conversation.StatelessConversationHandle, object()),
+            handle=cast(conversation.StandaloneCompactHandle, object()),
         )
 
 

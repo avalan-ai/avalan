@@ -18,6 +18,7 @@ from ..codec import (
 from ..contract import (
     AuthorityScope,
     CheckpointId,
+    CheckpointKind,
     IdempotencyDisposition,
     IdempotencyRecordState,
     LocalDeletionState,
@@ -90,6 +91,7 @@ from ..runtime import (
     IdempotencyResolution,
     IdempotencySettlementDisposition,
     IdempotencySettlementResolution,
+    NamedHeadAdvance,
     OutboxClaimDisposition,
     OutboxClaimResolution,
     OutboxClaimTarget,
@@ -118,6 +120,7 @@ from ..state import (
     CheckpointLifecycle,
     ConversationCheckpoint,
     NamedHeadLifecycle,
+    NamedHeadMetadata,
     NamedHeadSnapshot,
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
@@ -725,6 +728,70 @@ class PgsqlConversationStore:
     ) -> ConversationCheckpoint:
         await self._reach_store(StoreAwaitBoundary.CREATE)
         return await self._commit_candidate(candidate)
+
+    async def create_with_named_head(
+        self,
+        candidate: CheckpointCandidate,
+        advance: NamedHeadAdvance,
+    ) -> ConversationCheckpoint:
+        """Create a checkpoint and advance an exact head atomically."""
+        if type(advance) is not NamedHeadAdvance:
+            raise ConversationValidationError()
+        await self._reach_store(StoreAwaitBoundary.CREATE)
+        staged = InMemoryConversationStore._candidate_checkpoint(candidate)
+        expected_head = NamedHeadMetadata(
+            head_id=advance.head_id,
+            revision=NamedHeadRevision(advance.expected_revision + 1),
+        )
+        parent_id = staged.identity.parent_checkpoint_id
+        if parent_id is None or staged.head != expected_head:
+            raise ConversationValidationError()
+        parent = await self._load_checkpoint(parent_id, staged.authority)
+        if (
+            parent.kind is not CheckpointKind.STANDALONE_COMPACT_RESULT
+            or parent.identity.parent_checkpoint_id
+            != advance.parent_checkpoint_id
+        ):
+            raise ConversationValidationError()
+        prepared = await self._prepare_checkpoint(
+            candidate,
+            committed_at=staged.timestamps.created_at,
+            output_candidates=(),
+        )
+        authority_key = str(authority_digest(staged.authority))
+
+        async def operation(cursor: PgsqlCursor) -> None:
+            row = await self._fetchone(
+                cursor,
+                "compact_head_lock",
+                _SELECT_HEAD_FOR_UPDATE_SQL,
+                (authority_key, advance.head_id),
+            )
+            if (
+                row is None
+                or _row_str(row, "lifecycle_state") != "active"
+                or _row_int(row, "head_revision") != advance.expected_revision
+                or _row_str(row, "checkpoint_id")
+                != str(advance.parent_checkpoint_id)
+            ):
+                raise ConversationConflictError()
+            await self._insert_checkpoint(cursor, prepared)
+            await self._execute(
+                cursor,
+                "compact_head_advance",
+                _UPDATE_HEAD_SQL,
+                (
+                    prepared.checkpoint.identity.checkpoint_id,
+                    prepared.checkpoint.timestamps.committed_at,
+                    authority_key,
+                    advance.head_id,
+                    advance.expected_revision,
+                    advance.parent_checkpoint_id,
+                ),
+            )
+
+        await self._transaction("compact_checkpoint_head_commit", operation)
+        return prepared.checkpoint
 
     async def load(
         self,
@@ -2408,6 +2475,7 @@ class PgsqlConversationStore:
         """Apply one explicit durable ambiguity decision."""
         if type(request) is not AmbiguousDispatchReconciliationRequest:
             raise ConversationValidationError()
+        dispositions = AmbiguousDispatchReconciliationDisposition
         authority_key = str(authority_digest(request.authority))
         now = await self._clock.now()
         _validate_time(now)
@@ -2426,24 +2494,18 @@ class PgsqlConversationStore:
                 ),
             )
             if row is None:
-                disposition = (
-                    AmbiguousDispatchReconciliationDisposition.NOT_FOUND_OR_UNAUTHORIZED
-                )
+                disposition = dispositions.NOT_FOUND_OR_UNAUTHORIZED
             else:
                 state = IdempotencyRecordState(_row_str(row, "record_state"))
                 if state is IdempotencyRecordState.FAILED_NO_DISPATCH:
-                    disposition = (
-                        AmbiguousDispatchReconciliationDisposition.ALREADY_RESOLVED_NO_DISPATCH
-                    )
+                    disposition = dispositions.ALREADY_RESOLVED_NO_DISPATCH
                 elif state is not IdempotencyRecordState.AMBIGUOUS:
                     raise ConversationConflictError()
                 elif (
                     request.resolution
                     is AmbiguousDispatchResolution.RETAIN_FENCE
                 ):
-                    disposition = (
-                        AmbiguousDispatchReconciliationDisposition.FENCE_RETAINED
-                    )
+                    disposition = dispositions.FENCE_RETAINED
                 else:
                     await self._execute(
                         cursor,
@@ -2457,9 +2519,7 @@ class PgsqlConversationStore:
                             request.idempotency_key,
                         ),
                     )
-                    disposition = (
-                        AmbiguousDispatchReconciliationDisposition.RESOLVED_NO_DISPATCH
-                    )
+                    disposition = dispositions.RESOLVED_NO_DISPATCH
             return AmbiguousDispatchReconciliationResult(
                 disposition=disposition
             )

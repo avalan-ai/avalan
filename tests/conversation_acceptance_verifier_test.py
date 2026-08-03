@@ -369,12 +369,27 @@ def test_phase1_replacement_retains_tombstone_history_and_source(
         "_ACTIVE_SOURCE_SHA256_BY_PHASE",
         source_anchors,
     )
-    transitions = _VERIFIER._phase5_provider_transitions(_ROOT)
-    transitions.pop(domain_relative)
+    phase5_transitions = {
+        relative: transition
+        for relative, transition in _VERIFIER._phase5_provider_transitions(
+            _ROOT
+        ).items()
+        if relative in relative_paths
+    }
     monkeypatch.setattr(
         _VERIFIER,
         "_phase5_provider_transitions",
-        lambda _root: transitions,
+        lambda _root: phase5_transitions,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase6_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase7_provider_transitions",
+        lambda _root: {},
     )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
@@ -498,12 +513,27 @@ def test_phase1_sources_append_without_rewriting_phase0_pins(
         "_ACTIVE_SOURCE_SHA256_BY_PHASE",
         source_anchors,
     )
-    transitions = _VERIFIER._phase5_provider_transitions(_ROOT)
-    transitions.pop(phase1_relative)
+    phase5_transitions = {
+        relative: transition
+        for relative, transition in _VERIFIER._phase5_provider_transitions(
+            _ROOT
+        ).items()
+        if relative in relative_paths
+    }
     monkeypatch.setattr(
         _VERIFIER,
         "_phase5_provider_transitions",
-        lambda _root: transitions,
+        lambda _root: phase5_transitions,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase6_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase7_provider_transitions",
+        lambda _root: {},
     )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
@@ -727,6 +757,7 @@ def test_acceptance_type_boundary_rejects_source_byte_drift(
 
 def test_active_source_drift_is_rejected_by_external_hash(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reject a re-signed manifest backed by changed active test bytes."""
     manifest = _manifest()
@@ -749,6 +780,21 @@ def test_active_source_drift_is_rejected_by_external_hash(
     changed.write_text(
         changed.read_text(encoding="utf-8") + "\nVALUE = 1\n",
         encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase5_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase6_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase7_provider_transitions",
+        lambda _root: {},
     )
 
     with pytest.raises(

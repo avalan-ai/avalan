@@ -141,8 +141,12 @@ _ACTIVE_INTEGRATED_FIXTURES = (
 )
 _PHASE5_PROVIDER_CONFORMANCE = "provider_conformance.phase5.json"
 _PHASE6_PROVIDER_CONFORMANCE = "provider_conformance.phase6.json"
+_PHASE7_PROVIDER_CONFORMANCE = "provider_conformance.phase7.json"
 _PHASE5_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
     "c2cee698687f15d6147ba367450b68e863ec579866f6fc63982db8e73b7bf2f4"
+)
+_PHASE6_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
+    "7d17cbb33d159025a874bf82a5e29236661c01664987376d219ec307db306a70"
 )
 _THREAT_IDS = _frozen(
     "opaque-state-disclosure",
@@ -303,6 +307,131 @@ _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
         "2e6ab3c8048ddc6461ad13e214ca0c47a67bb94f2655d686bf22a59280328090",
     ),
 }
+_PHASE7_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase7.json"
+)
+_PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
+    "src/avalan/__init__.py": (
+        9_978,
+        "496ce5f01ed2c12d3bb37712c37e5a97cf0a5a814acbf05f54a70ebf68518847",
+        10_046,
+        "34094438bb8b6b2b3ba6197127c6903e5f8c7dc76cc6873f61976f58d1ab7ed3",
+    ),
+    "src/avalan/conversation/__init__.py": (
+        28_421,
+        "1c157fe247d198e07dff583eead46f21de8c70c9cefdc1abe80991ddd8667ddb",
+        28_960,
+        "98a018f55684c85faca8eac4cc0e650a7f6ab6d0068d8f18ee6fe8c7cd0a04a0",
+    ),
+    "src/avalan/conversation/binding.py": (
+        11_628,
+        "6677821422ae77ecef8ee2939d60ac8f11ce51b23d752974fea4b27df283f527",
+        12_110,
+        "d2a31bc6bf27a33cb41795eeb6dab6efffa1aaff5ccd071aaa6b9555d286c59d",
+    ),
+    "src/avalan/conversation/codec.py": (
+        32_829,
+        "64d9fc44e494453625538a4250b46d83a686f8e406c3b6340f31eb6ae5ef92e9",
+        33_233,
+        "eb7dfd3f39946fe8bbad368f73082cb47acfcd9b130bdac51bba390e5aa3ce1a",
+    ),
+    "src/avalan/conversation/coordinator.py": (
+        111_286,
+        "b586445a0d5910238d191508a5a534cc8f0b8910e72081c5551e9038021e2547",
+        127_460,
+        "7fd15c415a3a28a9f7fa477a9c01cfc076542fce1a2fe6fbb18686151630e838",
+    ),
+    "src/avalan/conversation/fakes.py": (
+        61_349,
+        "feeab4cbcc14e4882d7b8de19481353cff60e0eb787655e22cab4faf2e782957",
+        61_544,
+        "4dcb484149f9998c2cf39b02f3ba38e852d0b8c9cfe1ad353a592493efce9ac6",
+    ),
+    "src/avalan/conversation/items.py": (
+        69_302,
+        "dce99215796d7274fd8948bce9a1574cf8e5f34dc2087039208c7ef4809ef1f8",
+        71_181,
+        "8d5d2e2342513f688aa8d7478dec666a86d857ca21d23d79b734fba8062594e8",
+    ),
+    "src/avalan/conversation/protocols.py": (
+        20_226,
+        "f9faba0869f6f156139d5e88c384fbfe61caa32d5d72f2439d8914698ef37db0",
+        21_895,
+        "35a00f98479afca3182663e9e2a8b8199b324a703650ffa6e8636b0b769a46ba",
+    ),
+    "src/avalan/conversation/providers/__init__.py": (
+        1_133,
+        "4c6c408a95d86e0f254a19d70a9fd77ba98524a13da73c20f7cec28491035aa4",
+        1_347,
+        "c28bddfd6a1465d8539d852a7bbb0dca3e9543f8d40f03e95897b704e761098a",
+    ),
+    "src/avalan/conversation/providers/openai.py": (
+        41_406,
+        "4081b066e549a014a3dd3b9b1210d0c9ca51e4b9e0c720330073d66db04e347c",
+        59_231,
+        "9ccca73e880c89dd7699482b730476fd920036d559ab076a430323f775832d2b",
+    ),
+    "src/avalan/conversation/providers/openai_stored.py": (
+        29_169,
+        "9c0132bb7c48669c1ee157f7a58fb8582d4f51bca116db65ff4543856cda6019",
+        34_824,
+        "aed336669d63d4784f9facd901190951956f389bda16b06d033ac160a139857c",
+    ),
+    "src/avalan/conversation/runtime.py": (
+        38_395,
+        "5c798ee3a69fc8dabed5b61fcabc59f9d3f026cbf3a646f294ca641c378eefe2",
+        38_477,
+        "a8bf7538728adb7999d698fcc18dc116785e3dd200363d7f5bd687719871fba9",
+    ),
+    "src/avalan/conversation/sdk.py": (
+        46_113,
+        "fdadba814639ce92e08e79be36dafff25e4cd793c2f94b69de109f05a8b2884d",
+        52_924,
+        "0e127adcfd4677fb9184f0e9704f33906bc371e3629f1b79a07e30d38110a216",
+    ),
+    "src/avalan/conversation/settings.py": (
+        22_624,
+        "30668a8c786172a7b3463c9bd898782029efcf354d0ec17a600495e016a415d7",
+        25_654,
+        "f8e6fdbc44356f65aeae175d0e4c353457909ecbe98c5965ce797d874a2ebef1",
+    ),
+    "src/avalan/conversation/state.py": (
+        25_490,
+        "d852b5a9019ce18c5221757f00833b0f7d9ba5b03ec917f2ad74be24c8913265",
+        25_880,
+        "1cc077709f50104307c078e7304a11782059d7fdc322d4c0d6f80d1f1f445f82",
+    ),
+    "src/avalan/conversation/store.py": (
+        99_760,
+        "6718b06f63d1ea7e097dd78aebdcbaeca85ead83277f7019114aa89b0f34e222",
+        102_450,
+        "92c0864f3eef0974f1eed606b802635aed6e51714bbabedfb211f2cabb010ce3",
+    ),
+    "src/avalan/conversation/stores/pgsql.py": (
+        190_583,
+        "8e3afd42d2e3455400bfd19bd1329a6c2267155b5b9d8899535a7083ce49c29c",
+        193_033,
+        "20bcfc86a6d5a66a5fb6089ddf76e9598c3765ca05b2e596ae3a84469cf602e3",
+    ),
+    "src/avalan/sdk.py": (
+        77_463,
+        "afdf0f4056e33a39d00bf0d5b5587a26ac0d40eacf47f53bb67f278b8aecf162",
+        77_558,
+        "00091d7b4092444777217918e04a30116792fa88617d3e80857a4e16a84b042b",
+    ),
+    "tests/conversation/direct_sdk_test.py": (
+        25_942,
+        "a8a10e69b27842a3b0ec1138d04c1e758a618d091678623fff6e4f3a18d566a8",
+        26_694,
+        "a0a7aa6cddac7865eeefbefe4726c2112a9041170347ef85d6f658ae522e5295",
+    ),
+    "tests/conversation/domain_contract_test.py": (
+        160_196,
+        "6a00228d6ab78a5e2ec6e29da5745f2fe6c083b93e1893e6e8f4fca4bafcce15",
+        161_460,
+        "3d20fe77585eed53afcddec0127de6a40e3af2971a42fb4d343db9a90853eb80",
+    ),
+}
 _PHASE0_ACTIVE_SOURCE_SHA256 = {
     "tests/conversation_contract_gate_test.py": (
         "c014a962f1e0384370bc70113acc7189de48bbd0e7ecba54c041054eee4de349"
@@ -385,6 +514,17 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "43c337c9f430a36c2472b2b5f40f5d5513b804c86d71e961afd2724f7b2a2d08"
         ),
     },
+    7: {
+        "tests/conversation/compaction_contract_test.py": (
+            "afa41bbfd11b0323d4af0a4f6771c7bfc77241f0b2d9a13307207d7899e931e0"
+        ),
+        "tests/conversation/compaction_e2e_test.py": (
+            "6b1186ecedf1e40e7b34d3ad8335e166a059c12c39878ed7742c3f0ec4e277bf"
+        ),
+        "tests/conversation/native_openai_compaction_test.py": (
+            "7e1f208d3a44a756dcdeca127117c75844ce22ec935ef16b48576bf484b41211"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -394,6 +534,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     4: "4882ad8775ecb064daf399f2f83c32c913f4a0d5168396d18c5936936075a3eb",
     5: "b520005336f99a95a381c18887e5d319daf71dcc9bd7e03e2cc8fde05f2143f0",
     6: "c975653c7ae9bcd020f91be6785ddeb9a28ca9e8f39fa17e0a906e2cfee1a701",
+    7: "c791ea6bc92ad8ee8140bdddf2396c7f485306d946ce315723c274f654224227",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -403,6 +544,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     4: "869ac471b5bd88df84ff12ccae1d4c7929a70aa8e339a410a7ab031c873cf0b1",
     5: "b9d2247bc0db892b1e6da8b5b718fb814a19cc2641cb3a5ec54dc9d17e4b4bc5",
     6: "9e21f629f5fa6f3023321a873af7ccd934621fb55d398e52a7aa69abd4e2b3fa",
+    7: "b8fea5ce7efd5ef3f44913da597a7befec1a96084282a3524d58b807e88a2bc9",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -433,6 +575,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
         12,
         "292080771fdfc270bf429b31b265371982b0b9b8b037f0541cce7eb47f99d870",
     ),
+    7: (
+        19,
+        "28b06b757ec0cf38561aab854b11956b70f86d0fa52cf110af0edd26b9795144",
+    ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
     0: (11, 9, 99, _PHASE0_FAILURE_STRUCTURE_SHA256),
@@ -462,6 +608,12 @@ _FAILURE_STRUCTURE_BY_PHASE = {
         130,
         "83cb33eeb336ce865843cbf5b7872f47f428ef8c68ff90805a96b857a807a0d0",
     ),
+    7: (
+        19,
+        10,
+        190,
+        "d44224b1acbb51572b311d60297f597dfcc00145334b163c0efeef2d37c4b5ab",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
@@ -490,6 +642,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         9,
         23,
         "0e90f43443ae9106ebb1f371db0f250417856c73db1ff4c9fb2e9170f9cef8c1",
+    ),
+    7: (
+        11,
+        10,
+        25,
+        "9949053c95e1e85ad3e1ba0bd28f6f4a6a2ed91f001ef4ee2cae30c5b7fa8fbc",
     ),
 }
 _PHASE0_NODE_INVENTORY = (
@@ -589,10 +747,12 @@ _RETRY_DECISION_VALUES = _frozen(
 )
 _PARENT_STATE_VALUES = _frozen("not_applicable", "unchanged")
 _PUBLIC_ERROR_VALUES = _frozen(
+    "conversation_cancelled",
     "conversation_dispatch_ambiguous",
     "conversation_effect_boundary",
     "conversation_failed_after_output",
     "conversation_input_required",
+    "conversation_limit_exceeded",
     "conversation_provider_failed",
     "conversation_provider_rejected",
     "conversation_publication_failed",
@@ -742,7 +902,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase6.json"
+    return fixture_root() / "acceptance_manifest.phase7.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1268,15 +1428,39 @@ def verify_gate_source_isolation(
     manifest: AcceptanceManifest,
 ) -> None:
     """Reject Markdown dependencies from tracked gate and active tests."""
-    transitions = _phase5_provider_transitions(root)
-    phase6_transitions = _phase6_provider_transitions(root)
-    overlap = set(transitions) & set(phase6_transitions)
-    if overlap:
-        raise ConversationAcceptanceError(
-            "Phase 6 provider transitions overlap frozen Phase 5 "
-            f"transitions: {sorted(overlap)}"
-        )
-    transitions.update(phase6_transitions)
+    transitions_by_phase = (
+        _phase5_provider_transitions(root),
+        _phase6_provider_transitions(root),
+        _phase7_provider_transitions(root),
+    )
+    transition_chains: dict[
+        str,
+        list[tuple[int, str, int, str]],
+    ] = {}
+    for transitions in transitions_by_phase:
+        for relative, transition in transitions.items():
+            chain = transition_chains.setdefault(relative, [])
+            if chain and chain[-1][2:] != transition[:2]:
+                raise ConversationAcceptanceError(
+                    "reviewed provider transition chain is discontinuous: "
+                    f"{relative}"
+                )
+            chain.append(transition)
+    for relative, chain in transition_chains.items():
+        target = root / relative
+        if target.is_symlink() or not target.is_file():
+            raise ConversationAcceptanceError(
+                f"reviewed provider transition target is missing: {relative}"
+            )
+        target_bytes = target.read_bytes()
+        final_size, final_sha256 = chain[-1][2:]
+        if (
+            len(target_bytes) != final_size
+            or sha256(target_bytes).hexdigest() != final_sha256
+        ):
+            raise ConversationAcceptanceError(
+                f"reviewed provider transition target changed: {relative}"
+            )
     _require_phase_anchor_keys(
         _ACTIVE_SOURCE_SHA256_BY_PHASE,
         manifest.current_phase,
@@ -1301,16 +1485,20 @@ def verify_gate_source_isolation(
                 raise ConversationAcceptanceError(
                     f"active acceptance source is missing: {relative}"
                 )
-            transitioned = transitions.get(relative)
             current_sha256 = expected_sha256
-            if transitioned is not None:
-                _, from_sha256, _, to_sha256 = transitioned
-                if from_sha256 != expected_sha256:
+            chain = transition_chains.get(relative, [])
+            if chain:
+                matching = tuple(
+                    index
+                    for index, transition in enumerate(chain)
+                    if transition[1] == expected_sha256
+                )
+                if len(matching) != 1:
                     raise ConversationAcceptanceError(
                         "reviewed provider transition source differs from "
                         f"its historical anchor: {relative}"
                     )
-                current_sha256 = to_sha256
+                current_sha256 = chain[-1][3]
             if sha256(source.read_bytes()).hexdigest() != current_sha256:
                 raise ConversationAcceptanceError(
                     f"active acceptance source digest changed: {relative}"
@@ -1840,6 +2028,8 @@ def _validate_integrated_fixtures(
         names += (_PHASE5_PROVIDER_CONFORMANCE,)
     if current_phase >= 6:
         names += (_PHASE6_PROVIDER_CONFORMANCE,)
+    if current_phase >= 7:
+        names += (_PHASE7_PROVIDER_CONFORMANCE,)
     authoritative = fixtures.resolve() == fixture_root().resolve()
     if authoritative:
         missing = tuple(
@@ -1869,7 +2059,7 @@ def _validate_integrated_fixtures(
                 "Phase 0 provider conformance",
             )
             _validate_phase5_provider_conformance(payload, base)
-        else:
+        elif name == _PHASE6_PROVIDER_CONFORMANCE:
             phase5_path = fixtures / _PHASE5_PROVIDER_CONFORMANCE
             phase5 = _strict_mapping(
                 phase5_path,
@@ -1879,6 +2069,17 @@ def _validate_integrated_fixtures(
                 payload,
                 phase5,
                 phase5_path=phase5_path,
+            )
+        else:
+            phase6_path = fixtures / _PHASE6_PROVIDER_CONFORMANCE
+            phase6 = _strict_mapping(
+                phase6_path,
+                "Phase 6 provider conformance",
+            )
+            _validate_phase7_provider_conformance(
+                payload,
+                phase6,
+                phase6_path=phase6_path,
             )
 
 
@@ -2164,25 +2365,138 @@ def _phase6_provider_transitions(
                 "Phase 6 provider transition differs from its independent "
                 f"anchor: {relative}"
             )
-        target = root / relative
-        if not target.is_file():
-            target = repository_root() / relative
-        if target.is_symlink() or not target.is_file():
-            raise ConversationAcceptanceError(
-                f"Phase 6 provider transition target is missing: {relative}"
-            )
-        target_bytes = target.read_bytes()
-        if (
-            len(target_bytes) != to_size
-            or sha256(target_bytes).hexdigest() != to_sha256
-        ):
-            raise ConversationAcceptanceError(
-                f"Phase 6 provider transition target changed: {relative}"
-            )
         transitions[relative] = transition
     if set(transitions) != set(_PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS):
         raise ConversationAcceptanceError(
             "Phase 6 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase7_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact reviewed native compaction source transitions."""
+    path = root / _PHASE7_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE7_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 7 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 7 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 7
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by")
+        != "phase7-native-compaction-provider-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if observed_digest != canonical_sha256(canonical):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 7 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/native_openai_compaction_test.py::"
+            "test_native_inline_latest_replay_and_standalone_wire"
+        ),
+        (
+            "tests/conversation/native_openai_compaction_test.py::"
+            "test_streamed_compaction_commits_complete_done_items"
+        ),
+        (
+            "tests/conversation/compaction_e2e_test.py::"
+            "test_long_stateless_inline_compaction_restarts_at_latest_boundary"
+        ),
+        (
+            "tests/conversation/compaction_e2e_test.py::"
+            "test_stored_inline_compaction_uses_only_immediate_upstream_parent"
+        ),
+        (
+            "tests/conversation/compaction_e2e_test.py::"
+            "test_tool_cycles_across_two_boundaries_keep_exact_final_order"
+        ),
+        (
+            "tests/conversation/compaction_e2e_test.py::"
+            "test_standalone_explicit_fork_restarts_and_original_parent_branches"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 7 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 7 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 7 provider byte transition",
+        )
+        relative = _nonempty_string(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"),
+            "transition source digest",
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"),
+            "transition target digest",
+        )
+        if (
+            type(from_size) is not int
+            or from_size <= 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 7 provider byte transition is invalid"
+            )
+        transition = (from_size, from_sha256, to_size, to_sha256)
+        if transition != _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS.get(relative):
+            raise ConversationAcceptanceError(
+                "Phase 7 provider transition differs from its independent "
+                f"anchor: {relative}"
+            )
+        transitions[relative] = transition
+    if set(transitions) != set(_PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider transition inventory is invalid"
         )
     return transitions
 
@@ -3269,6 +3583,325 @@ def _validate_phase6_provider_conformance(
             "generic compatible stored profiles must remain incapable"
         )
     _validate_scoped_digest(payload, "Phase 6 provider conformance")
+
+
+def _validate_phase7_provider_conformance(
+    payload: dict[str, object],
+    phase6: dict[str, object],
+    *,
+    phase6_path: Path,
+) -> None:
+    """Validate exact native compaction profiles and evidence."""
+    _exact_keys(
+        payload,
+        {
+            "activation_state",
+            "base",
+            "canonical_digest",
+            "capability_names",
+            "capability_states",
+            "current_phase",
+            "feature",
+            "generic_compatible_state",
+            "identity_dimensions",
+            "owner",
+            "production_advertisement_enabled",
+            "production_dispatch_enabled",
+            "profile_schema_version",
+            "profiles",
+            "rejected_profile_evidence",
+            "schema_version",
+        },
+        "Phase 7 provider conformance",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("profile_schema_version")
+        != "conversation-provider-profile-v1"
+        or payload.get("feature") != _FEATURE
+        or payload.get("owner") != "provider_runtime"
+        or payload.get("current_phase") != 7
+        or payload.get("activation_state") != "test_only"
+        or payload.get("production_advertisement_enabled") is not False
+        or payload.get("production_dispatch_enabled") is not False
+        or payload.get("generic_compatible_state") != "incapable"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider conformance must remain exact and test-only"
+        )
+    capability_names = _string_list(
+        payload.get("capability_names"),
+        "Phase 7 provider capability names",
+    )
+    if capability_names != _string_list(
+        phase6.get("capability_names"),
+        "Phase 6 provider capability names",
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider capabilities differ from the frozen axes"
+        )
+    phase6_identity_dimensions = _string_list(
+        phase6.get("identity_dimensions"),
+        "Phase 6 provider identity dimensions",
+    )
+    identity_dimensions = _string_list(
+        payload.get("identity_dimensions"),
+        "Phase 7 provider identity dimensions",
+    )
+    if identity_dimensions != (
+        *phase6_identity_dimensions,
+        "compaction_limits_digest",
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider identity must bind exact compaction limits"
+        )
+    if _string_list(
+        payload.get("capability_states"),
+        "Phase 7 provider capability states",
+    ) != ("test_only", "incapable"):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider capability states are invalid"
+        )
+    base = mapping(payload.get("base"), "Phase 7 provider base")
+    _exact_keys(
+        base,
+        {"path", "byte_sha256", "canonical_digest"},
+        "Phase 7 provider base",
+    )
+    phase6_digest = mapping(
+        phase6.get("canonical_digest"),
+        "Phase 6 provider canonical digest",
+    )
+    if (
+        base.get("path") != _PHASE6_PROVIDER_CONFORMANCE
+        or base.get("byte_sha256") != _PHASE6_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or sha256(phase6_path.read_bytes()).hexdigest()
+        != _PHASE6_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or base.get("canonical_digest") != phase6_digest.get("value")
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 7 provider base is not the frozen Phase 6 evidence"
+        )
+
+    profile_specs = (
+        (
+            "native-openai-stateless-non-streaming-phase7-test",
+            (
+                "avalan.conversation.providers.openai."
+                "NativeOpenAIStatelessProvider"
+            ),
+            "non_streaming",
+            False,
+            (
+                "exact-inline-and-standalone-wire",
+                "bounded-profile-limits",
+                "loopback-postgresql-latest-boundary-restart",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_compaction_test.py::"
+                    "test_native_inline_latest_replay_and_standalone_wire"
+                ),
+                (
+                    "tests/conversation/compaction_contract_test.py::"
+                    "test_compaction_models_and_limits_are_closed"
+                ),
+                (
+                    "tests/conversation/compaction_e2e_test.py::"
+                    "test_long_stateless_inline_compaction_restarts_at_latest_boundary"
+                ),
+            ),
+        ),
+        (
+            "native-openai-stateless-streaming-phase7-test",
+            (
+                "avalan.conversation.providers.openai."
+                "NativeOpenAIStatelessProvider"
+            ),
+            "streaming",
+            False,
+            (
+                "fragmented-compaction-event-assembly",
+                "bounded-profile-limits",
+                "two-boundary-tool-order",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_compaction_test.py::"
+                    "test_streamed_compaction_commits_complete_done_items"
+                ),
+                (
+                    "tests/conversation/compaction_contract_test.py::"
+                    "test_compaction_models_and_limits_are_closed"
+                ),
+                (
+                    "tests/conversation/compaction_e2e_test.py::"
+                    "test_tool_cycles_across_two_boundaries_keep_exact_final_order"
+                ),
+            ),
+        ),
+        (
+            "native-openai-stored-non-streaming-phase7-test",
+            (
+                "avalan.conversation.providers.openai_stored."
+                "NativeOpenAIStoredProvider"
+            ),
+            "non_streaming",
+            True,
+            (
+                "immediate-upstream-parent-only",
+                "stored-execution-compaction-limit-digest",
+                "loopback-postgresql-provider-chain",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_compaction_test.py::"
+                    "test_stored_inline_compaction_only_sends_new_input_and_parent"
+                ),
+                (
+                    "tests/conversation/native_openai_compaction_test.py::"
+                    "test_compact_input_and_output_limits_are_enforced"
+                ),
+                (
+                    "tests/conversation/compaction_e2e_test.py::"
+                    "test_stored_inline_compaction_uses_only_immediate_upstream_parent"
+                ),
+            ),
+        ),
+    )
+    profiles = object_list(payload.get("profiles"), "Phase 7 profiles")
+    if len(profiles) != len(profile_specs):
+        raise ConversationAcceptanceError(
+            "Phase 7 compaction provider profile inventory is incomplete"
+        )
+    capability_inventory = set(capability_names)
+    binding_keys = set(identity_dimensions)
+    for raw, spec in zip(profiles, profile_specs, strict=True):
+        profile = mapping(raw, "Phase 7 compaction provider profile")
+        _exact_keys(
+            profile,
+            {
+                "profile_id",
+                "lifecycle",
+                "active_from_phase",
+                "activation_state",
+                "identity_complete",
+                "binding",
+                "capabilities",
+                "activation_evidence",
+                "evidence_node_ids",
+            },
+            "Phase 7 compaction provider profile",
+        )
+        profile_id, adapter, transport, stored, activation, evidence = spec
+        if (
+            profile.get("profile_id") != profile_id
+            or profile.get("lifecycle") != "active"
+            or profile.get("active_from_phase") != 7
+            or profile.get("activation_state") != "test_only"
+            or profile.get("identity_complete") is not True
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 7 compaction provider activation is invalid"
+            )
+        binding = mapping(profile.get("binding"), "Phase 7 binding")
+        _exact_keys(binding, binding_keys, "Phase 7 binding")
+        expected_binding = {
+            "adapter_type": adapter,
+            "provider_family": "openai",
+            "normalized_endpoint": "https://api.openai.com/v1",
+            "azure_resource_identity": None,
+            "model_or_deployment": "gpt-5",
+            "provider_api_revision": "openapi-2.3.0",
+            "sdk_revision": "openai-python-2.42.0",
+            "model_configuration_revision": "model-config-compact",
+            "capability_profile_revision": "capability-compact",
+            "tool_schema_revision": "tools-compact",
+            "execution_definition_revision": "execution-compact",
+            "continuation_codec_version": "1",
+            "transport": transport,
+            "execution_definition_digest": (
+                "12b476fdd37c3fb116ff04e344c3dd91361b653d352e75b6b14f376734807500"
+                if stored
+                else None
+            ),
+            "compaction_limits_digest": (
+                "198b029b6478edd284c816098d82810daa19edef7d927522ac601c2765b6ba7b"
+            ),
+        }
+        if binding != expected_binding:
+            raise ConversationAcceptanceError(
+                "Phase 7 compaction provider binding is not exact"
+            )
+        capabilities = mapping(
+            profile.get("capabilities"),
+            "Phase 7 provider capabilities",
+        )
+        required = {
+            "reasoning_context_current_turn",
+            "reasoning_context_all_turns",
+            "inline_compaction",
+            (
+                "stored_responses_chaining"
+                if stored
+                else "stateless_encrypted_reasoning_replay"
+            ),
+        }
+        if not stored:
+            required.add("standalone_compaction")
+        else:
+            required.update(
+                {
+                    "stored_response_retrieval",
+                    "stored_response_deletion",
+                }
+            )
+        if transport == "streaming":
+            required.add("streaming_item_fidelity")
+        if (
+            set(capabilities) != capability_inventory
+            or any(capabilities.get(name) != "test_only" for name in required)
+            or any(
+                capabilities.get(name) != "incapable"
+                for name in capability_inventory - required
+            )
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 7 compaction capability evidence is incomplete"
+            )
+        if (
+            _string_list(
+                profile.get("activation_evidence"),
+                "Phase 7 activation evidence",
+            )
+            != activation
+            or _string_list(
+                profile.get("evidence_node_ids"),
+                "Phase 7 provider evidence nodes",
+            )
+            != evidence
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 7 provider evidence is not independently pinned"
+            )
+    rejected = object_list(
+        payload.get("rejected_profile_evidence"),
+        "Phase 7 rejected provider evidence",
+    )
+    if rejected != [
+        {
+            "provider_family": "openai_compatible",
+            "expected_state": "incapable",
+            "evidence_node_id": (
+                "tests/conversation/native_openai_compaction_test.py::"
+                "test_unproven_or_out_of_range_compaction_rejects_before_wire"
+            ),
+        }
+    ]:
+        raise ConversationAcceptanceError(
+            "generic compatible compaction profiles must remain incapable"
+        )
+    _validate_scoped_digest(payload, "Phase 7 provider conformance")
 
 
 def _validate_provider_header(
