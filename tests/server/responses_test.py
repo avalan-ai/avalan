@@ -567,7 +567,11 @@ class ResponsesEndpointTestCase(IsolatedAsyncioTestCase):
                     json={"input": "hi", "reasoning": reasoning},
                 )
 
-                self.assertEqual(response.status_code, 422)
+                self.assertEqual(response.status_code, 400)
+                self.assertEqual(
+                    response.json()["error"]["code"],
+                    "conversation_validation_failed",
+                )
                 self.assertIsNone(orchestrator.last_messages)
 
     async def test_response_endpoint_preserves_summary_authority_rejection(

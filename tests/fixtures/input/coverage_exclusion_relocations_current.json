@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "f7e2896360b1920b5f709c28bbee1d9697b8e35a41926521aad26450bc09e25f",
+  "current_snapshot_sha256": "ce3fca0e567aba481574d2a6957412607d0706e24d14ec80c07423f8f2bc5fa4",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1314,
+    "added": 1338,
     "removed": 285,
-    "sha256": "c631778ac8c2b33a323a4aa6958473aeed94608d31f422389c4660bce2efd17b"
+    "sha256": "c0711509df1c3291ddf58d7827b3fcc8a5a53c8d5b516f9af5a264a80dc48718"
   },
   "review": {
-    "reviewed_by": "conversation Phase 8 exclusion inventory audit",
-    "rationale": "The current snapshot retains every reviewed directive and records parser-only line additions and relocations caused by the Phase 8 agent, durable continuation, provider, and SDK additions."
+    "reviewed_by": "conversation Phase 9 exclusion inventory audit",
+    "rationale": "The current snapshot retains every reviewed directive and records the parser-only protocol exclusions introduced by the served Responses lifecycle plus the relocated server protocol lines."
   },
-  "ledger_sha256": "f8db8e0f2e8dfbdfe89fc9f54e0b7604296b932762e8f8f384990ee967abfd26"
+  "ledger_sha256": "1a716a2615f03aca85d346a4bf75738882160add58ea9633e63e14cde2124f56"
 }

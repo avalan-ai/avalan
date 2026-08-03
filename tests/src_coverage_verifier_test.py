@@ -587,9 +587,37 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
         206,
         207,
     )
+    assert current.report_lines[
+        "src/avalan/server/responses_lifecycle.py"
+    ] == (
+        138,
+        139,
+        140,
+        146,
+        147,
+        148,
+        238,
+        239,
+        240,
+        247,
+        248,
+        255,
+        256,
+        263,
+        264,
+        267,
+        268,
+        275,
+        276,
+        284,
+        285,
+        288,
+        289,
+        290,
+    )
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2254
+    assert sum(map(len, current.report_lines.values())) == 2278
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

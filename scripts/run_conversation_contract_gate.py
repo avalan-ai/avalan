@@ -33,7 +33,7 @@ from task_pgsql_test_database import (
 )
 
 _INPUT_CURRENT_PHASE = 12
-_CONVERSATION_CURRENT_PHASE = 8
+_CONVERSATION_CURRENT_PHASE = 9
 _CONVERSATION_DATABASE_PHASE = 3
 _COVERAGE_REPORTS = ("coverage.json", "coverage.xml")
 _LEGACY_POSTGRESQL_LEASE_ENV = "AVALAN_TASK_TEST_POSTGRESQL_LEASE_SHA256"
@@ -282,7 +282,7 @@ def _owned_postgresql_database() -> Iterator[PostgreSQLTestDatabase]:
 
 def _validate_through_phase(root: Path, through_phase: int) -> None:
     """Reject a phase outside the closed implemented manifest range."""
-    path = root / "tests/fixtures/conversation/acceptance_manifest.phase8.json"
+    path = root / "tests/fixtures/conversation/acceptance_manifest.phase9.json"
     try:
         payload = strict_json_path(path)
     except StrictJsonError as exc:

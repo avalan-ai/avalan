@@ -1,4 +1,15 @@
 from ...agent.orchestrator import Orchestrator
+from ...conversation.errors import (
+    ConversationAuthorizationError,
+    ConversationCapabilityError,
+    ConversationConflictError,
+    ConversationError,
+    ConversationErrorCode,
+    ConversationLimitError,
+    ConversationValidationError,
+)
+from ...conversation.settings import ReasoningContext
+from ...conversation.value import canonical_json_bytes
 from ...model.reasoning import ReasoningSummaryCapabilityError
 from ...model.stream import (
     StreamChannel,
@@ -35,6 +46,15 @@ from ..interaction import (
     task_input_extension_from_request,
 )
 from ..remote_container import validate_remote_container_profile_selection
+from ..responses_lifecycle import (
+    ServedResponsesService,
+    StoredResponsesResource,
+)
+from ..responses_schema import (
+    ResponsesDeletedResource,
+    ResponsesErrorEnvelope,
+    ResponsesResource,
+)
 from ..sse import sse_headers, sse_message
 from . import orchestrate, resolve_model_id
 from .streaming import (
@@ -45,14 +65,17 @@ from .streaming import (
 )
 
 from asyncio import CancelledError
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
+from hashlib import sha256
 from logging import Logger
 from types import MappingProxyType
 from typing import Any, AsyncIterator, cast
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends, HTTPException, Request, Response
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.routing import APIRoute
 
 _MAX_COALESCED_DELTA_CHARS = 4096
 _NO_HTTP_REQUEST = cast(Request, None)
@@ -243,10 +266,15 @@ class _ResponsesSSEStreamEnvelope:
                 "type": "response.created",
                 "response": {
                     "id": self.response_id,
+                    "object": "response",
                     "created_at": self.timestamp,
                     "model": self.model_id,
                     "type": "response",
                     "status": "in_progress",
+                    "output": [],
+                    "parallel_tool_calls": False,
+                    "tool_choice": "auto",
+                    "tools": [],
                 },
             },
         )
@@ -1705,7 +1733,28 @@ class _DetachedResponsesProjection:
             self.indexed_output[output_index] = dict(item)
 
 
-router = APIRouter(tags=["responses"])
+class _ResponsesRoute(APIRoute):
+    """Project request-validation failures onto the Responses error shape."""
+
+    def get_route_handler(
+        self,
+    ) -> Callable[[Request], Awaitable[Response]]:
+        handler = super().get_route_handler()
+
+        async def responses_route_handler(request: Request) -> Response:
+            try:
+                return await handler(request)
+            except RequestValidationError:
+                return _openai_error_response(
+                    400,
+                    ConversationErrorCode.VALIDATION_FAILED.value,
+                    "Request validation failed.",
+                )
+
+        return responses_route_handler
+
+
+router = APIRouter(tags=["responses"], route_class=_ResponsesRoute)
 
 
 def _server_output_redaction_settings(
@@ -1714,10 +1763,121 @@ def _server_output_redaction_settings(
     return server_output_redaction_settings_from_state(request.app.state)
 
 
+def _served_responses_service(
+    request: Request,
+) -> ServedResponsesService | None:
+    service = getattr(request.app.state, "served_responses_service", None)
+    return service if isinstance(service, ServedResponsesService) else None
+
+
+def _openai_error_response(
+    status_code: int,
+    code: str,
+    message: str,
+    *,
+    param: str | None = None,
+) -> JSONResponse:
+    error: dict[str, object] = {
+        "message": message,
+        "type": (
+            "invalid_request_error" if status_code < 500 else "server_error"
+        ),
+        "code": code,
+    }
+    if param is not None:
+        error["param"] = param
+    return JSONResponse(status_code=status_code, content={"error": error})
+
+
+def _conversation_error_response(
+    error: ConversationError,
+) -> JSONResponse:
+    if isinstance(error, ConversationAuthorizationError):
+        return _openai_error_response(
+            404,
+            "response_not_found",
+            "Response not found.",
+        )
+    if isinstance(error, ConversationCapabilityError):
+        return _openai_error_response(
+            400,
+            ConversationErrorCode.CAPABILITY_UNSUPPORTED.value,
+            error.safe_message,
+        )
+    if isinstance(error, ConversationValidationError):
+        return _openai_error_response(
+            400,
+            ConversationErrorCode.VALIDATION_FAILED.value,
+            error.safe_message,
+        )
+    if isinstance(error, ConversationLimitError):
+        return _openai_error_response(
+            400,
+            ConversationErrorCode.LIMIT_EXCEEDED.value,
+            error.safe_message,
+        )
+    if isinstance(error, ConversationConflictError):
+        return _openai_error_response(
+            409,
+            ConversationErrorCode.CONFLICT.value,
+            error.safe_message,
+        )
+    return _openai_error_response(500, error.code.value, error.safe_message)
+
+
+def _served_input_text(request: ResponsesRequest) -> str:
+    values: list[str] = []
+    for message in request.messages:
+        if isinstance(message.content, str):
+            values.append(message.content)
+            continue
+        for part in message.content:
+            text = getattr(part, "text", None)
+            values.append(
+                text if isinstance(text, str) else "[non-text input]"
+            )
+    value = "\n".join(values).strip()
+    if not value:
+        raise ConversationValidationError()
+    return value
+
+
+def _request_idempotency_key(request: ResponsesRequest) -> str | None:
+    extensions = request.extensions
+    if extensions is None or extensions.avalan is None:
+        return None
+    conversation = extensions.avalan.conversation
+    if conversation is None:
+        return None
+    return conversation.idempotency_key
+
+
+def _request_compact_threshold(request: ResponsesRequest) -> int | None:
+    policies = request.context_management
+    return policies[0].compact_threshold if policies is not None else None
+
+
+def _request_fingerprint(request: ResponsesRequest) -> str:
+    """Digest every accepted request control before identity allocation."""
+    payload = request.model_dump(mode="json", exclude_none=True)
+    return sha256(canonical_json_bytes(payload)).hexdigest()
+
+
 @router.post(
     "/responses",
     response_model=None,
     dependencies=[Depends(validate_remote_container_profile_selection)],
+    responses={
+        200: {
+            "model": ResponsesResource,
+            "content": {"text/event-stream": {"schema": {"type": "string"}}},
+        },
+        400: {"model": ResponsesErrorEnvelope},
+        401: {"model": ResponsesErrorEnvelope},
+        404: {"model": ResponsesErrorEnvelope},
+        409: {"model": ResponsesErrorEnvelope},
+        500: {"model": ResponsesErrorEnvelope},
+    },
 )
 async def create_response(
     request: ResponsesRequest,
@@ -1726,12 +1886,81 @@ async def create_response(
     output_redaction_settings: ServerOutputRedactionSettings = Depends(
         _server_output_redaction_settings
     ),
+    served_responses_service: ServedResponsesService | None = Depends(
+        _served_responses_service
+    ),
     http_request: Request = _NO_HTTP_REQUEST,
 ) -> dict[str, Any] | JSONResponse | StreamingResponse:
     assert orchestrator and isinstance(orchestrator, Orchestrator)
     assert logger and isinstance(logger, Logger)
     assert request and request.messages
     model_id = resolve_model_id(orchestrator, request.model)
+    authority = None
+    prepared_turn = None
+    committed_response_id: str | None = None
+    if request.store:
+        if served_responses_service is None:
+            return _openai_error_response(
+                400,
+                "avalan_durable_store_required",
+                "store=true requires configured durable storage.",
+                param="store",
+            )
+        if not isinstance(http_request, Request):
+            return _openai_error_response(
+                401,
+                "authentication_required",
+                "Authentication is required.",
+            )
+        try:
+            authority = await served_responses_service.authenticate(
+                http_request
+            )
+        except ConversationAuthorizationError:
+            return _openai_error_response(
+                401,
+                "authentication_required",
+                "Authentication is required.",
+            )
+        reasoning_context = (
+            request.reasoning.context
+            if request.reasoning is not None
+            and request.reasoning.context is not None
+            else ReasoningContext.AUTO
+        )
+        includes = tuple(request.include or ())
+        tool_names = tuple(tool.name for tool in request.tools or ())
+        compact_threshold = _request_compact_threshold(request)
+        try:
+            served_responses_service.configuration.policy.validate_capabilities(
+                reasoning_context=reasoning_context,
+                includes=includes,
+                tool_names=tool_names,
+                compact_threshold=compact_threshold,
+            )
+            parent = (
+                await served_responses_service.resolve_parent(
+                    request.previous_response_id,
+                    authority,
+                )
+                if request.previous_response_id is not None
+                else None
+            )
+            prepared_turn = await served_responses_service.prepare_turn(
+                authority=authority,
+                input_text=_served_input_text(request),
+                parent=parent,
+                reasoning_context=reasoning_context,
+                compact_threshold=compact_threshold,
+                includes=includes,
+                tool_names=tool_names,
+                streaming=bool(request.stream),
+                idempotency_key=_request_idempotency_key(request),
+                request_fingerprint=_request_fingerprint(request),
+            )
+            committed_response_id = str(prepared_turn.turn.public_response_id)
+        except ConversationError as error:
+            return _conversation_error_response(error)
     interaction_run = None
     if isinstance(http_request, Request):
         try:
@@ -1744,7 +1973,23 @@ async def create_response(
             return _error_response(error)
 
     try:
-        if interaction_run is None:
+        if prepared_turn is not None:
+            response, response_id, timestamp = await orchestrate(
+                request,
+                logger,
+                orchestrator,
+                interaction_runtime=(
+                    interaction_run.runtime
+                    if interaction_run is not None
+                    else None
+                ),
+                conversation_turn=prepared_turn.turn,
+                conversation_children=prepared_turn.children,
+                outward_response_id=str(
+                    prepared_turn.turn.provisional_response_id
+                ),
+            )
+        elif interaction_run is None:
             response, response_id, timestamp = await orchestrate(
                 request,
                 logger,
@@ -1757,6 +2002,8 @@ async def create_response(
                 orchestrator,
                 interaction_runtime=interaction_run.runtime,
             )
+    except ConversationError as error:
+        return _conversation_error_response(error)
     except ReasoningSummaryCapabilityError as error:
         raise HTTPException(
             status_code=400,
@@ -1899,12 +2146,55 @@ async def create_response(
                         "stream missing terminal outcome"
                     )
 
+                committed_resource: StoredResponsesResource | None = None
+                if (
+                    served_responses_service is not None
+                    and authority is not None
+                    and stream_terminal_succeeded(terminal_projection)
+                ):
+                    try:
+                        committed_resource = (
+                            await served_responses_service.assert_committed(
+                                committed_response_id or str(response_id),
+                                authority,
+                            )
+                        )
+                    except ConversationError:
+                        cancelled = True
+                        for message in projection_adapter.enqueue(
+                            _ResponsesSSEEvent(
+                                event="response.failed",
+                                data={
+                                    "type": "response.failed",
+                                    "error": {
+                                        "type": "server_error",
+                                        "code": (
+                                            ConversationErrorCode.COMMIT_FAILED.value
+                                        ),
+                                        "message": (
+                                            "conversation state commit failed"
+                                        ),
+                                    },
+                                },
+                            )
+                        ):
+                            yield message
+                        terminal_owned = True
+                        for message in projection_adapter.flush_stream():
+                            yield message
+                        return
+
                 for ev in _terminal_response_events(
                     terminal_projection,
                     output_redaction_settings=output_redaction_settings,
                 ):
                     data = dict(ev.data)
                     data.pop("sequence_number", None)
+                    if (
+                        committed_resource is not None
+                        and ev.event == "response.completed"
+                    ):
+                        data["response"] = committed_resource.response_body()
                     for message in projection_adapter.enqueue(
                         _ResponsesSSEEvent(
                             event=ev.event,
@@ -2116,12 +2406,120 @@ async def create_response(
                 body["error"] = terminal_error
     if status == "completed" and source_error is None:
         await orchestrator.sync_messages(response)
+        if served_responses_service is not None and authority is not None:
+            try:
+                committed_resource = (
+                    await served_responses_service.assert_committed(
+                        committed_response_id or str(response_id),
+                        authority,
+                    )
+                )
+            except ConversationError as error:
+                return _conversation_error_response(error)
+            body = committed_resource.response_body()
     if interaction_run is not None:
         return JSONResponse(
             body,
             headers=interaction_response_headers(interaction_run),
         )
     return body
+
+
+@router.get(
+    "/responses/{response_id}",
+    response_model=None,
+    responses={
+        200: {"model": ResponsesResource},
+        401: {"model": ResponsesErrorEnvelope},
+        404: {"model": ResponsesErrorEnvelope},
+        500: {"model": ResponsesErrorEnvelope},
+    },
+)
+async def retrieve_response(
+    response_id: str,
+    http_request: Request,
+    served_responses_service: ServedResponsesService | None = Depends(
+        _served_responses_service
+    ),
+) -> dict[str, object] | JSONResponse:
+    """Retrieve one authenticated committed public response."""
+    if served_responses_service is None:
+        return _openai_error_response(
+            404,
+            "response_not_found",
+            "Response not found.",
+        )
+    try:
+        authority = await served_responses_service.authenticate(http_request)
+    except ConversationAuthorizationError:
+        return _openai_error_response(
+            401,
+            "authentication_required",
+            "Authentication is required.",
+        )
+    try:
+        await served_responses_service.sweep()
+        resource = await served_responses_service.retrieve(
+            response_id,
+            authority,
+        )
+    except ConversationError as error:
+        return _conversation_error_response(error)
+    return resource.response_body()
+
+
+@router.delete(
+    "/responses/{response_id}",
+    response_model=None,
+    responses={
+        200: {"model": ResponsesDeletedResource},
+        401: {"model": ResponsesErrorEnvelope},
+        404: {"model": ResponsesErrorEnvelope},
+        500: {"model": ResponsesErrorEnvelope},
+    },
+)
+async def delete_response(
+    response_id: str,
+    http_request: Request,
+    served_responses_service: ServedResponsesService | None = Depends(
+        _served_responses_service
+    ),
+) -> dict[str, object] | JSONResponse:
+    """Tombstone one authenticated response before upstream reconciliation."""
+    if served_responses_service is None:
+        return _openai_error_response(
+            404,
+            "response_not_found",
+            "Response not found.",
+        )
+    try:
+        authority = await served_responses_service.authenticate(http_request)
+    except ConversationAuthorizationError:
+        return _openai_error_response(
+            401,
+            "authentication_required",
+            "Authentication is required.",
+        )
+    try:
+        state = await served_responses_service.tombstone(
+            response_id,
+            authority,
+        )
+    except ConversationError as error:
+        return _conversation_error_response(error)
+    return {
+        "id": response_id,
+        "object": "response.deleted",
+        "deleted": True,
+        "metadata": {
+            "avalan_local_deletion": state.value,
+            "avalan_upstream_deletion": (
+                "reconciled"
+                if state.value == "deleted"
+                else "pending_outbox_reconciliation"
+            ),
+        },
+    }
 
 
 def _terminal_response_events(

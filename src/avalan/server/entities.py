@@ -38,12 +38,29 @@ from .authority import (
     reject_remote_runtime_authority_extra_fields,
     reject_remote_runtime_authority_fields,
     reject_remote_runtime_authority_model_identifier,
+    responses_replay_authority_payload,
+)
+from .responses_schema import (
+    ResponsesCompactionControl,
+    ResponsesContainerSelection,
+    ResponsesEasyInputMessage,
+    ResponsesFunctionTool,
+    ResponsesInclude,
+    ResponsesInputFile,
+    ResponsesInputImage,
+    ResponsesInputItem,
+    ResponsesInputText,
+    ResponsesMessageItem,
+    ResponsesReasoningConfig,
+    ResponsesRequestExtensions,
+    ResponsesStreamOptions,
 )
 
 from base64 import b64decode
 from binascii import Error as BinasciiError
 from collections.abc import Mapping
 from dataclasses import dataclass, field
+from json import dumps
 from pathlib import Path, PureWindowsPath
 from re import Match, fullmatch
 from re import compile as compile_pattern
@@ -51,7 +68,6 @@ from typing import Annotated, Any, Literal
 from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
-from pydantic_core import PydanticCustomError
 
 JSONType = Literal["bool", "float", "int", "object", "string"]
 _DORMANT_CONVERSATION_REQUEST_FIELD_VALUES = (
@@ -107,10 +123,6 @@ _DORMANT_CONVERSATION_REQUEST_FIELD_VALUES = (
 DORMANT_CONVERSATION_REQUEST_FIELDS = frozenset(
     _DORMANT_CONVERSATION_REQUEST_FIELD_VALUES
 )
-_DORMANT_CONVERSATION_REQUEST_FIELDS_BY_NORMALIZED = {
-    "".join(character for character in field if character.isalnum()): field
-    for field in DORMANT_CONVERSATION_REQUEST_FIELDS
-}
 MCP_FILE_DATA_KEYS = ("data", "base64", "file_data")
 MCP_FILE_URL_KEYS = ("uri", "url", "file_url")
 MCP_FILE_SOURCE_KEYS = MCP_FILE_DATA_KEYS + MCP_FILE_URL_KEYS
@@ -1448,10 +1460,12 @@ class ChatCompletionRequest(BaseModel):
         return value
 
 
-ResponsesInput = str | list[ChatMessage]
+ResponsesInput = str | list[ResponsesInputItem]
 
 
 class ResponsesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
     model: str | None = Field(
         None,
         description=(
@@ -1467,17 +1481,57 @@ class ResponsesRequest(BaseModel):
     stream: bool | None = False
     stop: str | list[str] | None = None
     max_tokens: int | None = None
+    max_output_tokens: int | None = Field(None, ge=1)
     text: ResponsesTextConfig | None = None
     response_format: ResponseFormat | None = None
-    reasoning: ReasoningConfig | None = None
-    extensions: OpenAIRequestExtensions | None = None
+    reasoning: ResponsesReasoningConfig | None = None
+    store: bool = False
+    previous_response_id: str | None = None
+    include: list[ResponsesInclude] | None = None
+    context_management: list[ResponsesCompactionControl] | None = None
+    stream_options: ResponsesStreamOptions | None = None
+    tools: list[ResponsesFunctionTool] | None = None
+    tool_choice: Literal["auto", "none", "required"] | str | None = None
+    parallel_tool_calls: bool | None = None
+    max_tool_calls: int | None = Field(None, ge=1)
+    background: bool = False
+    metadata: dict[str, str | int | float | bool] | None = None
+    user: str | None = None
+    container: ResponsesContainerSelection | None = None
+    extensions: ResponsesRequestExtensions | None = None
 
     @model_validator(mode="before")
     @classmethod
     def validate_remote_runtime_authority(cls, value: object) -> object:
-        _reject_dormant_conversation_request_fields(value)
+        if isinstance(value, Mapping):
+            normalized = dict(value)
+            reasoning = normalized.get("reasoning")
+            if isinstance(reasoning, ReasoningConfig):
+                normalized["reasoning"] = reasoning.model_dump(
+                    exclude_unset=True
+                )
+            extensions = normalized.get("extensions")
+            if isinstance(extensions, OpenAIRequestExtensions):
+                normalized["extensions"] = extensions.model_dump(
+                    exclude_unset=True
+                )
+            input_value = normalized.get("input")
+            if isinstance(input_value, list):
+                normalized["input"] = [
+                    (
+                        item.model_dump()
+                        if isinstance(item, ChatMessage)
+                        else item
+                    )
+                    for item in input_value
+                ]
+            value = normalized
         _reject_request_remote_runtime_authority(
-            value,
+            (
+                responses_replay_authority_payload(value)
+                if isinstance(value, Mapping)
+                else value
+            ),
             allowed_fields=frozenset(cls.model_fields),
             path="responses",
         )
@@ -1496,7 +1550,7 @@ class ResponsesRequest(BaseModel):
     def messages(self) -> list[ChatMessage]:
         if isinstance(self.input, str):
             return [ChatMessage(role=MessageRole.USER, content=self.input)]
-        return self.input
+        return [_responses_input_message(item) for item in self.input]
 
     @model_validator(mode="after")
     def validate_text_aliases(self) -> "ResponsesRequest":
@@ -1512,7 +1566,142 @@ class ResponsesRequest(BaseModel):
             and self.stop is not None
         ):
             raise ValueError("Use either text.stop or stop")
+        if self.max_tokens is not None and self.max_output_tokens is not None:
+            raise ValueError("Use either max_output_tokens or max_tokens")
+        if self.previous_response_id is not None:
+            if not self.store:
+                raise ValueError("previous_response_id requires store=true")
+            if not self.previous_response_id.strip():
+                raise ValueError("previous_response_id cannot be empty")
+        if self.stream_options is not None and not self.stream:
+            raise ValueError("stream_options requires stream=true")
+        if (
+            self.context_management is not None
+            and len(self.context_management) != 1
+        ):
+            raise ValueError("context_management requires exactly one policy")
+        if self.include is not None and len(self.include) != len(
+            set(self.include)
+        ):
+            raise ValueError("include values must be unique")
+        if self.tools is not None:
+            names = tuple(tool.name for tool in self.tools)
+            if not names or any(not name.strip() for name in names):
+                raise ValueError("tools must contain named definitions")
+            if len(names) != len(set(names)):
+                raise ValueError("tool names must be unique")
+        idempotency_key = None
+        if (
+            self.extensions is not None
+            and self.extensions.avalan is not None
+            and self.extensions.avalan.conversation is not None
+        ):
+            idempotency_key = (
+                self.extensions.avalan.conversation.idempotency_key
+            )
+        if self.include is not None:
+            raise ValueError("include is not supported")
+        if (
+            self.tools is not None
+            or self.tool_choice is not None
+            or self.parallel_tool_calls is not None
+            or self.max_tool_calls is not None
+        ):
+            raise ValueError("Responses tools are not supported")
+        if not self.store and (
+            (self.reasoning is not None and self.reasoning.context is not None)
+            or self.context_management is not None
+            or idempotency_key is not None
+        ):
+            raise ValueError("conversation controls require store=true")
+        if self.background:
+            raise ValueError("background Responses are not supported")
+        if self.metadata is not None and (
+            len(self.metadata) > 16
+            or any(not key or len(key) > 64 for key in self.metadata)
+        ):
+            raise ValueError("metadata exceeds configured wire limits")
         return self
+
+
+def _responses_input_message(item: ResponsesInputItem) -> ChatMessage:
+    """Project one strict input item onto the legacy orchestrator boundary."""
+    if isinstance(item, ResponsesMessageItem) or (
+        isinstance(item, ResponsesEasyInputMessage)
+        and bool({"phase", "type"} & item.model_fields_set)
+    ):
+        return ChatMessage(
+            role=item.role,
+            content=dumps(
+                item.model_dump(mode="json", exclude_unset=True),
+                sort_keys=True,
+                separators=(",", ":"),
+            ),
+        )
+    if isinstance(item, ResponsesEasyInputMessage):
+        content = item.content
+        if isinstance(content, str):
+            return ChatMessage(role=item.role, content=content)
+        return ChatMessage(
+            role=item.role,
+            content=[_responses_content_part(part) for part in content],
+        )
+    item_type = str(item.type)
+    if item_type.endswith("_output") or item_type == "mcp_approval_response":
+        role = MessageRole.TOOL
+    elif item_type in {
+        "additional_tools",
+        "apply_patch_call",
+        "code_interpreter_call",
+        "compaction",
+        "computer_call",
+        "custom_tool_call",
+        "file_search_call",
+        "function_call",
+        "image_generation_call",
+        "local_shell_call",
+        "mcp_approval_request",
+        "mcp_call",
+        "mcp_list_tools",
+        "reasoning",
+        "shell_call",
+        "tool_search_call",
+        "web_search_call",
+    }:
+        role = MessageRole.ASSISTANT
+    else:
+        role = MessageRole.USER
+    content = dumps(
+        item.model_dump(mode="json", exclude_unset=True),
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return ChatMessage(role=role, content=content)
+
+
+def _responses_content_part(
+    part: ResponsesInputText | ResponsesInputImage | ResponsesInputFile,
+) -> ContentText | ContentImage | ContentFile:
+    """Project one strict Responses content part without exposing state."""
+    if isinstance(part, ResponsesInputText):
+        return ContentText(type="input_text", text=part.text)
+    if isinstance(part, ResponsesInputImage):
+        if part.image_url is None:
+            return ContentText(
+                type="input_text",
+                text="[uploaded image input]",
+            )
+        return ContentImage(
+            type="image_url",
+            image_url={"url": part.image_url, "detail": part.detail},
+        )
+    return ContentFile(
+        type="input_file",
+        file_data=part.file_data,
+        file_id=part.file_id,
+        file_url=part.file_url,
+        filename=part.filename,
+    )
 
 
 def _reject_request_remote_runtime_authority(
@@ -1526,39 +1715,6 @@ def _reject_request_remote_runtime_authority(
         allowed_fields=allowed_fields,
         allow_container_profile_selector=True,
         path=path,
-    )
-
-
-def _reject_dormant_conversation_request_fields(value: object) -> None:
-    if not isinstance(value, Mapping):
-        return
-    for raw_key in value:
-        key = str(raw_key)
-        normalized = "".join(
-            character for character in key.casefold() if character.isalnum()
-        )
-        field = _DORMANT_CONVERSATION_REQUEST_FIELDS_BY_NORMALIZED.get(
-            normalized
-        )
-        if field is not None:
-            raise _dormant_conversation_field_error(field)
-    reasoning = value.get("reasoning")
-    if isinstance(reasoning, Mapping):
-        for raw_key in reasoning:
-            normalized = "".join(
-                character
-                for character in str(raw_key).casefold()
-                if character.isalnum()
-            )
-            if normalized == "context":
-                raise _dormant_conversation_field_error("reasoning.context")
-
-
-def _dormant_conversation_field_error(field: str) -> PydanticCustomError:
-    return PydanticCustomError(
-        "conversation_continuity_dormant",
-        "Conversation continuity field '{field}' is unavailable",
-        {"field": field},
     )
 
 

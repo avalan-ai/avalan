@@ -19,6 +19,11 @@ from .interaction import (
     close_server_interactions,
     configure_server_interactions,
 )
+from .responses_lifecycle import (
+    ServedResponsesConfiguration,
+    close_served_responses,
+    configure_served_responses,
+)
 from .routers import mcp as mcp_router
 
 from collections.abc import AsyncIterator, Callable
@@ -181,6 +186,7 @@ def _create_lifespan(
             finally:
                 await mcp_router.close_mcp_state(app)
                 await close_server_interactions(app)
+                await close_served_responses(app)
 
     return lifespan
 
@@ -347,12 +353,14 @@ def register_agent_endpoints(
     tool_name_policy: ToolNamePolicySettings | None = None,
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
     interaction_configuration: ServerInteractionConfiguration | None = None,
+    responses_configuration: ServedResponsesConfiguration | None = None,
 ) -> None:
     assert (specs_path is None) ^ (
         settings is None
     ), "Provide either specs_path or settings, but not both"
 
     selected_protocols = _normalize_protocols(protocols)
+    configure_served_responses(app, responses_configuration)
 
     lifespan = _create_lifespan(
         hub=hub,
@@ -425,6 +433,7 @@ def agents_server(
     tool_name_policy: ToolNamePolicySettings | None = None,
     output_redaction_settings: ServerOutputRedactionSettings | None = None,
     interaction_configuration: ServerInteractionConfiguration | None = None,
+    responses_configuration: ServedResponsesConfiguration | None = None,
 ) -> "Server":
     """Build a configured Uvicorn server for Avalan agents."""
     assert (specs_path is None) ^ (
@@ -454,6 +463,7 @@ def agents_server(
         interaction_configuration=interaction_configuration,
     )
     app = FastAPI(title=name, version=version, lifespan=lifespan)
+    configure_served_responses(app, responses_configuration)
 
     _configure_cors(
         app,

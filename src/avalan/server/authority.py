@@ -293,6 +293,38 @@ def reject_remote_runtime_authority_fields(
     )
 
 
+def responses_replay_authority_payload(
+    payload: Mapping[object, object],
+) -> Mapping[object, object]:
+    """Exclude inert typed replay fields from host-authority inspection."""
+    request_input = payload.get("input")
+    if not isinstance(request_input, list):
+        return payload
+    safe_input: list[object] = []
+    for item in request_input:
+        if not isinstance(item, Mapping):
+            safe_input.append(item)
+            continue
+        item_type = item.get("type")
+        inert_fields = (
+            {"container_id"}
+            if item_type == "code_interpreter_call"
+            else (
+                {"action", "environment"}
+                if item_type == "shell_call"
+                else {"action"} if item_type == "local_shell_call" else set()
+            )
+        )
+        safe_input.append(
+            {
+                key: item_value
+                for key, item_value in item.items()
+                if key not in inert_fields
+            }
+        )
+    return {**payload, "input": safe_input}
+
+
 def _reject_remote_runtime_authority_fields(
     value: object,
     *,

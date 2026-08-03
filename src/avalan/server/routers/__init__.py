@@ -1,8 +1,10 @@
+from ...agent.conversation_child import AgentConversationChildBinding
 from ...agent.execution import InteractionRuntime
 from ...agent.orchestrator import Orchestrator
 from ...agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
+from ...conversation.agent import AgentConversationTurn
 from ...entities import (
     GenerationSettings,
     Message,
@@ -50,6 +52,10 @@ async def orchestrate(
     logger: Logger,
     orchestrator: Orchestrator,
     interaction_runtime: InteractionRuntime | None = None,
+    *,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
+    outward_response_id: str | None = None,
 ) -> tuple[OrchestratorResponse, str, int]:
     messages = [
         Message(role=req.role, content=to_message_content(req.content))
@@ -62,7 +68,11 @@ async def orchestrate(
             detail="Streaming multiple completions is not supported",
         )
 
-    response_id = uuid4()
+    response_id = outward_response_id or (
+        f"resp_avl_{uuid4().hex}"
+        if isinstance(request, ResponsesRequest)
+        else str(uuid4())
+    )
     timestamp = int(time())
 
     stop_strings = request.stop
@@ -77,6 +87,7 @@ async def orchestrate(
         reasoning_values = {
             field_name: getattr(request.reasoning, field_name)
             for field_name in request.reasoning.model_fields_set
+            if field_name != "context"
         }
     elif (
         isinstance(request, ChatCompletionRequest)
@@ -87,7 +98,15 @@ async def orchestrate(
     settings = GenerationSettings(
         use_async_generator=bool(request.stream),
         temperature=request.temperature,
-        max_new_tokens=request.max_tokens,
+        max_new_tokens=(
+            (
+                request.max_output_tokens
+                if request.max_output_tokens is not None
+                else request.max_tokens
+            )
+            if isinstance(request, ResponsesRequest)
+            else request.max_tokens
+        ),
         stop_strings=stop_strings,
         top_p=request.top_p,
         num_return_sequences=request.n,
@@ -120,9 +139,12 @@ async def orchestrate(
         call_kwargs["instructions"] = request.instructions
     if interaction_runtime is not None:
         call_kwargs["interaction_runtime"] = interaction_runtime
+    if conversation_turn is not None:
+        call_kwargs["conversation_turn"] = conversation_turn
+        call_kwargs["conversation_children"] = conversation_children
 
     response = await orchestrator(messages, **call_kwargs)
-    return response, str(response_id), timestamp
+    return response, response_id, timestamp
 
 
 def resolve_model_id(

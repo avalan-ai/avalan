@@ -434,7 +434,13 @@ _PHASE8_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase8.json"
 )
 _PHASE8_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "2ed5dc7274142e9dceef58c2049fb9732704ee63dddb370d5eda5eb7e5fcdd00"
+    "8f8a3353abe054cac946d5d763f0dfd211652217db9ea70b87904f433aacbe7f"
+)
+_PHASE9_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase9.json"
+)
+_PHASE9_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "24703b5cad97d8ba01f10d0167092f817874387a3a72ccf3e69db6749afbe4f1"
 )
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
@@ -566,7 +572,7 @@ _PHASE0_ACTIVE_SOURCE_SHA256 = {
         "1b3c5fd038c7e8436a42e6456afbc7189465cc80be9ea06c6a4e5f23334a10fc"
     ),
     "tests/conversation_response_dormancy_test.py": (
-        "a528fbcff6e706a83bb5560deb14f23c7fc27c56cd4145796b99ac485e396458"
+        "47ee7631ee6f9928ffcfdd5550325a98f16c1f828f51a36eba7c104b298647bb"
     ),
 }
 _ACTIVE_SOURCE_SHA256_BY_PHASE = {
@@ -677,6 +683,11 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "d31c5f667fff1a4a54ed51cc0e16c8953b7c4e7126128ee1098ce5958354ee74"
         ),
     },
+    9: {
+        "tests/conversation/server_stored_e2e_test.py": (
+            "824e502fb7bcf9f6a97d720e20a5fd77e4ec41f4e1af10f69a0c268de45fb555"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -688,6 +699,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     6: "c975653c7ae9bcd020f91be6785ddeb9a28ca9e8f39fa17e0a906e2cfee1a701",
     7: "c791ea6bc92ad8ee8140bdddf2396c7f485306d946ce315723c274f654224227",
     8: "c922e9081f5944d65b923222372029f365f65e7a7ce4350cdbe43c74d0ce9110",
+    9: "2002bcaa8330005dc9cd01574c75ee4f2be2ddaca3bbff93dd9d77996e4ff527",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -699,6 +711,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     6: "9e21f629f5fa6f3023321a873af7ccd934621fb55d398e52a7aa69abd4e2b3fa",
     7: "b8fea5ce7efd5ef3f44913da597a7befec1a96084282a3524d58b807e88a2bc9",
     8: "f7dfd4dc132cd9007d09a73a6f884688e7084324ba01773b6be585b7ad261365",
+    9: "3ba2b5064970f4fbfabd203b9fe0c453c2ddbd2751c511224df807850e1c3355",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -736,6 +749,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
     8: (
         21,
         "20bb89ea58062fd7588ecab0a2a2e7f7d33ffc7c2057157ca9969c2bdfcd976d",
+    ),
+    9: (
+        22,
+        "39fe2f2258df939cdf93338a2ed4bf797f9bfbdd1324dbe6856f1e8fe12d0395",
     ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
@@ -784,55 +801,106 @@ _PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE = {
         11,
         9,
         99,
-        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+        "66bb92a99d4392fa9d05038dbacee97c42aebfeb6e843bcdf553d4bc62a33c5f",
     ),
     1: (
         11,
         9,
         99,
-        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+        "66bb92a99d4392fa9d05038dbacee97c42aebfeb6e843bcdf553d4bc62a33c5f",
     ),
     2: (
         11,
         9,
         99,
-        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+        "66bb92a99d4392fa9d05038dbacee97c42aebfeb6e843bcdf553d4bc62a33c5f",
     ),
     3: (
         12,
         10,
         120,
-        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+        "c06779f69ff721a928eb4dc6956867db50ac010cb1c0f6e9471b24f17c0bef80",
     ),
     4: (
         12,
         10,
         120,
-        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+        "c06779f69ff721a928eb4dc6956867db50ac010cb1c0f6e9471b24f17c0bef80",
     ),
     5: (
         12,
         10,
         120,
-        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+        "c06779f69ff721a928eb4dc6956867db50ac010cb1c0f6e9471b24f17c0bef80",
     ),
     6: (
         13,
         10,
         130,
-        "4053c880afa0398d67f1e3c5f61c540fb8e950090a592dedb695238e4e88793c",
+        "0a8eb708d8778242affc06006238a6784b6a0a63039ed214e6e640fb572864ce",
     ),
     7: (
         19,
         10,
         190,
-        "014ba05f2f52f96beee982018d588de7b397e3471a2a048013931a0fc2a0f9b5",
+        "30a5e1c30de04d41ea1226f4f2b06ee2984bb719616ce3af24a4858b16b2815a",
     ),
     8: (
         19,
         10,
         190,
-        "014ba05f2f52f96beee982018d588de7b397e3471a2a048013931a0fc2a0f9b5",
+        "30a5e1c30de04d41ea1226f4f2b06ee2984bb719616ce3af24a4858b16b2815a",
+    ),
+    9: (
+        19,
+        10,
+        190,
+        "30a5e1c30de04d41ea1226f4f2b06ee2984bb719616ce3af24a4858b16b2815a",
+    ),
+}
+_PHASE9_CORRECTED_FAILURE_STRUCTURE_BY_PHASE = {
+    **_PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE,
+    3: (
+        12,
+        10,
+        120,
+        "27d718faa873746e7ca32798c5a836589aca1590287f5aeef1a133f5954d63a4",
+    ),
+    4: (
+        12,
+        10,
+        120,
+        "27d718faa873746e7ca32798c5a836589aca1590287f5aeef1a133f5954d63a4",
+    ),
+    5: (
+        12,
+        10,
+        120,
+        "27d718faa873746e7ca32798c5a836589aca1590287f5aeef1a133f5954d63a4",
+    ),
+    6: (
+        13,
+        10,
+        130,
+        "9dcacf052c2c3a26e3fdde298e59bdf02b52665915ce0d877b9a464de21f533d",
+    ),
+    7: (
+        19,
+        10,
+        190,
+        "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
+    ),
+    8: (
+        19,
+        10,
+        190,
+        "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
+    ),
+    9: (
+        19,
+        10,
+        190,
+        "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
     ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
@@ -870,6 +938,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         "9949053c95e1e85ad3e1ba0bd28f6f4a6a2ed91f001ef4ee2cae30c5b7fa8fbc",
     ),
     8: (
+        15,
+        14,
+        29,
+        "045c3597d6633aeb595b5081e9944b52742d09fb132aae62cf6f4c73826192d8",
+    ),
+    9: (
         15,
         14,
         29,
@@ -1128,7 +1202,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase8.json"
+    return fixture_root() / "acceptance_manifest.phase9.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1618,11 +1692,12 @@ def _validate_failure_structure_anchors(
     current_phase: int,
 ) -> None:
     """Validate append-only failure topology apart from mutable evidence."""
-    anchors = (
-        _PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE
-        if current_phase == 8
-        else _FAILURE_STRUCTURE_BY_PHASE
-    )
+    if current_phase >= 9:
+        anchors = _PHASE9_CORRECTED_FAILURE_STRUCTURE_BY_PHASE
+    elif current_phase >= 8:
+        anchors = _PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE
+    else:
+        anchors = _FAILURE_STRUCTURE_BY_PHASE
     _require_phase_anchor_keys(
         anchors,
         current_phase,
@@ -1753,6 +1828,7 @@ def verify_gate_source_isolation(
         _phase6_provider_transitions(root),
         _phase7_provider_transitions(root),
         _phase8_provider_transitions(root),
+        _phase9_provider_transitions(root),
     )
     transition_chains: dict[
         str,
@@ -2419,7 +2495,13 @@ def _validate_integrated_fixtures(
 
 def _validate_phase0_provider_byte_anchors(root: Path) -> None:
     """Validate exact provider fixture, test, and production source bytes."""
-    transitions = _phase5_provider_transitions(root)
+    transition_maps = (
+        _phase5_provider_transitions(root),
+        _phase6_provider_transitions(root),
+        _phase7_provider_transitions(root),
+        _phase8_provider_transitions(root),
+        _phase9_provider_transitions(root),
+    )
     for relative, (
         expected_size,
         expected_sha256,
@@ -2431,14 +2513,18 @@ def _validate_phase0_provider_byte_anchors(root: Path) -> None:
             )
         current_size = expected_size
         current_sha256 = expected_sha256
-        transitioned = transitions.get(relative)
-        if transitioned is not None:
-            from_size, from_sha256, current_size, current_sha256 = transitioned
-            if from_size != expected_size or from_sha256 != expected_sha256:
+        for transitions in transition_maps:
+            transitioned = transitions.get(relative)
+            if transitioned is None:
+                continue
+            from_size, from_sha256, to_size, to_sha256 = transitioned
+            if from_size != current_size or from_sha256 != current_sha256:
                 raise ConversationAcceptanceError(
                     "reviewed provider transition differs from its Phase 0 "
                     f"anchor: {relative}"
                 )
+            current_size = to_size
+            current_sha256 = to_sha256
         payload = path.read_bytes()
         if (
             len(payload) != current_size
@@ -2996,6 +3082,117 @@ def _phase8_provider_transitions(
     if len(transitions) != 44:
         raise ConversationAcceptanceError(
             "Phase 8 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase9_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact served Responses source transitions."""
+    path = root / _PHASE9_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE9_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 9 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 9 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 9
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase9-served-responses-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 9 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE9_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 9 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 9 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/server_stored_e2e_test.py::"
+            "test_normative_server_stored_contract"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 9 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    empty_sha256 = sha256(b"").hexdigest()
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 9 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 9 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 9 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"),
+            "transition source digest",
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"),
+            "transition target digest",
+        )
+        if (
+            type(from_size) is not int
+            or from_size < 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or (from_size == 0 and from_sha256 != empty_sha256)
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 9 provider byte transition is invalid"
+            )
+        transitions[relative] = (
+            from_size,
+            from_sha256,
+            to_size,
+            to_sha256,
+        )
+    if len(transitions) != 14:
+        raise ConversationAcceptanceError(
+            "Phase 9 provider transition inventory is invalid"
         )
     return transitions
 

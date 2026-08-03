@@ -603,6 +603,11 @@ class PgsqlConversationUnitOfWork:
 class PgsqlConversationStore:
     """Persist test-only durable lanes against the Phase 3 store protocol."""
 
+    @property
+    def durable(self) -> bool:
+        """Return true because committed state survives process restart."""
+        return True
+
     def __init__(
         self,
         database: PgsqlDatabase,
@@ -2871,10 +2876,19 @@ class PgsqlConversationStore:
             _SELECT_PUBLIC_RESPONSE_SQL,
             (public_response_id, authority_digest(authority)),
         )
-        if public is None or _row_bool(public, "tombstoned"):
+        if public is None:
             raise ConversationAuthorizationError()
         checkpoint_id = CheckpointId(_row_str(public, "checkpoint_id"))
-        checkpoint = await self._load_checkpoint(checkpoint_id, authority)
+        if _row_bool(public, "tombstoned"):
+            raise ConversationAuthorizationError()
+        try:
+            checkpoint = await self._load_checkpoint(checkpoint_id, authority)
+        except ConversationAuthorizationError:
+            return await self._load_checkpoint_lifecycle(
+                checkpoint_id,
+                authority,
+                CheckpointLifecycle.TOMBSTONED,
+            )
         tombstone = with_checkpoint_integrity(
             replace(
                 checkpoint,
@@ -2888,7 +2902,7 @@ class PgsqlConversationStore:
         envelope, key = await self._prepare_lifecycle_envelope(tombstone)
         authority_key = str(authority_digest(authority))
 
-        async def operation(cursor: PgsqlCursor) -> None:
+        async def operation(cursor: PgsqlCursor) -> bool:
             row = await self._fetchone(
                 cursor,
                 "tombstone_checkpoint_lock",
@@ -2905,10 +2919,15 @@ class PgsqlConversationStore:
                 row is None
                 or response is None
                 or _row_str(row, "authority_digest") != authority_key
-                or _row_str(row, "lifecycle_state") != "committed"
-                or _row_bool(response, "tombstoned")
+                or _row_str(response, "authority_digest") != authority_key
                 or _row_str(response, "checkpoint_id") != str(checkpoint_id)
             ):
+                raise ConversationConflictError()
+            response_tombstoned = _row_bool(response, "tombstoned")
+            lifecycle = _row_str(row, "lifecycle_state")
+            if response_tombstoned and lifecycle == "tombstoned":
+                return False
+            if response_tombstoned or lifecycle != "committed":
                 raise ConversationConflictError()
             await self._synchronize_write_key(cursor, authority_key, key)
             await self._replace_checkpoint_envelope(cursor, envelope)
@@ -2948,8 +2967,15 @@ class PgsqlConversationStore:
                 CheckpointLifecycle.TOMBSTONED,
                 at,
             )
+            return True
 
-        await self._transaction("checkpoint_tombstone", operation)
+        changed = await self._transaction("checkpoint_tombstone", operation)
+        if not changed:
+            return await self._load_checkpoint_lifecycle(
+                checkpoint_id,
+                authority,
+                CheckpointLifecycle.TOMBSTONED,
+            )
         return tombstone
 
     async def _prepare_lifecycle_envelope(
