@@ -204,6 +204,7 @@ from .sdk import (
 )
 from .sdk import ProviderUsage as ProviderUsage
 from .sdk import ReasoningContext as ReasoningContext
+from .sdk import StandaloneCompactHandle as StandaloneCompactHandle
 from .sdk import StandaloneCompactRequest as StandaloneCompactRequest
 from .sdk import StandaloneCompactResult as StandaloneCompactResult
 from .sdk import (

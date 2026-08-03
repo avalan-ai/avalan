@@ -37,7 +37,12 @@ from ..protocols import (
     ProviderResult,
     StoredProviderPlan,
 )
-from ..settings import EffectiveReasoningContext, ReasoningContext
+from ..settings import (
+    DisabledCompaction,
+    EffectiveReasoningContext,
+    InlineCompaction,
+    ReasoningContext,
+)
 from ..value import (
     IntegrityDigest,
     canonical_json_bytes,
@@ -50,9 +55,11 @@ from .openai import (
     _ENCRYPTED_CONTENT_INCLUDE,
     _OPENAI_API_REVISION,
     _SDK_REVISION,
+    NativeOpenAICompactionLimits,
     NativeOpenAIEncryptedContentPolicy,
     NativeOpenAIFunctionTool,
     NativeOpenAIProviderDiagnostics,
+    _append_bounded_input_item,
     _NativeOpenAIDiagnosticsState,
     _NativeOpenAIProviderStream,
     _owned_close_outcome,
@@ -60,13 +67,14 @@ from .openai import (
     _provider_result_mapping,
     _sdk_mapping,
     _validate_sdk_client_binding,
+    native_openai_compaction_policy_digest,
 )
 
 from asyncio import CancelledError, Task, create_task
 from collections.abc import Mapping
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Literal, TypeAlias, cast, final
+from typing import Literal, TypeAlias, final
 
 from openai import (
     APIConnectionError,
@@ -84,6 +92,7 @@ from openai.types.responses import (
     ResponseInputItemParam,
     ResponseStreamEvent,
 )
+from openai.types.responses.response_create_params import ContextManagement
 from openai.types.shared_params import Reasoning
 
 _STORED_ADAPTER_TYPE = (
@@ -141,6 +150,7 @@ def native_openai_stored_execution_digest(
     execution: NativeOpenAIStoredExecution,
     encrypted_content: NativeOpenAIEncryptedContentPolicy,
     tools: tuple[NativeOpenAIFunctionTool, ...] = (),
+    compaction_limits: NativeOpenAICompactionLimits | None = None,
 ) -> IntegrityDigest:
     """Return canonical bytes binding every static stored request field."""
     if (
@@ -152,6 +162,10 @@ def native_openai_stored_execution_digest(
         )
         or type(tools) is not tuple
         or any(type(tool) is not NativeOpenAIFunctionTool for tool in tools)
+        or (
+            compaction_limits is not None
+            and type(compaction_limits) is not NativeOpenAICompactionLimits
+        )
     ):
         raise ConversationValidationError()
     include = (
@@ -160,7 +174,7 @@ def native_openai_stored_execution_digest(
         is NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
         else ()
     )
-    payload = {
+    payload: dict[str, object] = {
         "include": include,
         "instructions": execution.instructions,
         "max_output_tokens": execution.max_output_tokens,
@@ -181,6 +195,17 @@ def native_openai_stored_execution_digest(
         "top_p": execution.top_p,
         "truncation": execution.truncation,
     }
+    if compaction_limits is not None:
+        payload["compaction_limits"] = {
+            "max_compact_threshold": compaction_limits.max_compact_threshold,
+            "max_input_bytes": compaction_limits.max_input_bytes,
+            "max_input_depth": compaction_limits.max_input_depth,
+            "max_input_items": compaction_limits.max_input_items,
+            "max_output_bytes": compaction_limits.max_output_bytes,
+            "max_output_depth": compaction_limits.max_output_depth,
+            "max_output_items": compaction_limits.max_output_items,
+            "min_compact_threshold": compaction_limits.min_compact_threshold,
+        }
     canonical_payload = freeze_json_value(payload)
     return IntegrityDigest(
         sha256(canonical_json_bytes(canonical_payload)).hexdigest()
@@ -196,6 +221,7 @@ class NativeOpenAIStoredProfile:
     binding: ProviderLaneBinding
     execution: NativeOpenAIStoredExecution
     encrypted_content: NativeOpenAIEncryptedContentPolicy
+    compaction_limits: NativeOpenAICompactionLimits | None = None
     scripted_tcp_test: bool = False
 
     def __post_init__(self) -> None:
@@ -208,6 +234,11 @@ class NativeOpenAIStoredProfile:
                 NativeOpenAIEncryptedContentPolicy,
             )
             or type(self.scripted_tcp_test) is not bool
+            or (
+                self.compaction_limits is not None
+                and type(self.compaction_limits)
+                is not NativeOpenAICompactionLimits
+            )
         ):
             raise ConversationValidationError()
         binding = self.binding
@@ -235,6 +266,10 @@ class NativeOpenAIStoredProfile:
             is not NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
         ):
             raise ConversationCapabilityError()
+        if binding.compaction_policy_digest != (
+            native_openai_compaction_policy_digest(self.compaction_limits)
+        ):
+            raise ConversationBindingDriftError()
 
 
 @final
@@ -268,6 +303,7 @@ class NativeOpenAIStoredProvider:
             execution=profile.execution,
             encrypted_content=profile.encrypted_content,
             tools=tools,
+            compaction_limits=profile.compaction_limits,
         )
         if (
             profile.binding.execution_definition_digest
@@ -315,38 +351,77 @@ class NativeOpenAIStoredProvider:
             profile_id=self._profile.profile_id,
             effective_context=state.effective_context,
             failure_boundary=state.failure_boundary,
+            inline_compaction_request_count=(
+                state.inline_compaction_request_count
+            ),
+            standalone_compaction_request_count=(
+                state.standalone_compaction_request_count
+            ),
+            compaction_boundary_count=state.compaction_boundary_count,
+            compaction_failure_count=state.compaction_failure_count,
+            last_compact_threshold=state.last_compact_threshold,
         )
 
     async def dispatch(self, plan: ProviderPlan) -> ProviderResult:
         """Dispatch one exact non-streaming stored request."""
-        stored = self._validate_plan(plan, ProviderTransport.NON_STREAMING)
-        input_items = _stored_request_input_items(stored)
+        inline = (
+            isinstance(plan, FirstStoredProviderPlan | StoredProviderPlan)
+            and type(plan.compaction) is InlineCompaction
+        )
         try:
+            stored = self._validate_plan(
+                plan,
+                ProviderTransport.NON_STREAMING,
+            )
+            limits = self._profile.compaction_limits if inline else None
+            input_items = _stored_request_input_items(stored, limits=limits)
             response = await self._create(input_items, stored, stream=False)
             if type(response) is not Response:
                 raise _provider_failure(boundary="failure_before_output")
-            result = _provider_result_mapping(_sdk_mapping(response), stored)
+            result = _provider_result_mapping(
+                _sdk_mapping(response),
+                stored,
+                limits=limits,
+            )
+        except CancelledError:
+            if inline:
+                self._diagnostics.compaction_failure_count += 1
+            raise
         except ConversationError as error:
             self._diagnostics.failure_boundary = error.boundary.value
+            if inline:
+                self._diagnostics.compaction_failure_count += 1
             raise
         self._record_response(result)
         return result
 
     async def stream(self, plan: ProviderPlan) -> ConversationProviderStream:
         """Open one exact streaming stored request."""
-        stored = self._validate_plan(plan, ProviderTransport.STREAMING)
-        input_items = _stored_request_input_items(stored)
+        inline = (
+            isinstance(plan, FirstStoredProviderPlan | StoredProviderPlan)
+            and type(plan.compaction) is InlineCompaction
+        )
         try:
+            stored = self._validate_plan(plan, ProviderTransport.STREAMING)
+            limits = self._profile.compaction_limits if inline else None
+            input_items = _stored_request_input_items(stored, limits=limits)
             response = await self._create(input_items, stored, stream=True)
             if type(response) is not AsyncStream:
                 raise _provider_failure(boundary="failure_before_output")
+        except CancelledError:
+            if inline:
+                self._diagnostics.compaction_failure_count += 1
+            raise
         except ConversationError as error:
             self._diagnostics.failure_boundary = error.boundary.value
+            if inline:
+                self._diagnostics.compaction_failure_count += 1
             raise
         return _NativeOpenAIProviderStream(
             source=response,
             plan=stored,
             owner=self,
+            compaction_limits=limits,
         )
 
     async def execute_tool(self, item: ProviderItem) -> str:
@@ -548,6 +623,20 @@ class NativeOpenAIStoredProvider:
             self._capability_profile.require(
                 ConversationCapability.REASONING_CONTEXT_ALL_TURNS
             )
+        if type(plan.compaction) is InlineCompaction:
+            self._capability_profile.require(
+                ConversationCapability.INLINE_COMPACTION
+            )
+            limits = self._profile.compaction_limits
+            if (
+                limits is None
+                or not limits.min_compact_threshold
+                <= plan.compaction.compact_threshold
+                <= limits.max_compact_threshold
+            ):
+                raise ConversationCapabilityError()
+        elif type(plan.compaction) is not DisabledCompaction:
+            raise ConversationCapabilityError()
         _validate_sdk_client_binding(
             self._client,
             binding=binding,
@@ -555,6 +644,19 @@ class NativeOpenAIStoredProvider:
             capability_profile=self._capability_profile,
         )
         return plan
+
+    def validate_compaction_request(
+        self,
+        plan: ProviderPlan,
+        transport: ProviderTransport,
+    ) -> None:
+        """Validate exact inline input without dispatching provider work."""
+        stored = self._validate_plan(plan, transport)
+        if type(stored.compaction) is not InlineCompaction:
+            raise ConversationValidationError()
+        limits = self._profile.compaction_limits
+        assert limits is not None
+        _stored_request_input_items(stored, limits=limits)
 
     def _validate_lifecycle(
         self,
@@ -592,6 +694,18 @@ class NativeOpenAIStoredProvider:
         elif plan.reasoning.requested is ReasoningContext.ALL_TURNS:
             reasoning = {"context": "all_turns"}
         tools = [tool.schema for tool in self._tools.values()]
+        context_management: list[ContextManagement] | None = None
+        if type(plan.compaction) is InlineCompaction:
+            context_management = [
+                {
+                    "type": "compaction",
+                    "compact_threshold": plan.compaction.compact_threshold,
+                }
+            ]
+            self._diagnostics.inline_compaction_request_count += 1
+            self._diagnostics.last_compact_threshold = (
+                plan.compaction.compact_threshold
+            )
         previous_response_id = (
             str(plan.upstream_response_id)
             if type(plan) is StoredProviderPlan
@@ -605,6 +719,7 @@ class NativeOpenAIStoredProvider:
                 input_items=input_items,
                 include=include,
                 reasoning=reasoning,
+                context_management=context_management,
                 tools=tools,
                 previous_response_id=previous_response_id,
                 execution=self._profile.execution,
@@ -641,6 +756,9 @@ class NativeOpenAIStoredProvider:
         )
         state.response_item_kinds += tuple(
             item.kind.value for item in result.items
+        )
+        state.compaction_boundary_count += sum(
+            item.kind is ProviderItemKind.COMPACTION for item in result.items
         )
         state.effective_context = result.reasoning.effective
         state.failure_boundary = None
@@ -693,6 +811,7 @@ async def _create_exact_stored_response(
     input_items: list[ResponseInputItemParam],
     include: list[ResponseIncludable] | None,
     reasoning: Reasoning | None,
+    context_management: list[ContextManagement] | None,
     tools: list[FunctionToolParam],
     previous_response_id: str | None,
     execution: NativeOpenAIStoredExecution,
@@ -706,13 +825,16 @@ async def _create_exact_stored_response(
         return await client.responses.create(
             model=model,
             input=input_items,
-            include=include,
+            context_management=(
+                context_management if context_management is not None else omit
+            ),
+            include=include if include is not None else omit,
             instructions=execution.instructions,
             max_output_tokens=execution.max_output_tokens,
             max_tool_calls=execution.max_tool_calls,
             parallel_tool_calls=execution.parallel_tool_calls,
             previous_response_id=previous,
-            reasoning=reasoning,
+            reasoning=reasoning if reasoning is not None else omit,
             store=True,
             stream=True,
             temperature=execution.temperature,
@@ -725,13 +847,16 @@ async def _create_exact_stored_response(
     return await client.responses.create(
         model=model,
         input=input_items,
-        include=include,
+        context_management=(
+            context_management if context_management is not None else omit
+        ),
+        include=include if include is not None else omit,
         instructions=execution.instructions,
         max_output_tokens=execution.max_output_tokens,
         max_tool_calls=execution.max_tool_calls,
         parallel_tool_calls=execution.parallel_tool_calls,
         previous_response_id=previous,
-        reasoning=reasoning,
+        reasoning=reasoning if reasoning is not None else omit,
         store=True,
         stream=False,
         temperature=execution.temperature,
@@ -745,6 +870,8 @@ async def _create_exact_stored_response(
 
 def _stored_request_input_items(
     plan: NativeOpenAIStoredPlan,
+    *,
+    limits: NativeOpenAICompactionLimits | None = None,
 ) -> list[ResponseInputItemParam]:
     new_input = plan.new_input
     if new_input is None:
@@ -753,22 +880,25 @@ def _stored_request_input_items(
         text = new_input.get("text")
         if type(text) is not str or not text:
             raise ConversationValidationError()
-        return [
-            cast(
-                ResponseInputItemParam,
-                {
-                    "type": "message",
-                    "role": "user",
-                    "content": [{"type": "input_text", "text": text}],
-                },
-            )
-        ]
+        text_items: list[ResponseInputItemParam] = []
+        _append_bounded_input_item(
+            text_items,
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": text}],
+            },
+            limits,
+            0,
+        )
+        return text_items
     if set(new_input) != {"items"}:
         raise ConversationValidationError()
     raw_items = new_input.get("items")
     if type(raw_items) is not tuple or not raw_items:
         raise ConversationValidationError()
     items: list[ResponseInputItemParam] = []
+    byte_count = 0
     for raw_item in raw_items:
         if not isinstance(raw_item, Mapping):
             raise ConversationValidationError()
@@ -781,5 +911,10 @@ def _stored_request_input_items(
             or type(value.get("output")) is not str
         ):
             raise ConversationValidationError()
-        items.append(cast(ResponseInputItemParam, value))
+        byte_count = _append_bounded_input_item(
+            items,
+            value,
+            limits,
+            byte_count,
+        )
     return items

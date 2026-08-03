@@ -24,7 +24,7 @@ from .contract import (
 from .errors import ConversationTransitionError, ConversationValidationError
 from .execution import ProviderLaneExecutionReceipt
 from .items import CompactionBoundary, ProviderItemLedger, VisibleTranscript
-from .settings import EffectiveReasoningMetadata, StatelessConversationHandle
+from .settings import EffectiveReasoningMetadata, StandaloneCompactHandle
 from .value import (
     ConversationCodecVersion,
     IntegrityDigest,
@@ -590,14 +590,23 @@ class StandaloneCompactCheckpointCandidate:
     """Stage a canonical standalone compact result."""
 
     checkpoint: ConversationCheckpoint
-    handle: StatelessConversationHandle
+    handle: StandaloneCompactHandle
 
     def __post_init__(self) -> None:
         _validate_candidate(
             self.checkpoint,
             CheckpointKind.STANDALONE_COMPACT_RESULT,
         )
-        if type(self.handle) is not StatelessConversationHandle:
+        if (
+            type(self.handle) is not StandaloneCompactHandle
+            or self.handle.conversation_id
+            != self.checkpoint.identity.conversation_id
+            or self.handle.checkpoint_id
+            != self.checkpoint.identity.checkpoint_id
+            or self.handle.branch_id != self.checkpoint.identity.branch_id
+            or self.handle.parent_checkpoint_id
+            != self.checkpoint.identity.parent_checkpoint_id
+        ):
             raise ConversationValidationError()
 
 

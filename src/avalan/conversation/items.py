@@ -342,7 +342,7 @@ PROVIDER_ITEM_SEMANTICS: Mapping[
                 correlation=ProviderItemCorrelation.NONE,
                 normalization=_OUTPUT_REPLAY,
                 required_fields=("type",),
-                allowed_fields=("id", "type"),
+                allowed_fields=("created_by", "id", "type"),
                 opaque_required=True,
             ),
         ),
@@ -872,7 +872,8 @@ def _validate_canonical_values(
                     expected_type="reasoning_text",
                 )
         case ProviderItemKind.COMPACTION:
-            pass
+            if "created_by" in canonical_input:
+                _canonical_identifier(canonical_input["created_by"])
         case ProviderItemKind.IMAGE_GENERATION_CALL:
             _canonical_text(canonical_input["result"])
         case ProviderItemKind.CODE_INTERPRETER_CALL:
@@ -1869,6 +1870,50 @@ class ProviderItemLedger:
     def item_count(self) -> int:
         """Return the number of complete canonical items."""
         return len(self.items)
+
+
+def provider_replay_items(
+    ledger: ProviderItemLedger,
+) -> tuple[ProviderItem, ...]:
+    """Return the provider-designated compact context for exact replay."""
+    if type(ledger) is not ProviderItemLedger:
+        raise ConversationValidationError()
+    latest_index: int | None = None
+    for index, item in enumerate(ledger.items):
+        if item.kind is ProviderItemKind.COMPACTION:
+            latest_index = index
+    if latest_index is None:
+        return ledger.items
+    prefix = ledger.items[:latest_index]
+    canonical_standalone_prefix = bool(prefix) and all(
+        item.kind is ProviderItemKind.MESSAGE
+        and item.phase is ProviderItemPhase.INPUT
+        and item.caller is ProviderItemCaller.CALLER
+        for item in prefix
+    )
+    replay = (
+        ledger.items
+        if canonical_standalone_prefix
+        else ledger.items[latest_index:]
+    )
+    boundary_offset = latest_index if canonical_standalone_prefix else 0
+    assert replay[boundary_offset].kind is ProviderItemKind.COMPACTION
+    open_calls: dict[ProviderCallId, ProviderItemKind] = {}
+    for item in replay[boundary_offset + 1 :]:
+        if item.kind in _CALL_KINDS:
+            assert item.call_id is not None
+            if item.call_id in open_calls:
+                raise ConversationValidationError()
+            if item.kind not in _TERMINAL_CALL_KINDS:
+                open_calls[item.call_id] = _EXPECTED_OUTPUT_KINDS[item.kind]
+        elif item.kind in _OUTPUT_KINDS:
+            assert item.call_id is not None
+            if open_calls.get(item.call_id) is not item.kind:
+                raise ConversationValidationError()
+            del open_calls[item.call_id]
+    if open_calls:
+        raise ConversationValidationError()
+    return replay
 
 
 @final

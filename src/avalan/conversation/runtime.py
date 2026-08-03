@@ -297,9 +297,10 @@ def _validate_request_operation(request: ConversationRunRequest) -> None:
         raise ConversationValidationError()
     if operation is ConversationOperation.COMPACT and (
         request.boundary is not ConversationCommitBoundary.INTERNAL_SEGMENT
-        or not isinstance(advance, OrdinaryChildAdvance)
+        or not isinstance(advance, OrdinaryChildAdvance | NamedHeadAdvance)
         or any(
             lane.mode is not ConversationMode.STATELESS
+            or type(lane.compaction) is not DisabledCompaction
             for lane in request.lanes
         )
     ):

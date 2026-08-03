@@ -119,6 +119,9 @@ from .contract import (
     terminal_publication_allowed as terminal_publication_allowed,
 )
 from .coordinator import (
+    CompactionFailureRecord as CompactionFailureRecord,
+)
+from .coordinator import (
     ConversationLaneRuntime as ConversationLaneRuntime,
 )
 from .coordinator import CoordinatorDiagnostics as CoordinatorDiagnostics
@@ -272,6 +275,7 @@ from .items import ProviderItemSemanticRule as ProviderItemSemanticRule
 from .items import VisibleTranscript as VisibleTranscript
 from .items import VisibleTranscriptEntry as VisibleTranscriptEntry
 from .items import VisibleTranscriptRole as VisibleTranscriptRole
+from .items import provider_replay_items as provider_replay_items
 from .lifecycle import (
     AmbiguousDispatchReconciliationDisposition as AmbiguousDispatchReconciliationDisposition,  # noqa: E501
 )
@@ -354,8 +358,14 @@ from .protocols import CoordinatorBoundaryHook as CoordinatorBoundaryHook
 from .protocols import FirstStoredProviderPlan as FirstStoredProviderPlan
 from .protocols import ProviderPlan as ProviderPlan
 from .protocols import ProviderResult as ProviderResult
+from .protocols import (
+    StandaloneCompactProviderPlan as StandaloneCompactProviderPlan,
+)
 from .protocols import StatelessProviderPlan as StatelessProviderPlan
 from .protocols import StoredProviderPlan as StoredProviderPlan
+from .providers import (
+    NativeOpenAICompactionLimits as NativeOpenAICompactionLimits,
+)
 from .providers import (
     NativeOpenAIConversationLaneRuntime as NativeOpenAIConversationLaneRuntime,
 )
@@ -383,6 +393,9 @@ from .providers import (
 )
 from .providers import (
     NativeOpenAIStoredProvider as NativeOpenAIStoredProvider,
+)
+from .providers import (
+    native_openai_compaction_policy_digest as native_openai_compaction_policy_digest,  # noqa: E501
 )
 from .providers import (
     native_openai_stored_execution_digest as native_openai_stored_execution_digest,  # noqa: E501
@@ -497,6 +510,7 @@ from .settings import (
 )
 from .settings import ProviderUsage as ProviderUsage
 from .settings import ReasoningContext as ReasoningContext
+from .settings import StandaloneCompactHandle as StandaloneCompactHandle
 from .settings import StandaloneCompactRequest as StandaloneCompactRequest
 from .settings import StandaloneCompactResult as StandaloneCompactResult
 from .settings import (

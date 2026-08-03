@@ -86,6 +86,9 @@ from .conversation.settings import (
 from .conversation.settings import ProviderUsage as ProviderUsage
 from .conversation.settings import ReasoningContext as ReasoningContext
 from .conversation.settings import (
+    StandaloneCompactHandle as StandaloneCompactHandle,
+)
+from .conversation.settings import (
     StandaloneCompactRequest as StandaloneCompactRequest,
 )
 from .conversation.settings import (

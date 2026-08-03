@@ -1,5 +1,5 @@
 from argparse import Namespace
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from datetime import datetime
 from io import StringIO
@@ -195,6 +195,13 @@ class MatrixProjectionResponse:
 
     def set_thinking(self, value: bool) -> None:
         self.is_thinking = value
+
+    def set_cancellation_checker(
+        self,
+        checker: Callable[[], Awaitable[None]] | None,
+    ) -> None:
+        """Accept the public response cancellation callback contract."""
+        assert checker is None or callable(checker)
 
     def consumer_projections(
         self,

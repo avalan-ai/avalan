@@ -5,6 +5,7 @@ from .binding import ProviderLaneBinding
 from .contract import (
     AuthorityScope,
     CheckpointId,
+    CheckpointIdentity,
     NamedHeadId,
     PublicResponseId,
     RequestIdempotencyIdentity,
@@ -35,6 +36,7 @@ from .runtime import (
     CoordinatorAwaitBoundary,
     IdempotencyResolution,
     IdempotencySettlementResolution,
+    NamedHeadAdvance,
     OutboxClaimResolution,
     OutboxClaimTarget,
     OutboxRecord,
@@ -98,6 +100,26 @@ class StatelessProviderPlan:
 
 
 @final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class StandaloneCompactProviderPlan:
+    """Dispatch complete canonical context to a native compact operation."""
+
+    binding: ProviderLaneBinding
+    ledger: ProviderItemLedger
+    reasoning: EffectiveReasoningMetadata
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.binding) is not ProviderLaneBinding
+            or type(self.ledger) is not ProviderItemLedger
+            or type(self.reasoning) is not EffectiveReasoningMetadata
+            or self.binding.lane_id != self.ledger.lane_id
+            or not self.ledger.items
+        ):
+            raise ConversationValidationError()
+
+
+@final
 @dataclass(frozen=True, slots=True, kw_only=True, repr=False)
 class StoredProviderPlan:
     """Dispatch new input using one private upstream response ID."""
@@ -105,6 +127,7 @@ class StoredProviderPlan:
     binding: ProviderLaneBinding
     upstream_response_id: UpstreamResponseId
     reasoning: EffectiveReasoningMetadata
+    compaction: CompactionPolicy = DisabledCompaction()
     new_input: Mapping[str, JsonValue] | None = None
     model_call_index: int = 1
     item_order_offset: int = 0
@@ -113,6 +136,10 @@ class StoredProviderPlan:
         if (
             type(self.binding) is not ProviderLaneBinding
             or type(self.reasoning) is not EffectiveReasoningMetadata
+            or not isinstance(
+                self.compaction,
+                DisabledCompaction | InlineCompaction,
+            )
             or type(self.model_call_index) is not int
             or self.model_call_index <= 0
             or type(self.item_order_offset) is not int
@@ -140,6 +167,7 @@ class FirstStoredProviderPlan:
 
     binding: ProviderLaneBinding
     reasoning: EffectiveReasoningMetadata
+    compaction: CompactionPolicy = DisabledCompaction()
     new_input: Mapping[str, JsonValue] | None = None
     model_call_index: int = 1
     item_order_offset: int = 0
@@ -148,6 +176,10 @@ class FirstStoredProviderPlan:
         if (
             type(self.binding) is not ProviderLaneBinding
             or type(self.reasoning) is not EffectiveReasoningMetadata
+            or not isinstance(
+                self.compaction,
+                DisabledCompaction | InlineCompaction,
+            )
             or type(self.model_call_index) is not int
             or self.model_call_index <= 0
             or type(self.item_order_offset) is not int
@@ -170,7 +202,10 @@ def _freeze_stored_input(
 
 
 ProviderPlan: TypeAlias = (
-    StatelessProviderPlan | FirstStoredProviderPlan | StoredProviderPlan
+    StatelessProviderPlan
+    | StandaloneCompactProviderPlan
+    | FirstStoredProviderPlan
+    | StoredProviderPlan
 )
 
 
@@ -287,6 +322,14 @@ class ConversationStore(Protocol):
         candidate: CheckpointCandidate,
     ) -> ConversationCheckpoint:
         """Create one checkpoint without a public mapping."""
+        ...
+
+    async def create_with_named_head(
+        self,
+        candidate: CheckpointCandidate,
+        advance: NamedHeadAdvance,
+    ) -> ConversationCheckpoint:
+        """Create one checkpoint and advance one named head atomically."""
         ...
 
     async def load(
@@ -563,6 +606,15 @@ class ConversationCoordinator(Protocol):
         request: ConversationRunRequest,
     ) -> AtomicCommitReceipt:
         """Execute one standalone fake-provider compaction."""
+        ...
+
+    async def commit_compact_result(
+        self,
+        source: ConversationCheckpoint,
+        identity: CheckpointIdentity,
+        authority: AuthorityScope,
+    ) -> ConversationCheckpoint:
+        """Commit one explicit continuable child of compact state."""
         ...
 
 

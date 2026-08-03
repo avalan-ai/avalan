@@ -90,6 +90,7 @@ class ProviderLaneBinding:
     agent_id: ConversationAgentId
     azure_resource_identity: str | None = None
     execution_definition_digest: IntegrityDigest | None = None
+    compaction_policy_digest: IntegrityDigest | None = None
 
     def __post_init__(self) -> None:
         validate_identifier(self.lane_id, "lane_id")
@@ -141,6 +142,11 @@ class ProviderLaneBinding:
                 self.execution_definition_digest,
                 "execution_definition_digest",
             )
+        if self.compaction_policy_digest is not None:
+            validate_identifier(
+                self.compaction_policy_digest,
+                "compaction_policy_digest",
+            )
 
     @property
     def safe_alias(self) -> SafeAlias:
@@ -179,6 +185,13 @@ class ProviderLaneBinding:
         ]
         if self.execution_definition_digest is not None:
             values.append(self.execution_definition_digest)
+        if self.compaction_policy_digest is not None:
+            values.extend(
+                (
+                    "compaction_policy_digest",
+                    self.compaction_policy_digest,
+                )
+            )
         return "".join(f"{len(value)}:{value}" for value in values)
 
 

@@ -16,7 +16,7 @@ from .errors import (
     ConversationAuthorizationError,
     ConversationValidationError,
 )
-from .items import VisibleTranscriptEntry
+from .items import ProviderItemLedger, VisibleTranscriptEntry
 from .value import (
     CallerHeldState,
     IntegrityDigest,
@@ -234,6 +234,7 @@ class InlineCompaction:
             self.operation is not CompactionOperation.INLINE
             or type(self.compact_threshold) is not int
             or self.compact_threshold <= 0
+            or self.compact_threshold > 2_147_483_647
         ):
             raise ConversationValidationError()
 
@@ -445,6 +446,7 @@ class StoredConversationSettings:
     provider_storage_disclosed: bool
     parent: StoredParent | None = None
     reasoning_context: ReasoningContext = ReasoningContext.AUTO
+    compaction: CompactionPolicy = DisabledCompaction()
     retention: RetentionLimits | None = None
     branch: ConversationBranchIntent | None = None
     named_head: "NamedHeadParent | None" = None
@@ -460,6 +462,10 @@ class StoredConversationSettings:
         if self.parent is not None and type(self.parent) is not StoredParent:
             raise ConversationValidationError()
         if not isinstance(self.reasoning_context, ReasoningContext):
+            raise ConversationValidationError()
+        if not isinstance(
+            self.compaction, DisabledCompaction | InlineCompaction
+        ):
             raise ConversationValidationError()
         _validate_advance_settings(
             self.parent,
@@ -657,28 +663,98 @@ class StandaloneCompactRequest:
     """Request standalone compaction from a stateless parent only."""
 
     parent: StatelessParent
+    named_head: NamedHeadParent | None = None
     operation: CompactionOperation = CompactionOperation.STANDALONE
 
     def __post_init__(self) -> None:
         if (
             type(self.parent) is not StatelessParent
+            or (
+                self.named_head is not None
+                and (
+                    type(self.named_head) is not NamedHeadParent
+                    or self.named_head.parent != self.parent
+                )
+            )
             or self.operation is not CompactionOperation.STANDALONE
         ):
             raise ConversationValidationError()
 
 
 @final
-@dataclass(frozen=True, slots=True, kw_only=True)
-class StandaloneCompactResult:
-    """Return canonical caller-held compact state and its checkpoint handle."""
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class StandaloneCompactHandle:
+    """Identify private compact state that is not a continuation parent."""
 
-    handle: StatelessConversationHandle
+    conversation_id: ConversationId
+    checkpoint_id: CheckpointId
+    branch_id: ConversationBranchId
+    parent_checkpoint_id: CheckpointId
+    head_id: NamedHeadId | None = None
+    expected_head_revision: NamedHeadRevision | None = None
+
+    def __post_init__(self) -> None:
+        for value, name in (
+            (self.conversation_id, "conversation_id"),
+            (self.checkpoint_id, "checkpoint_id"),
+            (self.branch_id, "branch_id"),
+            (self.parent_checkpoint_id, "parent_checkpoint_id"),
+        ):
+            validate_identifier(value, name)
+        if self.checkpoint_id == self.parent_checkpoint_id:
+            raise ConversationValidationError()
+        if (self.head_id is None) != (self.expected_head_revision is None):
+            raise ConversationValidationError()
+        if self.head_id is not None:
+            validate_identifier(self.head_id, "head_id")
+            assert self.expected_head_revision is not None
+            if (
+                type(self.expected_head_revision) is not int
+                or self.expected_head_revision < 0
+            ):
+                raise ConversationValidationError()
+
+    def __repr__(self) -> str:
+        """Return a representation without private checkpoint identity."""
+        return "StandaloneCompactHandle(private=True)"
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True, repr=False)
+class StandaloneCompactResult:
+    """Return complete provider-private context without assistant content."""
+
+    handle: StandaloneCompactHandle
+    binding: ProviderLaneBinding
+    canonical_context: ProviderItemLedger
+    reasoning: EffectiveReasoningMetadata
+    usage: ProviderUsage
     canonical_context_digest: IntegrityDigest
 
     def __post_init__(self) -> None:
-        if type(self.handle) is not StatelessConversationHandle:
+        if (
+            type(self.handle) is not StandaloneCompactHandle
+            or type(self.binding) is not ProviderLaneBinding
+            or type(self.canonical_context) is not ProviderItemLedger
+            or self.binding.lane_id != self.canonical_context.lane_id
+            or type(self.reasoning) is not EffectiveReasoningMetadata
+            or type(self.usage) is not ProviderUsage
+        ):
             raise ConversationValidationError()
         validate_identifier(
             self.canonical_context_digest,
             "canonical_context_digest",
+        )
+
+    def __repr__(self) -> str:
+        """Return only content-free compact-state accounting."""
+        opaque_bytes = sum(
+            item.opaque_state.byte_count
+            for item in self.canonical_context.items
+            if item.opaque_state is not None
+        )
+        return (
+            "StandaloneCompactResult(private=True, "
+            f"item_count={self.canonical_context.item_count}, "
+            f"opaque_byte_count={opaque_bytes})"
         )
