@@ -15,6 +15,7 @@ from ..conversation.contract import (
     RequestIdempotencyKey,
     RetentionLimits,
 )
+from ..conversation.coordinator import RunScopedConversationCoordinator
 from ..conversation.errors import (
     ConversationAuthorizationError,
     ConversationCapabilityError,
@@ -26,6 +27,7 @@ from ..conversation.errors import (
 from ..conversation.lifecycle import LocalDeletionPreparation
 from ..conversation.observability import authority_digest
 from ..conversation.runtime import StoreCloseResolution, SweepReceipt
+from ..conversation.security import ConversationHardeningCoordinatorHook
 from ..conversation.settings import ConversationResult, ReasoningContext
 from ..conversation.state import CheckpointLifecycle, ConversationCheckpoint
 from ..conversation.value import canonical_json_bytes, validate_identifier
@@ -164,6 +166,8 @@ class ServedResponsesTurnPlan:
     tool_names: tuple[str, ...]
     parent: ConversationCheckpoint | None
     streaming: bool
+    hardening_hook: ConversationHardeningCoordinatorHook | None = None
+    hardening_required: bool = False
 
     def __post_init__(self) -> None:
         if type(self.authority) is not AuthorityScope:
@@ -205,6 +209,14 @@ class ServedResponsesTurnPlan:
         ):
             raise ConversationValidationError()
         if type(self.streaming) is not bool:
+            raise ConversationValidationError()
+        if type(self.hardening_required) is not bool or (
+            self.hardening_required
+            != (
+                type(self.hardening_hook)
+                is ConversationHardeningCoordinatorHook
+            )
+        ):
             raise ConversationValidationError()
 
 
@@ -305,6 +317,7 @@ class ServedResponsesPolicy:
     min_compact_threshold: int | None = None
     max_compact_threshold: int | None = None
     sweep_limit: int = 100
+    hardening_required: bool = False
 
     def __post_init__(self) -> None:
         validate_identifier(self.agent_id, "agent_id")
@@ -356,6 +369,8 @@ class ServedResponsesPolicy:
             raise ConversationValidationError()
         if type(self.sweep_limit) is not int or self.sweep_limit <= 0:
             raise ConversationValidationError()
+        if type(self.hardening_required) is not bool:
+            raise ConversationValidationError()
 
     def validate_capabilities(
         self,
@@ -401,6 +416,7 @@ class ServedResponsesConfiguration:
     policy: ServedResponsesPolicy
     clock: ResponsesClock = _UtcResponsesClock()
     close_store_on_shutdown: bool = False
+    hardening_hook: ConversationHardeningCoordinatorHook | None = None
 
     def __post_init__(self) -> None:
         if getattr(self.store, "durable", False) is not True:
@@ -421,6 +437,12 @@ class ServedResponsesConfiguration:
         _require_async_method(self.clock, "now", "clock")
         if type(self.close_store_on_shutdown) is not bool:
             raise TypeError("close_store_on_shutdown must be a boolean")
+        if self.policy.hardening_required != (
+            type(self.hardening_hook) is ConversationHardeningCoordinatorHook
+        ):
+            raise TypeError(
+                "hardening_hook must exactly match served hardening policy"
+            )
 
 
 @final
@@ -531,6 +553,15 @@ class ServedResponsesService:
                 "configuration must be a served Responses configuration"
             )
         self.configuration = configuration
+        self._hardening_started = False
+
+    async def start(self) -> None:
+        """Start the trusted hardening lifecycle before serving requests."""
+        hook = self.configuration.hardening_hook
+        if hook is None or self._hardening_started:
+            return
+        await hook.start()
+        self._hardening_started = True
 
     async def authenticate(self, request: Request) -> AuthorityScope:
         """Resolve strict authenticated tenant and principal authority."""
@@ -628,6 +659,8 @@ class ServedResponsesService:
             tool_names=tool_names,
             parent=parent,
             streaming=streaming,
+            hardening_hook=self.configuration.hardening_hook,
+            hardening_required=self.configuration.policy.hardening_required,
         )
         prepared = await self.configuration.turn_resolver(plan)
         if type(prepared) is not PreparedServedResponsesTurn:
@@ -642,6 +675,12 @@ class ServedResponsesService:
             or turn.parent != parent
         ):
             raise ConversationValidationError()
+        if self.configuration.policy.hardening_required:
+            if type(turn.coordinator) is not RunScopedConversationCoordinator:
+                raise ConversationValidationError()
+            hook = self.configuration.hardening_hook
+            assert hook is not None
+            turn.coordinator.assert_hardening_hook(hook)
         return prepared
 
     async def retrieve(
@@ -730,6 +769,10 @@ class ServedResponsesService:
 
     async def aclose(self) -> None:
         """Close durable storage only when ownership is explicit."""
+        hook = self.configuration.hardening_hook
+        if hook is not None and self._hardening_started:
+            await hook.close()
+            self._hardening_started = False
         if self.configuration.close_store_on_shutdown:
             await self.configuration.store.close()
 
@@ -751,6 +794,13 @@ async def close_served_responses(app: FastAPI) -> None:
     service = getattr(app.state, "served_responses_service", None)
     if isinstance(service, ServedResponsesService):
         await service.aclose()
+
+
+async def start_served_responses(app: FastAPI) -> None:
+    """Start one configured service before accepting public requests."""
+    service = getattr(app.state, "served_responses_service", None)
+    if isinstance(service, ServedResponsesService):
+        await service.start()
 
 
 def validate_public_response_id(value: object) -> None:

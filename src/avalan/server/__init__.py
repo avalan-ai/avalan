@@ -23,6 +23,7 @@ from .responses_lifecycle import (
     ServedResponsesConfiguration,
     close_served_responses,
     configure_served_responses,
+    start_served_responses,
 )
 from .routers import mcp as mcp_router
 from .stateless_responses import (
@@ -186,6 +187,7 @@ def _create_lifespan(
                 if mcp_description:
                     app.state.mcp_tool_description = mcp_description
             try:
+                await start_served_responses(app)
                 yield
             finally:
                 await mcp_router.close_mcp_state(app)

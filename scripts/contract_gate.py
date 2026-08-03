@@ -1428,7 +1428,18 @@ def _analyze_reachable_statement(
         return _analyze_reachable_while(node, static_names)
     if isinstance(node, (AsyncWith, With)):
         return _analyze_reachable_with(node, static_names)
-    if isinstance(node, (Match, Try, TryStar)):
+    if isinstance(node, Try):
+        if node.handlers or node.orelse:
+            return _reachable_result(falls_through=False)
+        body = _analyze_reachable_block(node.body, static_names)
+        finalbody = _analyze_reachable_block(node.finalbody, static_names)
+        return _reachable_result(
+            contains_invariant=(
+                body.contains_invariant and finalbody.falls_through
+            ),
+            falls_through=body.falls_through and finalbody.falls_through,
+        )
+    if isinstance(node, (Match, TryStar)):
         return _reachable_result(falls_through=False)
     return _reachable_result()
 

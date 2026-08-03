@@ -1291,6 +1291,76 @@ def test_threat_model_rejects_resigned_semantic_drift(
         )
 
 
+def test_phase11_threat_model_rejects_placeholder_ownership(
+    tmp_path: Path,
+) -> None:
+    """Reject locally signed placeholder ownership in active controls."""
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+    requirements = _VERIFIER.load_requirements(
+        _FIXTURES / "requirements_traceability.json",
+        manifest,
+        repo_root=_ROOT,
+    )
+    payload = _read("threat_model.phase11.json")
+    threats = payload["threats"]
+    assert isinstance(threats, list)
+    threat = threats[-1]
+    assert isinstance(threat, dict)
+    owners = threat["control_owners"]
+    assert isinstance(owners, list)
+    owner = owners[0]
+    assert isinstance(owner, dict)
+    owner["owner"] = "todo-runtime-owner"
+    _resign(payload, "threat_model_sha256")
+    path = tmp_path / "threats.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="placeholder text",
+    ):
+        _VERIFIER._validate_threat_model(
+            path,
+            manifest=manifest,
+            requirement_ids=frozenset(item.id for item in requirements),
+        )
+
+
+def test_phase11_threat_model_rejects_missing_operational_response(
+    tmp_path: Path,
+) -> None:
+    """Reject active hardening threats missing operational response data."""
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+    requirements = _VERIFIER.load_requirements(
+        _FIXTURES / "requirements_traceability.json",
+        manifest,
+        repo_root=_ROOT,
+    )
+    payload = _read("threat_model.phase11.json")
+    threats = payload["threats"]
+    assert isinstance(threats, list)
+    threat = threats[-1]
+    assert isinstance(threat, dict)
+    threat.pop("incident_response")
+    _resign(payload, "threat_model_sha256")
+    path = tmp_path / "threats.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="invalid keys",
+    ):
+        _VERIFIER._validate_threat_model(
+            path,
+            manifest=manifest,
+            requirement_ids=frozenset(item.id for item in requirements),
+        )
+
+
 def test_deterministic_fixture_requires_its_canonical_digest() -> None:
     """Reject deterministic evidence whose bytes outgrow its signature."""
     payload = _read("deterministic_fixtures.json")

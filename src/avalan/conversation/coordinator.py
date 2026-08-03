@@ -155,6 +155,7 @@ from .runtime import (
     conversation_run_request_recovery_payload,
     request_operation,
 )
+from .security import is_trusted_conversation_hardening_hook
 from .settings import (
     CompactionOperation,
     ConversationMode,
@@ -719,6 +720,7 @@ class RunScopedConversationCoordinator:
         max_attempts: int = 2,
         max_active_executions: int = 128,
         boundary_hook: CoordinatorBoundaryHook | None = None,
+        hardening_required: bool = False,
     ) -> None:
         if (
             type(lanes) is not tuple
@@ -746,6 +748,13 @@ class RunScopedConversationCoordinator:
             or max_active_executions <= 0
         ):
             raise ConversationValidationError()
+        hardening_hook_valid = is_trusted_conversation_hardening_hook(
+            boundary_hook
+        )
+        if type(hardening_required) is not bool or (
+            hardening_required and not hardening_hook_valid
+        ):
+            raise ConversationValidationError()
         self._store = store
         self._resolver = authority_resolver
         self._clock = clock
@@ -761,6 +770,8 @@ class RunScopedConversationCoordinator:
         self._max_attempts = max_attempts
         self._max_active_executions = max_active_executions
         self._hook = boundary_hook or _NoopCoordinatorBoundaryHook()
+        self._hardening_required = hardening_required
+        self._hardening_active = hardening_required and hardening_hook_valid
         self._active_attempts: set[str] = set()
         self._compaction_failure_count = 0
         self._compaction_failures: list[CompactionFailureRecord] = []
@@ -776,6 +787,20 @@ class RunScopedConversationCoordinator:
             compaction_failure_count=self._compaction_failure_count,
             compaction_failures=tuple(self._compaction_failures),
         )
+
+    @property
+    def hardening_active(self) -> bool:
+        """Return whether the trusted hardening hook is installed."""
+        return self._hardening_active
+
+    def assert_hardening_hook(self, hook: CoordinatorBoundaryHook) -> None:
+        """Require the exact trusted hook installed by server policy."""
+        if (
+            self._hook is not hook
+            or not self._hardening_required
+            or not self.hardening_active
+        ):
+            raise ConversationValidationError()
 
     def _record_compaction_failure(
         self,
