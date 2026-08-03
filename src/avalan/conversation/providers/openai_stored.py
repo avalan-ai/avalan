@@ -7,7 +7,11 @@ from ..binding import (
     ProviderLaneBinding,
     ProviderTransport,
 )
-from ..contract import ChildLaneRetentionPolicy, UpstreamResponseId
+from ..contract import (
+    ChildLaneRetentionPolicy,
+    RequestIdempotencyKey,
+    UpstreamResponseId,
+)
 from ..errors import (
     ConversationAmbiguousDispatchError,
     ConversationBindingDriftError,
@@ -17,10 +21,10 @@ from ..errors import (
     ConversationProviderResponseError,
     ConversationValidationError,
 )
+from ..execution import ProviderToolExecution, ToolExecutionPhase
 from ..items import (
     PROVIDER_ITEM_NORMALIZATION_VERSION,
     ProviderItem,
-    ProviderItemCaller,
     ProviderItemKind,
 )
 from ..lifecycle import (
@@ -45,6 +49,7 @@ from ..settings import (
 )
 from ..value import (
     IntegrityDigest,
+    ProviderItemId,
     canonical_json_bytes,
     freeze_json_value,
     thaw_json_value,
@@ -60,6 +65,8 @@ from .openai import (
     NativeOpenAIFunctionTool,
     NativeOpenAIProviderDiagnostics,
     _append_bounded_input_item,
+    _configured_function_tool,
+    _configured_tool_execution_metadata,
     _NativeOpenAIDiagnosticsState,
     _NativeOpenAIProviderStream,
     _owned_close_outcome,
@@ -426,21 +433,30 @@ class NativeOpenAIStoredProvider:
 
     async def execute_tool(self, item: ProviderItem) -> str:
         """Execute one exact configured function call asynchronously."""
-        if (
-            type(item) is not ProviderItem
-            or item.kind is not ProviderItemKind.FUNCTION_CALL
-            or item.caller is not ProviderItemCaller.PROVIDER
-            or item.lane_id != self.binding.lane_id
-        ):
-            raise ConversationValidationError()
-        name = item.canonical_input.get("name")
-        arguments = item.canonical_input.get("arguments")
-        if type(name) is not str or type(arguments) is not str:
-            raise ConversationValidationError()
-        tool = self._tools.get(name)
-        if tool is None:
-            raise ConversationCapabilityError()
+        tool, arguments = _configured_function_tool(
+            self._tools,
+            self.binding,
+            item,
+        )
         return await tool.execute(arguments)
+
+    def tool_execution_metadata(
+        self,
+        item: ProviderItem,
+        *,
+        request_idempotency_key: RequestIdempotencyKey,
+        phase: ToolExecutionPhase,
+        output_id: ProviderItemId | None = None,
+    ) -> ProviderToolExecution:
+        """Return exact durable metadata for one configured tool call."""
+        return _configured_tool_execution_metadata(
+            self._tools,
+            self.binding,
+            item,
+            request_idempotency_key=request_idempotency_key,
+            phase=phase,
+            output_id=output_id,
+        )
 
     async def retrieve(
         self,

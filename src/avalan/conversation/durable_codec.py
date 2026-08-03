@@ -309,6 +309,13 @@ def execution_reservation_digest(
                 for lane in value.lanes
             ),
             "schema_version": 1,
+            **(
+                {
+                    "authorized_agent_ids": value.authorized_agent_ids,
+                }
+                if value.authorized_agent_ids
+                else {}
+            ),
         }
     )
     return sha256(canonical_json_bytes(payload)).hexdigest()

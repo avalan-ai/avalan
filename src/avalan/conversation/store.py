@@ -6,6 +6,7 @@ from .contract import (
     CheckpointId,
     CheckpointIdentity,
     CheckpointKind,
+    ChildLaneRetentionPolicy,
     IdempotencyDisposition,
     IdempotencyRecordState,
     LocalDeletionState,
@@ -25,9 +26,12 @@ from .errors import (
 )
 from .execution import (
     ConversationExecutionReservation,
+    DurableToolRecoveryAdmission,
+    DurableToolRecoveryLease,
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionReservation,
     ProviderLaneExecutionStage,
+    durable_tool_recovery_action,
     provider_lane_execution_receipt,
 )
 from .items import ProviderItemLedger
@@ -95,6 +99,9 @@ from .state import (
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
     SuspensionCheckpointCandidate,
+    SuspensionContinuationCheckpointCandidate,
+    is_standalone_compact_bridge,
+    validate_checkpoint_parent_kind,
 )
 from .value import AuthorityDigest, IntegrityDigest, validate_identifier
 
@@ -405,7 +412,14 @@ class InMemoryConversationStore:
         authority_key = str(authority_digest(committed.authority))
         async with self._lock:
             self._ensure_open_locked()
-            self._validate_checkpoint_write_locked(committed, encoded)
+            self._validate_checkpoint_write_locked(
+                committed,
+                encoded,
+                suspension_continuation=isinstance(
+                    candidate,
+                    SuspensionContinuationCheckpointCandidate,
+                ),
+            )
             direct_parent_id = committed.identity.parent_checkpoint_id
             assert direct_parent_id is not None
             direct_parent = self._checkpoints[direct_parent_id].checkpoint
@@ -572,12 +586,37 @@ class InMemoryConversationStore:
         authority_key = str(authority_digest(committed.authority))
         async with self._lock:
             self._ensure_open_locked()
-            self._validate_checkpoint_write_locked(committed, encoded)
             parent_id = committed.identity.parent_checkpoint_id
-            parent = (
-                self._checkpoints[parent_id].checkpoint
+            parent_entry = (
+                self._checkpoints.get(parent_id)
                 if parent_id is not None
                 else None
+            )
+            parent = (
+                parent_entry.checkpoint if parent_entry is not None else None
+            )
+            compact_source_entry = (
+                self._checkpoints.get(parent.identity.parent_checkpoint_id)
+                if parent is not None
+                and parent.kind is CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                and parent.identity.parent_checkpoint_id is not None
+                else None
+            )
+            self._validate_checkpoint_write_locked(
+                committed,
+                encoded,
+                suspension_continuation=isinstance(
+                    commit.candidate,
+                    SuspensionContinuationCheckpointCandidate,
+                ),
+                compact_continuation=is_standalone_compact_bridge(
+                    parent,
+                    (
+                        compact_source_entry.checkpoint
+                        if compact_source_entry is not None
+                        else None
+                    ),
+                ),
             )
             self._validate_output_candidates(
                 committed,
@@ -831,6 +870,60 @@ class InMemoryConversationStore:
             self._idempotency_changed.notify_all()
         if cancellation is not None:
             raise cancellation
+
+    async def admit_tool_recovery(
+        self,
+        admission: DurableToolRecoveryAdmission,
+        execution: ConversationExecutionReservation,
+    ) -> DurableToolRecoveryLease:
+        """Atomically lease one exact ambiguous durable tool suffix."""
+        if (
+            type(admission) is not DurableToolRecoveryAdmission
+            or type(execution) is not ConversationExecutionReservation
+            or execution.idempotency != admission.idempotency
+        ):
+            raise ConversationValidationError()
+        execution_record = self._execution_reservation_record(
+            admission.idempotency,
+            execution,
+        )
+        await self._hook.reach(StoreAwaitBoundary.IDEMPOTENCY)
+        now = await self._clock.now()
+        self._validate_time(now)
+        async with self._idempotency_changed:
+            self._ensure_open_locked()
+            stored = self._authorize_entry_locked(
+                admission.checkpoint_id,
+                admission.idempotency.authority,
+            )
+            checkpoint = self._codec.decode(stored.encoded)
+            _validate_tool_recovery_checkpoint(
+                admission,
+                execution,
+                checkpoint,
+            )
+            key = self._idempotency_key(admission.idempotency)
+            current = self._idempotency.get(key)
+            if (
+                current is None
+                or current.identity != admission.idempotency
+                or current.state is not IdempotencyRecordState.AMBIGUOUS
+                or current.execution != execution_record
+            ):
+                raise ConversationConflictError()
+            owner_token = self._next_owner_token_locked()
+            self._idempotency[key] = replace(
+                current,
+                state=IdempotencyRecordState.IN_PROGRESS,
+                owner_token=owner_token,
+                lease_expires_at=now
+                + timedelta(seconds=self._limits.idempotency_lease_seconds),
+            )
+            self._idempotency_changed.notify_all()
+        return DurableToolRecoveryLease(
+            admission=admission,
+            owner_token=owner_token,
+        )
 
     async def abandon_idempotency(
         self,
@@ -1820,7 +1913,14 @@ class InMemoryConversationStore:
         encoded = self._codec.encode(committed)
         async with self._lock:
             self._ensure_open_locked()
-            self._validate_checkpoint_write_locked(committed, encoded)
+            self._validate_checkpoint_write_locked(
+                committed,
+                encoded,
+                suspension_continuation=isinstance(
+                    candidate,
+                    SuspensionContinuationCheckpointCandidate,
+                ),
+            )
             checkpoint_id = committed.identity.checkpoint_id
             self._checkpoints[checkpoint_id] = _StoredCheckpoint(
                 checkpoint=committed,
@@ -1858,15 +1958,40 @@ class InMemoryConversationStore:
             ExecutionSegmentCheckpointCandidate
             | SuspensionCheckpointCandidate
             | OutwardTurnCheckpointCandidate
+            | SuspensionContinuationCheckpointCandidate
             | StandaloneCompactCheckpointCandidate,
         ):
             raise ConversationValidationError()
         checkpoint = candidate.checkpoint
-        if any(
-            lane.binding.agent_id != checkpoint.authority.agent_id
-            for lane in checkpoint.content.lanes
-        ):
+        topology = checkpoint.content.lane_topology
+        authorized_agent_ids = (
+            {checkpoint.authority.agent_id}
+            if topology is None
+            else set(topology.agent_ids)
+        )
+        if checkpoint.authority.agent_id not in authorized_agent_ids:
             raise ConversationAuthorizationError()
+        for lane in checkpoint.content.lanes:
+            if lane.binding.agent_id not in authorized_agent_ids:
+                raise ConversationAuthorizationError()
+            if topology is not None:
+                entry = topology.entry(lane.lane_id)
+                if (
+                    entry.agent_id != lane.binding.agent_id
+                    or entry.binding_digest != lane.binding.integrity_digest
+                    or entry.retention_policy != lane.retention_policy
+                ):
+                    raise ConversationAuthorizationError()
+        for segment in checkpoint.content.execution_segments:
+            if segment.binding.agent_id not in authorized_agent_ids:
+                raise ConversationAuthorizationError()
+            if topology is not None:
+                entry = topology.entry(segment.lane_id)
+                if (
+                    entry.agent_id != segment.binding.agent_id
+                    or entry.binding_digest != segment.binding.integrity_digest
+                ):
+                    raise ConversationAuthorizationError()
         return checkpoint
 
     @staticmethod
@@ -1891,6 +2016,8 @@ class InMemoryConversationStore:
         encoded: bytes,
         *,
         enforce_capacity: bool = True,
+        suspension_continuation: bool = False,
+        compact_continuation: bool = False,
     ) -> None:
         checkpoint_id = checkpoint.identity.checkpoint_id
         if checkpoint_id in self._checkpoints:
@@ -1914,19 +2041,31 @@ class InMemoryConversationStore:
         if counts.provider_item_count > self._limits.max_provider_items:
             raise ConversationLimitError()
         parent_id = checkpoint.identity.parent_checkpoint_id
-        if parent_id is not None:
-            parent = self._checkpoints.get(parent_id)
-            if (
-                parent is None
-                or parent.checkpoint.lifecycle
-                is not CheckpointLifecycle.COMMITTED
-                or parent.authority_digest
-                != str(authority_digest(checkpoint.authority))
-            ):
-                raise ConversationAuthorizationError()
-            children = self._children.get(parent_id, set())
-            if len(children) >= self._limits.max_children_per_parent:
-                raise ConversationLimitError()
+        if parent_id is None:
+            validate_checkpoint_parent_kind(
+                checkpoint.kind,
+                None,
+                suspension_continuation=suspension_continuation,
+                compact_continuation=compact_continuation,
+            )
+            return
+        parent = self._checkpoints.get(parent_id)
+        if (
+            parent is None
+            or parent.checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+            or parent.authority_digest
+            != str(authority_digest(checkpoint.authority))
+        ):
+            raise ConversationAuthorizationError()
+        validate_checkpoint_parent_kind(
+            checkpoint.kind,
+            parent.checkpoint.kind,
+            suspension_continuation=suspension_continuation,
+            compact_continuation=compact_continuation,
+        )
+        children = self._children.get(parent_id, set())
+        if len(children) >= self._limits.max_children_per_parent:
+            raise ConversationLimitError()
 
     @staticmethod
     def _validate_output_candidates(
@@ -1951,9 +2090,52 @@ class InMemoryConversationStore:
                 raise ConversationValidationError()
         for candidate in candidates:
             lane = lanes.get(candidate.lane_id)
+            if lane is None:
+                topology = checkpoint.content.lane_topology
+                topology_entry = (
+                    next(
+                        (
+                            entry
+                            for entry in topology.entries
+                            if entry.lane_id == candidate.lane_id
+                        ),
+                        None,
+                    )
+                    if topology is not None
+                    else None
+                )
+                if (
+                    topology_entry is None
+                    or topology_entry.retention_policy
+                    is not ChildLaneRetentionPolicy.DISCARD_TERMINAL
+                    or topology_entry.binding_digest
+                    != candidate.binding.integrity_digest
+                ):
+                    raise ConversationValidationError()
+                expected_receipt = provider_lane_execution_receipt(
+                    authority=checkpoint.authority,
+                    identity=checkpoint.identity,
+                    binding=candidate.binding,
+                    mode=candidate.mode,
+                    scope=candidate.scope,
+                    completed_items=candidate.completed_items,
+                    reasoning=candidate.reasoning,
+                    usage=candidate.usage,
+                    upstream_response_id=candidate.upstream_response_id,
+                )
+                if candidate.execution_receipt != expected_receipt:
+                    raise ConversationValidationError()
+                if candidate.mode is ConversationMode.STATELESS:
+                    ProviderItemLedger(
+                        lane_id=candidate.lane_id,
+                        normalization_version=(
+                            candidate.binding.continuation_codec_version
+                        ),
+                        items=candidate.completed_items,
+                    )
+                continue
             if (
-                lane is None
-                or lane.binding != candidate.binding
+                lane.binding != candidate.binding
                 or lane.reasoning != candidate.reasoning
                 or lane.execution_receipt != candidate.execution_receipt
             ):
@@ -2645,3 +2827,35 @@ class InMemoryConversationStore:
     def _ensure_open_locked(self) -> None:
         if self._closed:
             raise ConversationStorageError()
+
+
+def _validate_tool_recovery_checkpoint(
+    admission: DurableToolRecoveryAdmission,
+    execution: ConversationExecutionReservation,
+    checkpoint: ConversationCheckpoint,
+) -> None:
+    """Validate one immutable checkpoint as the exact recovery suffix."""
+    segments = checkpoint.content.execution_segments
+    integrity = checkpoint.integrity
+    if (
+        checkpoint.identity.checkpoint_id != admission.checkpoint_id
+        or checkpoint.kind is not CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+        or checkpoint.authority != admission.idempotency.authority
+        or integrity is None
+        or integrity.digest != admission.checkpoint_integrity
+        or len(segments) != admission.segment_count
+        or not segments
+        or segments[-1].binding != admission.binding
+        or any(
+            segment.idempotency_key != admission.idempotency.key
+            or segment.request_digest != admission.idempotency.request_digest
+            for segment in segments
+        )
+        or durable_tool_recovery_action(segments) is not admission.action
+        or checkpoint.identity.conversation_id
+        != execution.identity.conversation_id
+        or checkpoint.identity.logical_turn_id
+        != execution.identity.logical_turn_id
+    ):
+        raise ConversationConflictError()

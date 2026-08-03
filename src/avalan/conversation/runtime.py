@@ -7,10 +7,15 @@ from .contract import (
     CanonicalRequestDigest,
     CheckpointId,
     CheckpointIdentity,
+    CheckpointSequence,
+    ChildLaneRetentionPolicy,
     ConversationBranchId,
+    ConversationId,
     ConversationOperation,
+    ExecutionSegmentId,
     FailureBoundary,
     IdempotencyDisposition,
+    LogicalTurnId,
     NamedHeadId,
     NamedHeadRevision,
     ProviderLaneId,
@@ -30,6 +35,7 @@ from .execution import (
 from .items import (
     ProviderItem,
     VisibleTranscriptEntry,
+    VisibleTranscriptRole,
     public_provider_item_projection,
 )
 from .observability import ConversationRequestSemantics
@@ -50,13 +56,21 @@ from .state import (
     ConversationCheckpoint,
     ExecutionSegmentCheckpointCandidate,
     OutwardTurnCheckpointCandidate,
+    ProviderLaneTopology,
     StandaloneCompactCheckpointCandidate,
     StoredProviderLaneSnapshot,
     SuspensionCheckpointCandidate,
     validate_upstream_identifier_separation,
 )
-from .value import AuthorityDigest, validate_identifier, validate_revision
+from .value import (
+    AuthorityDigest,
+    IntegrityDigest,
+    freeze_json_value,
+    validate_identifier,
+    validate_revision,
+)
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import datetime
 from enum import StrEnum
@@ -198,6 +212,7 @@ class ConversationRunRequest:
     retention: RetentionLimits
     idempotency_key: RequestIdempotencyKey
     boundary: ConversationCommitBoundary
+    lane_topology: ProviderLaneTopology | None = None
     provisional_response_id: ProvisionalResponseId | None = None
     public_response_id: PublicResponseId | None = None
 
@@ -234,6 +249,11 @@ class ConversationRunRequest:
         validate_identifier(self.idempotency_key, "idempotency_key")
         if not isinstance(self.boundary, ConversationCommitBoundary):
             raise ConversationValidationError()
+        if self.lane_topology is not None:
+            if type(self.lane_topology) is not ProviderLaneTopology:
+                raise ConversationValidationError()
+            if not set(lane_ids) <= self.lane_topology.lane_ids:
+                raise ConversationValidationError()
         outward = self.boundary is ConversationCommitBoundary.OUTWARD_TURN
         if outward != (
             self.provisional_response_id is not None
@@ -248,6 +268,360 @@ class ConversationRunRequest:
             validate_identifier(self.public_response_id, "public_response_id")
         _validate_advance_identity(self)
         _validate_request_operation(self)
+
+
+def conversation_run_request_recovery_payload(
+    request: ConversationRunRequest,
+) -> Mapping[str, JsonValue]:
+    """Return the exact durable request envelope needed after a restart."""
+    if type(request) is not ConversationRunRequest:
+        raise ConversationValidationError()
+    advance = request.advance
+    advance_payload: dict[str, JsonValue]
+    if type(advance) is FirstTurnAdvance:
+        advance_payload = {"kind": "first_turn"}
+    elif type(advance) is ResetAdvance:
+        advance_payload = {
+            "kind": "reset",
+            "parent_checkpoint_id": advance.parent_checkpoint_id,
+        }
+    elif type(advance) is OrdinaryChildAdvance:
+        advance_payload = {
+            "kind": "ordinary_child",
+            "parent_checkpoint_id": advance.parent_checkpoint_id,
+        }
+    elif type(advance) is ExplicitBranchAdvance:
+        advance_payload = {
+            "branch_id": advance.branch_id,
+            "kind": "explicit_branch",
+            "parent_checkpoint_id": advance.parent_checkpoint_id,
+        }
+    elif type(advance) is NamedHeadAdvance:
+        advance_payload = {
+            "expected_revision": advance.expected_revision,
+            "head_id": advance.head_id,
+            "kind": "named_head",
+            "parent_checkpoint_id": advance.parent_checkpoint_id,
+        }
+    else:
+        raise ConversationValidationError()
+    identity = request.identity
+    payload = freeze_json_value(
+        {
+            "advance": advance_payload,
+            "boundary": request.boundary.value,
+            "identity": {
+                "branch_id": identity.branch_id,
+                "checkpoint_id": identity.checkpoint_id,
+                "conversation_id": identity.conversation_id,
+                "execution_segment_id": identity.execution_segment_id,
+                "logical_turn_id": identity.logical_turn_id,
+                "parent_checkpoint_id": identity.parent_checkpoint_id,
+                "parent_sequence": identity.parent_sequence,
+                "sequence": identity.sequence,
+            },
+            "lanes": [
+                {
+                    "compaction_threshold": (
+                        lane.compaction.compact_threshold
+                        if type(lane.compaction) is InlineCompaction
+                        else None
+                    ),
+                    "lane_id": lane.lane_id,
+                    "mode": lane.mode.value,
+                    "reasoning_context": lane.reasoning_context.value,
+                }
+                for lane in request.lanes
+            ],
+            "provisional_response_id": request.provisional_response_id,
+            "public_response_id": request.public_response_id,
+            "schema_version": 1,
+            "semantics": {
+                "mode": request.semantics.mode.value,
+                "opaque_digests": list(request.semantics.opaque_digests),
+                "operation": request.semantics.operation.value,
+                "parent_checkpoint_id": request.semantics.parent_checkpoint_id,
+                "reasoning_context": request.semantics.reasoning_context.value,
+                "semantic_input": request.semantics.semantic_input,
+            },
+            "visible_delta": [
+                {"content": entry.content, "role": entry.role.value}
+                for entry in request.visible_delta
+            ],
+        }
+    )
+    if not isinstance(payload, Mapping):
+        raise ConversationValidationError()
+    return payload
+
+
+def conversation_run_request_from_recovery_payload(
+    value: Mapping[str, JsonValue],
+    *,
+    authority: AuthorityScope,
+    retention: RetentionLimits,
+    lane_topology: ProviderLaneTopology | None,
+    idempotency_key: RequestIdempotencyKey,
+) -> ConversationRunRequest:
+    """Decode one exact durable request envelope under trusted authority."""
+    root = _recovery_mapping(
+        value,
+        {
+            "advance",
+            "boundary",
+            "identity",
+            "lanes",
+            "provisional_response_id",
+            "public_response_id",
+            "schema_version",
+            "semantics",
+            "visible_delta",
+        },
+    )
+    if _recovery_int(root["schema_version"]) != 1:
+        raise ConversationValidationError()
+    semantics = _recovery_mapping(
+        root["semantics"],
+        {
+            "mode",
+            "opaque_digests",
+            "operation",
+            "parent_checkpoint_id",
+            "reasoning_context",
+            "semantic_input",
+        },
+    )
+    identity_value = _recovery_mapping(
+        root["identity"],
+        {
+            "branch_id",
+            "checkpoint_id",
+            "conversation_id",
+            "execution_segment_id",
+            "logical_turn_id",
+            "parent_checkpoint_id",
+            "parent_sequence",
+            "sequence",
+        },
+    )
+    advance_value = _recovery_mapping(root["advance"], None)
+    advance_kind = _recovery_str(advance_value.get("kind"))
+    parent_id = _recovery_optional_str(
+        advance_value.get("parent_checkpoint_id")
+    )
+    if advance_kind == "first_turn" and set(advance_value) == {"kind"}:
+        advance: ConversationAdvance = FirstTurnAdvance()
+    elif advance_kind == "reset" and set(advance_value) == {
+        "kind",
+        "parent_checkpoint_id",
+    }:
+        advance = ResetAdvance(
+            parent_checkpoint_id=CheckpointId(_required_recovery(parent_id))
+        )
+    elif advance_kind == "ordinary_child" and set(advance_value) == {
+        "kind",
+        "parent_checkpoint_id",
+    }:
+        advance = OrdinaryChildAdvance(
+            parent_checkpoint_id=CheckpointId(_required_recovery(parent_id))
+        )
+    elif advance_kind == "explicit_branch" and set(advance_value) == {
+        "branch_id",
+        "kind",
+        "parent_checkpoint_id",
+    }:
+        advance = ExplicitBranchAdvance(
+            parent_checkpoint_id=CheckpointId(_required_recovery(parent_id)),
+            branch_id=ConversationBranchId(
+                _recovery_str(advance_value["branch_id"])
+            ),
+        )
+    elif advance_kind == "named_head" and set(advance_value) == {
+        "expected_revision",
+        "head_id",
+        "kind",
+        "parent_checkpoint_id",
+    }:
+        advance = NamedHeadAdvance(
+            parent_checkpoint_id=CheckpointId(_required_recovery(parent_id)),
+            head_id=NamedHeadId(_recovery_str(advance_value["head_id"])),
+            expected_revision=NamedHeadRevision(
+                _recovery_int(advance_value["expected_revision"])
+            ),
+        )
+    else:
+        raise ConversationValidationError()
+    lanes_value = _recovery_sequence(root["lanes"])
+    lanes: list[ConversationLaneRequest] = []
+    for raw in lanes_value:
+        lane = _recovery_mapping(
+            raw,
+            {
+                "compaction_threshold",
+                "lane_id",
+                "mode",
+                "reasoning_context",
+            },
+        )
+        threshold = lane["compaction_threshold"]
+        compaction: CompactionPolicy = (
+            DisabledCompaction()
+            if threshold is None
+            else InlineCompaction(compact_threshold=_recovery_int(threshold))
+        )
+        lanes.append(
+            ConversationLaneRequest(
+                lane_id=ProviderLaneId(_recovery_str(lane["lane_id"])),
+                mode=ConversationMode(_recovery_str(lane["mode"])),
+                reasoning_context=ReasoningContext(
+                    _recovery_str(lane["reasoning_context"])
+                ),
+                compaction=compaction,
+            )
+        )
+    visible_delta = tuple(
+        VisibleTranscriptEntry(
+            role=VisibleTranscriptRole(
+                _recovery_str(
+                    _recovery_mapping(raw, {"content", "role"})["role"]
+                )
+            ),
+            content=_recovery_str(
+                _recovery_mapping(raw, {"content", "role"})["content"]
+            ),
+        )
+        for raw in _recovery_sequence(root["visible_delta"])
+    )
+    opaque_digests = tuple(
+        IntegrityDigest(_recovery_str(item))
+        for item in _recovery_sequence(semantics["opaque_digests"])
+    )
+    return ConversationRunRequest(
+        semantics=ConversationRequestSemantics(
+            authority=authority,
+            operation=ConversationOperation(
+                _recovery_str(semantics["operation"])
+            ),
+            mode=ConversationMode(_recovery_str(semantics["mode"])),
+            reasoning_context=ReasoningContext(
+                _recovery_str(semantics["reasoning_context"])
+            ),
+            semantic_input=semantics["semantic_input"],
+            parent_checkpoint_id=(
+                CheckpointId(parent)
+                if (
+                    parent := _recovery_optional_str(
+                        semantics["parent_checkpoint_id"]
+                    )
+                )
+                is not None
+                else None
+            ),
+            opaque_digests=opaque_digests,
+        ),
+        identity=CheckpointIdentity(
+            conversation_id=ConversationId(
+                _recovery_str(identity_value["conversation_id"])
+            ),
+            logical_turn_id=LogicalTurnId(
+                _recovery_str(identity_value["logical_turn_id"])
+            ),
+            execution_segment_id=ExecutionSegmentId(
+                _recovery_str(identity_value["execution_segment_id"])
+            ),
+            checkpoint_id=CheckpointId(
+                _recovery_str(identity_value["checkpoint_id"])
+            ),
+            branch_id=ConversationBranchId(
+                _recovery_str(identity_value["branch_id"])
+            ),
+            sequence=CheckpointSequence(
+                _recovery_int(identity_value["sequence"])
+            ),
+            parent_checkpoint_id=(
+                CheckpointId(identity_parent)
+                if (
+                    identity_parent := _recovery_optional_str(
+                        identity_value["parent_checkpoint_id"]
+                    )
+                )
+                is not None
+                else None
+            ),
+            parent_sequence=(
+                CheckpointSequence(_recovery_int(parent_sequence))
+                if (parent_sequence := identity_value["parent_sequence"])
+                is not None
+                else None
+            ),
+        ),
+        advance=advance,
+        lanes=tuple(lanes),
+        visible_delta=visible_delta,
+        retention=retention,
+        idempotency_key=idempotency_key,
+        boundary=ConversationCommitBoundary(_recovery_str(root["boundary"])),
+        lane_topology=lane_topology,
+        provisional_response_id=(
+            ProvisionalResponseId(provisional)
+            if (
+                provisional := _recovery_optional_str(
+                    root["provisional_response_id"]
+                )
+            )
+            is not None
+            else None
+        ),
+        public_response_id=(
+            PublicResponseId(public)
+            if (public := _recovery_optional_str(root["public_response_id"]))
+            is not None
+            else None
+        ),
+    )
+
+
+def _recovery_mapping(
+    value: object,
+    expected: set[str] | None,
+) -> Mapping[str, JsonValue]:
+    if not isinstance(value, Mapping) or any(
+        type(key) is not str for key in value
+    ):
+        raise ConversationValidationError()
+    if expected is not None and set(value) != expected:
+        raise ConversationValidationError()
+    return value
+
+
+def _recovery_sequence(value: object) -> tuple[JsonValue, ...]:
+    if not isinstance(value, tuple | list):
+        raise ConversationValidationError()
+    return tuple(value)
+
+
+def _recovery_str(value: object) -> str:
+    if type(value) is not str:
+        raise ConversationValidationError()
+    return value
+
+
+def _recovery_optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return _recovery_str(value)
+
+
+def _recovery_int(value: object) -> int:
+    if type(value) is not int:
+        raise ConversationValidationError()
+    return value
+
+
+def _required_recovery(value: str | None) -> str:
+    if value is None:
+        raise ConversationValidationError()
+    return value
 
 
 def _validate_advance_identity(request: ConversationRunRequest) -> None:
@@ -702,20 +1076,41 @@ class AtomicConversationCommit:
         checkpoint_lane_ids = tuple(
             item.lane_id for item in self.candidate.checkpoint.content.lanes
         )
-        if not set(lane_ids) <= set(checkpoint_lane_ids):
-            raise ConversationValidationError()
         lanes = {
             item.lane_id: item
             for item in self.candidate.checkpoint.content.lanes
         }
+        missing_lane_ids = set(lane_ids) - set(checkpoint_lane_ids)
+        topology = self.candidate.checkpoint.content.lane_topology
+        topology_by_lane = (
+            {entry.lane_id: entry for entry in topology.entries}
+            if topology is not None
+            else {}
+        )
+        if any(
+            (entry := topology_by_lane.get(lane_id)) is None
+            or entry.retention_policy
+            is not ChildLaneRetentionPolicy.DISCARD_TERMINAL
+            or next(
+                item.binding.integrity_digest
+                for item in self.output_candidates
+                if item.lane_id == lane_id
+            )
+            != entry.binding_digest
+            for lane_id in missing_lane_ids
+        ):
+            raise ConversationValidationError()
+        retained_outputs = tuple(
+            item for item in self.output_candidates if item.lane_id in lanes
+        )
         if any(
             lanes[item.lane_id].binding != item.binding
-            for item in self.output_candidates
+            for item in retained_outputs
         ):
             raise ConversationValidationError()
         if any(
             lanes[item.lane_id].execution_receipt != item.execution_receipt
-            for item in self.output_candidates
+            for item in retained_outputs
         ):
             raise ConversationValidationError()
         if self.candidate.checkpoint.authority != self.idempotency.authority:

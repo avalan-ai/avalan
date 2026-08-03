@@ -843,6 +843,9 @@ async def test_private_invariant_guards_reject_corrupt_durable_state(
         "lifecycle_state": "committed",
         "conversation_id": str(checkpoint.identity.conversation_id),
         "checkpoint_sequence": 0,
+        "checkpoint_kind": (
+            conversation.CheckpointKind.COMPLETED_OUTWARD_TURN.value
+        ),
     }
     capacity_cases = (
         ({"record_count": conversation.StoreLimits().max_checkpoints},),

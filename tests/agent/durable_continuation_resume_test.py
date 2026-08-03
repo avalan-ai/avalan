@@ -28,6 +28,7 @@ import pytest
 from a2a.types import a2a_pb2
 from google.protobuf.struct_pb2 import Struct
 
+from avalan import conversation
 from avalan.agent import continuation as continuation_module
 from avalan.agent import continuation_stager as continuation_stager_module
 from avalan.agent import durable_runtime as durable_runtime_module
@@ -35,9 +36,12 @@ from avalan.agent.continuation import (
     AgentContinuationEventListener,
     AgentContinuationEventListenerRegistration,
     AgentContinuationResumeCommand,
+    AgentConversationContinuationResolver,
+    AgentConversationContinuationResult,
     DurableAgentContinuationAdmission,
     DurableAgentContinuationClaimLease,
     DurableAgentContinuationResumer,
+    ResolvedAgentConversationContinuation,
 )
 from avalan.agent.execution import (
     AgentExecution,
@@ -89,9 +93,12 @@ from avalan.interaction.continuation import (
     DurableContinuationRecord,
     DurableContinuationResumeState,
     PortableContinuation,
+    PortableConversationCheckpointReference,
     ResolvedContinuationRuntime,
+    decode_portable_continuation,
     derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
+    encode_portable_continuation,
 )
 from avalan.interaction.entities import (
     AgentId,
@@ -151,9 +158,11 @@ from avalan.interaction.store import (
 )
 from avalan.model.capability import (
     ContinuationSnapshotCodecRegistry,
+    CorrelatedCapabilityResult,
     ModelCapabilityCatalog,
     ProviderCapabilitySupport,
     TaskInputCapabilityAdvertisement,
+    TaskInputCapabilityCall,
 )
 from avalan.model.nlp.text.vendor import openai as openai_module
 from avalan.model.nlp.text.vendor.openai import OpenAIClient
@@ -950,6 +959,195 @@ def _harness() -> _Harness:
     )
 
 
+def _conversation_checkpoint(
+    reference: PortableConversationCheckpointReference,
+) -> conversation.ConversationCheckpoint:
+    checkpoint = object.__new__(conversation.ConversationCheckpoint)
+    object.__setattr__(
+        checkpoint,
+        "identity",
+        conversation.CheckpointIdentity(
+            conversation_id=conversation.ConversationId("conversation"),
+            logical_turn_id=conversation.LogicalTurnId("logical-turn"),
+            execution_segment_id=conversation.ExecutionSegmentId(
+                reference.execution_segment_id
+            ),
+            checkpoint_id=conversation.CheckpointId(reference.checkpoint_id),
+            branch_id=conversation.ConversationBranchId("branch"),
+            sequence=conversation.CheckpointSequence(0),
+        ),
+    )
+    object.__setattr__(
+        checkpoint,
+        "kind",
+        conversation.CheckpointKind.STRUCTURED_INPUT_SUSPENSION,
+    )
+    object.__setattr__(
+        checkpoint,
+        "lifecycle",
+        conversation.CheckpointLifecycle.COMMITTED,
+    )
+    object.__setattr__(
+        checkpoint,
+        "authority",
+        conversation.AuthorityScope(
+            source=conversation.AuthoritySource.AUTHENTICATED_SERVER_CONTEXT,
+            tenant_id=conversation.AuthorityTenantId("tenant"),
+            principal_id=conversation.AuthorityPrincipalId("principal"),
+            agent_id=conversation.ConversationAgentId("agent"),
+            endpoint_id=conversation.AuthorityEndpointId("endpoint"),
+        ),
+    )
+    return checkpoint
+
+
+def _continued_conversation_checkpoint(
+    suspension: conversation.ConversationCheckpoint,
+) -> conversation.ConversationCheckpoint:
+    checkpoint = object.__new__(conversation.ConversationCheckpoint)
+    identity = suspension.identity
+    object.__setattr__(
+        checkpoint,
+        "identity",
+        conversation.CheckpointIdentity(
+            conversation_id=identity.conversation_id,
+            logical_turn_id=identity.logical_turn_id,
+            execution_segment_id=conversation.ExecutionSegmentId(
+                "continued-segment"
+            ),
+            checkpoint_id=conversation.CheckpointId("continued-checkpoint"),
+            branch_id=identity.branch_id,
+            sequence=conversation.CheckpointSequence(identity.sequence + 1),
+            parent_checkpoint_id=identity.checkpoint_id,
+            parent_sequence=identity.sequence,
+        ),
+    )
+    object.__setattr__(
+        checkpoint,
+        "kind",
+        conversation.CheckpointKind.COMPLETED_OUTWARD_TURN,
+    )
+    object.__setattr__(
+        checkpoint,
+        "lifecycle",
+        conversation.CheckpointLifecycle.COMMITTED,
+    )
+    object.__setattr__(checkpoint, "authority", suspension.authority)
+    return checkpoint
+
+
+def _conversation_harness(
+    *,
+    wrong_binding: bool = False,
+    applications: (
+        list[tuple[TaskInputCapabilityCall, CorrelatedCapabilityResult]] | None
+    ) = None,
+    output: object = "conversation resumed",
+    restarted_continuation: PortableContinuation | None = None,
+    wrong_child: bool = False,
+) -> _Harness:
+    harness = _harness()
+    if restarted_continuation is None:
+        checkpoint_reference = PortableConversationCheckpointReference(
+            checkpoint_id="conversation-checkpoint",
+            execution_segment_id="conversation-segment",
+        )
+        continuation = replace(
+            harness.record.continuation,
+            version=2,
+            provider_snapshot=None,
+            conversation_checkpoint_reference=checkpoint_reference,
+        )
+    else:
+        continuation = restarted_continuation
+        checkpoint_reference = continuation.conversation_checkpoint_reference
+        assert checkpoint_reference is not None
+    harness.store.continuation = continuation
+    record = replace(harness.record, continuation=continuation)
+    suspension = _conversation_checkpoint(checkpoint_reference)
+
+    async def apply_result(
+        call: TaskInputCapabilityCall,
+        result: CorrelatedCapabilityResult,
+    ) -> AgentConversationContinuationResult:
+        if applications is not None:
+            applications.append((call, result))
+        checkpoint = _continued_conversation_checkpoint(suspension)
+        if wrong_child:
+            object.__setattr__(
+                checkpoint,
+                "identity",
+                replace(
+                    checkpoint.identity,
+                    logical_turn_id=conversation.LogicalTurnId("wrong-turn"),
+                ),
+            )
+        return AgentConversationContinuationResult(
+            checkpoint=checkpoint,
+            output=output,
+        )
+
+    async def resolve_conversation(
+        claimed: PortableContinuation,
+        expected_digest: str,
+    ) -> ResolvedAgentConversationContinuation:
+        revision_binding = claimed.revision_binding
+        if wrong_binding:
+            revision_binding = replace(
+                revision_binding,
+                model_id=ModelId("wrong-model"),
+            )
+        return ResolvedAgentConversationContinuation(
+            checkpoint=suspension,
+            continuation_reference=conversation.PortableContinuationReference(
+                continuation_id=claimed.continuation_id,
+                state_revision=StateRevision(int(claimed.state_revision) - 1),
+                digest=conversation.ContinuationDigest(expected_digest),
+                definition=claimed.definition,
+                revision_binding=revision_binding,
+            ),
+            apply_result=apply_result,
+        )
+
+    return replace(
+        harness,
+        record=record,
+        resumer=DurableAgentContinuationResumer(
+            harness.store,
+            harness.resumer._resolver,
+            conversation_resolver=AgentConversationContinuationResolver(
+                resolve_continuation=resolve_conversation,
+            ),
+            clock=lambda: _CLAIMED_AT,
+        ),
+    )
+
+
+def _install_trusted_conversation_executor(
+    harness: _Harness,
+) -> tuple[
+    durable_runtime_module.TrustedAgentContinuationExecutor,
+    durable_runtime_module._TrustedContinuationRuntimeOwnership,
+]:
+    ownership = durable_runtime_module._TrustedContinuationRuntimeOwnership(
+        AsyncExitStack()
+    )
+    orchestrator = MagicMock(spec=Orchestrator)
+    orchestrator.event_manager = EventManager()
+    executor = durable_runtime_module.TrustedAgentContinuationExecutor(
+        orchestrator,
+        stager=durable_runtime_module.PortableAgentContinuationStager(
+            clock=lambda: _NOW
+        ),
+        ownership=ownership,
+    )
+    harness.loader.runtime = replace(
+        harness.loader.runtime,
+        runtime=executor,
+    )
+    return executor, ownership
+
+
 def _set_harness_terminal_request(
     harness: _Harness,
     request: InputRequest,
@@ -994,6 +1192,8 @@ async def test_resume_claims_restores_dispatches_and_completes_once() -> None:
     assert harness.adapter.validated == harness.adapter.imported
     assert len(harness.executor.commands) == 1
     command = harness.executor.commands[0]
+    assert command.resolved_conversation is None
+    assert command.conversation_continuation_digest is None
     assert (
         str(command.correlated_result.call_id)
         == harness.record.continuation.provider_call_correlation_id
@@ -1005,6 +1205,162 @@ async def test_resume_claims_restores_dispatches_and_completes_once() -> None:
         "mark_dispatched",
         "complete",
     ]
+
+
+@_async_test
+async def test_resume_resolves_exact_conversation_replay_without_snapshot() -> (  # noqa: E501
+    None
+):
+    harness = _conversation_harness()
+
+    admission = await _admit(harness)
+
+    assert admission.command.resolved_conversation is not None
+    assert admission.command.conversation_continuation_digest is not None
+    assert admission.command.continuation.provider_snapshot is None
+    assert harness.adapter.imported == []
+    assert harness.adapter.validated == []
+    assert harness.store.calls == ["lookup", "claim"]
+
+
+@_async_test
+async def test_resume_rejects_wrong_conversation_binding_before_dispatch() -> (
+    None
+):
+    harness = _conversation_harness(wrong_binding=True)
+
+    with pytest.raises(InputValidationError) as raised:
+        await _admit(harness)
+
+    assert (
+        raised.value.path
+        == "resume.command.resolved_conversation.continuation_reference"
+    )
+    assert harness.store.calls == ["lookup", "claim", "release"]
+    assert harness.store.release_attempts == 1
+    assert "mark_dispatching" not in harness.store.calls
+    assert harness.adapter.imported == []
+
+
+@_async_test
+async def test_conversation_answer_applies_once_across_race_and_replay(
+    record_property: Callable[[str, object], None],
+) -> None:
+    record_property("conversation_acceptance_evidence", "runtime")
+    applications: list[
+        tuple[TaskInputCapabilityCall, CorrelatedCapabilityResult]
+    ] = []
+    output = {"answer": "continued logical turn"}
+    harness = _conversation_harness(
+        applications=applications,
+        output=output,
+    )
+    _install_trusted_conversation_executor(harness)
+    admission = await _admit(harness)
+
+    first, second = await gather(
+        admission.dispatch(),
+        admission.dispatch(),
+    )
+    replay = await admission.dispatch()
+
+    assert first is second is replay is output
+    assert applications == [
+        (
+            admission.command.task_input_call,
+            admission.command.correlated_result,
+        )
+    ]
+    assert harness.store.calls.count("mark_dispatching") == 1
+    assert harness.store.calls.count("mark_dispatched") == 1
+    assert harness.adapter.imported == []
+    await admission.complete(_RESULT_DIGEST)
+    await admission.close()
+
+
+@_async_test
+async def test_conversation_wrong_answer_is_rejected_before_application() -> (
+    None
+):
+    applications: list[
+        tuple[TaskInputCapabilityCall, CorrelatedCapabilityResult]
+    ] = []
+    harness = _conversation_harness(applications=applications)
+    admission = await _admit(harness)
+    correlated = admission.command.correlated_result
+    assert correlated is not None
+
+    with pytest.raises(InputValidationError) as raised:
+        replace(
+            admission.command,
+            correlated_result=replace(
+                correlated,
+                payload={"kind": "wrong-answer"},
+            ),
+        )
+
+    assert raised.value.path == "resume.command.correlated_result"
+    assert applications == []
+    assert "mark_dispatching" not in harness.store.calls
+    await admission.release()
+
+
+@_async_test
+async def test_conversation_answer_rejects_wrong_logical_turn_child() -> None:
+    applications: list[
+        tuple[TaskInputCapabilityCall, CorrelatedCapabilityResult]
+    ] = []
+    harness = _conversation_harness(
+        applications=applications,
+        wrong_child=True,
+    )
+    _install_trusted_conversation_executor(harness)
+    admission = await _admit(harness)
+
+    with pytest.raises(InputValidationError) as raised:
+        await admission.dispatch()
+
+    assert raised.value.path == "resume.conversation.result.checkpoint"
+    assert len(applications) == 1
+    assert harness.store.calls.count("mark_dispatching") == 1
+    assert "mark_dispatched" not in harness.store.calls
+    await admission.close()
+
+
+@_async_test
+async def test_conversation_answer_continues_after_portable_restart() -> None:
+    initial = _conversation_harness().record.continuation
+    checkpoint_reference = initial.conversation_checkpoint_reference
+    assert checkpoint_reference is not None
+    restarted = decode_portable_continuation(
+        encode_portable_continuation(initial),
+        expected_binding=initial.revision_binding,
+        expected_conversation_checkpoint_reference=checkpoint_reference,
+    )
+    applications: list[
+        tuple[TaskInputCapabilityCall, CorrelatedCapabilityResult]
+    ] = []
+    harness = _conversation_harness(
+        applications=applications,
+        output="continued after restart",
+        restarted_continuation=restarted,
+    )
+    _install_trusted_conversation_executor(harness)
+
+    admission = await _admit(harness)
+    output = await admission.dispatch()
+
+    assert output == "continued after restart"
+    assert len(applications) == 1
+    resolved = admission.command.resolved_conversation
+    assert resolved is not None
+    assert (
+        resolved.checkpoint.identity.logical_turn_id
+        == conversation.LogicalTurnId("logical-turn")
+    )
+    assert restarted.provider_snapshot is None
+    await admission.complete(_RESULT_DIGEST)
+    await admission.close()
 
 
 @_async_test
@@ -1061,9 +1417,12 @@ async def test_resume_admits_every_canonical_resumable_terminal_outcome() -> (
 
 
 @_async_test
-async def test_resume_rejects_canonical_termination_before_provider_work() -> (
-    None
-):
+async def test_resume_rejects_canonical_termination_before_provider_work(
+    record_property: Callable[[str, object], None],
+) -> None:
+    record_property(
+        "conversation_acceptance_evidence", "pre_dispatch_rejection"
+    )
     resolved_at = _NOW + timedelta(seconds=5)
     resolutions: tuple[InputResolution, ...] = (
         ExpiredResolution(
@@ -1082,6 +1441,11 @@ async def test_resume_rejects_canonical_termination_before_provider_work() -> (
             resolved_at=resolved_at,
             scope=CancellationScope.CONTAINING_RUN,
         ),
+    )
+    assert tuple(type(resolution) for resolution in resolutions) == (
+        ExpiredResolution,
+        SupersededResolution,
+        CancelledResolution,
     )
     for resolution in resolutions:
         harness = _harness()
@@ -1542,9 +1906,12 @@ async def test_resume_command_rejects_tampered_correlated_result_payload() -> (
 
 
 @_async_test
-async def test_snapshot_call_tampering_rejects_before_provider_dispatch() -> (
-    None
-):
+async def test_snapshot_call_tampering_rejects_before_provider_dispatch(
+    record_property: Callable[[str, object], None],
+) -> None:
+    record_property(
+        "conversation_acceptance_evidence", "pre_dispatch_rejection"
+    )
     harness = _harness()
     harness.adapter.validation_failure = InputValidationError(
         InputErrorCode.CORRELATION_MISMATCH,
@@ -3211,6 +3578,105 @@ async def test_portable_stager_and_runtime_ownership_validate_boundaries() -> (
         "listener close failed",
         "stack close failed",
     ]
+
+
+@_async_test
+async def test_portable_stager_binds_conversation_without_snapshot_copy(
+    record_property: Callable[[str, object], None],
+) -> None:
+    record_property("conversation_acceptance_evidence", "wire")
+    harness = _harness()
+    pending = harness.request
+    request = InteractionBrokerRequest(
+        actor=InteractionActor(principal=pending.origin.principal),
+        origin=pending.origin,
+        mode=pending.mode,
+        reason=pending.reason,
+        questions=pending.questions,
+        continuation_ttl_seconds=pending.continuation_ttl_seconds,
+    )
+    arguments = cast(
+        Mapping[str, JsonValue],
+        {
+            "mode": request.mode.value,
+            "reason": request.reason,
+            "questions": [
+                encode_input_question(question)
+                for question in request.questions
+            ],
+        },
+    )
+    call = TaskInputCapabilityCall(
+        call_id="call-input",
+        provider_name="request_user_input",
+        arguments=arguments,
+        mode=request.mode,
+        reason=request.reason,
+        questions=request.questions,
+        advertisement=TaskInputCapabilityAdvertisement.DURABLE,
+    )
+    reference = PortableConversationCheckpointReference(
+        checkpoint_id="conversation-checkpoint",
+        execution_segment_id="conversation-segment",
+    )
+    dispatch_id = derive_continuation_dispatch_id(pending.continuation_id)
+    staging = DurableInteractionStagingContext(
+        task_input_call=call,
+        continuation_id=pending.continuation_id,
+        dispatch_id=dispatch_id,
+        revision_binding=harness.record.continuation.revision_binding,
+        provider_idempotency_key=derive_provider_idempotency_key(
+            pending.continuation_id,
+            dispatch_id,
+        ),
+        provider_call_correlation_id=str(call.call_id),
+        conversation_checkpoint_reference=reference,
+    )
+    execution = MagicMock(spec=AgentExecution)
+    execution.snapshot = SimpleNamespace(
+        ledger=(
+            SimpleNamespace(
+                task_input_call=call,
+                interaction_assistant_message=Message(
+                    role=MessageRole.ASSISTANT,
+                    content="input required",
+                ),
+            ),
+        ),
+        active_interaction_fingerprint="input-fingerprint",
+        interaction_fingerprint_counts=(("input-fingerprint", 1),),
+    )
+    execution.messages = (Message(role=MessageRole.USER, content="begin"),)
+    execution.definition = pending.origin.definition
+    execution.operation_index = 0
+    execution.interaction_count = 1
+    execution.revision = 1
+    response = MagicMock(spec=OrchestratorResponse)
+    response.continuation_generation_settings = {"temperature": 0}
+    response.continuation_tool_loop_count = 0
+
+    stager = continuation_stager_module.PortableAgentContinuationStager(
+        clock=lambda: _NOW,
+    )
+    suspension = await stager(
+        request,
+        execution=execution,
+        response=response,
+        stream_sequence=2,
+        staging=staging,
+    )
+    continuation = suspension.continuation
+    encoded = encode_portable_continuation(continuation)
+    restarted = decode_portable_continuation(
+        encoded,
+        expected_binding=continuation.revision_binding,
+        expected_conversation_checkpoint_reference=reference,
+    )
+
+    assert continuation.provider_snapshot is None
+    assert continuation.conversation_checkpoint_reference == reference
+    assert restarted == continuation
+    assert restarted.provider_snapshot is None
 
 
 def _durable_runtime_resume_command(

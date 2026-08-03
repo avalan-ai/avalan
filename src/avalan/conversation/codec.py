@@ -8,6 +8,7 @@ from .contract import (
     AuthorityScope,
     AuthoritySource,
     AuthorityTenantId,
+    CanonicalRequestDigest,
     CheckpointId,
     CheckpointIdentity,
     CheckpointKind,
@@ -23,7 +24,9 @@ from .contract import (
     NamedHeadId,
     NamedHeadRevision,
     ProviderLaneId,
+    ProviderLaneOwnerKind,
     ProviderLaneStorage,
+    RequestIdempotencyKey,
     RetentionLimits,
     StoragePolicy,
     UpstreamLifetimeStatus,
@@ -35,7 +38,14 @@ from .errors import (
     ConversationLimitError,
     ConversationValidationError,
 )
-from .execution import ProviderLaneExecutionReceipt
+from .execution import (
+    ProviderExecutionSegment,
+    ProviderExecutionSegmentPhase,
+    ProviderLaneExecutionReceipt,
+    ProviderToolExecution,
+    ToolEffectPolicy,
+    ToolExecutionPhase,
+)
 from .items import (
     CompactionBoundary,
     ProviderItem,
@@ -48,8 +58,10 @@ from .items import (
     VisibleTranscriptRole,
 )
 from .settings import (
+    ConversationMode,
     EffectiveReasoningContext,
     EffectiveReasoningMetadata,
+    ProviderUsage,
     ReasoningContext,
 )
 from .state import (
@@ -60,6 +72,8 @@ from .state import (
     MultiLaneCheckpointContent,
     NamedHeadMetadata,
     ProviderLaneLifecycle,
+    ProviderLaneTopology,
+    ProviderLaneTopologyEntry,
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
 )
@@ -385,17 +399,31 @@ def _decode_authority(value: JsonValue) -> AuthorityScope:
 
 
 def _encode_content(value: MultiLaneCheckpointContent) -> dict[str, object]:
-    return {
+    encoded: dict[str, object] = {
         "visible_transcript": [
             {"role": entry.role.value, "content": entry.content}
             for entry in value.visible_transcript.entries
         ],
         "lanes": [_encode_lane(lane) for lane in value.lanes],
     }
+    if value.execution_segments:
+        encoded["execution_segments"] = [
+            _encode_execution_segment(segment)
+            for segment in value.execution_segments
+        ]
+    if value.lane_topology is not None:
+        encoded["lane_topology"] = _encode_lane_topology(value.lane_topology)
+    return encoded
 
 
 def _decode_content(value: JsonValue) -> MultiLaneCheckpointContent:
-    item = _mapping(value, {"visible_transcript", "lanes"})
+    item = _mapping_unchecked(value)
+    keys = {"visible_transcript", "lanes"}
+    if "execution_segments" in item:
+        keys.add("execution_segments")
+    if "lane_topology" in item:
+        keys.add("lane_topology")
+    _exact_keys(item, keys)
     entries = tuple(
         _decode_transcript_entry(entry)
         for entry in _sequence(item["visible_transcript"])
@@ -404,6 +432,201 @@ def _decode_content(value: JsonValue) -> MultiLaneCheckpointContent:
     return MultiLaneCheckpointContent(
         visible_transcript=VisibleTranscript(entries=entries),
         lanes=lanes,
+        execution_segments=(
+            tuple(
+                _decode_execution_segment(segment)
+                for segment in _sequence(item["execution_segments"])
+            )
+            if "execution_segments" in item
+            else ()
+        ),
+        lane_topology=(
+            _decode_lane_topology(item["lane_topology"])
+            if "lane_topology" in item
+            else None
+        ),
+    )
+
+
+def _encode_lane_topology(value: ProviderLaneTopology) -> dict[str, object]:
+    return {
+        "schema_version": value.schema_version,
+        "entries": [
+            {
+                "agent_id": entry.agent_id,
+                "binding_digest": entry.binding_digest,
+                "lane_id": entry.lane_id,
+                "model_slot": entry.model_slot,
+                "owner_kind": entry.owner_kind.value,
+                "parent_lane_id": entry.parent_lane_id,
+                "retention_policy": entry.retention_policy.value,
+                "topology_path": entry.topology_path,
+            }
+            for entry in value.entries
+        ],
+    }
+
+
+def _decode_lane_topology(value: JsonValue) -> ProviderLaneTopology:
+    item = _mapping(value, {"schema_version", "entries"})
+    entries: list[ProviderLaneTopologyEntry] = []
+    for raw in _sequence(item["entries"]):
+        entry = _mapping(
+            raw,
+            {
+                "agent_id",
+                "binding_digest",
+                "lane_id",
+                "model_slot",
+                "owner_kind",
+                "parent_lane_id",
+                "retention_policy",
+                "topology_path",
+            },
+        )
+        parent_lane_id = _optional_string(entry["parent_lane_id"])
+        entries.append(
+            ProviderLaneTopologyEntry(
+                lane_id=ProviderLaneId(_string(entry["lane_id"])),
+                owner_kind=ProviderLaneOwnerKind(_string(entry["owner_kind"])),
+                agent_id=ConversationAgentId(_string(entry["agent_id"])),
+                topology_path=_string(entry["topology_path"]),
+                model_slot=_string(entry["model_slot"]),
+                retention_policy=ChildLaneRetentionPolicy(
+                    _string(entry["retention_policy"])
+                ),
+                binding_digest=IntegrityDigest(
+                    _string(entry["binding_digest"])
+                ),
+                parent_lane_id=(
+                    ProviderLaneId(parent_lane_id)
+                    if parent_lane_id is not None
+                    else None
+                ),
+            )
+        )
+    return ProviderLaneTopology(
+        schema_version=_integer(item["schema_version"]),
+        entries=tuple(entries),
+    )
+
+
+def _encode_execution_segment(
+    value: ProviderExecutionSegment,
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "schema_version": value.schema_version,
+        "idempotency_key": value.idempotency_key,
+        "request_digest": value.request_digest,
+        "binding": _encode_binding(value.binding),
+        "mode": value.mode.value,
+        "segment_index": value.segment_index,
+        "phase": value.phase.value,
+        "items": [_encode_item(item) for item in value.items],
+        "reasoning": _encode_reasoning(value.reasoning),
+        "usage": {
+            "input_tokens": value.usage.input_tokens,
+            "output_tokens": value.usage.output_tokens,
+        },
+        "tools": [_encode_tool_execution(tool) for tool in value.tools],
+        "upstream_response_id": value.upstream_response_id,
+    }
+    if value.recovery_request is not None:
+        payload["recovery_request"] = thaw_json_value(value.recovery_request)
+    return payload
+
+
+def _decode_execution_segment(value: JsonValue) -> ProviderExecutionSegment:
+    item = _mapping_unchecked(value)
+    keys = {
+        "schema_version",
+        "idempotency_key",
+        "request_digest",
+        "binding",
+        "mode",
+        "segment_index",
+        "phase",
+        "items",
+        "reasoning",
+        "usage",
+        "tools",
+        "upstream_response_id",
+    }
+    if set(item) not in {
+        frozenset(keys),
+        frozenset((*keys, "recovery_request")),
+    }:
+        raise ConversationCodecError()
+    usage = _mapping(
+        item["usage"],
+        {"input_tokens", "output_tokens"},
+    )
+    upstream = _optional_string(item["upstream_response_id"])
+    return ProviderExecutionSegment(
+        schema_version=_integer(item["schema_version"]),
+        idempotency_key=RequestIdempotencyKey(
+            _string(item["idempotency_key"])
+        ),
+        request_digest=CanonicalRequestDigest(_string(item["request_digest"])),
+        binding=_decode_binding(item["binding"]),
+        mode=ConversationMode(_string(item["mode"])),
+        segment_index=_integer(item["segment_index"]),
+        phase=ProviderExecutionSegmentPhase(_string(item["phase"])),
+        items=tuple(_decode_item(raw) for raw in _sequence(item["items"])),
+        reasoning=_decode_reasoning(item["reasoning"]),
+        usage=ProviderUsage(
+            input_tokens=_integer(usage["input_tokens"]),
+            output_tokens=_integer(usage["output_tokens"]),
+        ),
+        tools=tuple(
+            _decode_tool_execution(raw) for raw in _sequence(item["tools"])
+        ),
+        upstream_response_id=(
+            UpstreamResponseId(upstream) if upstream is not None else None
+        ),
+        recovery_request=(
+            _mapping_unchecked(item["recovery_request"])
+            if "recovery_request" in item
+            else None
+        ),
+    )
+
+
+def _encode_tool_execution(value: ProviderToolExecution) -> dict[str, object]:
+    return {
+        "call_id": value.call_id,
+        "arguments": thaw_json_value(value.arguments),
+        "tool_revision": value.tool_revision,
+        "effect_policy": value.effect_policy.value,
+        "phase": value.phase.value,
+        "idempotency_key": value.idempotency_key,
+        "output_id": value.output_id,
+    }
+
+
+def _decode_tool_execution(value: JsonValue) -> ProviderToolExecution:
+    item = _mapping(
+        value,
+        {
+            "call_id",
+            "arguments",
+            "tool_revision",
+            "effect_policy",
+            "phase",
+            "idempotency_key",
+            "output_id",
+        },
+    )
+    idempotency_key = _optional_string(item["idempotency_key"])
+    output_id = _optional_string(item["output_id"])
+    return ProviderToolExecution(
+        call_id=ProviderCallId(_string(item["call_id"])),
+        arguments=_mapping_unchecked(item["arguments"]),
+        tool_revision=ToolSchemaRevision(_string(item["tool_revision"])),
+        effect_policy=ToolEffectPolicy(_string(item["effect_policy"])),
+        phase=ToolExecutionPhase(_string(item["phase"])),
+        idempotency_key=idempotency_key,
+        output_id=ProviderItemId(output_id) if output_id is not None else None,
     )
 
 

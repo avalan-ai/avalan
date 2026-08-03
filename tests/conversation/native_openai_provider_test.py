@@ -1,6 +1,6 @@
 """Verify exact native OpenAI and Azure stateless conversation replay."""
 
-from asyncio import CancelledError, Event, create_task, gather
+from asyncio import CancelledError, Event, create_task, gather, sleep
 from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime
@@ -14,11 +14,51 @@ from phase2_fixtures import authority, retention
 
 import avalan
 import avalan.conversation as conversation
+from avalan.agent import InputType, Specification
+from avalan.agent.continuation_stager import PortableAgentContinuationStager
+from avalan.agent.engine import EngineAgent
+from avalan.agent.execution import (
+    AgentExecutionStatus,
+    DurableInteractionRuntime,
+    ExecutionInputRequiredError,
+    create_agent_execution,
+)
+from avalan.entities import GenerationSettings
+from avalan.interaction.codec import (
+    decode_continuation_snapshot,
+    encode_continuation_snapshot,
+)
+from avalan.interaction.entities import (
+    AgentId,
+    CapabilityRevision,
+    ContinuationRevisionBinding,
+    ExecutionDefinitionRef,
+    ModelConfigRevision,
+    ModelId,
+    PrincipalScope,
+    ProviderConfigRevision,
+    ProviderFamilyName,
+)
+from avalan.interaction.policy import InteractionActor
+from avalan.model.call import ModelCallContext
+from avalan.model.capability import (
+    ContinuationSnapshotCodecRegistry,
+    ModelCapabilityCatalog,
+    ProviderCapabilitySupport,
+)
 from avalan.types import JsonValue
 
 pytestmark = pytest.mark.anyio
 
 _ADAPTER = "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider"
+
+
+class _StagingEngineAgent(EngineAgent):
+    """Expose only the coordinated suspension bridge under test."""
+
+    def _prepare_call(self, context: ModelCallContext) -> dict[str, object]:
+        del context
+        return {}
 
 
 @pytest.fixture
@@ -173,14 +213,20 @@ def _message(identifier: str, text: str) -> dict[str, object]:
     }
 
 
-def _function_call(identifier: str, call_id: str) -> dict[str, object]:
+def _function_call(
+    identifier: str,
+    call_id: str,
+    *,
+    name: str = "lookup",
+    arguments: str = '{"value":1}',
+) -> dict[str, object]:
     return {
         "id": identifier,
         "type": "function_call",
         "status": "completed",
         "call_id": call_id,
-        "name": "lookup",
-        "arguments": '{"value":1}',
+        "name": name,
+        "arguments": arguments,
     }
 
 
@@ -544,10 +590,38 @@ async def test_native_function_cycles_use_the_coordinator_ledger() -> None:
     """Execute tools asynchronously and replay each call/output once."""
     requests: list[dict[str, object]] = []
     executed: list[Mapping[str, JsonValue]] = []
+    tool_entered = Event()
+    tool_heartbeat_complete = Event()
+    heartbeat_ticks = 0
+
+    async def tool_heartbeat() -> None:
+        nonlocal heartbeat_ticks
+        await tool_entered.wait()
+        for _ in range(3):
+            await sleep(0)
+            heartbeat_ticks += 1
+        tool_heartbeat_complete.set()
 
     async def lookup(
         arguments: Mapping[str, JsonValue],
     ) -> str:
+        page = await store.list_checkpoints(authority(), cursor=None, limit=10)
+        durable = tuple(
+            checkpoint.content.execution_segments[-1]
+            for checkpoint in page.checkpoints
+            if checkpoint.kind
+            is conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            and checkpoint.content.execution_segments
+        )
+        assert len(durable) == 1
+        assert durable[0].phase is (
+            conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+        )
+        assert durable[0].tools[0].phase is (
+            conversation.ToolExecutionPhase.REQUESTED
+        )
+        tool_entered.set()
+        await tool_heartbeat_complete.wait()
         executed.append(arguments)
         return '{"value":2}'
 
@@ -581,16 +655,54 @@ async def test_native_function_cycles_use_the_coordinator_ledger() -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         requests.append(cast(dict[str, object], loads(await request.aread())))
+        if len(requests) == 2:
+            page = await store.list_checkpoints(
+                authority(),
+                cursor=None,
+                limit=10,
+            )
+            segments = tuple(
+                checkpoint.content.execution_segments[-1]
+                for checkpoint in page.checkpoints
+                if checkpoint.kind
+                is conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                and checkpoint.content.execution_segments
+            )
+            requested = next(
+                segment
+                for segment in segments
+                if segment.tools
+                and segment.phase
+                is conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+            )
+            persisted = next(
+                segment
+                for segment in segments
+                if segment.phase
+                is conversation.ProviderExecutionSegmentPhase.TOOL_OUTPUT
+            )
+            assert (
+                conversation.durable_tool_recovery_action(
+                    (
+                        requested,
+                        persisted,
+                    )
+                )
+                is conversation.DurableToolRecoveryAction.RESUME_PROVIDER
+            )
         return httpx.Response(200, json=responses[len(requests) - 1])
 
     provider = _provider(_binding(lane_id="lane-tool"), handler, tools=(tool,))
-    client, coordinator, _ = _direct_client(provider, namespace="tool")
+    client, coordinator, store = _direct_client(provider, namespace="tool")
+    heartbeat_task = create_task(tool_heartbeat())
     result = await client.create(
         "use tool",
         avalan.StatelessConversationSettings(),
     )
+    await heartbeat_task
 
     assert result.output == "tool-finished"
+    assert heartbeat_ticks == 3
     assert len(executed) == 1
     assert dict(executed[0]) == {"value": 1}
     second_input = cast(list[dict[str, Any]], requests[1]["input"])
@@ -606,6 +718,486 @@ async def test_native_function_cycles_use_the_coordinator_ledger() -> None:
         "type": "function_call_output",
     }
     assert second_input[0]["encrypted_content"] == "tool-opaque-one"
+    checkpoint = await store.load(result.handle.checkpoint_id, authority())
+    segments = checkpoint.content.execution_segments
+    assert tuple(segment.phase for segment in segments) == (
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+        conversation.ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+    )
+    assert segments[0].tools[0].effect_policy is (
+        conversation.ToolEffectPolicy.FENCED_UNPROTECTED
+    )
+    assert segments[0].tools[0].arguments == {"value": 1}
+    assert segments[1].tools[0].output_id is not None
+    assert not segments[2].tools
+    await coordinator.close()
+
+
+async def test_internal_completion_precedes_outward_commit_crash() -> None:
+    """Recover deterministically after internal completion before commit."""
+    requests = 0
+    effects = 0
+    store = conversation.InMemoryConversationStore()
+    recovery_actions: list[conversation.DurableToolRecoveryAction] = []
+
+    class CommitCrashHook:
+        async def reach(
+            self,
+            boundary: conversation.CoordinatorAwaitBoundary,
+        ) -> None:
+            if boundary is not conversation.CoordinatorAwaitBoundary.COMMIT:
+                return
+            page = await store.list_checkpoints(
+                authority(),
+                cursor=None,
+                limit=10,
+            )
+            segments = tuple(
+                checkpoint.content.execution_segments[-1]
+                for checkpoint in page.checkpoints
+                if checkpoint.kind
+                is conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                and checkpoint.content.execution_segments
+            )
+            ordered = tuple(
+                sorted(
+                    segments,
+                    key=lambda segment: (
+                        segment.segment_index,
+                        (
+                            0
+                            if segment.phase
+                            is (
+                                conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+                            )
+                            else 1
+                        ),
+                    ),
+                )
+            )
+            action = conversation.durable_tool_recovery_action(ordered)
+            recovery_actions.append(action)
+            assert action is (
+                conversation.DurableToolRecoveryAction.COMMIT_OUTWARD
+            )
+            assert all(
+                checkpoint.kind
+                is conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                for checkpoint in page.checkpoints
+            )
+            raise conversation.ConversationCommitError()
+
+    async def lookup(arguments: Mapping[str, JsonValue]) -> str:
+        nonlocal effects
+        assert arguments == {"value": 1}
+        effects += 1
+        return "durable-output"
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="lookup",
+        parameters={"type": "object"},
+        handler=lookup,
+        effect_policy=conversation.ToolEffectPolicy.IDEMPOTENT,
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal requests
+        requests += 1
+        await request.aread()
+        if requests == 1:
+            return httpx.Response(
+                200,
+                json=_response(
+                    "internal-complete-request",
+                    [
+                        _reasoning(
+                            "internal-complete-reasoning-1",
+                            "internal-complete-private-1",
+                        ),
+                        _function_call(
+                            "internal-complete-call",
+                            "internal-complete-call-id",
+                        ),
+                    ],
+                ),
+            )
+        return httpx.Response(
+            200,
+            json=_response(
+                "internal-complete-terminal",
+                [
+                    _reasoning(
+                        "internal-complete-reasoning-2",
+                        "internal-complete-private-2",
+                    ),
+                    _message(
+                        "internal-complete-message",
+                        "not outwardly committed",
+                    ),
+                ],
+            ),
+        )
+
+    provider = _provider(
+        _binding(lane_id="lane-internal-complete-crash"),
+        handler,
+        tools=(tool,),
+    )
+    client, coordinator, _ = _direct_client(
+        provider,
+        store=store,
+        namespace="internal-complete-crash",
+        boundary_hook=CommitCrashHook(),
+    )
+
+    with pytest.raises(conversation.ConversationCommitError):
+        await client.create(
+            "complete internally then crash",
+            avalan.StatelessConversationSettings(),
+        )
+
+    page = await store.list_checkpoints(authority(), cursor=None, limit=10)
+    segments = tuple(
+        checkpoint.content.execution_segments[-1]
+        for checkpoint in page.checkpoints
+        if checkpoint.content.execution_segments
+    )
+    ordered = tuple(
+        sorted(
+            segments,
+            key=lambda segment: (
+                segment.segment_index,
+                (
+                    0
+                    if segment.phase
+                    is (
+                        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+                    )
+                    else 1
+                ),
+            ),
+        )
+    )
+    assert recovery_actions == [
+        conversation.DurableToolRecoveryAction.COMMIT_OUTWARD
+    ]
+    assert conversation.durable_tool_recovery_action(ordered) is (
+        conversation.DurableToolRecoveryAction.COMMIT_OUTWARD
+    )
+    assert effects == 1
+    assert requests == 2
+    assert len(page.checkpoints) == 3
+    assert tuple(segment.phase for segment in ordered) == (
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+        conversation.ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+    )
+    assert all(
+        checkpoint.content.execution_segments
+        == ordered[
+            : ordered.index(checkpoint.content.execution_segments[-1]) + 1
+        ]
+        for checkpoint in page.checkpoints
+    )
+    assert all(
+        checkpoint.kind
+        is conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        for checkpoint in page.checkpoints
+    )
+    assert store.diagnostics.public_responses == 0
+    assert store.diagnostics.outbox_records == 0
+    assert store.diagnostics.output_records == 0
+    await coordinator.close()
+
+
+async def test_agent_turn_propagates_typed_structured_input_suspension() -> (
+    None
+):
+    """Suspend only after the complete requesting segment is durable."""
+    input_arguments = {
+        "mode": "required",
+        "reason": "Need one bounded decision.",
+        "questions": [
+            {
+                "question_id": "continue",
+                "kind": "confirmation",
+                "prompt": "Continue?",
+                "required": True,
+                "choices": [],
+                "allow_other": False,
+            }
+        ],
+    }
+    scope = authority()
+    conversation_id = conversation.ConversationId(
+        "conversation-agent-structured-input"
+    )
+    model_slot = conversation.AgentModelSlot("primary")
+    topology_path = conversation.parent_agent_topology_path(
+        scope.agent_id,
+        model_slot,
+    )
+    binding_seed = _binding(lane_id="lane-agent-structured-input-seed")
+    lane_id = conversation.derive_agent_provider_lane_id(
+        conversation_id=conversation_id,
+        owner_kind=conversation.ProviderLaneOwnerKind.PARENT_AGENT,
+        topology_path=topology_path,
+        model_slot=model_slot,
+        binding=binding_seed,
+    )
+    binding = replace(binding_seed, lane_id=lane_id)
+    store = conversation.InMemoryConversationStore()
+
+    async def request_input(arguments: Mapping[str, JsonValue]) -> str:
+        page = await store.list_checkpoints(scope, cursor=None, limit=10)
+        assert len(page.checkpoints) == 1
+        durable = page.checkpoints[0]
+        assert durable.kind is (
+            conversation.CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        )
+        assert durable.lifecycle is conversation.CheckpointLifecycle.COMMITTED
+        assert durable.content.lanes[0].lane_id == lane_id
+        assert (
+            durable.content.visible_transcript.entries[0].content
+            == "need structured input"
+        )
+        segment = durable.content.execution_segments[0]
+        assert segment.phase is (
+            conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+        )
+        assert segment.tools[0].phase is (
+            conversation.ToolExecutionPhase.REQUESTED
+        )
+        return await conversation.request_agent_structured_input(arguments)
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="request_user_input",
+        parameters={"type": "object"},
+        handler=request_input,
+        effect_policy=conversation.ToolEffectPolicy.PURE,
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        del request
+        return httpx.Response(
+            200,
+            json=_response(
+                "structured-input-response",
+                [
+                    _function_call(
+                        "structured-input-call",
+                        "call-input",
+                        name="request_user_input",
+                        arguments=dumps(
+                            input_arguments,
+                            ensure_ascii=False,
+                            separators=(",", ":"),
+                            sort_keys=True,
+                        ),
+                    )
+                ],
+            ),
+        )
+
+    provider = _provider(binding, handler, tools=(tool,))
+    coordinator = conversation.RunScopedConversationCoordinator(
+        store=store,
+        authority_resolver=conversation.DeterministicFakeAuthorityResolver(
+            scope
+        ),
+        clock=conversation.DeterministicFakeClock(
+            datetime(2026, 8, 2, 12, tzinfo=UTC)
+        ),
+        publisher=conversation.DeterministicFakePublisher(),
+        observer=conversation.DeterministicFakeObserver(),
+        retry_waiter=conversation.DeterministicFakeRetryWaiter(),
+        lanes=(
+            conversation.NativeOpenAIConversationLaneRuntime(
+                provider=provider
+            ),
+        ),
+    )
+    topology = conversation.AgentLaneTopology(
+        conversation_id=conversation_id,
+        lanes=(
+            conversation.AgentProviderLane(
+                owner_kind=conversation.ProviderLaneOwnerKind.PARENT_AGENT,
+                agent_id=scope.agent_id,
+                topology_path=topology_path,
+                model_slot=model_slot,
+                binding=binding,
+                retention_policy=(
+                    conversation.ChildLaneRetentionPolicy.RETAIN
+                ),
+            ),
+        ),
+    )
+    turn = conversation.AgentConversationTurn(
+        coordinator=coordinator,
+        authority=scope,
+        topology=topology,
+        lanes=(
+            conversation.AgentConversationLane(
+                lane_id=lane_id,
+                mode=conversation.ConversationMode.STATELESS,
+            ),
+        ),
+        logical_turn_id=conversation.LogicalTurnId(
+            "agent-structured-input-turn"
+        ),
+        execution_segment_id=conversation.ExecutionSegmentId(
+            "agent-structured-input-outward-segment"
+        ),
+        checkpoint_id=conversation.CheckpointId(
+            "agent-structured-input-outward-checkpoint"
+        ),
+        branch_id=conversation.ConversationBranchId(
+            "agent-structured-input-branch"
+        ),
+        provisional_response_id=conversation.ProvisionalResponseId(
+            "agent-structured-input-provisional"
+        ),
+        public_response_id=conversation.PublicResponseId(
+            "agent-structured-input-response"
+        ),
+        idempotency_key=conversation.RequestIdempotencyKey(
+            "agent-structured-input-key"
+        ),
+        retention=retention(),
+    )
+
+    with pytest.raises(
+        conversation.AgentConversationSuspensionBoundary
+    ) as raised:
+        await turn.execute("need structured input")
+
+    boundary = raised.value
+    checkpoint = boundary.checkpoint
+    assert boundary.request.arguments == conversation.freeze_json_value(
+        input_arguments
+    )
+    assert boundary.tool.arguments == boundary.request.arguments
+    assert checkpoint.kind is (
+        conversation.CheckpointKind.STRUCTURED_INPUT_SUSPENSION
+    )
+    assert checkpoint.lifecycle is conversation.CheckpointLifecycle.STAGED
+    assert checkpoint.identity.parent_checkpoint_id is not None
+    assert checkpoint.content.lanes[0].lifecycle is (
+        conversation.ProviderLaneLifecycle.SUSPENDED
+    )
+    assert checkpoint.content.lane_topology == topology.checkpoint_topology()
+    assert store.diagnostics.checkpoints == 1
+    with pytest.raises(conversation.ConversationAuthorizationError):
+        await store.load(
+            conversation.CheckpointId(
+                "agent-structured-input-outward-checkpoint"
+            ),
+            scope,
+        )
+
+    revision_binding = ContinuationRevisionBinding(
+        provider_family=ProviderFamilyName("openai"),
+        model_id=ModelId("coordinated-model"),
+        provider_config_revision=ProviderConfigRevision("provider-r1"),
+        model_config_revision=ModelConfigRevision("model-r1"),
+        capability_revision=CapabilityRevision("capability-r1"),
+    )
+    registry = ContinuationSnapshotCodecRegistry(
+        "coordinated-staging-registry"
+    )
+    registry.register(
+        codec_id="unused-provider-codec",
+        revision_binding=revision_binding,
+        snapshot_kind="unused-provider-snapshot",
+        export_snapshot=encode_continuation_snapshot,
+        restore_snapshot=lambda value, expected: decode_continuation_snapshot(
+            value,
+            expected_binding=expected,
+        ),
+    )
+    capability = ModelCapabilityCatalog.create(
+        support=ProviderCapabilitySupport(
+            provider_family=ProviderFamilyName("openai"),
+            structured_invocation=True,
+            stable_call_ids=True,
+            correlated_results=True,
+            durable_store=True,
+            registered_resumer=True,
+            continuation_snapshot_codec_registry=registry,
+            continuation_snapshot_codec=registry.reference(
+                "unused-provider-codec"
+            ),
+        ),
+        revision_binding=revision_binding,
+    )
+    principal = PrincipalScope()
+    runtime = DurableInteractionRuntime(
+        actor=InteractionActor(principal=principal),
+        stager=PortableAgentContinuationStager(
+            clock=lambda: datetime(2026, 8, 2, 12, 1, tzinfo=UTC)
+        ),
+    )
+    execution = await create_agent_execution(
+        definition=ExecutionDefinitionRef(
+            agent_definition_locator="agent://coordinated-staging",
+            agent_definition_revision="agent-r1",
+            operation_id="coordinated-operation",
+            operation_index=0,
+            model_config_reference="model-r1",
+            tool_revision="tools-r1",
+            capability_revision="capability-r1",
+        ),
+        agent_id=AgentId(str(scope.agent_id)),
+        principal=principal,
+        initial_messages=(),
+        interaction_runtime=runtime,
+    )
+    context = ModelCallContext(
+        specification=Specification(
+            role=None,
+            goal=None,
+            input_type=InputType.TEXT,
+        ),
+        input="need structured input",
+        capability=capability,
+        execution=execution,
+        conversation_turn=turn,
+        conversation_input="need structured input",
+    )
+    engine_agent = object.__new__(_StagingEngineAgent)
+    with pytest.raises(ExecutionInputRequiredError) as staged:
+        await engine_agent._stage_conversation_input_required(
+            context,
+            GenerationSettings(),
+            boundary,
+        )
+
+    error = staged.value
+    assert execution.status is AgentExecutionStatus.INPUT_REQUIRED
+    assert error.durable is not None
+    assert error.durable.continuation.provider_snapshot is None
+    reference = error.durable.continuation.conversation_checkpoint_reference
+    assert reference is not None
+    assert error.checkpoint_id == reference.checkpoint_id
+    assert error.conversation_unit is not None
+    conversation_unit = cast(
+        conversation.ConversationUnitOfWork,
+        error.conversation_unit,
+    )
+    committed = await conversation_unit.commit()
+    assert committed.identity.checkpoint_id == (
+        boundary.checkpoint.identity.checkpoint_id
+    )
+    restarted = await store.load(
+        boundary.checkpoint.identity.checkpoint_id,
+        scope,
+    )
+    assert restarted.kind is (
+        conversation.CheckpointKind.STRUCTURED_INPUT_SUSPENSION
+    )
+    assert restarted.lifecycle is conversation.CheckpointLifecycle.COMMITTED
+    assert reference.checkpoint_id == str(restarted.identity.checkpoint_id)
     await coordinator.close()
 
 
@@ -813,6 +1405,120 @@ async def test_parallel_branches_do_not_share_provider_state(
             "tools": [],
         }
     assert before == after
+    await coordinator.close()
+
+
+async def test_branches_reuse_one_multi_tool_parent_ledger_once() -> None:
+    """Branch after two tools without retaining a second replay transcript."""
+    requests: list[dict[str, object]] = []
+    tool_effects: list[Mapping[str, JsonValue]] = []
+
+    async def lookup(arguments: Mapping[str, JsonValue]) -> str:
+        tool_effects.append(arguments)
+        return f"tool-output-{len(tool_effects)}"
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="lookup",
+        parameters={"type": "object"},
+        handler=lookup,
+        effect_policy=conversation.ToolEffectPolicy.IDEMPOTENT,
+    )
+    root_responses = (
+        _response(
+            "multi-tool-response-1",
+            [
+                _reasoning("multi-tool-reasoning-1", "multi-private-1"),
+                _function_call("multi-tool-call-1", "multi-call-1"),
+            ],
+        ),
+        _response(
+            "multi-tool-response-2",
+            [
+                _reasoning("multi-tool-reasoning-2", "multi-private-2"),
+                _function_call("multi-tool-call-2", "multi-call-2"),
+            ],
+        ),
+        _response(
+            "multi-tool-response-3",
+            [
+                _reasoning("multi-tool-reasoning-3", "multi-private-3"),
+                _message("multi-tool-message", "multi-tool parent"),
+            ],
+        ),
+    )
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        body = cast(dict[str, object], loads(await request.aread()))
+        requests.append(body)
+        if len(requests) <= len(root_responses):
+            return httpx.Response(200, json=root_responses[len(requests) - 1])
+        suffix = "left" if "branch left" in dumps(body) else "right"
+        return httpx.Response(
+            200,
+            json=_response(
+                f"multi-tool-branch-{suffix}",
+                [_message(f"multi-tool-message-{suffix}", suffix)],
+            ),
+        )
+
+    provider = _provider(
+        _binding(lane_id="lane-multi-tool-branch"),
+        handler,
+        tools=(tool,),
+    )
+    client, coordinator, store = _direct_client(
+        provider,
+        namespace="multi-tool-branch",
+    )
+    root = await client.create(
+        "multi-tool root",
+        avalan.StatelessConversationSettings(),
+    )
+    assert type(root.handle) is avalan.StatelessConversationHandle
+    parent = avalan.StatelessParent(handle=root.handle)
+    parent_bytes = conversation.ConversationCheckpointCodec().encode(
+        await store.load(parent.handle.checkpoint_id, authority())
+    )
+
+    async def branch(branch_id: str) -> avalan.DirectConversationResult:
+        intent = avalan.ConversationBranchIntent(
+            parent=parent,
+            branch_id=conversation.ConversationBranchId(branch_id),
+        )
+        return await client.branch(
+            f"branch {branch_id}",
+            avalan.StatelessConversationSettings(
+                parent=parent,
+                branch=intent,
+            ),
+        )
+
+    left, right = await gather(branch("left"), branch("right"))
+
+    assert {left.output, right.output} == {"left", "right"}
+    assert len(tool_effects) == 2
+    assert len(requests) == 5
+    for request in requests[3:]:
+        replay = cast(list[dict[str, object]], request["input"])
+        assert [item["type"] for item in replay] == [
+            "reasoning",
+            "function_call",
+            "function_call_output",
+            "reasoning",
+            "function_call",
+            "function_call_output",
+            "reasoning",
+            "message",
+            "message",
+        ]
+        assert [
+            item.get("call_id")
+            for item in replay
+            if item["type"] in {"function_call", "function_call_output"}
+        ] == ["multi-call-1", "multi-call-1", "multi-call-2", "multi-call-2"]
+    assert parent_bytes == conversation.ConversationCheckpointCodec().encode(
+        await store.load(parent.handle.checkpoint_id, authority())
+    )
     await coordinator.close()
 
 

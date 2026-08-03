@@ -1,4 +1,55 @@
 from ...cli import CommandAbortException
+from ...conversation.agent import (
+    AgentConversationExecutionSegmentCandidate,
+    AgentConversationInvocationAdapter,
+    AgentConversationLaneInvocation,
+    AgentConversationLaneInvocationResult,
+    AgentConversationResult,
+    AgentConversationTurn,
+    AgentProviderLane,
+    require_agent_conversation_surface,
+)
+from ...conversation.contract import (
+    ConversationModelCallId,
+    ConversationSurface,
+    ProviderLaneId,
+)
+from ...conversation.errors import (
+    ConversationBindingDriftError,
+    ConversationCapabilityError,
+    ConversationValidationError,
+)
+from ...conversation.execution import (
+    ProviderExecutionSegmentPhase,
+    ProviderToolExecution,
+    ToolEffectPolicy,
+    ToolExecutionPhase,
+)
+from ...conversation.items import (
+    ProviderItem,
+    ProviderItemCaller,
+    ProviderItemKind,
+    ProviderItemPhase,
+    VisibleTranscriptEntry,
+    VisibleTranscriptRole,
+)
+from ...conversation.protocols import (
+    ProviderPlan,
+    ProviderResult,
+    StatelessProviderPlan,
+)
+from ...conversation.settings import (
+    EffectiveReasoningContext,
+    EffectiveReasoningMetadata,
+    ProviderUsage,
+)
+from ...conversation.value import (
+    ProviderCallId,
+    ProviderItemId,
+    ProviderItemIndex,
+    ProviderItemOrder,
+    canonical_json_bytes,
+)
 from ...entities import (
     EngineMessage as EngineMessage,
 )
@@ -9,6 +60,10 @@ from ...entities import (
     MessageContentFile,
     MessageContentText,
     MessageRole,
+    ToolCall,
+    ToolCallDiagnostic,
+    ToolCallError,
+    ToolCallResult,
     TransformerEngineSettings,
     merge_generation_settings_options,
 )
@@ -29,7 +84,7 @@ from ...interaction.entities import (
 from ...interaction.error import InputErrorCode, InputSnapshotError
 from ...interaction.policy import InteractionPolicy
 from ...memory.manager import MemoryManager
-from ...model.call import ModelCallContext
+from ...model.call import ModelCall, ModelCallContext
 from ...model.capability import (
     ModelCapabilityCatalog,
     ProviderCapabilitySupport,
@@ -46,6 +101,7 @@ from ...tool_cycles import (
     MaximumToolCycles,
     validate_maximum_tool_cycles,
 )
+from ...types import JsonValue
 from .. import (
     AgentOperation,
     InputType,
@@ -55,6 +111,11 @@ from .. import (
 from .. import (
     EngineEnvironment as EngineEnvironment,
 )
+from ..conversation_child import AgentConversationChildBinding
+from ..conversation_trace import (
+    AgentProviderResponseTrace,
+    AgentToolOutputTrace,
+)
 from ..engine import EngineAgent
 from ..execution import (
     AgentExecution,
@@ -62,6 +123,7 @@ from ..execution import (
     AttachedInteractionRuntime,
     DurableInteractionRuntime,
     ExecutionIdFactory,
+    ExecutionInputRequiredError,
     InteractionRuntime,
     create_agent_execution,
     snapshot_execution_messages,
@@ -71,9 +133,9 @@ from .response.orchestrator_response import OrchestratorResponse
 
 import asyncio
 from asyncio import Lock, Task, create_task, gather, shield
-from collections.abc import Mapping
+from collections.abc import Awaitable, Callable, Mapping
 from contextlib import ExitStack
-from dataclasses import asdict, replace
+from dataclasses import asdict, dataclass, replace
 from enum import Enum
 from hashlib import sha256
 from inspect import isawaitable
@@ -362,6 +424,602 @@ class _PendingProviderCleanup:
             raise primary_failure
 
 
+class _PreparedAgentConversationTrace:
+    """Collect and canonicalize one real provider/tool/provider sequence."""
+
+    def __init__(self, tool: ToolManager) -> None:
+        self._tool = tool
+        self._events: list[
+            AgentProviderResponseTrace | AgentToolOutputTrace
+        ] = []
+
+    async def record_provider_response(
+        self,
+        trace: AgentProviderResponseTrace,
+    ) -> None:
+        """Record one provider boundary in invocation order."""
+        if type(trace) is not AgentProviderResponseTrace:
+            raise TypeError("provider trace is invalid")
+        self._events.append(trace)
+
+    async def record_tool_output(self, trace: AgentToolOutputTrace) -> None:
+        """Record one ToolManager boundary in invocation order."""
+        if type(trace) is not AgentToolOutputTrace:
+            raise TypeError("tool trace is invalid")
+        self._events.append(trace)
+
+    def complete(
+        self,
+        plan: ProviderPlan,
+        output: str,
+        *,
+        invocation_id: str,
+    ) -> AgentConversationLaneInvocationResult:
+        """Return a closed canonical trace bound later by the coordinator."""
+        if type(plan) is not StatelessProviderPlan or not self._events:
+            raise ConversationValidationError()
+        reasoning = EffectiveReasoningMetadata(
+            requested=plan.reasoning.requested,
+            effective=EffectiveReasoningContext.CURRENT_TURN,
+        )
+        usage = ProviderUsage()
+        order = len(plan.ledger.items)
+        response_index = 0
+        event_index = 0
+        all_items: list[ProviderItem] = []
+        segments: list[AgentConversationExecutionSegmentCandidate] = []
+        while event_index < len(self._events):
+            event = self._events[event_index]
+            if type(event) is not AgentProviderResponseTrace:
+                raise ConversationValidationError()
+            response_index += 1
+            calls = event.calls
+            call_items: list[ProviderItem] = []
+            requested_tools: list[ProviderToolExecution] = []
+            for provider_index, call in enumerate(calls):
+                call_item = self._call_item(
+                    plan,
+                    call,
+                    invocation_id=invocation_id,
+                    response_index=response_index,
+                    provider_index=provider_index,
+                    order=order,
+                )
+                order += 1
+                call_items.append(call_item)
+                requested_tools.append(
+                    self._requested_tool(plan, call, call_item.call_id)
+                )
+            if calls:
+                segments.append(
+                    AgentConversationExecutionSegmentCandidate(
+                        segment_index=response_index - 1,
+                        phase=(
+                            ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+                        ),
+                        items=tuple(call_items),
+                        reasoning=reasoning,
+                        usage=usage,
+                        tools=tuple(requested_tools),
+                    )
+                )
+                all_items.extend(call_items)
+                event_index += 1
+                tool_items: list[ProviderItem] = []
+                completed_tools: list[ProviderToolExecution] = []
+                for requested, call, call_item in zip(
+                    requested_tools,
+                    calls,
+                    call_items,
+                    strict=True,
+                ):
+                    if event_index >= len(self._events):
+                        raise ConversationValidationError()
+                    tool_event = self._events[event_index]
+                    if (
+                        type(tool_event) is not AgentToolOutputTrace
+                        or tool_event.call != call
+                    ):
+                        raise ConversationValidationError()
+                    output_item = self._tool_output_item(
+                        plan,
+                        tool_event,
+                        call_item,
+                        invocation_id=invocation_id,
+                        response_index=response_index,
+                        order=order,
+                    )
+                    order += 1
+                    tool_items.append(output_item)
+                    completed_tools.append(
+                        replace(
+                            requested,
+                            phase=ToolExecutionPhase.OUTPUT_PERSISTED,
+                            output_id=output_item.item_id,
+                        )
+                    )
+                    event_index += 1
+                segments.append(
+                    AgentConversationExecutionSegmentCandidate(
+                        segment_index=response_index - 1,
+                        phase=ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+                        items=tuple((*call_items, *tool_items)),
+                        reasoning=reasoning,
+                        usage=usage,
+                        tools=tuple(completed_tools),
+                    )
+                )
+                all_items.extend(tool_items)
+                continue
+            message = self._message_item(
+                plan,
+                event.text,
+                invocation_id=invocation_id,
+                response_index=response_index,
+                order=order,
+            )
+            if event.text != output or event_index != len(self._events) - 1:
+                raise ConversationValidationError()
+            all_items.append(message)
+            segments.append(
+                AgentConversationExecutionSegmentCandidate(
+                    segment_index=response_index - 1,
+                    phase=ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+                    items=(message,),
+                    reasoning=reasoning,
+                    usage=usage,
+                )
+            )
+            event_index += 1
+        result = ProviderResult(
+            items=tuple(all_items),
+            reasoning=reasoning,
+            usage=usage,
+        )
+        return AgentConversationLaneInvocationResult(
+            result=result,
+            segments=tuple(segments),
+        )
+
+    @staticmethod
+    def _item_suffix(
+        invocation_id: str,
+        response_index: int,
+        discriminator: str,
+    ) -> str:
+        return sha256(
+            canonical_json_bytes(
+                {
+                    "discriminator": discriminator,
+                    "invocation_id": invocation_id,
+                    "response_index": response_index,
+                }
+            )
+        ).hexdigest()
+
+    def _call_item(
+        self,
+        plan: ProviderPlan,
+        call: ToolCall,
+        *,
+        invocation_id: str,
+        response_index: int,
+        provider_index: int,
+        order: int,
+    ) -> ProviderItem:
+        if call.id is None or not isinstance(call.arguments, dict):
+            raise ConversationValidationError()
+        call_id = ProviderCallId(str(call.id))
+        suffix = self._item_suffix(
+            invocation_id,
+            response_index,
+            f"call-{call_id}",
+        )
+        item_id = ProviderItemId(f"agent-call-{suffix}")
+        return ProviderItem(
+            item_id=item_id,
+            lane_id=plan.binding.lane_id,
+            model_call_id=ConversationModelCallId(
+                f"agent-model-call-{response_index}-{suffix}"
+            ),
+            kind=ProviderItemKind.FUNCTION_CALL,
+            order=ProviderItemOrder(order),
+            provider_index=ProviderItemIndex(provider_index),
+            phase=ProviderItemPhase.ASSISTANT,
+            caller=ProviderItemCaller.PROVIDER,
+            canonical_input={
+                "arguments": (
+                    canonical_json_bytes(
+                        cast(JsonValue, call.arguments)
+                    ).decode("utf-8")
+                ),
+                "call_id": call_id,
+                "id": item_id,
+                "name": call.name,
+                "status": "completed",
+                "type": "function_call",
+            },
+            normalization_version=plan.binding.continuation_codec_version,
+            call_id=call_id,
+        )
+
+    def _requested_tool(
+        self,
+        plan: ProviderPlan,
+        call: ToolCall,
+        call_id: ProviderCallId | None,
+    ) -> ProviderToolExecution:
+        if call_id is None or not isinstance(call.arguments, dict):
+            raise ConversationValidationError()
+        descriptor = self._tool.describe_tool_call(call)
+        if descriptor is None:
+            raise ConversationValidationError()
+        policy = (
+            ToolEffectPolicy.FENCED_UNPROTECTED
+            if descriptor.capabilities.side_effecting
+            else ToolEffectPolicy.PURE
+        )
+        return ProviderToolExecution(
+            call_id=call_id,
+            arguments=cast(Any, call.arguments),
+            tool_revision=plan.binding.tool_schema_revision,
+            effect_policy=policy,
+            phase=ToolExecutionPhase.REQUESTED,
+        )
+
+    def _tool_output_item(
+        self,
+        plan: ProviderPlan,
+        trace: AgentToolOutputTrace,
+        call_item: ProviderItem,
+        *,
+        invocation_id: str,
+        response_index: int,
+        order: int,
+    ) -> ProviderItem:
+        call_id = trace.call.id
+        if call_id is None:
+            raise ConversationValidationError()
+        suffix = self._item_suffix(
+            invocation_id,
+            response_index,
+            f"output-{call_id}",
+        )
+        item_id = ProviderItemId(f"agent-tool-output-{suffix}")
+        outcome = trace.outcome
+        if isinstance(outcome, ToolCallResult):
+            output = dumps(outcome.result, default=str, sort_keys=True)
+        elif isinstance(outcome, ToolCallError):
+            output = outcome.message
+        elif isinstance(outcome, ToolCallDiagnostic):
+            output = outcome.message
+        else:
+            output = ""
+        return ProviderItem(
+            item_id=item_id,
+            lane_id=plan.binding.lane_id,
+            model_call_id=call_item.model_call_id,
+            kind=ProviderItemKind.FUNCTION_CALL_OUTPUT,
+            order=ProviderItemOrder(order),
+            provider_index=ProviderItemIndex(
+                int(call_item.provider_index) + 1
+            ),
+            phase=ProviderItemPhase.TOOL,
+            caller=ProviderItemCaller.TOOL,
+            canonical_input={
+                "call_id": str(call_id),
+                "output": output,
+                "type": "function_call_output",
+            },
+            normalization_version=plan.binding.continuation_codec_version,
+            call_id=ProviderCallId(str(call_id)),
+        )
+
+    def _message_item(
+        self,
+        plan: ProviderPlan,
+        text: str,
+        *,
+        invocation_id: str,
+        response_index: int,
+        order: int,
+    ) -> ProviderItem:
+        suffix = self._item_suffix(
+            invocation_id,
+            response_index,
+            "message",
+        )
+        item_id = ProviderItemId(f"agent-message-{suffix}")
+        return ProviderItem(
+            item_id=item_id,
+            lane_id=plan.binding.lane_id,
+            model_call_id=ConversationModelCallId(
+                f"agent-model-call-{response_index}-{suffix}"
+            ),
+            kind=ProviderItemKind.MESSAGE,
+            order=ProviderItemOrder(order),
+            provider_index=ProviderItemIndex(0),
+            phase=ProviderItemPhase.FINAL,
+            caller=ProviderItemCaller.PROVIDER,
+            canonical_input={
+                "content": (
+                    {
+                        "annotations": (),
+                        "text": text,
+                        "type": "output_text",
+                    },
+                ),
+                "id": item_id,
+                "role": "assistant",
+                "status": "completed",
+                "type": "message",
+            },
+            normalization_version=plan.binding.continuation_codec_version,
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _ResolvedAgentConversationChild:
+    """Freeze one validated configured child for one invocation."""
+
+    lane: AgentProviderLane
+    binding: AgentConversationChildBinding
+    engine_agent: EngineAgent
+    operation: AgentOperation
+    engine_args: dict[str, Any]
+    block_repeated_tool_calls: bool
+    maximum_tool_cycles: MaximumToolCycles
+
+
+class _PreparedAgentConversationAdapter:
+    """Run one prepared parent model call without retaining callbacks."""
+
+    def __init__(
+        self,
+        *,
+        engine_agent: EngineAgent,
+        operation: AgentOperation,
+        engine_args: dict[str, Any],
+        event_manager: EventManager,
+        tool: ToolManager,
+        tool_confirm: Any,
+        block_repeated_tool_calls: bool,
+        maximum_tool_cycles: MaximumToolCycles,
+        children: tuple[_ResolvedAgentConversationChild, ...],
+    ) -> None:
+        self._engine_agent = engine_agent
+        self._operation = operation
+        self._engine_args = dict(engine_args)
+        self._event_manager = event_manager
+        self._tool = tool
+        self._tool_confirm = tool_confirm
+        self._block_repeated_tool_calls = block_repeated_tool_calls
+        self._maximum_tool_cycles = maximum_tool_cycles
+        self._children = children
+
+    async def execute(
+        self,
+        turn: AgentConversationTurn,
+        input: str,
+        prepared_model_call: object,
+        invoke_model: Callable[[object], Awaitable[object]],
+    ) -> AgentConversationResult:
+        """Execute the real model/tool loop through one coordinator lane."""
+        if (
+            type(turn) is not AgentConversationTurn
+            or type(input) is not str
+            or not input.strip()
+            or type(prepared_model_call) is not ModelCall
+            or not callable(invoke_model)
+        ):
+            raise ConversationValidationError()
+        model_call = prepared_model_call
+        if (
+            model_call.context.conversation_turn is not turn
+            or model_call.context.conversation_invocation_adapter is not self
+            or model_call.context.conversation_input != input
+        ):
+            raise ConversationValidationError()
+        parent_lanes = turn.topology.parent_lanes
+        child_lanes = turn.topology.child_lanes
+        if (
+            len(parent_lanes) != 1
+            or tuple(child.lane for child in self._children) != child_lanes
+        ):
+            raise ConversationCapabilityError()
+        parent_lane = parent_lanes[0]
+
+        child_outputs: dict[
+            ProviderLaneId,
+            VisibleTranscriptEntry,
+        ] = {}
+
+        def child_invocation(
+            child: _ResolvedAgentConversationChild,
+        ) -> AgentConversationLaneInvocation:
+            async def dispatch_child(
+                plan: ProviderPlan,
+            ) -> AgentConversationLaneInvocationResult:
+                capability = ModelCapabilityCatalog.create(
+                    child.binding.orchestrator.tool.export_model_capability_seed()
+                )
+                child_input: Input = [
+                    Message(role=MessageRole.USER, content=input)
+                ]
+                context = ModelCallContext(
+                    specification=child.operation.specification,
+                    input=child_input,
+                    capability=capability,
+                    engine_args=dict(child.engine_args),
+                    agent_id=child.binding.orchestrator.id,
+                )
+                raw = await child.engine_agent(context)
+                if type(raw) is not TextGenerationResponse:
+                    raise ConversationValidationError()
+                trace = _PreparedAgentConversationTrace(
+                    child.binding.orchestrator.tool
+                )
+                nested: OrchestratorResponse | None = None
+                try:
+                    nested = OrchestratorResponse(
+                        child_input,
+                        raw,
+                        child.engine_agent,
+                        child.operation,
+                        dict(child.engine_args),
+                        context,
+                        capability=capability,
+                        event_manager=child.binding.orchestrator.event_manager,
+                        tool=child.binding.orchestrator.tool,
+                        agent_id=child.binding.orchestrator.id,
+                        block_repeated_tool_calls=(
+                            child.block_repeated_tool_calls
+                        ),
+                        maximum_tool_cycles=child.maximum_tool_cycles,
+                        enable_tool_parsing=True,
+                        conversation_trace_sink=trace,
+                    )
+                    child.engine_agent.acknowledge_provider_handoff(raw)
+                    output = await nested.to_str()
+                except BaseException:
+                    if nested is None:
+                        child.engine_agent.acknowledge_provider_handoff(raw)
+                        await raw.aclose()
+                    raise
+                child_outputs[child.lane.lane_id] = VisibleTranscriptEntry(
+                    role=VisibleTranscriptRole.ASSISTANT,
+                    content=output,
+                )
+                return trace.complete(
+                    plan,
+                    output,
+                    invocation_id=f"{turn.checkpoint_id}-{child.lane.lane_id}",
+                )
+
+            return AgentConversationLaneInvocation(
+                binding=child.lane.binding,
+                dispatch=dispatch_child,
+            )
+
+        async def dispatch_parent(
+            plan: ProviderPlan,
+        ) -> AgentConversationLaneInvocationResult:
+            if set(child_outputs) != {lane.lane_id for lane in child_lanes}:
+                raise ConversationValidationError()
+            child_results = tuple(
+                child_outputs[lane.lane_id] for lane in child_lanes
+            )
+            parent_call = self._parent_call_with_children(
+                model_call,
+                input,
+                child_results,
+            )
+            parent_input = parent_call.operation.input
+            if parent_input is None:
+                raise ConversationValidationError()
+            raw = await invoke_model(parent_call)
+            if type(raw) is not TextGenerationResponse:
+                raise ConversationValidationError()
+            trace = _PreparedAgentConversationTrace(self._tool)
+            detached_context = replace(
+                parent_call.context,
+                parent=None,
+                root_parent=None,
+                execution=None,
+                execution_origin=None,
+                interaction_broker=None,
+                conversation_turn=None,
+                conversation_input=None,
+                conversation_invocation_adapter=None,
+            )
+            nested: OrchestratorResponse | None = None
+            try:
+                nested = OrchestratorResponse(
+                    parent_input,
+                    raw,
+                    self._engine_agent,
+                    self._operation,
+                    dict(self._engine_args),
+                    detached_context,
+                    capability=parent_call.capability,
+                    event_manager=self._event_manager,
+                    tool=self._tool,
+                    tool_confirm=self._tool_confirm,
+                    agent_id=parent_call.context.agent_id,
+                    participant_id=parent_call.context.participant_id,
+                    session_id=parent_call.context.session_id,
+                    block_repeated_tool_calls=(
+                        self._block_repeated_tool_calls
+                    ),
+                    maximum_tool_cycles=self._maximum_tool_cycles,
+                    enable_tool_parsing=True,
+                    conversation_trace_sink=trace,
+                )
+                output = await nested.to_str()
+            except BaseException:
+                if nested is None:
+                    await raw.aclose()
+                raise
+            return trace.complete(
+                plan,
+                output,
+                invocation_id=f"{turn.checkpoint_id}-{parent_lane.lane_id}",
+            )
+
+        parent_invocation = AgentConversationLaneInvocation(
+            binding=parent_lane.binding,
+            dispatch=dispatch_parent,
+        )
+        return await turn.execute(
+            input,
+            lane_invocations=(
+                *(child_invocation(child) for child in self._children),
+                parent_invocation,
+            ),
+        )
+
+    @staticmethod
+    def _parent_call_with_children(
+        model_call: ModelCall,
+        input: str,
+        child_results: tuple[VisibleTranscriptEntry, ...],
+    ) -> ModelCall:
+        """Append only canonical child text to the current parent message."""
+        if not child_results:
+            return model_call
+        operation_input = model_call.operation.input
+        if type(operation_input) is not list or not operation_input:
+            raise ConversationValidationError()
+        current = operation_input[-1]
+        if (
+            type(current) is not Message
+            or current.role is not MessageRole.USER
+            or current.content != input
+            or any(
+                type(entry) is not VisibleTranscriptEntry
+                or entry.role is not VisibleTranscriptRole.ASSISTANT
+                for entry in child_results
+            )
+        ):
+            raise ConversationValidationError()
+        child_text = "\n".join(entry.content for entry in child_results)
+        augmented = (
+            input
+            if not child_text
+            else f"{input}\n\nCanonical child results:\n{child_text}"
+        )
+        augmented_input = [
+            *operation_input[:-1],
+            replace(current, content=augmented),
+        ]
+        context = replace(model_call.context, input=augmented_input)
+        return replace(
+            model_call,
+            operation=replace(model_call.operation, input=augmented_input),
+            context=context,
+        )
+
+
 class Orchestrator:
     _INTERRUPTED_EXIT_EXCEPTIONS = (
         asyncio.CancelledError,
@@ -536,6 +1194,10 @@ class Orchestrator:
     def event_manager(self) -> EventManager:
         return self._event_manager
 
+    def conversation_engine_args(self) -> dict[str, object]:
+        """Return isolated configured arguments for a child invocation."""
+        return dict(self._call_options or {})
+
     @property
     def renderer(self) -> Renderer:
         """Return the renderer used by the orchestrator."""
@@ -571,6 +1233,81 @@ class Orchestrator:
         if engine_agent is None:
             raise RuntimeError("orchestrator operation is not loaded")
         return engine_agent
+
+    def _resolve_conversation_children(
+        self,
+        turn: AgentConversationTurn | None,
+        bindings: tuple[AgentConversationChildBinding, ...],
+        parent_engine: EngineAgent,
+        parent_operation: AgentOperation,
+    ) -> tuple[_ResolvedAgentConversationChild, ...]:
+        """Resolve exact invocation-local child engines before dispatch."""
+        if turn is None:
+            if bindings:
+                raise ConversationValidationError()
+            return ()
+        parent_lanes = turn.topology.parent_lanes
+        if len(parent_lanes) != 1:
+            raise ConversationBindingDriftError()
+        parent_lane = parent_lanes[0]
+        parent_model_id = parent_operation.environment.engine_uri.model_id
+        if (
+            str(self._id) != str(parent_lane.agent_id)
+            or parent_engine.id != self._id
+            or parent_model_id != parent_lane.binding.model_or_deployment
+            or parent_engine.engine.model_id
+            != parent_lane.binding.model_or_deployment
+        ):
+            raise ConversationBindingDriftError()
+
+        child_lanes = turn.topology.child_lanes
+        lane_ids = tuple(binding.lane_id for binding in bindings)
+        coordinates = tuple(
+            (binding.orchestrator.id, binding.operation_index)
+            for binding in bindings
+        )
+        if (
+            len(lane_ids) != len(set(lane_ids))
+            or set(lane_ids) != {lane.lane_id for lane in child_lanes}
+            or len(coordinates) != len(set(coordinates))
+        ):
+            raise ConversationValidationError()
+        binding_by_lane = {binding.lane_id: binding for binding in bindings}
+        resolved: list[_ResolvedAgentConversationChild] = []
+        for lane in child_lanes:
+            binding = binding_by_lane[lane.lane_id]
+            child = binding.orchestrator
+            engine_agent, operation = binding.resolve()
+            model_id = operation.environment.engine_uri.model_id
+            if (
+                str(child.id) != str(lane.agent_id)
+                or model_id != lane.binding.model_or_deployment
+                or engine_agent.engine.model_id
+                != lane.binding.model_or_deployment
+                or type(child.tool) is not ToolManager
+                or type(child.event_manager) is not EventManager
+            ):
+                raise ConversationBindingDriftError()
+            raw_engine_args = child.conversation_engine_args()
+            if type(raw_engine_args) is not dict:
+                raise ConversationValidationError()
+            engine_args = dict(raw_engine_args)
+            maximum_tool_cycles = self._pop_maximum_tool_cycles(engine_args)
+            block_repeated_tool_calls = self._pop_block_repeated_tool_calls(
+                engine_args
+            )
+            resolved.append(
+                _ResolvedAgentConversationChild(
+                    lane=lane,
+                    binding=binding,
+                    engine_agent=engine_agent,
+                    operation=operation,
+                    engine_args=engine_args,
+                    block_repeated_tool_calls=block_repeated_tool_calls,
+                    maximum_tool_cycles=maximum_tool_cycles,
+                )
+            )
+        return tuple(resolved)
 
     def continuation_execution_contract(
         self,
@@ -610,9 +1347,29 @@ class Orchestrator:
         generation_options_override: Mapping[str, Any] | None = None,
         operation_index: int = 0,
         interaction_runtime: InteractionRuntime | None = None,
+        conversation_turn: AgentConversationTurn | None = None,
+        conversation_children: tuple[AgentConversationChildBinding, ...] = (),
         execution_id_factory: ExecutionIdFactory | None = None,
         **kwargs: Any,
     ) -> OrchestratorResponse:
+        if (
+            conversation_turn is not None
+            and type(conversation_turn) is not AgentConversationTurn
+        ):
+            raise TypeError(
+                "conversation_turn must be an agent conversation turn or None"
+            )
+        if conversation_turn is not None:
+            require_agent_conversation_surface(ConversationSurface.AGENT_SDK)
+        if (
+            type(conversation_children) is not tuple
+            or any(
+                type(child) is not AgentConversationChildBinding
+                for child in conversation_children
+            )
+            or (conversation_turn is None and conversation_children)
+        ):
+            raise ConversationValidationError()
         runtime = (
             interaction_runtime
             if interaction_runtime is not None
@@ -639,6 +1396,12 @@ class Orchestrator:
         engine_agents = self._engine_agents
         assert engine_agents and environment_hash in engine_agents
         engine_agent = engine_agents[environment_hash]
+        resolved_children = self._resolve_conversation_children(
+            conversation_turn,
+            conversation_children,
+            engine_agent,
+            operation,
+        )
         history = await self._sync_terminal_responses_and_snapshot()
 
         await self._event_manager.trigger(
@@ -647,6 +1410,11 @@ class Orchestrator:
 
         messages = self._input_messages(operation.specification, input)
         messages = await self._input_messages_with_shell_manifest(messages)
+        conversation_input = (
+            self._conversation_turn_input(messages)
+            if conversation_turn is not None
+            else None
+        )
         current_messages = self._execution_messages(messages)
         execution_messages = (*history, *current_messages)
         messages = cast(Input, list(execution_messages))
@@ -724,6 +1492,19 @@ class Orchestrator:
             interaction_runtime=runtime,
         )
         messages = cast(Input, list(execution.messages))
+        conversation_adapter: AgentConversationInvocationAdapter | None = None
+        if conversation_turn is not None:
+            conversation_adapter = _PreparedAgentConversationAdapter(
+                engine_agent=engine_agent,
+                operation=operation,
+                engine_args=engine_args,
+                event_manager=self._event_manager,
+                tool=self._tool,
+                tool_confirm=tool_confirm,
+                block_repeated_tool_calls=block_repeated_tool_calls,
+                maximum_tool_cycles=maximum_tool_cycles,
+                children=resolved_children,
+            )
         context = ModelCallContext(
             specification=operation.specification,
             input=messages,
@@ -735,6 +1516,9 @@ class Orchestrator:
             execution=execution,
             execution_origin=execution.origin,
             interaction_broker=execution.interaction_broker,
+            conversation_turn=conversation_turn,
+            conversation_input=conversation_input,
+            conversation_invocation_adapter=conversation_adapter,
         )
         return await self._dispatch_execution(
             engine_agent=engine_agent,
@@ -862,6 +1646,8 @@ class Orchestrator:
         """Transfer one provider result into an owned response wrapper."""
         try:
             result = cast(TextGenerationResponse, await engine_agent(context))
+        except ExecutionInputRequiredError:
+            raise
         except BaseException as error:
             await self._settle_engine_call_failure(
                 engine_agent,
@@ -932,7 +1718,11 @@ class Orchestrator:
                 context,
                 capability=context.capability,
                 event_manager=self._event_manager,
-                tool=self._tool,
+                tool=(
+                    None
+                    if context.conversation_turn is not None
+                    else self._tool
+                ),
                 tool_confirm=tool_confirm,
                 agent_id=agent_id,
                 participant_id=participant_id,
@@ -940,6 +1730,7 @@ class Orchestrator:
                 block_repeated_tool_calls=block_repeated_tool_calls,
                 maximum_tool_cycles=maximum_tool_cycles,
                 initial_tool_cycle_count=initial_tool_cycle_count,
+                enable_tool_parsing=context.conversation_turn is None,
             )
             async with self._pending_responses_lock:
                 if self._exiting:
@@ -1208,6 +1999,40 @@ class Orchestrator:
             Message(role=MessageRole.USER, content=item)
             for item in cast(list[str], input)
         )
+
+    @staticmethod
+    def _conversation_turn_input(input: Input) -> str:
+        """Return one exact text input or reject lossy agent conversion."""
+        candidate: str | Message
+        if isinstance(input, list):
+            if len(input) != 1:
+                raise ConversationCapabilityError()
+            candidate = input[0]
+        else:
+            candidate = input
+        if type(candidate) is str:
+            text = candidate
+        elif isinstance(candidate, Message):
+            if candidate.role is not MessageRole.USER:
+                raise ConversationCapabilityError()
+            content = candidate.content
+            if type(content) is str:
+                text = content
+            elif isinstance(content, MessageContentText):
+                text = content.text
+            elif (
+                isinstance(content, list)
+                and len(content) == 1
+                and isinstance(content[0], MessageContentText)
+            ):
+                text = content[0].text
+            else:
+                raise ConversationCapabilityError()
+        else:
+            raise ConversationCapabilityError()
+        if not text.strip():
+            raise ConversationCapabilityError()
+        return text
 
     def _recent_message_snapshot(self) -> tuple[Message, ...]:
         """Return one invocation-local copy of prior conversation history."""

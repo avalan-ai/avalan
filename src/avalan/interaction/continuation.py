@@ -1245,6 +1245,30 @@ def portable_continuation_digest(
     return _portable_digest_payload(_portable_payload(continuation))
 
 
+def portable_continuation_binding_digest(
+    continuation: PortableContinuation,
+) -> str:
+    """Return the stable digest bound to a conversation suspension."""
+    if type(continuation) is not PortableContinuation:
+        raise InputSnapshotError(
+            InputErrorCode.SNAPSHOT_INVALID,
+            "continuation",
+            "value must be a portable continuation",
+        )
+    payload = _portable_payload(continuation)
+    for field_name in (
+        "state_revision",
+        "store_revision",
+        "updated_at",
+        "claim",
+        "fencing_token",
+        "dispatch",
+        "completion",
+    ):
+        del payload[field_name]
+    return _portable_digest_payload(payload)
+
+
 def _portable_payload(continuation: PortableContinuation) -> JsonObject:
     payload: JsonObject = {
         "version": continuation.version,

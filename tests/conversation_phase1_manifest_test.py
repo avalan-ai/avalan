@@ -49,8 +49,8 @@ def _payload(name: str) -> dict[str, object]:
     return {str(key): item for key, item in value.items()}
 
 
-def test_phase7_defaults_select_the_complete_snapshot_family() -> None:
-    """Select Phase 7 acceptance, type, failure, and threat snapshots."""
+def test_phase8_defaults_select_the_complete_snapshot_family() -> None:
+    """Select Phase 8 acceptance, type, failure, and threat snapshots."""
     type_verifier = _load(
         "_phase1_type_verifier",
         "scripts/verify_conversation_types.py",
@@ -65,38 +65,38 @@ def test_phase7_defaults_select_the_complete_snapshot_family() -> None:
     )
 
     acceptance_path = acceptance.default_manifest_path()
-    assert acceptance_path.name == "acceptance_manifest.phase7.json"
+    assert acceptance_path.name == "acceptance_manifest.phase8.json"
     assert (
         type_verifier.default_manifest_path().name
-        == "type_contract_manifest.phase7.json"
+        == "type_contract_manifest.phase8.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "failure_matrix"
         ).name
-        == "failure_matrix.phase7.json"
+        == "failure_matrix.phase8.json"
     )
     assert (
         acceptance.companion_fixture_path(acceptance_path, "threat_model").name
-        == "threat_model.phase7.json"
+        == "threat_model.phase8.json"
     )
     assert (
         acceptance.companion_fixture_path(
             acceptance_path, "type_contract_manifest"
         ).name
-        == "type_contract_manifest.phase7.json"
+        == "type_contract_manifest.phase8.json"
     )
-    assert acceptance.load_manifest(acceptance_path).current_phase == 7
+    assert acceptance.load_manifest(acceptance_path).current_phase == 8
     assert (
         type_verifier.load_manifest(
             type_verifier.default_manifest_path()
         ).current_phase
-        == 7
+        == 8
     )
-    assert runner._CONVERSATION_CURRENT_PHASE == 7
-    runner._validate_through_phase(_ROOT, 7)
+    assert runner._CONVERSATION_CURRENT_PHASE == 8
+    runner._validate_through_phase(_ROOT, 8)
     with pytest.raises(runner.ContractGateError):
-        runner._validate_through_phase(_ROOT, 8)
+        runner._validate_through_phase(_ROOT, 9)
 
 
 def test_phase1_acceptance_validates_selected_companions() -> None:

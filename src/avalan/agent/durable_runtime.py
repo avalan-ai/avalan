@@ -230,7 +230,7 @@ class TrustedAgentContinuationExecutor:
     async def resume_agent_continuation(
         self,
         command: AgentContinuationResumeCommand,
-    ) -> OrchestratorResponse:
+    ) -> object:
         """Append one correlated result and continue the exact model turn."""
         if type(command) is not AgentContinuationResumeCommand:
             raise TypeError("command must be an agent continuation command")
@@ -241,6 +241,16 @@ class TrustedAgentContinuationExecutor:
         continuation = command.continuation
         if command.a2a_checkpoint is not None:
             return await self._resume_a2a_tool_continuation(command)
+        if command.resolved_conversation is not None:
+            task_input_call = command.task_input_call
+            correlated_result = command.correlated_result
+            assert type(task_input_call) is TaskInputCapabilityCall
+            assert correlated_result is not None
+            applied = await command.resolved_conversation.apply(
+                task_input_call,
+                correlated_result,
+            )
+            return applied.output
         (
             active_fingerprint,
             fingerprint_counts,

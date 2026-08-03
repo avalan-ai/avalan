@@ -533,6 +533,17 @@ async def test_stored_tool_cycle_uses_only_immediate_id_and_tool_output() -> (
     lane = checkpoint.content.lanes[0]
     assert isinstance(lane, conversation.StoredProviderLaneSnapshot)
     assert lane.upstream_response_id == "private-tool-two"
+    segments = checkpoint.content.execution_segments
+    assert tuple(segment.upstream_response_id for segment in segments) == (
+        "private-tool-one",
+        "private-tool-one",
+        "private-tool-two",
+    )
+    assert tuple(segment.phase for segment in segments) == (
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+        conversation.ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+        conversation.ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+    )
     assert provider.diagnostics.request_count == 2
     assert provider.diagnostics.response_count == 2
     await coordinator.close()

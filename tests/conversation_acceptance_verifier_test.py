@@ -391,6 +391,11 @@ def test_phase1_replacement_retains_tombstone_history_and_source(
         "_phase7_provider_transitions",
         lambda _root: {},
     )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase8_provider_transitions",
+        lambda _root: {},
+    )
 
     _VERIFIER.verify_gate_source_isolation(tmp_path, manifest)
 
@@ -420,6 +425,47 @@ def test_phase1_replacement_rejects_unreviewed_lifecycle_reversal(
         match="replaced acceptance records and reviewed ledger entries differ",
     ):
         _VERIFIER.load_manifest(path)
+
+
+def test_replacement_cover_rejects_extra_requirement_ownership(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject overlapping replacement evidence that adds ownership."""
+    manifest, payload, _old_node_id, target_node_id = (
+        _phase1_replacement_manifest(tmp_path, monkeypatch)
+    )
+    dynamic_manifest = cast(Any, manifest)
+    target = next(
+        node
+        for node in dynamic_manifest.nodes
+        if node.node_id == target_node_id
+    )
+    attacked_target = replace(
+        target,
+        requirement_ids=(*target.requirement_ids, "CONV-N-999"),
+    )
+    attacked_nodes = tuple(
+        attacked_target if node.node_id == target_node_id else node
+        for node in dynamic_manifest.nodes
+    )
+    history = payload["activation_history"]
+    assert isinstance(history, list)
+    activation_history = tuple(
+        tuple(entry["node_ids"])
+        for entry in history
+        if isinstance(entry, dict) and isinstance(entry.get("node_ids"), list)
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="exact nonempty cover",
+    ):
+        _VERIFIER._validate_replacement_transitions(
+            dynamic_manifest.replacements,
+            attacked_nodes,
+            activation_history,
+        )
 
 
 @pytest.mark.parametrize(
@@ -533,6 +579,11 @@ def test_phase1_sources_append_without_rewriting_phase0_pins(
     monkeypatch.setattr(
         _VERIFIER,
         "_phase7_provider_transitions",
+        lambda _root: {},
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase8_provider_transitions",
         lambda _root: {},
     )
 
@@ -796,6 +847,11 @@ def test_active_source_drift_is_rejected_by_external_hash(
         "_phase7_provider_transitions",
         lambda _root: {},
     )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_phase8_provider_transitions",
+        lambda _root: {},
+    )
 
     with pytest.raises(
         _VERIFIER.ConversationAcceptanceError,
@@ -838,6 +894,112 @@ def test_manifest_rejects_dimension_drift(tmp_path: Path) -> None:
         match="mandatory dimension inventory changed",
     ):
         _VERIFIER.load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    ("node_id", "dimension", "value", "message"),
+    (
+        (
+            (
+                "tests/conversation/agent_integration_e2e_test.py::"
+                "test_parent_tool_effect_failure_fences_unsafe_retry"
+            ),
+            "execution",
+            "no_tool",
+            "must declare one_tool execution",
+        ),
+        (
+            (
+                "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+                "test_fresh_worker_applies_atomic_conversation_answer_once"
+            ),
+            "scenario_lifecycle",
+            "same_process",
+            "must declare fresh_process lifecycle",
+        ),
+        (
+            (
+                "tests/conversation/agent_integration_pgsql_test.py::"
+                "test_pgsql_tool_boundaries_recover_without_duplicate_effect"
+            ),
+            "local_retention",
+            "direct_process_local",
+            "must declare durable_local retention",
+        ),
+    ),
+)
+def test_phase8_manifest_rejects_contradictory_evidence_axes(
+    tmp_path: Path,
+    node_id: str,
+    dimension: str,
+    value: str,
+    message: str,
+) -> None:
+    """Reject re-signed no-tool, process-local, and same-process claims."""
+    payload = _read("acceptance_manifest.phase8.json")
+    nodes = payload["nodes"]
+    assert isinstance(nodes, list)
+    node = next(
+        item
+        for item in nodes
+        if isinstance(item, dict) and item.get("node_id") == node_id
+    )
+    node[dimension] = [value]
+    _resign(payload, "manifest_sha256")
+    path = tmp_path / "acceptance-phase8-axis-drift.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match=message,
+    ):
+        _VERIFIER.load_manifest(path)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("checkpoint_commit_count", 1),
+        ("retry_decision", "never"),
+    ),
+)
+def test_phase8_failure_matrix_rejects_agent_tool_contradictions(
+    tmp_path: Path,
+    field: str,
+    value: object,
+) -> None:
+    """Reject re-signed agent tool semantics that contradict evidence."""
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase8.json"
+    )
+    requirements = _VERIFIER.load_requirements(
+        _FIXTURES / "requirements_traceability.json",
+        manifest,
+        repo_root=_ROOT,
+    )
+    payload = _read("failure_matrix.phase8.json")
+    cells = payload["cells"]
+    assert isinstance(cells, list)
+    cell = next(
+        item
+        for item in cells
+        if isinstance(item, dict)
+        and item.get("id") == "tool_effect--agent_sdk"
+    )
+    cell[field] = value
+    _resign(payload, "matrix_sha256")
+    path = tmp_path / "failure-matrix-phase8-agent-tool-drift.json"
+    _write(path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="agent tool failure semantics contradict",
+    ):
+        _VERIFIER.load_failure_matrix(
+            path,
+            manifest=manifest,
+            requirement_ids=frozenset(item.id for item in requirements),
+        )
 
 
 def test_manifest_rejects_resigned_semantic_drift(tmp_path: Path) -> None:

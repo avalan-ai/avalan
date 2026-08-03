@@ -163,6 +163,9 @@ from .continuation import (
     encode_portable_continuation as encode_portable_continuation,
 )
 from .continuation import (
+    portable_continuation_binding_digest as portable_continuation_binding_digest,  # noqa: E501
+)
+from .continuation import (
     portable_continuation_digest as portable_continuation_digest,
 )
 from .durable import (

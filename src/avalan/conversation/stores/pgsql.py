@@ -62,8 +62,11 @@ from ..errors import (
 )
 from ..execution import (
     ConversationExecutionReservation,
+    DurableToolRecoveryAdmission,
+    DurableToolRecoveryLease,
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionStage,
+    durable_tool_recovery_action,
     provider_lane_execution_receipt,
 )
 from ..lifecycle import (
@@ -125,6 +128,9 @@ from ..state import (
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
     SuspensionCheckpointCandidate,
+    SuspensionContinuationCheckpointCandidate,
+    is_standalone_compact_bridge,
+    validate_checkpoint_parent_kind,
 )
 from ..store import (
     InMemoryConversationStore,
@@ -485,6 +491,8 @@ class _PreparedCheckpoint:
     deletion_targets: tuple[_PreparedPayload, ...]
     continuation: _PreparedPayload | None
     continuation_reference: PortableContinuationReference | None
+    suspension_continuation: bool
+    compact_continuation: bool
 
     @property
     def payloads(self) -> tuple[_PreparedPayload, ...]:
@@ -866,6 +874,7 @@ class PgsqlConversationStore:
         *,
         committed_at: datetime,
         output_candidates: tuple[ProviderLaneOutputCandidate, ...],
+        compact_continuation: bool = False,
     ) -> _PreparedCheckpoint:
         staged = InMemoryConversationStore._candidate_checkpoint(candidate)
         committed = InMemoryConversationStore._committed_checkpoint(
@@ -952,6 +961,11 @@ class PgsqlConversationStore:
             deletion_targets=tuple(deletion_targets),
             continuation=continuation,
             continuation_reference=continuation_reference,
+            suspension_continuation=isinstance(
+                candidate,
+                SuspensionContinuationCheckpointCandidate,
+            ),
+            compact_continuation=compact_continuation,
         )
 
     async def _encrypt_payload(
@@ -1025,7 +1039,12 @@ class PgsqlConversationStore:
         ):
             raise ConversationAuthorizationError()
         if enforce_capacity:
-            await self._validate_checkpoint_capacity(cursor, checkpoint)
+            await self._validate_checkpoint_capacity(
+                cursor,
+                checkpoint,
+                suspension_continuation=prepared.suspension_continuation,
+                compact_continuation=prepared.compact_continuation,
+            )
         counts = checkpoint.content.safe_counts
         total_payload_bytes = sum(
             value.plaintext_bytes for value in prepared.payloads
@@ -1106,6 +1125,9 @@ class PgsqlConversationStore:
         self,
         cursor: PgsqlCursor,
         checkpoint: ConversationCheckpoint,
+        *,
+        suspension_continuation: bool = False,
+        compact_continuation: bool = False,
     ) -> None:
         await self._lock_global_capacity(cursor)
         total = await self._fetchone(
@@ -1120,6 +1142,12 @@ class PgsqlConversationStore:
             raise ConversationLimitError()
         parent_id = checkpoint.identity.parent_checkpoint_id
         if parent_id is None:
+            validate_checkpoint_parent_kind(
+                checkpoint.kind,
+                None,
+                suspension_continuation=suspension_continuation,
+                compact_continuation=compact_continuation,
+            )
             return
         parent = await self._fetchone(
             cursor,
@@ -1138,6 +1166,12 @@ class PgsqlConversationStore:
             != checkpoint.identity.parent_sequence
         ):
             raise ConversationAuthorizationError()
+        validate_checkpoint_parent_kind(
+            checkpoint.kind,
+            CheckpointKind(_row_str(parent, "checkpoint_kind")),
+            suspension_continuation=suspension_continuation,
+            compact_continuation=compact_continuation,
+        )
         children = await self._fetchone(
             cursor,
             "checkpoint_child_count",
@@ -1542,6 +1576,92 @@ class PgsqlConversationStore:
                 ),
             )
 
+    async def admit_tool_recovery(
+        self,
+        admission: DurableToolRecoveryAdmission,
+        execution: ConversationExecutionReservation,
+    ) -> DurableToolRecoveryLease:
+        """Atomically lease one exact ambiguous durable tool suffix."""
+        if (
+            type(admission) is not DurableToolRecoveryAdmission
+            or type(execution) is not ConversationExecutionReservation
+            or execution.idempotency != admission.idempotency
+        ):
+            raise ConversationValidationError()
+        checkpoint = await self.load(
+            admission.checkpoint_id,
+            admission.idempotency.authority,
+        )
+        _validate_tool_recovery_checkpoint(
+            admission,
+            execution,
+            checkpoint,
+        )
+        await self._reach_store(StoreAwaitBoundary.IDEMPOTENCY)
+        now = await self._clock.now()
+        _validate_time(now)
+        owner_token = f"recovery-owner-{uuid4().hex}"
+        authority_key = str(authority_digest(admission.idempotency.authority))
+        expected_execution_digest = execution_reservation_digest(execution)
+
+        async def operation(cursor: PgsqlCursor) -> None:
+            checkpoint_row = await self._fetchone(
+                cursor,
+                "tool_recovery_checkpoint_lock",
+                _SELECT_CHECKPOINT_FOR_UPDATE_SQL,
+                (admission.checkpoint_id,),
+            )
+            idempotency = await self._fetchone(
+                cursor,
+                "tool_recovery_idempotency_lock",
+                _SELECT_IDEMPOTENCY_FOR_UPDATE_SQL,
+                (
+                    authority_key,
+                    admission.idempotency.operation.value,
+                    admission.idempotency.key,
+                ),
+            )
+            if (
+                checkpoint_row is None
+                or _row_str(checkpoint_row, "authority_digest")
+                != authority_key
+                or _row_str(checkpoint_row, "lifecycle_state")
+                != CheckpointLifecycle.COMMITTED.value
+                or _row_str(checkpoint_row, "checkpoint_kind")
+                != CheckpointKind.INTERNAL_PROVIDER_BOUNDARY.value
+                or idempotency is None
+                or _row_str(idempotency, "request_digest")
+                != str(admission.idempotency.request_digest)
+                or _row_str(idempotency, "record_state")
+                != IdempotencyRecordState.AMBIGUOUS.value
+                or _row_optional_str(idempotency, "execution_digest")
+                != expected_execution_digest
+            ):
+                raise ConversationConflictError()
+            await self._execute(
+                cursor,
+                "tool_recovery_admit",
+                _UPDATE_IDEMPOTENCY_RECOVERY_LEASE_SQL,
+                (
+                    IdempotencyRecordState.IN_PROGRESS.value,
+                    owner_token,
+                    now
+                    + timedelta(
+                        seconds=self._policy.limits.idempotency_lease_seconds
+                    ),
+                    now,
+                    authority_key,
+                    admission.idempotency.operation.value,
+                    admission.idempotency.key,
+                ),
+            )
+
+        await self._transaction("tool_recovery_admit", operation)
+        return DurableToolRecoveryLease(
+            admission=admission,
+            owner_token=owner_token,
+        )
+
     async def stage_execution(
         self,
         stage: ProviderLaneExecutionStage,
@@ -1708,10 +1828,24 @@ class PgsqlConversationStore:
                 parent_id,
                 commit.candidate.checkpoint.authority,
             )
+        compact_source = None
+        if (
+            parent is not None
+            and parent.kind is CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            and parent.identity.parent_checkpoint_id is not None
+        ):
+            compact_source = await self._load_checkpoint(
+                parent.identity.parent_checkpoint_id,
+                commit.candidate.checkpoint.authority,
+            )
         prepared = await self._prepare_checkpoint(
             commit.candidate,
             committed_at=commit.committed_at,
             output_candidates=commit.output_candidates,
+            compact_continuation=is_standalone_compact_bridge(
+                parent,
+                compact_source,
+            ),
         )
         InMemoryConversationStore._validate_output_candidates(
             prepared.checkpoint,
@@ -4255,6 +4389,38 @@ def _reservation_matches_stage(
     )
 
 
+def _validate_tool_recovery_checkpoint(
+    admission: DurableToolRecoveryAdmission,
+    execution: ConversationExecutionReservation,
+    checkpoint: ConversationCheckpoint,
+) -> None:
+    """Validate one immutable checkpoint as the exact recovery suffix."""
+    segments = checkpoint.content.execution_segments
+    integrity = checkpoint.integrity
+    if (
+        checkpoint.identity.checkpoint_id != admission.checkpoint_id
+        or checkpoint.kind is not CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+        or checkpoint.authority != admission.idempotency.authority
+        or integrity is None
+        or integrity.digest != admission.checkpoint_integrity
+        or len(segments) != admission.segment_count
+        or not segments
+        or segments[-1].binding != admission.binding
+        or any(
+            segment.idempotency_key != admission.idempotency.key
+            or segment.request_digest != admission.idempotency.request_digest
+            for segment in segments
+        )
+        or durable_tool_recovery_action(segments) is not admission.action
+        or checkpoint.identity.conversation_id
+        != execution.identity.conversation_id
+        or checkpoint.identity.logical_turn_id
+        != execution.identity.logical_turn_id
+    ):
+        raise ConversationConflictError()
+
+
 def _outbox_target_matches(
     row: PgsqlRow | None,
     target: OutboxClaimTarget,
@@ -4417,7 +4583,7 @@ WHERE "lifecycle_state" <> 'deleted'
 _SELECT_CHECKPOINT_FOR_UPDATE_SQL = """
 SELECT
     "checkpoint_id", "conversation_id", "authority_digest",
-    "lifecycle_state", "checkpoint_sequence"
+    "lifecycle_state", "checkpoint_sequence", "checkpoint_kind"
 FROM "conversation_checkpoints"
 WHERE "checkpoint_id" = %s
 FOR UPDATE
@@ -4703,6 +4869,17 @@ INSERT INTO "conversation_idempotency" (
 _UPDATE_IDEMPOTENCY_STATE_SQL = """
 UPDATE "conversation_idempotency"
 SET "record_state" = %s, "updated_at" = %s
+WHERE "authority_digest" = %s
+  AND "operation" = %s
+  AND "idempotency_key" = %s
+"""
+
+_UPDATE_IDEMPOTENCY_RECOVERY_LEASE_SQL = """
+UPDATE "conversation_idempotency"
+SET "record_state" = %s,
+    "owner_token" = %s,
+    "lease_expires_at" = %s,
+    "updated_at" = %s
 WHERE "authority_digest" = %s
   AND "operation" = %s
   AND "idempotency_key" = %s

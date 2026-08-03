@@ -9,6 +9,7 @@ from asyncio import (
 )
 from asyncio import run as asyncio_run
 from asyncio import sleep as asyncio_sleep
+from collections.abc import Callable
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 
@@ -23,6 +24,7 @@ from avalan.interaction.continuation import (
     ContinuationFencingToken,
     ContinuationStoreRevision,
     PortableContinuation,
+    PortableConversationCheckpointReference,
 )
 from avalan.interaction.durable import DurableInteractionSuspension
 from avalan.interaction.entities import (
@@ -665,6 +667,66 @@ def test_durable_handoff_wait_is_wall_clock_bounded_and_cancellable() -> None:
             await task
         await asyncio_sleep(0)
         assert caller_cancelled.is_set()
+
+    asyncio_run(exercise())
+
+
+def test_conversation_handoff_fails_before_non_atomic_persistence(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Reject a conversation handoff before invoking a non-atomic host."""
+    record_property(
+        "conversation_acceptance_evidence", "pre_dispatch_rejection"
+    )
+    reference = PortableConversationCheckpointReference(
+        checkpoint_id="conversation-checkpoint",
+        execution_segment_id="conversation-segment",
+    )
+    assert (
+        reference.checkpoint_id,
+        reference.execution_segment_id,
+    ) == ("conversation-checkpoint", "conversation-segment")
+
+    async def exercise() -> None:
+        base = _suspension()
+        suspension = replace(
+            base,
+            continuation=replace(
+                base.continuation,
+                version=2,
+                conversation_checkpoint_reference=reference,
+            ),
+        )
+        calls = 0
+
+        async def handoff(
+            received: DurableInteractionSuspension,
+        ) -> InputRequest:
+            nonlocal calls
+            calls += 1
+            return replace(
+                received.command.request,
+                state=RequestState.PENDING,
+                state_revision=StateRevision(1),
+            )
+
+        class Participant:
+            checkpoint_id = reference.checkpoint_id
+            execution_segment_id = reference.execution_segment_id
+            continuation_id = str(suspension.continuation.continuation_id)
+            continuation_state_revision = int(
+                suspension.continuation.state_revision
+            )
+
+        policy = DurableHandoffInputPolicy(handoff=handoff)
+        with pytest.raises(InputValidationError) as raised:
+            await policy.persist(
+                suspension,
+                conversation_unit=Participant(),  # type: ignore[arg-type]
+            )
+
+        assert raised.value.code is InputErrorCode.UNAVAILABLE
+        assert calls == 0
 
     asyncio_run(exercise())
 

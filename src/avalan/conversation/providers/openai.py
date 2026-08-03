@@ -13,6 +13,7 @@ from ..contract import (
     ChildLaneRetentionPolicy,
     ConversationModelCallId,
     FailureBoundary,
+    RequestIdempotencyKey,
     UpstreamResponseId,
 )
 from ..errors import (
@@ -25,6 +26,13 @@ from ..errors import (
     ConversationLimitError,
     ConversationProviderResponseError,
     ConversationValidationError,
+)
+from ..execution import (
+    AgentStructuredInputRequested,
+    ProviderToolExecution,
+    ToolEffectPolicy,
+    ToolEffectReconciliation,
+    ToolExecutionPhase,
 )
 from ..items import (
     PROVIDER_ITEM_NORMALIZATION_VERSION,
@@ -61,6 +69,7 @@ from ..value import (
     ProviderItemId,
     ProviderItemIndex,
     ProviderItemOrder,
+    ToolSchemaRevision,
     canonical_json_bytes,
     freeze_json_value,
     thaw_json_value,
@@ -72,8 +81,10 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass
 from enum import StrEnum
 from hashlib import sha256
+from importlib import import_module
 from inspect import iscoroutinefunction, signature
 from json import JSONDecodeError, loads
+from types import ModuleType
 from typing import Protocol, TypeAlias, cast, final
 from urllib.parse import urlsplit
 
@@ -100,6 +111,8 @@ from openai.types.responses import (
 )
 from openai.types.responses.response_create_params import ContextManagement
 from openai.types.shared_params import Reasoning
+from referencing import Registry
+from referencing.exceptions import Unresolvable
 
 _ADAPTER_TYPE = (
     "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider"
@@ -143,6 +156,67 @@ class NativeOpenAIEncryptedContentPolicy(StrEnum):
 
     DEFAULT_RETURN = "default_return"
     EXPLICIT_INCLUDE = "explicit_include"
+
+
+class _JsonSchemaValidator(Protocol):
+    def validate(self, instance: object) -> None:
+        """Validate one JSON schema instance."""
+
+
+class _JsonSchemaValidatorClass(Protocol):
+    def __call__(
+        self,
+        schema: Mapping[str, object],
+        *,
+        registry: object,
+    ) -> _JsonSchemaValidator:
+        """Build one JSON schema validator."""
+
+    def check_schema(self, schema: Mapping[str, object]) -> None:
+        """Validate one JSON schema definition."""
+
+
+@dataclass(frozen=True, slots=True)
+class _JsonSchemaAdapter:
+    validator_class: _JsonSchemaValidatorClass
+    schema_error: type[Exception]
+    validation_error: type[Exception]
+
+
+def _json_schema_adapter() -> _JsonSchemaAdapter:
+    """Return the required typed JSON schema adapter."""
+    try:
+        module = import_module("jsonschema")
+    except (ImportError, ValueError):
+        raise ConversationValidationError() from None
+    validator_class = getattr(module, "Draft202012Validator", None)
+    schema_error = _json_schema_exception_class(module, "SchemaError")
+    validation_error = _json_schema_exception_class(
+        module,
+        "ValidationError",
+    )
+    if (
+        validator_class is None
+        or schema_error is None
+        or validation_error is None
+    ):
+        raise ConversationValidationError()
+    return _JsonSchemaAdapter(
+        validator_class=cast(_JsonSchemaValidatorClass, validator_class),
+        schema_error=schema_error,
+        validation_error=validation_error,
+    )
+
+
+def _json_schema_exception_class(
+    module: ModuleType,
+    name: str,
+) -> type[Exception] | None:
+    """Return one exported JSON schema exception class."""
+    value = getattr(module, name, None)
+    if isinstance(value, type) and issubclass(value, Exception):
+        return value
+    return None
 
 
 @final
@@ -353,6 +427,15 @@ class NativeOpenAIFunctionTool:
     parameters: Mapping[str, JsonValue]
     handler: Callable[[Mapping[str, JsonValue]], Awaitable[str]]
     description: str | None = None
+    effect_policy: ToolEffectPolicy = ToolEffectPolicy.FENCED_UNPROTECTED
+    revision: ToolSchemaRevision | None = None
+    reconciliation_handler: (
+        Callable[
+            [Mapping[str, JsonValue]],
+            Awaitable[ToolEffectReconciliation],
+        ]
+        | None
+    ) = None
 
     def __post_init__(self) -> None:
         validate_identifier(self.name, "tool_name")
@@ -364,12 +447,45 @@ class NativeOpenAIFunctionTool:
             )
         if not callable(self.handler) or not iscoroutinefunction(self.handler):
             raise ConversationValidationError()
+        if not isinstance(self.effect_policy, ToolEffectPolicy):
+            raise ConversationValidationError()
+        if self.reconciliation_handler is not None and (
+            not callable(self.reconciliation_handler)
+            or not iscoroutinefunction(self.reconciliation_handler)
+            or self.effect_policy is not ToolEffectPolicy.FENCED_UNPROTECTED
+        ):
+            raise ConversationValidationError()
         frozen = freeze_json_value(self.parameters)
         if not isinstance(frozen, Mapping):
             raise ConversationValidationError()
         if frozen.get("type") != "object":
             raise ConversationValidationError()
+        schema = thaw_json_value(frozen)
+        assert isinstance(schema, dict)
+        schema_adapter = _json_schema_adapter()
+        try:
+            schema_adapter.validator_class.check_schema(schema)
+        except (RecursionError, schema_adapter.schema_error):
+            raise ConversationValidationError() from None
         object.__setattr__(self, "parameters", frozen)
+        revision = self.revision
+        if revision is None:
+            digest = sha256(
+                canonical_json_bytes(
+                    {
+                        "description": self.description,
+                        "effect_policy": self.effect_policy.value,
+                        "name": self.name,
+                        "parameters": frozen,
+                        "reconciliation_configured": (
+                            self.reconciliation_handler is not None
+                        ),
+                    }
+                )
+            ).hexdigest()
+            revision = ToolSchemaRevision(f"tool-v1-{digest}")
+            object.__setattr__(self, "revision", revision)
+        validate_identifier(revision, "tool_revision")
 
     @property
     def schema(self) -> FunctionToolParam:
@@ -389,6 +505,37 @@ class NativeOpenAIFunctionTool:
 
     async def execute(self, arguments: str) -> str:
         """Validate arguments and execute the bound tool asynchronously."""
+        frozen = self.validate_arguments(arguments)
+        try:
+            result = await self.handler(frozen)
+        except CancelledError:
+            raise
+        except AgentStructuredInputRequested:
+            raise
+        except BaseException:
+            raise _provider_failure(boundary="tool_effect") from None
+        if type(result) is not str or len(result.encode("utf-8")) > 1_048_576:
+            raise ConversationValidationError()
+        return result
+
+    async def reconcile(self, arguments: str) -> ToolEffectReconciliation:
+        """Reconcile one fenced effect without silently reexecuting it."""
+        handler = self.reconciliation_handler
+        if handler is None:
+            raise ConversationCapabilityError()
+        frozen = self.validate_arguments(arguments)
+        try:
+            result = await handler(frozen)
+        except CancelledError:
+            raise
+        except BaseException:
+            raise _provider_failure(boundary="tool_effect") from None
+        if type(result) is not ToolEffectReconciliation:
+            raise ConversationValidationError()
+        return result
+
+    def validate_arguments(self, arguments: str) -> Mapping[str, JsonValue]:
+        """Return canonical validated arguments without executing the tool."""
         try:
             decoded = loads(
                 arguments,
@@ -397,18 +544,112 @@ class NativeOpenAIFunctionTool:
             )
         except (JSONDecodeError, RecursionError, ValueError):
             raise _provider_failure(boundary="failure_before_output") from None
+        schema = thaw_json_value(self.parameters)
+        assert isinstance(schema, dict)
+        schema_adapter = _json_schema_adapter()
+        try:
+            schema_adapter.validator_class(
+                schema,
+                registry=Registry(),
+            ).validate(decoded)
+        except (
+            RecursionError,
+            Unresolvable,
+            schema_adapter.validation_error,
+        ):
+            raise _provider_failure(boundary="failure_before_output") from None
         frozen = freeze_json_value(decoded)
         if not isinstance(frozen, Mapping):
             raise _provider_failure(boundary="failure_before_output")
-        try:
-            result = await self.handler(frozen)
-        except CancelledError:
-            raise
-        except BaseException:
-            raise _provider_failure(boundary="tool_effect") from None
-        if type(result) is not str or len(result.encode("utf-8")) > 1_048_576:
+        return frozen
+
+    def execution_metadata(
+        self,
+        *,
+        call_id: ProviderCallId,
+        arguments: str,
+        request_idempotency_key: RequestIdempotencyKey,
+        phase: ToolExecutionPhase,
+        output_id: ProviderItemId | None = None,
+    ) -> ProviderToolExecution:
+        """Return exact durable metadata for one validated tool call."""
+        validate_identifier(call_id, "call_id")
+        validate_identifier(request_idempotency_key, "idempotency_key")
+        if not isinstance(phase, ToolExecutionPhase):
             raise ConversationValidationError()
-        return result
+        revision = self.revision
+        assert revision is not None
+        idempotency_key = None
+        if self.effect_policy is ToolEffectPolicy.IDEMPOTENT:
+            payload = canonical_json_bytes(
+                {
+                    "call_id": call_id,
+                    "request_idempotency_key": request_idempotency_key,
+                    "tool_revision": revision,
+                }
+            )
+            idempotency_key = f"tool-call-v1-{sha256(payload).hexdigest()}"
+        return ProviderToolExecution(
+            call_id=call_id,
+            arguments=self.validate_arguments(arguments),
+            tool_revision=revision,
+            effect_policy=self.effect_policy,
+            phase=phase,
+            idempotency_key=idempotency_key,
+            output_id=output_id,
+        )
+
+
+async def request_agent_structured_input(
+    arguments: Mapping[str, JsonValue],
+) -> str:
+    """Raise one typed structured-input signal before external effects."""
+    raise AgentStructuredInputRequested(arguments)
+
+
+def _configured_function_tool(
+    tools: Mapping[str, NativeOpenAIFunctionTool],
+    binding: ProviderLaneBinding,
+    item: ProviderItem,
+) -> tuple[NativeOpenAIFunctionTool, str]:
+    """Return the exact configured tool and raw validated argument text."""
+    if (
+        type(item) is not ProviderItem
+        or item.kind is not ProviderItemKind.FUNCTION_CALL
+        or item.caller is not ProviderItemCaller.PROVIDER
+        or item.lane_id != binding.lane_id
+    ):
+        raise ConversationValidationError()
+    name = item.canonical_input.get("name")
+    arguments = item.canonical_input.get("arguments")
+    if type(name) is not str or type(arguments) is not str:
+        raise ConversationValidationError()
+    tool = tools.get(name)
+    if tool is None:
+        raise ConversationCapabilityError()
+    return tool, arguments
+
+
+def _configured_tool_execution_metadata(
+    tools: Mapping[str, NativeOpenAIFunctionTool],
+    binding: ProviderLaneBinding,
+    item: ProviderItem,
+    *,
+    request_idempotency_key: RequestIdempotencyKey,
+    phase: ToolExecutionPhase,
+    output_id: ProviderItemId | None = None,
+) -> ProviderToolExecution:
+    """Return durable metadata through one shared strict tool lookup."""
+    tool, arguments = _configured_function_tool(tools, binding, item)
+    call_id = item.call_id
+    assert call_id is not None
+    return tool.execution_metadata(
+        call_id=call_id,
+        arguments=arguments,
+        request_idempotency_key=request_idempotency_key,
+        phase=phase,
+        output_id=output_id,
+    )
 
 
 @final
@@ -659,19 +900,42 @@ class NativeOpenAIStatelessProvider:
 
     async def execute_tool(self, item: ProviderItem) -> str:
         """Execute one exact configured function call asynchronously."""
-        if (
-            type(item) is not ProviderItem
-            or item.kind is not ProviderItemKind.FUNCTION_CALL
-        ):
-            raise ConversationValidationError()
-        name = item.canonical_input["name"]
-        arguments = item.canonical_input["arguments"]
-        if type(name) is not str or type(arguments) is not str:
-            raise ConversationValidationError()
-        tool = self._tools.get(name)
-        if tool is None:
-            raise ConversationCapabilityError()
+        tool, arguments = _configured_function_tool(
+            self._tools,
+            self.binding,
+            item,
+        )
         return await tool.execute(arguments)
+
+    async def reconcile_tool(
+        self,
+        item: ProviderItem,
+    ) -> ToolEffectReconciliation:
+        """Reconcile one exact configured fenced function call."""
+        tool, arguments = _configured_function_tool(
+            self._tools,
+            self.binding,
+            item,
+        )
+        return await tool.reconcile(arguments)
+
+    def tool_execution_metadata(
+        self,
+        item: ProviderItem,
+        *,
+        request_idempotency_key: RequestIdempotencyKey,
+        phase: ToolExecutionPhase,
+        output_id: ProviderItemId | None = None,
+    ) -> ProviderToolExecution:
+        """Return exact durable metadata for one configured tool call."""
+        return _configured_tool_execution_metadata(
+            self._tools,
+            self.binding,
+            item,
+            request_idempotency_key=request_idempotency_key,
+            phase=phase,
+            output_id=output_id,
+        )
 
     async def aclose(self) -> None:
         """Settle the owned SDK client close exactly once."""

@@ -353,6 +353,15 @@ async def test_profiles_tools_and_runtime_fail_closed() -> None:
             parameters={"type": "array"},
             handler=valid,
         )
+    with pytest.raises(conversation.ConversationValidationError):
+        conversation.NativeOpenAIFunctionTool(
+            name="unsupported-schema-type",
+            parameters={
+                "type": "object",
+                "properties": {"value": {"type": "unsupported"}},
+            },
+            handler=valid,
+        )
 
     provider = _provider(binding, _unused_handler)
     with pytest.raises(conversation.ConversationValidationError):
@@ -746,6 +755,134 @@ async def test_native_output_item_limit_precedes_tool_effect_and_commit(
             scope,
         )
     await bounded_coordinator.close()
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    (
+        '{"value":"wrong-type"}',
+        "{}",
+        '{"value":1,"extra":true}',
+        '{"value":NaN}',
+        '{"value":1,"value":2}',
+    ),
+    ids=(
+        "wrong-type",
+        "missing-required",
+        "extra-property",
+        "nonfinite-number",
+        "duplicate-key",
+    ),
+)
+async def test_native_function_tool_rejects_invalid_schema_arguments_before_effect(  # noqa: E501
+    arguments: str,
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Reject malformed arguments before effects or durable metadata."""
+    record_property(
+        "conversation_acceptance_evidence", "pre_dispatch_rejection"
+    )
+    effects = 0
+
+    async def handler(value: Mapping[str, JsonValue]) -> str:
+        nonlocal effects
+        effects += 1
+        return str(value)
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="strict-local-schema",
+        parameters={
+            "type": "object",
+            "properties": {"value": {"type": "integer"}},
+            "required": ("value",),
+            "additionalProperties": False,
+        },
+        handler=handler,
+    )
+
+    with pytest.raises(conversation.ConversationProviderResponseError):
+        await tool.execute(arguments)
+    with pytest.raises(conversation.ConversationProviderResponseError):
+        tool.execution_metadata(
+            call_id=conversation.ProviderCallId("invalid-schema-call"),
+            arguments=arguments,
+            request_idempotency_key=conversation.RequestIdempotencyKey(
+                "invalid-schema-request"
+            ),
+            phase=conversation.ToolExecutionPhase.REQUESTED,
+        )
+    assert effects == 0
+
+
+async def test_native_function_tool_rejects_nonlocal_schema_before_effect(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Fail closed when argument validation needs a nonlocal schema."""
+    record_property(
+        "conversation_acceptance_evidence", "pre_dispatch_rejection"
+    )
+    effects = 0
+
+    async def handler(value: Mapping[str, JsonValue]) -> str:
+        nonlocal effects
+        effects += 1
+        return str(value)
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="nonlocal-schema",
+        parameters={
+            "type": "object",
+            "properties": {
+                "value": {"$ref": "https://schemas.invalid/value.json"}
+            },
+        },
+        handler=handler,
+    )
+
+    with pytest.raises(conversation.ConversationProviderResponseError):
+        await tool.execute('{"value":1}')
+    assert effects == 0
+
+
+async def test_native_function_tool_persists_only_validated_arguments(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Execute and persist only the canonical schema-valid arguments."""
+    record_property("conversation_acceptance_evidence", "runtime")
+    effects: list[Mapping[str, JsonValue]] = []
+
+    async def handler(value: Mapping[str, JsonValue]) -> str:
+        effects.append(value)
+        return "valid"
+
+    tool = conversation.NativeOpenAIFunctionTool(
+        name="canonical-schema",
+        parameters={
+            "type": "object",
+            "properties": {
+                "value": {"type": "integer"},
+                "enabled": {"type": "boolean"},
+            },
+            "required": ("value", "enabled"),
+            "additionalProperties": False,
+        },
+        handler=handler,
+    )
+    arguments = '{ "enabled" : true, "value" : 7 }'
+
+    metadata = tool.execution_metadata(
+        call_id=conversation.ProviderCallId("canonical-schema-call"),
+        arguments=arguments,
+        request_idempotency_key=conversation.RequestIdempotencyKey(
+            "canonical-schema-request"
+        ),
+        phase=conversation.ToolExecutionPhase.REQUESTED,
+    )
+    output = await tool.execute(arguments)
+
+    assert metadata.arguments == {"enabled": True, "value": 7}
+    assert effects == [{"enabled": True, "value": 7}]
+    assert output == "valid"
 
 
 async def test_native_provider_items_reject_before_tool_effect() -> None:

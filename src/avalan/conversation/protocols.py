@@ -14,6 +14,8 @@ from .contract import (
 from .errors import ConversationValidationError
 from .execution import (
     ConversationExecutionReservation,
+    DurableToolRecoveryAdmission,
+    DurableToolRecoveryLease,
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionStage,
 )
@@ -426,6 +428,14 @@ class ConversationStore(Protocol):
         execution: ConversationExecutionReservation | None = None,
     ) -> IdempotencyResolution:
         """Reserve, await, or replay one scoped idempotent operation."""
+        ...
+
+    async def admit_tool_recovery(
+        self,
+        admission: DurableToolRecoveryAdmission,
+        execution: ConversationExecutionReservation,
+    ) -> DurableToolRecoveryLease:
+        """Atomically lease one exact fenced durable tool suffix."""
         ...
 
     async def fence_idempotency(

@@ -9,11 +9,13 @@ from .contract import (
     CheckpointIdentity,
     CheckpointKind,
     ChildLaneRetentionPolicy,
+    ConversationAgentId,
     LocalDeletionState,
     NamedHeadId,
     NamedHeadRevision,
     PortableContinuationReference,
     ProviderLaneId,
+    ProviderLaneOwnerKind,
     PublicResponseId,
     ResponseResourceState,
     RetentionLimits,
@@ -22,7 +24,7 @@ from .contract import (
     response_transition_allowed,
 )
 from .errors import ConversationTransitionError, ConversationValidationError
-from .execution import ProviderLaneExecutionReceipt
+from .execution import ProviderExecutionSegment, ProviderLaneExecutionReceipt
 from .items import CompactionBoundary, ProviderItemLedger, VisibleTranscript
 from .settings import EffectiveReasoningMetadata, StandaloneCompactHandle
 from .value import (
@@ -363,16 +365,125 @@ ProviderLaneSnapshot: TypeAlias = (
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderLaneTopologyEntry:
+    """Persist one exact agent/model lane ownership relationship."""
+
+    lane_id: ProviderLaneId
+    owner_kind: ProviderLaneOwnerKind
+    agent_id: ConversationAgentId
+    topology_path: str
+    model_slot: str
+    retention_policy: ChildLaneRetentionPolicy
+    binding_digest: IntegrityDigest
+    parent_lane_id: ProviderLaneId | None = None
+
+    def __post_init__(self) -> None:
+        validate_identifier(self.lane_id, "lane_id")
+        validate_identifier(self.agent_id, "agent_id")
+        validate_identifier(self.topology_path, "topology_path")
+        validate_identifier(self.model_slot, "model_slot")
+        if (
+            not isinstance(self.owner_kind, ProviderLaneOwnerKind)
+            or not isinstance(
+                self.retention_policy,
+                ChildLaneRetentionPolicy,
+            )
+            or type(self.binding_digest) is not str
+            or len(self.binding_digest) != 64
+        ):
+            raise ConversationValidationError()
+        try:
+            int(self.binding_digest, 16)
+        except ValueError as exc:
+            raise ConversationValidationError() from exc
+        child = self.owner_kind is ProviderLaneOwnerKind.CHILD_AGENT
+        if child != (self.parent_lane_id is not None):
+            raise ConversationValidationError()
+        if self.parent_lane_id is not None:
+            validate_identifier(self.parent_lane_id, "parent_lane_id")
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ProviderLaneTopology:
+    """Persist deterministic lane topology without provider-private state."""
+
+    schema_version: int
+    entries: tuple[ProviderLaneTopologyEntry, ...]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.schema_version) is not int
+            or self.schema_version != 1
+            or type(self.entries) is not tuple
+            or not self.entries
+            or any(
+                type(entry) is not ProviderLaneTopologyEntry
+                for entry in self.entries
+            )
+        ):
+            raise ConversationValidationError()
+        lane_ids = tuple(entry.lane_id for entry in self.entries)
+        paths = tuple(entry.topology_path for entry in self.entries)
+        if len(lane_ids) != len(set(lane_ids)) or len(paths) != len(
+            set(paths)
+        ):
+            raise ConversationValidationError()
+        by_id = {entry.lane_id: entry for entry in self.entries}
+        for entry in self.entries:
+            if entry.parent_lane_id is None:
+                continue
+            parent = by_id.get(entry.parent_lane_id)
+            if (
+                parent is None
+                or parent.owner_kind is not ProviderLaneOwnerKind.PARENT_AGENT
+                or not entry.topology_path.startswith(
+                    f"{parent.topology_path}/child/"
+                )
+            ):
+                raise ConversationValidationError()
+
+    @property
+    def lane_ids(self) -> frozenset[ProviderLaneId]:
+        """Return every deterministic lane in this topology."""
+        return frozenset(entry.lane_id for entry in self.entries)
+
+    @property
+    def agent_ids(self) -> frozenset[ConversationAgentId]:
+        """Return every agent authorized by this exact topology."""
+        return frozenset(entry.agent_id for entry in self.entries)
+
+    def entry(self, lane_id: ProviderLaneId) -> ProviderLaneTopologyEntry:
+        """Return one exact lane entry or reject the missing lane."""
+        validate_identifier(lane_id, "lane_id")
+        for entry in self.entries:
+            if entry.lane_id == lane_id:
+                return entry
+        raise ConversationValidationError()
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class MultiLaneCheckpointContent:
     """Keep shared visible transcript separate from bound provider lanes."""
 
     visible_transcript: VisibleTranscript
     lanes: tuple[ProviderLaneSnapshot, ...]
+    execution_segments: tuple[ProviderExecutionSegment, ...] = ()
+    lane_topology: ProviderLaneTopology | None = None
 
     def __post_init__(self) -> None:
         if type(self.visible_transcript) is not VisibleTranscript:
             raise ConversationValidationError()
-        if type(self.lanes) is not tuple or not self.lanes:
+        if (
+            type(self.lanes) is not tuple
+            or type(self.execution_segments) is not tuple
+            or (not self.lanes and not self.execution_segments)
+            or (
+                self.lane_topology is not None
+                and type(self.lane_topology) is not ProviderLaneTopology
+            )
+        ):
             raise ConversationValidationError()
         lane_ids: list[ProviderLaneId] = []
         for lane in self.lanes:
@@ -384,6 +495,24 @@ class MultiLaneCheckpointContent:
             lane_ids.append(lane.lane_id)
         if len(lane_ids) != len(set(lane_ids)):
             raise ConversationValidationError()
+        if any(
+            type(segment) is not ProviderExecutionSegment
+            for segment in self.execution_segments
+        ):
+            raise ConversationValidationError()
+        segment_keys = tuple(
+            (segment.lane_id, segment.segment_index, segment.phase)
+            for segment in self.execution_segments
+        )
+        if len(segment_keys) != len(set(segment_keys)):
+            raise ConversationValidationError()
+        if self.lane_topology is not None:
+            represented = {
+                *lane_ids,
+                *(segment.lane_id for segment in self.execution_segments),
+            }
+            if not represented <= self.lane_topology.lane_ids:
+                raise ConversationValidationError()
 
     @property
     def safe_counts(self) -> SafeCheckpointCounts:
@@ -398,8 +527,20 @@ class MultiLaneCheckpointContent:
                     for item in lane.ledger.items
                     if item.opaque_state is not None
                 )
+        for segment in self.execution_segments:
+            provider_items += len(segment.items)
+            opaque_bytes += sum(
+                item.opaque_state.byte_count
+                for item in segment.items
+                if item.opaque_state is not None
+            )
         return SafeCheckpointCounts(
-            lane_count=len(self.lanes),
+            lane_count=len(
+                {
+                    *(lane.lane_id for lane in self.lanes),
+                    *(segment.lane_id for segment in self.execution_segments),
+                }
+            ),
             provider_item_count=provider_items,
             transcript_entry_count=self.visible_transcript.entry_count,
             opaque_byte_count=opaque_bytes,
@@ -436,6 +577,12 @@ class ConversationCheckpoint:
         if type(self.timestamps) is not CheckpointTimestamps:
             raise ConversationValidationError()
         if type(self.retention) is not RetentionLimits:
+            raise ConversationValidationError()
+        if self.content.execution_segments and self.kind not in {
+            CheckpointKind.INTERNAL_PROVIDER_BOUNDARY,
+            CheckpointKind.COMPLETED_OUTWARD_TURN,
+            CheckpointKind.STRUCTURED_INPUT_SUSPENSION,
+        }:
             raise ConversationValidationError()
         if self.head is not None and type(self.head) is not NamedHeadMetadata:
             raise ConversationValidationError()
@@ -586,6 +733,36 @@ class OutwardTurnCheckpointCandidate:
 
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
+class SuspensionContinuationCheckpointCandidate:
+    """Stage an outward child through the structured-input resume fence."""
+
+    checkpoint: ConversationCheckpoint
+    public_response_id: PublicResponseId
+    suspension_checkpoint_id: CheckpointId
+
+    def __post_init__(self) -> None:
+        _validate_candidate(
+            self.checkpoint,
+            CheckpointKind.COMPLETED_OUTWARD_TURN,
+        )
+        validate_identifier(self.public_response_id, "public_response_id")
+        validate_identifier(
+            self.suspension_checkpoint_id,
+            "suspension_checkpoint_id",
+        )
+        if (
+            self.checkpoint.identity.parent_checkpoint_id
+            != self.suspension_checkpoint_id
+        ):
+            raise ConversationValidationError()
+        validate_upstream_identifier_separation(
+            self.checkpoint,
+            additional_public_identifiers=(str(self.public_response_id),),
+        )
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
 class StandaloneCompactCheckpointCandidate:
     """Stage a canonical standalone compact result."""
 
@@ -614,8 +791,92 @@ CheckpointCandidate: TypeAlias = (
     ExecutionSegmentCheckpointCandidate
     | SuspensionCheckpointCandidate
     | OutwardTurnCheckpointCandidate
+    | SuspensionContinuationCheckpointCandidate
     | StandaloneCompactCheckpointCandidate
 )
+
+
+def validate_checkpoint_parent_kind(
+    child_kind: CheckpointKind,
+    parent_kind: CheckpointKind | None,
+    *,
+    suspension_continuation: bool = False,
+    compact_continuation: bool = False,
+) -> None:
+    """Validate one closed checkpoint parent-kind transition."""
+    if not isinstance(child_kind, CheckpointKind) or (
+        parent_kind is not None and not isinstance(parent_kind, CheckpointKind)
+    ):
+        raise ConversationValidationError()
+    allowed: dict[CheckpointKind, frozenset[CheckpointKind | None]] = {
+        CheckpointKind.COMPLETED_OUTWARD_TURN: frozenset(
+            {
+                None,
+                CheckpointKind.COMPLETED_OUTWARD_TURN,
+            }
+        ),
+        CheckpointKind.STANDALONE_COMPACT_RESULT: frozenset(
+            {CheckpointKind.COMPLETED_OUTWARD_TURN}
+        ),
+        CheckpointKind.INTERNAL_PROVIDER_BOUNDARY: frozenset(
+            {
+                None,
+                CheckpointKind.COMPLETED_OUTWARD_TURN,
+                CheckpointKind.STANDALONE_COMPACT_RESULT,
+            }
+        ),
+        CheckpointKind.STRUCTURED_INPUT_SUSPENSION: frozenset(
+            {
+                None,
+                CheckpointKind.INTERNAL_PROVIDER_BOUNDARY,
+            }
+        ),
+    }
+    if suspension_continuation:
+        if (
+            child_kind is CheckpointKind.COMPLETED_OUTWARD_TURN
+            and parent_kind is CheckpointKind.STRUCTURED_INPUT_SUSPENSION
+        ):
+            return
+        raise ConversationTransitionError()
+    if compact_continuation:
+        if (
+            child_kind is CheckpointKind.COMPLETED_OUTWARD_TURN
+            and parent_kind is CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        ):
+            return
+        raise ConversationTransitionError()
+    if parent_kind not in allowed.get(child_kind, frozenset()):
+        raise ConversationTransitionError()
+
+
+def is_standalone_compact_bridge(
+    checkpoint: ConversationCheckpoint | None,
+    source: ConversationCheckpoint | None,
+) -> bool:
+    """Return whether one internal checkpoint bridges compact state."""
+    return (
+        type(checkpoint) is ConversationCheckpoint
+        and type(source) is ConversationCheckpoint
+        and checkpoint.kind is CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+        and source.kind is CheckpointKind.STANDALONE_COMPACT_RESULT
+        and checkpoint.lifecycle is CheckpointLifecycle.COMMITTED
+        and source.lifecycle is CheckpointLifecycle.COMMITTED
+        and checkpoint.authority == source.authority
+        and checkpoint.identity.conversation_id
+        == source.identity.conversation_id
+        and checkpoint.identity.parent_checkpoint_id
+        == source.identity.checkpoint_id
+        and checkpoint.identity.parent_sequence == source.identity.sequence
+        and checkpoint.identity.sequence == source.identity.sequence + 1
+        and checkpoint.content == source.content
+        and bool(checkpoint.content.lanes)
+        and all(
+            type(lane) is StatelessProviderLaneSnapshot
+            and lane.compaction_boundary is not None
+            for lane in checkpoint.content.lanes
+        )
+    )
 
 
 @final
