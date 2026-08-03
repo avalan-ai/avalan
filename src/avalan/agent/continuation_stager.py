@@ -11,6 +11,7 @@ from ..interaction.continuation import (
     ContinuationFencingToken,
     ContinuationStoreRevision,
     PortableContinuation,
+    bind_portable_continuation_to_conversation,
     derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
 )
@@ -179,6 +180,16 @@ class PortableAgentContinuationStager:
             fencing_token=ContinuationFencingToken(0),
             provider_snapshot=staging.provider_snapshot,
         )
+        reference = getattr(
+            staging,
+            "conversation_checkpoint_reference",
+            None,
+        )
+        if reference is not None:
+            continuation = bind_portable_continuation_to_conversation(
+                continuation,
+                reference,
+            )
         return _suspension(request, continuation, now)
 
     async def stage_a2a_successor(

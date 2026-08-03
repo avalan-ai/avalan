@@ -12,6 +12,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from unittest.mock import patch
 from uuid import uuid4
 
+import pytest
+
 from avalan import (
     AgentRunCancelled,
     AgentRunCompleted,
@@ -82,6 +84,7 @@ from avalan.interaction import (
     ModelConfigRevision,
     ModelId,
     PortableContinuation,
+    PortableConversationCheckpointReference,
     PrincipalScope,
     ProviderConfigRevision,
     ProviderContinuationSnapshotAdapter,
@@ -289,6 +292,82 @@ def _openai_client() -> OpenAIClient:
 
 class DurableInteractionStagingContextValidationTest(TestCase):
     """Exercise every fail-closed provider staging boundary."""
+
+    def test_accepts_exact_conversation_reference_without_replay_copy(
+        self,
+    ) -> None:
+        legacy = _durable_staging_context()
+        reference = PortableConversationCheckpointReference(
+            checkpoint_id="conversation-checkpoint",
+            execution_segment_id="conversation-segment",
+        )
+
+        staging = replace(
+            legacy,
+            codec_registry=None,
+            codec=None,
+            provider_snapshot=None,
+            conversation_checkpoint_reference=reference,
+        )
+
+        self.assertIsNone(staging.provider_snapshot)
+        self.assertIsNone(staging.codec_registry)
+        self.assertIsNone(staging.codec)
+        self.assertEqual(
+            staging.conversation_checkpoint_reference,
+            reference,
+        )
+
+    def test_rejects_ambiguous_conversation_replay_authority(self) -> None:
+        legacy = _durable_staging_context()
+        reference = PortableConversationCheckpointReference(
+            checkpoint_id="conversation-checkpoint",
+            execution_segment_id="conversation-segment",
+        )
+        conversation = replace(
+            legacy,
+            codec_registry=None,
+            codec=None,
+            provider_snapshot=None,
+            conversation_checkpoint_reference=reference,
+        )
+        checkpoint = object.__new__(A2AToolContinuationCheckpoint)
+        object.__setattr__(
+            checkpoint,
+            "call_id",
+            legacy.provider_call_correlation_id,
+        )
+        cases = (
+            (
+                {"conversation_checkpoint_reference": reference},
+                legacy,
+                "exactly one replay authority",
+            ),
+            (
+                {"conversation_checkpoint_reference": None},
+                conversation,
+                "exactly one replay authority",
+            ),
+            (
+                {"codec_registry": legacy.codec_registry},
+                conversation,
+                "cannot copy provider replay",
+            ),
+            (
+                {
+                    "task_input_call": None,
+                    "a2a_checkpoint": checkpoint,
+                },
+                conversation,
+                "cannot copy provider replay",
+            ),
+        )
+        for changes, base, message in cases:
+            with (
+                self.subTest(message=message),
+                self.assertRaisesRegex(ExecutionCorrelationError, message),
+            ):
+                replace(base, **cast(Any, changes))
 
     def test_accepts_only_one_exact_a2a_checkpoint(self) -> None:
         valid = _durable_staging_context()
@@ -1156,66 +1235,112 @@ def _messages(response: Any) -> tuple[Message, ...]:
     return execution.messages
 
 
+@dataclass(frozen=True, slots=True)
+class _DefaultInputRequiredTrace:
+    """Capture the public input-required stream and runtime outcome."""
+
+    lifecycle: tuple[StreamItemKind, ...]
+    event_states: tuple[object, ...]
+    model_call_count: int
+    execution_status: AgentExecutionStatus
+
+
+_DEFAULT_INPUT_REQUIRED_TRACE = _DefaultInputRequiredTrace(
+    lifecycle=(
+        StreamItemKind.INTERACTION_CREATED,
+        StreamItemKind.INTERACTION_PENDING,
+        StreamItemKind.STREAM_INPUT_REQUIRED,
+        StreamItemKind.STREAM_CLOSED,
+    ),
+    event_states=(
+        RequestState.CREATED.value,
+        RequestState.PENDING.value,
+        RequestState.PENDING.value,
+    ),
+    model_call_count=1,
+    execution_status=AgentExecutionStatus.INPUT_REQUIRED,
+)
+
+
+async def _default_input_required_trace() -> _DefaultInputRequiredTrace:
+    """Return one exact public input-required lifecycle trace."""
+    broker = _PendingBroker()
+    harness = _Harness(
+        wrapper="default",
+        plans=[_ResponsePlan(arguments=_input_arguments())],
+        broker=broker,
+        handler=_DetachedHandler(),
+    )
+    try:
+        response = await harness.response()
+        items = await wait_for(_consume(response), timeout=1)
+        lifecycle = tuple(
+            item.kind
+            for item in items
+            if item.kind
+            in {
+                StreamItemKind.INTERACTION_CREATED,
+                StreamItemKind.INTERACTION_PENDING,
+                StreamItemKind.STREAM_INPUT_REQUIRED,
+                StreamItemKind.STREAM_CLOSED,
+            }
+        )
+        event_states = tuple(
+            event.observability.data["state"]
+            for event in harness.events.history
+            if event.type is EventType.INTERACTION_LIFECYCLE
+            and event.observability.kind is EventPayloadKind.CANONICAL_STREAM
+            and "state" in event.observability.data
+        )
+        execution = response.execution
+        assert execution is not None
+        return _DefaultInputRequiredTrace(
+            lifecycle=lifecycle,
+            event_states=event_states,
+            model_call_count=len(harness.model_manager.calls),
+            execution_status=execution.status,
+        )
+    finally:
+        await harness.close()
+
+
+@pytest.fixture
+def anyio_backend() -> str:
+    """Run the top-level acceptance wrapper on asyncio."""
+    return "asyncio"
+
+
+@pytest.mark.anyio
+async def test_default_stream_has_exact_input_required_order(
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Expose the exact input-required order as Phase 8 evidence."""
+    record_property("conversation_acceptance_evidence", "runtime")
+    trace = await _default_input_required_trace()
+
+    assert trace == _DEFAULT_INPUT_REQUIRED_TRACE
+    assert StreamItemKind.STREAM_COMPLETED not in trace.lifecycle
+
+
 class ExecutionWrapperInputRequiredTest(IsolatedAsyncioTestCase):
     """Require explicit suspension semantics across public wrappers."""
 
     async def test_default_stream_has_exact_input_required_order(self) -> None:
-        broker = _PendingBroker()
-        harness = _Harness(
-            wrapper="default",
-            plans=[_ResponsePlan(arguments=_input_arguments())],
-            broker=broker,
-            handler=_DetachedHandler(),
-        )
-        try:
-            response = await harness.response()
-            items = await wait_for(_consume(response), timeout=1)
-            lifecycle = tuple(
-                item.kind
-                for item in items
-                if item.kind
-                in {
-                    StreamItemKind.INTERACTION_CREATED,
-                    StreamItemKind.INTERACTION_PENDING,
-                    StreamItemKind.STREAM_INPUT_REQUIRED,
-                    StreamItemKind.STREAM_CLOSED,
-                }
-            )
-            event_states = tuple(
-                event.observability.data["state"]
-                for event in harness.events.history
-                if event.type is EventType.INTERACTION_LIFECYCLE
-                and event.observability.kind
-                is EventPayloadKind.CANONICAL_STREAM
-                and "state" in event.observability.data
-            )
+        trace = await _default_input_required_trace()
 
-            self.assertEqual(
-                lifecycle,
-                (
-                    StreamItemKind.INTERACTION_CREATED,
-                    StreamItemKind.INTERACTION_PENDING,
-                    StreamItemKind.STREAM_INPUT_REQUIRED,
-                    StreamItemKind.STREAM_CLOSED,
-                ),
-            )
-            self.assertEqual(
-                event_states,
-                (
-                    RequestState.CREATED.value,
-                    RequestState.PENDING.value,
-                    RequestState.PENDING.value,
-                ),
-            )
-            self.assertNotIn(StreamItemKind.STREAM_COMPLETED, lifecycle)
-            self.assertEqual(len(harness.model_manager.calls), 1)
-            assert response.execution is not None
-            self.assertIs(
-                response.execution.status,
-                AgentExecutionStatus.INPUT_REQUIRED,
-            )
-        finally:
-            await harness.close()
+        self.assertEqual(
+            trace.lifecycle, _DEFAULT_INPUT_REQUIRED_TRACE.lifecycle
+        )
+        self.assertEqual(
+            trace.event_states,
+            _DEFAULT_INPUT_REQUIRED_TRACE.event_states,
+        )
+        self.assertNotIn(StreamItemKind.STREAM_COMPLETED, trace.lifecycle)
+        self.assertEqual(trace.model_call_count, 1)
+        self.assertIs(
+            trace.execution_status,
+            AgentExecutionStatus.INPUT_REQUIRED,
+        )
 
     async def test_conversions_and_wrappers_expose_input_required(
         self,

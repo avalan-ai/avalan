@@ -1083,10 +1083,28 @@ async def test_stored_coordinator_limits_precede_commit_and_tool_effects(
     assert dispatches == 1
     assert tool_effects == (1 if boundary == "segments" else 0)
     page = await store.list_checkpoints(authority(), cursor=None, limit=10)
-    assert len(page.checkpoints) == 1
-    assert str(page.checkpoints[0].identity.checkpoint_id).startswith(
-        "quarantine-"
+    quarantine = tuple(
+        checkpoint
+        for checkpoint in page.checkpoints
+        if str(checkpoint.identity.checkpoint_id).startswith("quarantine-")
     )
+    internal = tuple(
+        checkpoint
+        for checkpoint in page.checkpoints
+        if str(checkpoint.identity.checkpoint_id).startswith(
+            "internal-segment-"
+        )
+    )
+    assert len(quarantine) == 1
+    assert (
+        len(internal)
+        == {
+            "segments": 2,
+            "provider_items": 0,
+            "reserved_tool_item": 1,
+        }[boundary]
+    )
+    assert len(page.checkpoints) == len(quarantine) + len(internal)
     assert (
         len(await store.claim_provider_lifecycle(authority(), limit=10)) == 1
     )
@@ -1113,9 +1131,8 @@ async def test_stored_segment_identity_and_sequence_are_closed() -> None:
 
     provider = _provider(binding, handler)
     result = await provider.dispatch(plan)
-    validator = (
-        conversation.RunScopedConversationCoordinator._validate_native_stored_provider_segment
-    )
+    coordinator = conversation.RunScopedConversationCoordinator
+    validator = coordinator._validate_native_stored_provider_segment
     validator(plan, (), result)
 
     with pytest.raises(conversation.ConversationProviderResponseError):

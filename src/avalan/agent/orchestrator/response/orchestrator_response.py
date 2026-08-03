@@ -119,6 +119,11 @@ from ....tool_cycles import (
 from ....types import JsonValue
 from ....utils import tool_call_diagnostic_payload
 from ... import AgentOperation
+from ...conversation_trace import (
+    AgentConversationTraceSink,
+    AgentProviderResponseTrace,
+    AgentToolOutputTrace,
+)
 from ...engine import EngineAgent
 from ...execution import (
     AgentExecution,
@@ -319,6 +324,7 @@ class OrchestratorResponse(
         maximum_tool_cycles: MaximumToolCycles = DEFAULT_MAXIMUM_TOOL_CYCLES,
         initial_tool_cycle_count: int = 0,
         capability: ModelCapabilityCatalog | None = None,
+        conversation_trace_sink: AgentConversationTraceSink | None = None,
     ) -> None:
         assert input and response and engine_agent and operation
         assert type(block_repeated_tool_calls) is bool
@@ -331,6 +337,11 @@ class OrchestratorResponse(
             maximum_tool_cycles == UNLIMITED_TOOL_CYCLES
             or initial_tool_cycle_count <= maximum_tool_cycles
         ), "initial tool cycles exceed the configured maximum"
+        if conversation_trace_sink is not None and any(
+            not callable(getattr(conversation_trace_sink, method, None))
+            for method in ("record_provider_response", "record_tool_output")
+        ):
+            raise TypeError("conversation trace sink is invalid")
         self._input = input
         self._response = response
         self._engine_agent = engine_agent
@@ -446,6 +457,7 @@ class OrchestratorResponse(
         self._pending_tool_batch_task = None
         self._maximum_tool_cycles = maximum_tool_cycles
         self._block_repeated_tool_calls = block_repeated_tool_calls
+        self._conversation_trace_sink = conversation_trace_sink
         self._final_response_text = None
         self._task_input_call = None
         self._pending_interaction_task = None
@@ -2655,6 +2667,7 @@ class OrchestratorResponse(
                 and not self._staged_tool_batch_present
                 and self._task_input_call is None
             ):
+                await self._record_conversation_provider_response(delta, ())
                 break
             classified_calls = (
                 self._classify_complete_tool_call_batch(
@@ -2694,7 +2707,12 @@ class OrchestratorResponse(
                 delta = new_text
                 continue
             if not classified_calls:
+                await self._record_conversation_provider_response(delta, ())
                 break
+            await self._record_conversation_provider_response(
+                delta,
+                tuple(classified_calls),
+            )
             await self._trigger_derived_canonical_observability_event(
                 EventType.TOOL_DETECT,
                 StreamItemKind.STREAM_DIAGNOSTIC,
@@ -2736,6 +2754,22 @@ class OrchestratorResponse(
 
         self._response = current_response
         return "".join((*attached_answer_prefixes, delta))
+
+    async def _record_conversation_provider_response(
+        self,
+        text: str,
+        calls: tuple[ToolCall, ...],
+    ) -> None:
+        """Send one classified provider boundary to a runtime-only sink."""
+        sink = self._conversation_trace_sink
+        if sink is None:
+            return
+        pending = sink.record_provider_response(
+            AgentProviderResponseTrace(text=text, calls=calls)
+        )
+        if not isawaitable(pending):
+            raise TypeError("conversation provider trace must be awaitable")
+        await pending
 
     async def _start_task_input(
         self,
@@ -3010,14 +3044,19 @@ class OrchestratorResponse(
                 "durable interaction request changed in staging"
             )
         continuation = durable.continuation
+        snapshot = staging.provider_snapshot
         if (
             request.continuation_id != staging.continuation_id
-            or continuation.provider_snapshot != staging.provider_snapshot
+            or continuation.provider_snapshot != snapshot
+            or continuation.conversation_checkpoint_reference
+            != staging.conversation_checkpoint_reference
             or continuation.revision_binding != staging.revision_binding
             or continuation.provider_call_correlation_id
             != staging.provider_call_correlation_id
-            or continuation.provider_call_id
-            != staging.provider_snapshot.model_call_id
+            or (
+                snapshot is not None
+                and continuation.provider_call_id != snapshot.model_call_id
+            )
         ):
             raise RuntimeError(
                 "durable continuation changed provider replay state"
@@ -3839,6 +3878,14 @@ class OrchestratorResponse(
             finished=end,
             elapsed=end - start,
         )
+        sink = self._conversation_trace_sink
+        if sink is not None:
+            pending = sink.record_tool_output(
+                AgentToolOutputTrace(call=call, outcome=result)
+            )
+            if not isawaitable(pending):
+                raise TypeError("conversation tool trace must be awaitable")
+            await pending
 
         return _ToolExecutionOutcome(
             call=call,
@@ -5210,6 +5257,8 @@ class OrchestratorResponse(
             conversation_authority=parent_context.conversation_authority,
             conversation_lane=parent_context.conversation_lane,
             conversation_checkpoint=parent_context.conversation_checkpoint,
+            conversation_turn=parent_context.conversation_turn,
+            conversation_input=parent_context.conversation_input,
         )
         self._context = context
         return context

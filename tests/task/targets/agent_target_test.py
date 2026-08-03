@@ -5056,6 +5056,51 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
                 interaction_runtime=None,
             )
 
+        conversation_required = InputRequiredResult(
+            request_id=InputRequestId("conversation-helper-request"),
+            continuation_id=ContinuationId("conversation-helper-continuation"),
+            detached_resumption_available=True,
+        )
+        participant = SimpleNamespace(
+            checkpoint_id="conversation-helper-checkpoint",
+        )
+        conversation_durable = cast(
+            DurableInteractionSuspension,
+            SimpleNamespace(
+                continuation=SimpleNamespace(
+                    continuation_id=conversation_required.continuation_id,
+                    conversation_checkpoint_reference=SimpleNamespace(
+                        checkpoint_id="conversation-helper-checkpoint"
+                    ),
+                )
+            ),
+        )
+        conversation_error = ExecutionInputRequiredError.__new__(
+            ExecutionInputRequiredError
+        )
+        conversation_error.result = conversation_required
+        conversation_error.durable = conversation_durable
+        conversation_error.checkpoint_id = "conversation-helper-checkpoint"
+        conversation_error.conversation_unit = participant
+        expected_suspension = object()
+        with patch.object(
+            agent_module,
+            "suspended_task_target_outcome",
+            return_value=expected_suspension,
+        ) as suspended:
+            propagated = agent_module._suspended_agent_target_outcome(
+                conversation_error,
+                interaction_runtime=None,
+                resumed=True,
+            )
+        self.assertIs(propagated, expected_suspension)
+        suspended.assert_called_once_with(
+            conversation_required,
+            checkpoint_id="conversation-helper-checkpoint",
+            durable=conversation_durable,
+            conversation_unit=participant,
+        )
+
         response = SuspendingResponse(failure)
         with self.assertRaises(ExecutionInputRequiredError) as raised:
             await agent_module._response_json_payload(response)

@@ -1,6 +1,9 @@
 """Expose the typed asynchronous public agent-input SDK."""
 
 from .agent.continuation_stager import PortableAgentContinuationStager
+from .agent.conversation_child import (
+    AgentConversationChildBinding as AgentConversationChildBinding,
+)
 from .agent.execution import (
     AttachedInteractionRuntime,
     DurableInteractionRuntime,
@@ -9,6 +12,7 @@ from .agent.execution import (
     InteractionRuntime,
 )
 from .agent.orchestrator_contract import Orchestrator
+from .conversation.agent import AgentConversationTurn as AgentConversationTurn
 from .conversation.lifecycle import (
     DirectDeletionResult as DirectDeletionResult,
 )
@@ -202,6 +206,7 @@ from .interaction.store import (
 )
 from .interaction.stores.memory import MemoryInteractionStoreFactory
 from .interaction.validation import validate_presentation_text
+from .pgsql import PgsqlAtomicSuspensionParticipant
 
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from collections.abc import Awaitable, Callable, Mapping
@@ -1470,6 +1475,8 @@ async def run_agent(
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
     operation_index: int = 0,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
 ) -> "AgentRunResult[JsonOrchestratorOutput]": ...
 
 
@@ -1482,6 +1489,8 @@ async def run_agent(
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
     operation_index: int = 0,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
 ) -> "AgentRunResult[ReasoningOrchestratorResponse]": ...
 
 
@@ -1494,6 +1503,8 @@ async def run_agent(
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
     operation_index: int = 0,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
 ) -> AgentRunResult[str]: ...
 
 
@@ -1506,6 +1517,8 @@ async def run_agent(
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
     operation_index: int = 0,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
 ) -> AgentRunResult[object]: ...
 
 
@@ -1517,18 +1530,24 @@ async def run_agent(
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
     operation_index: int = 0,
+    conversation_turn: AgentConversationTurn | None = None,
+    conversation_children: tuple[AgentConversationChildBinding, ...] = (),
 ) -> AgentRunResult[object]:
     """Run one agent asynchronously and return a strict typed outcome."""
     try:
         internal_runtime = _unwrap_interaction_runtime(interaction_runtime)
         internal_policy = _unwrap_headless_policy(headless_policy)
         runtime = _runtime_for_policy(internal_runtime, internal_policy)
-        response: object = await orchestrator(
-            input,
-            interaction_runtime=runtime,
-            generation_options_override=generation_options_override,
-            operation_index=operation_index,
-        )
+        call_options: dict[str, object] = {
+            "interaction_runtime": runtime,
+            "generation_options_override": generation_options_override,
+            "operation_index": operation_index,
+        }
+        if conversation_turn is not None:
+            call_options["conversation_turn"] = conversation_turn
+        if conversation_children:
+            call_options["conversation_children"] = conversation_children
+        response: object = await orchestrator(input, **call_options)
         if isinstance(response, str | ReasoningOrchestratorResponse):
             value: object = response
         elif isinstance(response, _AsyncStringResponse):
@@ -1675,15 +1694,23 @@ async def _input_required_result(
                 retryable=False,
             )
         try:
-            request = await policy.persist(suspension)
+            request = await policy.persist(
+                suspension,
+                conversation_unit=cast(
+                    PgsqlAtomicSuspensionParticipant | None,
+                    error.conversation_unit,
+                ),
+            )
             await policy.wait()
         except InputContractError as handoff_error:
+            await _rollback_conversation_handoff(error.conversation_unit)
             return AgentRunFailed(
                 code=handoff_error.code.value,
                 message=handoff_error.safe_message,
                 retryable=False,
             )
         except Exception:
+            await _rollback_conversation_handoff(error.conversation_unit)
             return AgentRunFailed(
                 code="input.durable_handoff_failed",
                 message="durable input handoff failed",
@@ -1706,6 +1733,15 @@ async def _input_required_result(
         continuation_id=None,
         detached_resumption_available=False,
     )
+
+
+async def _rollback_conversation_handoff(unit: object | None) -> None:
+    """Settle one uncommitted participant after public handoff failure."""
+    if unit is None:
+        return
+    rollback = getattr(unit, "rollback", None)
+    if _is_async_callable(rollback):
+        await cast(Callable[[], Awaitable[None]], rollback)()
 
 
 def _request_view(request: InputRequest) -> InputRequestView:

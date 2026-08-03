@@ -1,8 +1,11 @@
 """Assemble durable agent suspension and cold-resume components."""
 
 from ..agent.continuation import (
+    AgentConversationContinuationResolver,
+    AgentConversationContinuationResult,
     AgentDurableContinuationStore,
     DurableAgentContinuationResumer,
+    ResolvedAgentConversationContinuation,
 )
 from ..agent.durable_runtime import (
     PortableAgentContinuationStager,
@@ -13,12 +16,26 @@ from ..agent.execution import (
     UuidExecutionIdFactory,
 )
 from ..agent.loader import OrchestratorLoader
-from ..interaction.continuation import ContinuationRuntimeResolver
+from ..conversation.contract import (
+    AuthorityScope,
+    CheckpointId,
+    CheckpointKind,
+    PortableContinuationReference,
+)
+from ..conversation.state import CheckpointLifecycle, ConversationCheckpoint
+from ..interaction.continuation import (
+    ContinuationRuntimeResolver,
+    PortableContinuation,
+)
 from ..interaction.entities import PrincipalScope, RunId, TaskId
 from ..interaction.policy import (
     InteractionActor,
     InteractionPolicy,
     RuntimeInteractionClock,
+)
+from ..model.capability import (
+    CorrelatedCapabilityResult,
+    TaskInputCapabilityCall,
 )
 from ..tool.context import ToolSettingsContext
 from .context import TaskTargetContext
@@ -31,12 +48,122 @@ from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import cast, final
+from typing import Protocol, cast, final
 
 TaskInteractionActorResolver = Callable[
     [TaskTargetContext],
     InteractionActor,
 ]
+
+
+class TaskAgentConversationStore(Protocol):
+    """Load exact durable conversation suspension state."""
+
+    async def load(
+        self,
+        checkpoint_id: CheckpointId,
+        authority: AuthorityScope,
+    ) -> ConversationCheckpoint: ...
+
+    async def load_continuation_reference(
+        self,
+        checkpoint_id: CheckpointId,
+        authority: AuthorityScope,
+    ) -> PortableContinuationReference: ...
+
+
+class TaskAgentConversationCoordinator(Protocol):
+    """Resume one exact coordinated structured-input suspension."""
+
+    async def resume_structured_input(
+        self,
+        checkpoint: ConversationCheckpoint,
+        call: TaskInputCapabilityCall,
+        result: CorrelatedCapabilityResult,
+    ) -> AgentConversationContinuationResult: ...
+
+
+@final
+class TaskDurableAgentRuntime:
+    """Resolve task continuations from configured production state."""
+
+    def __init__(
+        self,
+        *,
+        store: TaskAgentConversationStore,
+        coordinator: TaskAgentConversationCoordinator,
+        authority: AuthorityScope,
+    ) -> None:
+        if (
+            not callable(getattr(store, "load", None))
+            or not callable(
+                getattr(store, "load_continuation_reference", None)
+            )
+            or not callable(
+                getattr(coordinator, "resume_structured_input", None)
+            )
+            or type(authority) is not AuthorityScope
+        ):
+            raise TypeError("conversation runtime configuration is invalid")
+        self._store = store
+        self._coordinator = coordinator
+        self._authority = authority
+
+    def resolver(self) -> AgentConversationContinuationResolver:
+        """Return the exact resolver consumed by fresh-worker admission."""
+        return AgentConversationContinuationResolver(
+            resolve_continuation=self.resolve_continuation,
+        )
+
+    async def resolve_continuation(
+        self,
+        continuation: PortableContinuation,
+        continuation_digest: str,
+    ) -> ResolvedAgentConversationContinuation:
+        """Load and bind one exact suspension to its configured coordinator."""
+        reference = continuation.conversation_checkpoint_reference
+        if reference is None:
+            raise TypeError("conversation checkpoint reference is unavailable")
+        checkpoint_id = CheckpointId(reference.checkpoint_id)
+        checkpoint = await self._store.load(checkpoint_id, self._authority)
+        persisted = await self._store.load_continuation_reference(
+            checkpoint_id,
+            self._authority,
+        )
+        if (
+            checkpoint.kind is not CheckpointKind.STRUCTURED_INPUT_SUSPENSION
+            or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+            or str(checkpoint.identity.execution_segment_id)
+            != reference.execution_segment_id
+            or persisted.continuation_id != continuation.continuation_id
+            or int(persisted.state_revision) + 1
+            != int(continuation.state_revision)
+            or str(persisted.digest) != continuation_digest
+            or persisted.definition != continuation.definition
+            or persisted.revision_binding != continuation.revision_binding
+        ):
+            raise TypeError("conversation suspension state does not correlate")
+
+        async def apply_result(
+            call: TaskInputCapabilityCall,
+            result: CorrelatedCapabilityResult,
+        ) -> AgentConversationContinuationResult:
+            applied = await self._coordinator.resume_structured_input(
+                checkpoint,
+                call,
+                result,
+            )
+            if type(applied) is not AgentConversationContinuationResult:
+                raise TypeError(
+                    "conversation coordinator returned invalid state"
+                )
+            return applied
+
+        return ResolvedAgentConversationContinuation(
+            checkpoint=checkpoint,
+            continuation_reference=persisted,
+            apply_result=apply_result,
+        )
 
 
 @final
@@ -56,6 +183,10 @@ class DurableAgentTaskHost:
         uri: str | None = None,
         clock: Callable[[], datetime] | None = None,
         policy: InteractionPolicy | None = None,
+        conversation_resolver: (
+            AgentConversationContinuationResolver | None
+        ) = None,
+        conversation_runtime: TaskDurableAgentRuntime | None = None,
     ) -> None:
         if not callable(
             getattr(
@@ -72,6 +203,30 @@ class DurableAgentTaskHost:
             raise TypeError("actor_resolver must be callable")
         if clock is not None and not callable(clock):
             raise TypeError("clock must be callable")
+        if (
+            conversation_resolver is not None
+            and type(conversation_resolver)
+            is not AgentConversationContinuationResolver
+        ):
+            raise TypeError(
+                "conversation_resolver must be an agent conversation resolver"
+            )
+        if (
+            conversation_runtime is not None
+            and type(conversation_runtime) is not TaskDurableAgentRuntime
+        ):
+            raise TypeError(
+                "conversation_runtime must be a task durable agent runtime"
+            )
+        if (
+            conversation_resolver is not None
+            and conversation_runtime is not None
+        ):
+            raise TypeError(
+                "conversation resolver must have exactly one configured owner"
+            )
+        if conversation_runtime is not None:
+            conversation_resolver = conversation_runtime.resolver()
         clock_source = clock if clock is not None else _utc_now
         resolved_policy = InteractionPolicy() if policy is None else policy
         if not isinstance(resolved_policy, InteractionPolicy):
@@ -100,6 +255,7 @@ class DurableAgentTaskHost:
         resumer = DurableAgentContinuationResumer(
             cast(AgentDurableContinuationStore, continuation_store),
             resolver,
+            conversation_resolver=conversation_resolver,
             clock=resolved_clock,
         )
         self._stager = stager

@@ -19,6 +19,7 @@ from ..interaction.broker import (
 from ..interaction.codec import encode_input_model_result
 from ..interaction.continuation import (
     ContinuationDispatchId,
+    PortableConversationCheckpointReference,
     derive_continuation_dispatch_id,
     derive_provider_idempotency_key,
 )
@@ -184,6 +185,8 @@ class ExecutionInputRequiredError(RuntimeError):
     result: InputRequiredResult
     request: InputRequest | None
     durable: DurableInteractionSuspension | None
+    checkpoint_id: str | None
+    conversation_unit: object | None
 
     def __init__(
         self,
@@ -191,6 +194,8 @@ class ExecutionInputRequiredError(RuntimeError):
         *,
         request: InputRequest | None = None,
         durable: DurableInteractionSuspension | None = None,
+        checkpoint_id: str | None = None,
+        conversation_unit: object | None = None,
     ) -> None:
         if type(result) is not InputRequiredResult:
             raise TypeError("result must be an input-required result")
@@ -222,9 +227,25 @@ class ExecutionInputRequiredError(RuntimeError):
             raise ExecutionCorrelationError(
                 "request does not match input-required result"
             )
+        if (checkpoint_id is None) != (conversation_unit is None):
+            raise ExecutionCorrelationError(
+                "conversation suspension requires checkpoint and unit"
+            )
+        if checkpoint_id is not None:
+            if durable is None:
+                raise ExecutionCorrelationError(
+                    "conversation suspension requires durable state"
+                )
+            reference = durable.continuation.conversation_checkpoint_reference
+            if reference is None or reference.checkpoint_id != checkpoint_id:
+                raise ExecutionCorrelationError(
+                    "conversation checkpoint does not match durable state"
+                )
         self.result = result
         self.request = request
         self.durable = durable
+        self.checkpoint_id = checkpoint_id
+        self.conversation_unit = conversation_unit
         super().__init__("execution requires correlated input")
 
 
@@ -1226,18 +1247,27 @@ class DurableInteractionStager(Protocol):
 @final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class DurableInteractionStagingContext:
-    """Bind one provider replay snapshot to its exact suspended call."""
+    """Bind one exact replay authority to its suspended call."""
 
     continuation_id: ContinuationId
     dispatch_id: ContinuationDispatchId
     revision_binding: ContinuationRevisionBinding
-    codec_registry: ContinuationSnapshotCodecRegistry = field(repr=False)
-    codec: RegisteredContinuationSnapshotCodec
-    provider_snapshot: ContinuationSnapshot = field(repr=False)
     provider_idempotency_key: ProviderIdempotencyKey
     provider_call_correlation_id: str
     task_input_call: TaskInputCapabilityCall | None = None
     a2a_checkpoint: A2AToolContinuationCheckpoint | None = None
+    codec_registry: ContinuationSnapshotCodecRegistry | None = field(
+        default=None,
+        repr=False,
+    )
+    codec: RegisteredContinuationSnapshotCodec | None = None
+    provider_snapshot: ContinuationSnapshot | None = field(
+        default=None,
+        repr=False,
+    )
+    conversation_checkpoint_reference: (
+        PortableConversationCheckpointReference | None
+    ) = None
 
     def __post_init__(self) -> None:
         checkpoint = self.a2a_checkpoint
@@ -1281,25 +1311,43 @@ class DurableInteractionStagingContext:
             raise TypeError(
                 "revision_binding must be a continuation revision binding"
             )
-        if type(self.codec_registry) is not ContinuationSnapshotCodecRegistry:
-            raise TypeError("codec_registry must be a codec registry")
-        if (
-            type(self.codec) is not RegisteredContinuationSnapshotCodec
-            or not self.codec_registry.is_registered(self.codec)
-            or self.codec.revision_binding != self.revision_binding
-        ):
-            raise ExecutionCorrelationError(
-                "durable staging codec is not registered for the revision"
-            )
         snapshot = self.provider_snapshot
-        if type(snapshot) is not ContinuationSnapshot:
-            raise TypeError(
-                "provider_snapshot must be a continuation snapshot"
-            )
-        if not self.codec.accepts(snapshot):
+        reference = self.conversation_checkpoint_reference
+        if (snapshot is None) == (reference is None):
             raise ExecutionCorrelationError(
-                "provider snapshot does not match the durable codec"
+                "durable staging requires exactly one replay authority"
             )
+        if reference is not None:
+            if (
+                type(reference) is not PortableConversationCheckpointReference
+                or checkpoint is not None
+                or self.codec_registry is not None
+                or self.codec is not None
+            ):
+                raise ExecutionCorrelationError(
+                    "conversation staging cannot copy provider replay"
+                )
+        else:
+            if type(snapshot) is not ContinuationSnapshot:
+                raise TypeError(
+                    "provider_snapshot must be a continuation snapshot"
+                )
+            registry = self.codec_registry
+            codec = self.codec
+            if type(registry) is not ContinuationSnapshotCodecRegistry:
+                raise TypeError("codec_registry must be a codec registry")
+            if (
+                type(codec) is not RegisteredContinuationSnapshotCodec
+                or not registry.is_registered(codec)
+                or codec.revision_binding != self.revision_binding
+            ):
+                raise ExecutionCorrelationError(
+                    "durable staging codec is not registered for the revision"
+                )
+            if not codec.accepts(snapshot):
+                raise ExecutionCorrelationError(
+                    "provider snapshot does not match the durable codec"
+                )
         if (
             not isinstance(
                 self.provider_idempotency_key,
@@ -1330,6 +1378,8 @@ class DurableInteractionStagingContext:
             raise ExecutionCorrelationError(
                 "provider correlation does not match the reserved call"
             )
+        if snapshot is None:
+            return
         if snapshot.provider_idempotency_key != self.provider_idempotency_key:
             raise ExecutionCorrelationError(
                 "provider snapshot changed its idempotency key"
@@ -1341,12 +1391,15 @@ class DurableInteractionStagingContext:
             raise ExecutionCorrelationError(
                 "provider snapshot changed the reserved call"
             )
-        encoded = self.codec_registry.export_snapshot(
-            self.codec,
+        registry = self.codec_registry
+        codec = self.codec
+        assert registry is not None and codec is not None
+        encoded = registry.export_snapshot(
+            codec,
             snapshot,
         )
-        restored = self.codec_registry.restore_snapshot(
-            self.codec,
+        restored = registry.restore_snapshot(
+            codec,
             encoded,
             self.revision_binding,
         )

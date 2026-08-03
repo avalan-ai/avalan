@@ -1,0 +1,238 @@
+{
+  "schema_version": 1,
+  "profile_schema_version": "conversation-provider-profile-v1",
+  "feature": "conversation_continuity",
+  "owner": "provider_runtime",
+  "current_phase": 8,
+  "activation_state": "test_only",
+  "production_dispatch_enabled": false,
+  "production_advertisement_enabled": false,
+  "base": {
+    "path": "provider_conformance.phase7.json",
+    "byte_sha256": "d8eb36b662f604c59589b52be2b8c972bdaef0b347a2aae2ec4d1b91ab1ec936",
+    "canonical_digest": "7ae6085b8295737ee30ffaf3eb1916f2a9b1a0fc9c54e5e00a0077ddf620526c"
+  },
+  "capability_names": [
+    "stored_responses_chaining",
+    "stateless_encrypted_reasoning_replay",
+    "reasoning_context_current_turn",
+    "reasoning_context_all_turns",
+    "inline_compaction",
+    "standalone_compaction",
+    "streaming_item_fidelity",
+    "stored_response_retrieval",
+    "stored_response_deletion",
+    "durable_tool_execution_segments",
+    "structured_input_suspension",
+    "deterministic_agent_lane_topology"
+  ],
+  "capability_states": [
+    "test_only",
+    "incapable"
+  ],
+  "identity_dimensions": [
+    "adapter_type",
+    "provider_family",
+    "normalized_endpoint",
+    "azure_resource_identity",
+    "model_or_deployment",
+    "provider_api_revision",
+    "sdk_revision",
+    "model_configuration_revision",
+    "capability_profile_revision",
+    "tool_schema_revision",
+    "execution_definition_revision",
+    "continuation_codec_version",
+    "transport",
+    "execution_definition_digest",
+    "compaction_limits_digest"
+  ],
+  "generic_compatible_state": "incapable",
+  "profiles": [
+    {
+      "profile_id": "native-openai-stateless-non-streaming-phase8-test",
+      "lifecycle": "active",
+      "active_from_phase": 8,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "gpt-5",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-compact",
+        "capability_profile_revision": "capability-compact",
+        "tool_schema_revision": "tools-compact",
+        "execution_definition_revision": "execution-compact",
+        "continuation_codec_version": "1",
+        "transport": "non_streaming",
+        "execution_definition_digest": null,
+        "compaction_limits_digest": "198b029b6478edd284c816098d82810daa19edef7d927522ac601c2765b6ba7b"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "test_only",
+        "standalone_compaction": "test_only",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable",
+        "durable_tool_execution_segments": "test_only",
+        "deterministic_agent_lane_topology": "test_only",
+        "structured_input_suspension": "test_only"
+      },
+      "activation_evidence": [
+        "durable-tool-segment-recovery",
+        "draft-2020-12-tool-schema-zero-effect",
+        "typed-structured-input-suspension",
+        "actual-agent-lane-restart-isolation"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_native_function_cycles_use_the_coordinator_ledger",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_nonlocal_schema_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_persists_only_validated_arguments",
+        "tests/conversation/native_openai_provider_test.py::test_agent_turn_propagates_typed_structured_input_suspension",
+        "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+        "tests/conversation/agent_integration_e2e_test.py::test_child_merge_rejects_wrong_provider_and_model_binding"
+      ]
+    },
+    {
+      "profile_id": "native-openai-stateless-streaming-phase8-test",
+      "lifecycle": "active",
+      "active_from_phase": 8,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai.NativeOpenAIStatelessProvider",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "gpt-5",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-compact",
+        "capability_profile_revision": "capability-compact",
+        "tool_schema_revision": "tools-compact",
+        "execution_definition_revision": "execution-compact",
+        "continuation_codec_version": "1",
+        "transport": "streaming",
+        "execution_definition_digest": null,
+        "compaction_limits_digest": "198b029b6478edd284c816098d82810daa19edef7d927522ac601c2765b6ba7b"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "incapable",
+        "stateless_encrypted_reasoning_replay": "test_only",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "test_only",
+        "standalone_compaction": "test_only",
+        "streaming_item_fidelity": "test_only",
+        "stored_response_retrieval": "incapable",
+        "stored_response_deletion": "incapable",
+        "durable_tool_execution_segments": "test_only",
+        "deterministic_agent_lane_topology": "test_only",
+        "structured_input_suspension": "incapable"
+      },
+      "activation_evidence": [
+        "streaming-provider-boundary",
+        "streaming-tool-effect-zero-commit",
+        "draft-2020-12-tool-schema-zero-effect",
+        "actual-agent-lane-isolation"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_provider_test.py::test_native_stream_matches_non_stream_and_closes",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_output_byte_limit_precedes_tool_effect_and_commit",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_nonlocal_schema_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_persists_only_validated_arguments",
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart"
+      ]
+    },
+    {
+      "profile_id": "native-openai-stored-non-streaming-phase8-test",
+      "lifecycle": "active",
+      "active_from_phase": 8,
+      "activation_state": "test_only",
+      "identity_complete": true,
+      "binding": {
+        "adapter_type": "avalan.conversation.providers.openai_stored.NativeOpenAIStoredProvider",
+        "provider_family": "openai",
+        "normalized_endpoint": "https://api.openai.com/v1",
+        "azure_resource_identity": null,
+        "model_or_deployment": "gpt-5",
+        "provider_api_revision": "openapi-2.3.0",
+        "sdk_revision": "openai-python-2.42.0",
+        "model_configuration_revision": "model-config-compact",
+        "capability_profile_revision": "capability-compact",
+        "tool_schema_revision": "tools-compact",
+        "execution_definition_revision": "execution-compact",
+        "continuation_codec_version": "1",
+        "transport": "non_streaming",
+        "execution_definition_digest": "12b476fdd37c3fb116ff04e344c3dd91361b653d352e75b6b14f376734807500",
+        "compaction_limits_digest": "198b029b6478edd284c816098d82810daa19edef7d927522ac601c2765b6ba7b"
+      },
+      "capabilities": {
+        "stored_responses_chaining": "test_only",
+        "stateless_encrypted_reasoning_replay": "incapable",
+        "reasoning_context_current_turn": "test_only",
+        "reasoning_context_all_turns": "test_only",
+        "inline_compaction": "test_only",
+        "standalone_compaction": "incapable",
+        "streaming_item_fidelity": "incapable",
+        "stored_response_retrieval": "test_only",
+        "stored_response_deletion": "test_only",
+        "durable_tool_execution_segments": "test_only",
+        "deterministic_agent_lane_topology": "test_only",
+        "structured_input_suspension": "incapable"
+      },
+      "activation_evidence": [
+        "stored-immediate-parent-tool-segments",
+        "draft-2020-12-tool-schema-zero-effect",
+        "actual-agent-lane-isolation"
+      ],
+      "evidence_node_ids": [
+        "tests/conversation/native_openai_stored_provider_test.py::test_stored_tool_cycle_uses_only_immediate_id_and_tool_output",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_nonlocal_schema_before_effect",
+        "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_persists_only_validated_arguments",
+        "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart"
+      ]
+    }
+  ],
+  "rejected_profile_evidence": [
+    {
+      "provider_family": "openai_compatible",
+      "expected_state": "incapable",
+      "evidence_node_id": "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch"
+    }
+  ],
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": [
+      "schema_version",
+      "profile_schema_version",
+      "feature",
+      "owner",
+      "current_phase",
+      "activation_state",
+      "production_dispatch_enabled",
+      "production_advertisement_enabled",
+      "base",
+      "capability_names",
+      "capability_states",
+      "identity_dimensions",
+      "generic_compatible_state",
+      "profiles",
+      "rejected_profile_evidence"
+    ],
+    "value": "824cf01e3d6c0b2321840cb3aea2f992d5ab416c81153d697d97a64ff586ebe7"
+  }
+}

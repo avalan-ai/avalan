@@ -142,11 +142,15 @@ _ACTIVE_INTEGRATED_FIXTURES = (
 _PHASE5_PROVIDER_CONFORMANCE = "provider_conformance.phase5.json"
 _PHASE6_PROVIDER_CONFORMANCE = "provider_conformance.phase6.json"
 _PHASE7_PROVIDER_CONFORMANCE = "provider_conformance.phase7.json"
+_PHASE8_PROVIDER_CONFORMANCE = "provider_conformance.phase8.json"
 _PHASE5_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
     "c2cee698687f15d6147ba367450b68e863ec579866f6fc63982db8e73b7bf2f4"
 )
 _PHASE6_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
     "7d17cbb33d159025a874bf82a5e29236661c01664987376d219ec307db306a70"
+)
+_PHASE7_PROVIDER_CONFORMANCE_BYTE_SHA256 = (
+    "d8eb36b662f604c59589b52be2b8c972bdaef0b347a2aae2ec4d1b91ab1ec936"
 )
 _THREAT_IDS = _frozen(
     "opaque-state-disclosure",
@@ -171,6 +175,122 @@ _EVIDENCE_CLASSES = _frozen(
     "security",
     "wire",
 )
+_PHASE8_TOOL_EVIDENCE_NODES = _frozen(
+    "tests/conversation/agent_integration_e2e_test.py::"
+    "test_parent_tool_effect_failure_fences_unsafe_retry",
+    "tests/conversation/agent_integration_contract_test.py::"
+    "test_durable_tool_crash_points_have_one_safe_recovery_action",
+    "tests/conversation/agent_integration_pgsql_test.py::"
+    "test_pgsql_recovery_admission_is_exact_and_single_owner",
+    "tests/conversation/agent_integration_pgsql_test.py::"
+    "test_pgsql_tool_boundaries_recover_without_duplicate_effect",
+    "tests/conversation/native_openai_provider_validation_test.py::"
+    "test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+    "tests/conversation/native_openai_provider_validation_test.py::"
+    "test_native_function_tool_rejects_nonlocal_schema_before_effect",
+    "tests/conversation/native_openai_provider_validation_test.py::"
+    "test_native_function_tool_persists_only_validated_arguments",
+)
+_PHASE8_DURABLE_EVIDENCE_NODES = _frozen(
+    "tests/conversation/agent_integration_pgsql_test.py::"
+    "test_pgsql_recovery_admission_is_exact_and_single_owner",
+    "tests/conversation/agent_integration_pgsql_test.py::"
+    "test_pgsql_tool_boundaries_recover_without_duplicate_effect",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+    "test_fresh_worker_applies_atomic_conversation_answer_once",
+)
+_PHASE8_FRESH_PROCESS_EVIDENCE_NODES = _frozen(
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+    "test_fresh_worker_applies_atomic_conversation_answer_once",
+)
+_PHASE8_MULTI_AGENT_EVIDENCE_NODES = _frozen(
+    "tests/conversation/agent_integration_e2e_test.py::"
+    "test_parent_two_children_persist_isolation_and_restart",
+    "tests/conversation/agent_integration_e2e_test.py::"
+    "test_child_merge_rejects_wrong_provider_and_model_binding",
+    "tests/conversation/agent_integration_e2e_test.py::"
+    "test_failed_child_never_dispatches_or_publishes_parent",
+)
+_PHASE8_FAILURE_EVIDENCE = {
+    "tool_effect--direct_sdk": (
+        "tests/conversation/agent_integration_pgsql_test.py::"
+        "test_pgsql_tool_boundaries_recover_without_duplicate_effect"
+    ),
+    "tool_effect--agent_sdk": (
+        "tests/conversation/agent_integration_e2e_test.py::"
+        "test_parent_tool_effect_failure_fences_unsafe_retry"
+    ),
+    "tool_effect--stream": (
+        "tests/conversation/native_openai_provider_validation_test.py::"
+        "test_native_output_byte_limit_precedes_tool_effect_and_commit"
+    ),
+    "tool_effect--structured_input": (
+        "tests/agent/execution_wrapper_input_required_test.py::"
+        "test_default_stream_has_exact_input_required_order"
+    ),
+    "structured_input_suspension--direct_sdk": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_fresh_worker_applies_atomic_conversation_answer_once"
+    ),
+    "structured_input_suspension--agent_sdk": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_fresh_worker_applies_atomic_conversation_answer_once"
+    ),
+    "structured_input_suspension--stream": (
+        "tests/agent/execution_wrapper_input_required_test.py::"
+        "test_default_stream_has_exact_input_required_order"
+    ),
+    "structured_input_suspension--structured_input": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_atomic_suspension_commits_every_durable_surface"
+    ),
+    "tool_effect--durable_checkpoint_store": (
+        "tests/conversation/agent_integration_pgsql_test.py::"
+        "test_pgsql_tool_boundaries_recover_without_duplicate_effect"
+    ),
+    "structured_input_suspension--durable_checkpoint_store": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_fresh_worker_applies_atomic_conversation_answer_once"
+    ),
+    "durable_transaction_failure--agent_sdk": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_atomic_suspension_rolls_back_every_durable_surface"
+    ),
+    "durable_transaction_failure--structured_input": (
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+        "test_atomic_suspension_rolls_back_every_durable_surface"
+    ),
+}
+_PHASE8_AGENT_TOOL_FAILURE_SEMANTICS = {
+    "expected_dispatch_count": 1,
+    "visible_output_count": 0,
+    "tool_effect_count": 1,
+    "checkpoint_commit_count": 0,
+    "public_mapping": "absent",
+    "retry_decision": "reconcile_only",
+    "parent_state": "unchanged",
+    "public_error": "conversation_effect_boundary",
+    "reconciliation_state": "required",
+}
+_PHASE8_SCHEMA_FAILURE_EVIDENCE = {
+    "validation_before_dispatch--direct_sdk": (
+        "tests/conversation/native_openai_provider_validation_test.py::"
+        "test_native_function_tool_rejects_invalid_schema_arguments_"
+        "before_effect"
+    ),
+    "validation_before_dispatch--provider_adapter": (
+        "tests/conversation/native_openai_provider_validation_test.py::"
+        "test_native_function_tool_rejects_nonlocal_schema_before_effect"
+    ),
+    "validation_before_dispatch--agent_sdk": (
+        "tests/conversation/agent_integration_e2e_test.py::"
+        "test_public_agent_rejects_lossy_input_before_dispatch"
+    ),
+    "validation_before_dispatch--structured_input": (
+        "tests/interaction/headless_policy_test.py::"
+        "test_conversation_handoff_fails_before_non_atomic_persistence"
+    ),
+}
 _PHASE0_NODE_PAYLOAD_SHA256 = (
     "0440d0f24548c5b9ddcead0ad6f4e238416f3e0dc6683414f1eeb16dd92d046b"
 )
@@ -309,6 +429,12 @@ _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
 }
 _PHASE7_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase7.json"
+)
+_PHASE8_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase8.json"
+)
+_PHASE8_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "2ed5dc7274142e9dceef58c2049fb9732704ee63dddb370d5eda5eb7e5fcdd00"
 )
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
@@ -525,6 +651,32 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "7e1f208d3a44a756dcdeca127117c75844ce22ec935ef16b48576bf484b41211"
         ),
     },
+    8: {
+        "tests/agent/durable_continuation_resume_test.py": (
+            "759ccfe458701fe9e0ffa0a549afc0b0a0a9ec0258c2385e4c25062d946b326c"
+        ),
+        "tests/agent/execution_wrapper_input_required_test.py": (
+            "fd868276a07f8b9893641bdeadd16448c15c2336772a554b484c01149981f81e"
+        ),
+        "tests/conversation/agent_integration_contract_test.py": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ),
+        "tests/conversation/agent_integration_e2e_test.py": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ),
+        "tests/conversation/agent_integration_pgsql_test.py": (
+            "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+        ),
+        "tests/conversation/native_openai_provider_validation_test.py": (
+            "37d0e30e733e56c9e388ae0492aac931d2b98245497b4359ca9740e950c1dc74"
+        ),
+        "tests/interaction/headless_policy_test.py": (
+            "531b4a900e33ad05836c55415c587979833efb60b19019cc3d9a1c762fc06c5e"
+        ),
+        "tests/interaction/stores/conversation_atomic_pgsql_test.py": (
+            "d31c5f667fff1a4a54ed51cc0e16c8953b7c4e7126128ee1098ce5958354ee74"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -535,6 +687,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     5: "b520005336f99a95a381c18887e5d319daf71dcc9bd7e03e2cc8fde05f2143f0",
     6: "c975653c7ae9bcd020f91be6785ddeb9a28ca9e8f39fa17e0a906e2cfee1a701",
     7: "c791ea6bc92ad8ee8140bdddf2396c7f485306d946ce315723c274f654224227",
+    8: "c922e9081f5944d65b923222372029f365f65e7a7ce4350cdbe43c74d0ce9110",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -545,6 +698,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     5: "b9d2247bc0db892b1e6da8b5b718fb814a19cc2641cb3a5ec54dc9d17e4b4bc5",
     6: "9e21f629f5fa6f3023321a873af7ccd934621fb55d398e52a7aa69abd4e2b3fa",
     7: "b8fea5ce7efd5ef3f44913da597a7befec1a96084282a3524d58b807e88a2bc9",
+    8: "f7dfd4dc132cd9007d09a73a6f884688e7084324ba01773b6be585b7ad261365",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -578,6 +732,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
     7: (
         19,
         "28b06b757ec0cf38561aab854b11956b70f86d0fa52cf110af0edd26b9795144",
+    ),
+    8: (
+        21,
+        "20bb89ea58062fd7588ecab0a2a2e7f7d33ffc7c2057157ca9969c2bdfcd976d",
     ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
@@ -614,6 +772,68 @@ _FAILURE_STRUCTURE_BY_PHASE = {
         190,
         "d44224b1acbb51572b311d60297f597dfcc00145334b163c0efeef2d37c4b5ab",
     ),
+    8: (
+        19,
+        10,
+        190,
+        "d44224b1acbb51572b311d60297f597dfcc00145334b163c0efeef2d37c4b5ab",
+    ),
+}
+_PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE = {
+    0: (
+        11,
+        9,
+        99,
+        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+    ),
+    1: (
+        11,
+        9,
+        99,
+        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+    ),
+    2: (
+        11,
+        9,
+        99,
+        "c1a2958c4838c17e81a8b942d3239065b7baac7ec8085f48f8114d0532def142",
+    ),
+    3: (
+        12,
+        10,
+        120,
+        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+    ),
+    4: (
+        12,
+        10,
+        120,
+        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+    ),
+    5: (
+        12,
+        10,
+        120,
+        "0d8939931e437d01c0d240d1434d495c6dae8ce8d0b8a045d06bc2d28bede544",
+    ),
+    6: (
+        13,
+        10,
+        130,
+        "4053c880afa0398d67f1e3c5f61c540fb8e950090a592dedb695238e4e88793c",
+    ),
+    7: (
+        19,
+        10,
+        190,
+        "014ba05f2f52f96beee982018d588de7b397e3471a2a048013931a0fc2a0f9b5",
+    ),
+    8: (
+        19,
+        10,
+        190,
+        "014ba05f2f52f96beee982018d588de7b397e3471a2a048013931a0fc2a0f9b5",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
@@ -648,6 +868,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         10,
         25,
         "9949053c95e1e85ad3e1ba0bd28f6f4a6a2ed91f001ef4ee2cae30c5b7fa8fbc",
+    ),
+    8: (
+        15,
+        14,
+        29,
+        "045c3597d6633aeb595b5081e9944b52742d09fb132aae62cf6f4c73826192d8",
     ),
 }
 _PHASE0_NODE_INVENTORY = (
@@ -902,7 +1128,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase7.json"
+    return fixture_root() / "acceptance_manifest.phase8.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -951,6 +1177,7 @@ def load_manifest(path: Path) -> AcceptanceManifest:
     nodes = tuple(_acceptance_node(raw, current_phase) for raw in raw_nodes)
     _unique((node.id for node in nodes), "acceptance node ID")
     _unique((node.node_id for node in nodes), "pytest node ID")
+    _validate_phase8_semantic_axes(nodes)
     if frozenset(node.category for node in nodes) != _CATEGORIES:
         raise ConversationAcceptanceError(
             "every acceptance category must own a node"
@@ -1052,6 +1279,50 @@ def load_manifest(path: Path) -> AcceptanceManifest:
         nodes=nodes,
         replacements=replacements,
     )
+
+
+def _validate_phase8_semantic_axes(
+    nodes: tuple[AcceptanceNode, ...],
+) -> None:
+    """Reject Phase 8 evidence metadata that contradicts its test boundary."""
+    by_node_id = {
+        node.node_id: node
+        for node in nodes
+        if node.lifecycle == "active" and node.active_from_phase == 8
+    }
+    for node_id in _PHASE8_TOOL_EVIDENCE_NODES:
+        node = by_node_id.get(node_id)
+        if node is not None and node.dimensions["execution"] != ("one_tool",):
+            raise ConversationAcceptanceError(
+                "Phase 8 tool evidence must declare one_tool execution"
+            )
+    for node_id in _PHASE8_DURABLE_EVIDENCE_NODES:
+        node = by_node_id.get(node_id)
+        if node is not None and node.dimensions["local_retention"] != (
+            "durable_local",
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 PostgreSQL evidence must declare durable_local "
+                "retention"
+            )
+    for node_id in _PHASE8_FRESH_PROCESS_EVIDENCE_NODES:
+        node = by_node_id.get(node_id)
+        if node is not None and node.dimensions["lifecycle"] != (
+            "fresh_process",
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 fresh-worker evidence must declare fresh_process "
+                "lifecycle"
+            )
+    for node_id in _PHASE8_MULTI_AGENT_EVIDENCE_NODES:
+        node = by_node_id.get(node_id)
+        if node is not None and node.dimensions["execution"] != (
+            "multiple_agents_lanes",
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 multi-agent evidence must declare "
+                "multiple_agents_lanes execution"
+            )
 
 
 def load_requirements(
@@ -1276,6 +1547,8 @@ def load_failure_matrix(
         raise ConversationAcceptanceError(
             "failure matrix needs applicable and explicit non-applicable cells"
         )
+    if manifest.current_phase >= 8:
+        _validate_phase8_failure_evidence(cells, raw_cells=raw_cells)
     canonical = {
         key: value for key, value in payload.items() if key != "matrix_sha256"
     }
@@ -1295,6 +1568,48 @@ def load_failure_matrix(
     )
 
 
+def _validate_phase8_failure_evidence(
+    cells: tuple[FailureCell, ...],
+    *,
+    raw_cells: list[object],
+) -> None:
+    """Pin Phase 8 runtime and schema failure evidence independently."""
+    by_id = {cell.id: cell for cell in cells}
+    observed = {
+        cell_id: by_id[cell_id].evidence_node_id
+        for cell_id in _PHASE8_FAILURE_EVIDENCE
+    }
+    if observed != _PHASE8_FAILURE_EVIDENCE:
+        raise ConversationAcceptanceError(
+            "Phase 8 failure cells differ from exact executable evidence"
+        )
+    raw_by_id = {
+        _nonempty_string(
+            mapping(raw, "failure cell").get("id"),
+            "failure cell ID",
+        ): mapping(raw, "failure cell")
+        for raw in raw_cells
+    }
+    agent_tool = raw_by_id["tool_effect--agent_sdk"]
+    semantics = {
+        field: agent_tool.get(field)
+        for field in _PHASE8_AGENT_TOOL_FAILURE_SEMANTICS
+    }
+    if semantics != _PHASE8_AGENT_TOOL_FAILURE_SEMANTICS:
+        raise ConversationAcceptanceError(
+            "Phase 8 agent tool failure semantics contradict its durable "
+            "negative evidence"
+        )
+    schema_observed = {
+        cell_id: by_id[cell_id].evidence_node_id
+        for cell_id in _PHASE8_SCHEMA_FAILURE_EVIDENCE
+    }
+    if schema_observed != _PHASE8_SCHEMA_FAILURE_EVIDENCE:
+        raise ConversationAcceptanceError(
+            "Phase 8 schema failure cells differ from zero-effect evidence"
+        )
+
+
 def _validate_failure_structure_anchors(
     payload: dict[str, object],
     raw_boundaries: list[object],
@@ -1303,16 +1618,21 @@ def _validate_failure_structure_anchors(
     current_phase: int,
 ) -> None:
     """Validate append-only failure topology apart from mutable evidence."""
+    anchors = (
+        _PHASE8_CORRECTED_FAILURE_STRUCTURE_BY_PHASE
+        if current_phase == 8
+        else _FAILURE_STRUCTURE_BY_PHASE
+    )
     _require_phase_anchor_keys(
-        _FAILURE_STRUCTURE_BY_PHASE,
+        anchors,
         current_phase,
         "failure structure",
     )
     previous = (0, 0, 0)
     for phase in range(current_phase + 1):
-        boundary_count, surface_count, cell_count, expected_sha256 = (
-            _FAILURE_STRUCTURE_BY_PHASE[phase]
-        )
+        boundary_count, surface_count, cell_count, expected_sha256 = anchors[
+            phase
+        ]
         counts = (boundary_count, surface_count, cell_count)
         available = (
             len(raw_boundaries),
@@ -1432,6 +1752,7 @@ def verify_gate_source_isolation(
         _phase5_provider_transitions(root),
         _phase6_provider_transitions(root),
         _phase7_provider_transitions(root),
+        _phase8_provider_transitions(root),
     )
     transition_chains: dict[
         str,
@@ -2030,6 +2351,8 @@ def _validate_integrated_fixtures(
         names += (_PHASE6_PROVIDER_CONFORMANCE,)
     if current_phase >= 7:
         names += (_PHASE7_PROVIDER_CONFORMANCE,)
+    if current_phase >= 8:
+        names += (_PHASE8_PROVIDER_CONFORMANCE,)
     authoritative = fixtures.resolve() == fixture_root().resolve()
     if authoritative:
         missing = tuple(
@@ -2070,7 +2393,7 @@ def _validate_integrated_fixtures(
                 phase5,
                 phase5_path=phase5_path,
             )
-        else:
+        elif name == _PHASE7_PROVIDER_CONFORMANCE:
             phase6_path = fixtures / _PHASE6_PROVIDER_CONFORMANCE
             phase6 = _strict_mapping(
                 phase6_path,
@@ -2080,6 +2403,17 @@ def _validate_integrated_fixtures(
                 payload,
                 phase6,
                 phase6_path=phase6_path,
+            )
+        else:
+            phase7_path = fixtures / _PHASE7_PROVIDER_CONFORMANCE
+            phase7 = _strict_mapping(
+                phase7_path,
+                "Phase 7 provider conformance",
+            )
+            _validate_phase8_provider_conformance(
+                payload,
+                phase7,
+                phase7_path=phase7_path,
             )
 
 
@@ -2497,6 +2831,171 @@ def _phase7_provider_transitions(
     if set(transitions) != set(_PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS):
         raise ConversationAcceptanceError(
             "Phase 7 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase8_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact reviewed agent and tool source transitions."""
+    path = root / _PHASE8_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE8_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 8 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 8 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 8
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase8-agent-tool-provider-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE8_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 8 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/native_openai_provider_test.py::"
+            "test_native_function_cycles_use_the_coordinator_ledger"
+        ),
+        (
+            "tests/conversation/native_openai_provider_validation_test.py::"
+            "test_native_function_tool_rejects_invalid_schema_arguments_"
+            "before_effect"
+        ),
+        (
+            "tests/conversation/native_openai_provider_validation_test.py::"
+            "test_native_function_tool_rejects_nonlocal_schema_before_effect"
+        ),
+        (
+            "tests/conversation/native_openai_provider_validation_test.py::"
+            "test_native_function_tool_persists_only_validated_arguments"
+        ),
+        (
+            "tests/conversation/native_openai_provider_validation_test.py::"
+            "test_native_output_byte_limit_precedes_tool_effect_and_commit"
+        ),
+        (
+            "tests/conversation/native_openai_provider_test.py::"
+            "test_agent_turn_propagates_typed_structured_input_suspension"
+        ),
+        (
+            "tests/conversation/native_openai_stored_provider_test.py::"
+            "test_stored_tool_cycle_uses_only_immediate_id_and_tool_output"
+        ),
+        (
+            "tests/conversation/agent_integration_e2e_test.py::"
+            "test_parent_tool_effect_failure_fences_unsafe_retry"
+        ),
+        (
+            "tests/conversation/agent_integration_e2e_test.py::"
+            "test_parent_two_children_persist_isolation_and_restart"
+        ),
+        (
+            "tests/conversation/agent_integration_e2e_test.py::"
+            "test_child_merge_rejects_wrong_provider_and_model_binding"
+        ),
+        (
+            "tests/conversation/agent_integration_contract_test.py::"
+            "test_parent_kind_policy_rejects_agent_coordinator_and_store_"
+            "bypasses"
+        ),
+        (
+            "tests/conversation/agent_integration_contract_test.py::"
+            "test_agent_conversation_surfaces_are_explicit_and_fail_closed"
+        ),
+        (
+            "tests/conversation/agent_integration_pgsql_test.py::"
+            "test_pgsql_tool_boundaries_recover_without_duplicate_effect"
+        ),
+        (
+            "tests/interaction/stores/conversation_atomic_pgsql_test.py::"
+            "test_fresh_worker_applies_atomic_conversation_answer_once"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    empty_sha256 = sha256(b"").hexdigest()
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 8 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 8 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 8 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"),
+            "transition source digest",
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"),
+            "transition target digest",
+        )
+        if (
+            type(from_size) is not int
+            or from_size < 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or (from_size == 0 and from_sha256 != empty_sha256)
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 provider byte transition is invalid"
+            )
+        transitions[relative] = (
+            from_size,
+            from_sha256,
+            to_size,
+            to_sha256,
+        )
+    if len(transitions) != 44:
+        raise ConversationAcceptanceError(
+            "Phase 8 provider transition inventory is invalid"
         )
     return transitions
 
@@ -3904,6 +4403,334 @@ def _validate_phase7_provider_conformance(
     _validate_scoped_digest(payload, "Phase 7 provider conformance")
 
 
+def _validate_phase8_provider_conformance(
+    payload: dict[str, object],
+    phase7: dict[str, object],
+    *,
+    phase7_path: Path,
+) -> None:
+    """Validate exact agent tool, suspension, and lane evidence."""
+    _exact_keys(
+        payload,
+        {
+            "activation_state",
+            "base",
+            "canonical_digest",
+            "capability_names",
+            "capability_states",
+            "current_phase",
+            "feature",
+            "generic_compatible_state",
+            "identity_dimensions",
+            "owner",
+            "production_advertisement_enabled",
+            "production_dispatch_enabled",
+            "profile_schema_version",
+            "profiles",
+            "rejected_profile_evidence",
+            "schema_version",
+        },
+        "Phase 8 provider conformance",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("profile_schema_version")
+        != "conversation-provider-profile-v1"
+        or payload.get("feature") != _FEATURE
+        or payload.get("owner") != "provider_runtime"
+        or payload.get("current_phase") != 8
+        or payload.get("activation_state") != "test_only"
+        or payload.get("production_advertisement_enabled") is not False
+        or payload.get("production_dispatch_enabled") is not False
+        or payload.get("generic_compatible_state") != "incapable"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider conformance must remain exact and test-only"
+        )
+    phase7_capabilities = _string_list(
+        phase7.get("capability_names"),
+        "Phase 7 provider capability names",
+    )
+    capability_names = _string_list(
+        payload.get("capability_names"),
+        "Phase 8 provider capability names",
+    )
+    new_capabilities = (
+        "durable_tool_execution_segments",
+        "structured_input_suspension",
+        "deterministic_agent_lane_topology",
+    )
+    if capability_names != (*phase7_capabilities, *new_capabilities):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider capabilities differ from the frozen axes"
+        )
+    if _string_list(
+        payload.get("identity_dimensions"),
+        "Phase 8 provider identity dimensions",
+    ) != _string_list(
+        phase7.get("identity_dimensions"),
+        "Phase 7 provider identity dimensions",
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider identity dimensions changed"
+        )
+    if _string_list(
+        payload.get("capability_states"),
+        "Phase 8 provider capability states",
+    ) != ("test_only", "incapable"):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider capability states are invalid"
+        )
+    base = mapping(payload.get("base"), "Phase 8 provider base")
+    _exact_keys(
+        base,
+        {"path", "byte_sha256", "canonical_digest"},
+        "Phase 8 provider base",
+    )
+    phase7_digest = mapping(
+        phase7.get("canonical_digest"),
+        "Phase 7 provider canonical digest",
+    )
+    if (
+        base.get("path") != _PHASE7_PROVIDER_CONFORMANCE
+        or base.get("byte_sha256") != _PHASE7_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or sha256(phase7_path.read_bytes()).hexdigest()
+        != _PHASE7_PROVIDER_CONFORMANCE_BYTE_SHA256
+        or base.get("canonical_digest") != phase7_digest.get("value")
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 8 provider base is not the frozen Phase 7 evidence"
+        )
+    evidence_specs = (
+        (
+            (
+                "durable-tool-segment-recovery",
+                "draft-2020-12-tool-schema-zero-effect",
+                "typed-structured-input-suspension",
+                "actual-agent-lane-restart-isolation",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_provider_test.py::"
+                    "test_native_function_cycles_use_the_coordinator_ledger"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_invalid_schema_"
+                    "arguments_before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_nonlocal_schema_"
+                    "before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_persists_only_validated_"
+                    "arguments"
+                ),
+                (
+                    "tests/conversation/native_openai_provider_test.py::"
+                    "test_agent_turn_propagates_typed_structured_input_suspension"
+                ),
+                (
+                    "tests/conversation/agent_integration_pgsql_test.py::"
+                    "test_pgsql_tool_boundaries_recover_without_duplicate_"
+                    "effect"
+                ),
+                (
+                    "tests/conversation/agent_integration_e2e_test.py::"
+                    "test_parent_two_children_persist_isolation_and_restart"
+                ),
+                (
+                    "tests/conversation/agent_integration_e2e_test.py::"
+                    "test_child_merge_rejects_wrong_provider_and_model_binding"
+                ),
+            ),
+            "test_only",
+        ),
+        (
+            (
+                "streaming-provider-boundary",
+                "streaming-tool-effect-zero-commit",
+                "draft-2020-12-tool-schema-zero-effect",
+                "actual-agent-lane-isolation",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_provider_test.py::"
+                    "test_native_stream_matches_non_stream_and_closes"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_output_byte_limit_precedes_tool_effect_and_"
+                    "commit"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_invalid_schema_"
+                    "arguments_before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_nonlocal_schema_"
+                    "before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_persists_only_validated_"
+                    "arguments"
+                ),
+                (
+                    "tests/conversation/agent_integration_e2e_test.py::"
+                    "test_parent_two_children_persist_isolation_and_restart"
+                ),
+            ),
+            "incapable",
+        ),
+        (
+            (
+                "stored-immediate-parent-tool-segments",
+                "draft-2020-12-tool-schema-zero-effect",
+                "actual-agent-lane-isolation",
+            ),
+            (
+                (
+                    "tests/conversation/native_openai_stored_provider_test.py::"
+                    "test_stored_tool_cycle_uses_only_immediate_id_and_tool_output"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_invalid_schema_"
+                    "arguments_before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_rejects_nonlocal_schema_"
+                    "before_effect"
+                ),
+                (
+                    "tests/conversation/"
+                    "native_openai_provider_validation_test.py::"
+                    "test_native_function_tool_persists_only_validated_"
+                    "arguments"
+                ),
+                (
+                    "tests/conversation/agent_integration_e2e_test.py::"
+                    "test_parent_two_children_persist_isolation_and_restart"
+                ),
+            ),
+            "incapable",
+        ),
+    )
+    profiles = object_list(payload.get("profiles"), "Phase 8 profiles")
+    phase7_profiles = object_list(
+        phase7.get("profiles"),
+        "Phase 7 profiles",
+    )
+    if len(profiles) != 3 or len(phase7_profiles) != 3:
+        raise ConversationAcceptanceError(
+            "Phase 8 agent provider profile inventory is incomplete"
+        )
+    profile_keys = {
+        "profile_id",
+        "lifecycle",
+        "active_from_phase",
+        "activation_state",
+        "identity_complete",
+        "binding",
+        "capabilities",
+        "activation_evidence",
+        "evidence_node_ids",
+    }
+    for raw, old_raw, spec in zip(
+        profiles,
+        phase7_profiles,
+        evidence_specs,
+        strict=True,
+    ):
+        profile = mapping(raw, "Phase 8 provider profile")
+        old = mapping(old_raw, "Phase 7 provider profile")
+        _exact_keys(profile, profile_keys, "Phase 8 provider profile")
+        old_id = _nonempty_string(old.get("profile_id"), "Phase 7 profile ID")
+        if (
+            profile.get("profile_id") != old_id.replace("phase7", "phase8")
+            or profile.get("lifecycle") != "active"
+            or profile.get("active_from_phase") != 8
+            or profile.get("activation_state") != "test_only"
+            or profile.get("identity_complete") is not True
+            or profile.get("binding") != old.get("binding")
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 provider profile identity is invalid"
+            )
+        capabilities = mapping(
+            profile.get("capabilities"),
+            "Phase 8 provider capabilities",
+        )
+        old_capabilities = mapping(
+            old.get("capabilities"),
+            "Phase 7 provider capabilities",
+        )
+        if (
+            set(capabilities) != set(capability_names)
+            or any(
+                capabilities.get(name) != old_capabilities.get(name)
+                for name in phase7_capabilities
+            )
+            or capabilities.get("durable_tool_execution_segments")
+            != "test_only"
+            or capabilities.get("structured_input_suspension") != spec[2]
+            or capabilities.get("deterministic_agent_lane_topology")
+            != "test_only"
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 agent provider capability evidence is invalid"
+            )
+        if (
+            _string_list(
+                profile.get("activation_evidence"),
+                "Phase 8 activation evidence",
+            )
+            != spec[0]
+            or _string_list(
+                profile.get("evidence_node_ids"),
+                "Phase 8 provider evidence nodes",
+            )
+            != spec[1]
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 8 provider evidence is not independently pinned"
+            )
+    rejected = object_list(
+        payload.get("rejected_profile_evidence"),
+        "Phase 8 rejected provider evidence",
+    )
+    if rejected != [
+        {
+            "provider_family": "openai_compatible",
+            "expected_state": "incapable",
+            "evidence_node_id": (
+                "tests/conversation/native_openai_provider_test.py::"
+                "test_unproven_or_drifted_profiles_fail_without_dispatch"
+            ),
+        }
+    ]:
+        raise ConversationAcceptanceError(
+            "generic compatible agent profiles must remain incapable"
+        )
+    _validate_scoped_digest(payload, "Phase 8 provider conformance")
+
+
 def _validate_provider_header(
     payload: dict[str, object],
     label: str,
@@ -4192,20 +5019,18 @@ def _validate_replacement_transitions(
                 )
             target_requirement_sets.append(set(target.requirement_ids))
         old_requirements = set(old.requirement_ids)
-        replicated = all(
-            requirements == old_requirements
-            for requirements in target_requirement_sets
-        )
-        partitioned = (
+        exact_cover = (
             all(target_requirement_sets)
             and set().union(*target_requirement_sets) == old_requirements
-            and sum(len(value) for value in target_requirement_sets)
-            == len(old_requirements)
+            and all(
+                requirements <= old_requirements
+                for requirements in target_requirement_sets
+            )
         )
-        if not (replicated or partitioned):
+        if not exact_cover:
             raise ConversationAcceptanceError(
-                "acceptance replacement targets must replicate or exactly "
-                "partition preserved requirement ownership"
+                "acceptance replacement targets must form an exact "
+                "nonempty cover of preserved requirement ownership"
             )
 
 

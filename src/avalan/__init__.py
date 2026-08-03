@@ -103,6 +103,10 @@ def site() -> ParseResult:
 
 
 from .sdk import ActiveConversationSettings as ActiveConversationSettings
+from .sdk import (
+    AgentConversationChildBinding as AgentConversationChildBinding,
+)
+from .sdk import AgentConversationTurn as AgentConversationTurn
 from .sdk import AgentHeadlessInputPolicy as AgentHeadlessInputPolicy
 from .sdk import AgentInteractionRuntime as AgentInteractionRuntime
 from .sdk import AgentRunCancelled as AgentRunCancelled

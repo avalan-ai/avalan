@@ -1,4 +1,9 @@
 from ..cli import CommandAbortException
+from ..conversation.agent import AgentConversationSuspensionBoundary
+from ..conversation.contract import (
+    ContinuationDigest,
+    PortableContinuationReference,
+)
 from ..entities import (
     ChatSettings,
     EngineMessage,
@@ -8,6 +13,7 @@ from ..entities import (
     Input,
     Message,
     MessageRole,
+    MessageToolCall,
     Modality,
     Operation,
     OperationParameters,
@@ -16,12 +22,32 @@ from ..entities import (
     ReasoningSettings,
     ReasoningSummaryMode,
     ReasoningTag,
+    normalize_tool_arguments,
 )
 from ..event import Event, EventType
 from ..event.manager import EventManager
+from ..interaction.broker import InteractionBrokerRequest
+from ..interaction.continuation import (
+    PortableConversationCheckpointReference,
+    derive_continuation_dispatch_id,
+    derive_provider_idempotency_key,
+    portable_continuation_binding_digest,
+)
+from ..interaction.durable import DurableInteractionSuspension
+from ..interaction.entities import (
+    ContinuationId,
+    InputRequiredResult,
+    RequestState,
+)
+from ..interaction.security import enforce_task_input_questions_policy
 from ..memory.manager import MemoryManager
 from ..model.call import ModelCall, ModelCallContext
-from ..model.capability import ModelCapabilityCatalog
+from ..model.capability import (
+    ModelCapabilityCatalog,
+    ProviderCapabilityCall,
+    TaskInputCapabilityAdvertisement,
+    TaskInputCapabilityCall,
+)
 from ..model.engine import Engine
 from ..model.manager import ModelManager
 from ..model.response.text import TextGenerationResponse
@@ -29,9 +55,14 @@ from ..tool.manager import ToolManager
 from .execution import (
     AgentExecution,
     AgentExecutionStatus,
+    DurableInteractionRuntime,
+    DurableInteractionStagingContext,
+    ExecutionCorrelationError,
+    ExecutionInputRequiredError,
     ExecutionMemoryEntry,
     ModelPromptRecord,
 )
+from .orchestrator_response_contract import DurableOrchestratorResponse
 
 from abc import ABC, abstractmethod
 from asyncio import (
@@ -45,7 +76,9 @@ from asyncio import (
 )
 from contextvars import ContextVar
 from dataclasses import Field, fields, replace
-from typing import Any, Protocol, cast
+from hashlib import sha256
+from logging import getLogger
+from typing import Any, Mapping, Protocol, cast
 from uuid import UUID, uuid4
 
 _TERMINAL_EXECUTION_STATUSES = frozenset(
@@ -55,6 +88,32 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
         AgentExecutionStatus.ERRORED,
     }
 )
+
+
+class _ConversationDurableResponseState(DurableOrchestratorResponse):
+    """Expose provider-neutral state for coordinated suspension staging."""
+
+    def __init__(
+        self,
+        generation_settings: Mapping[str, object],
+        tool_loop_count: int,
+    ) -> None:
+        if not isinstance(generation_settings, Mapping):
+            raise TypeError("generation_settings must be a mapping")
+        if type(tool_loop_count) is not int or tool_loop_count < 0:
+            raise TypeError("tool_loop_count must be non-negative")
+        self._generation_settings = dict(generation_settings)
+        self._tool_loop_count = tool_loop_count
+
+    @property
+    def continuation_generation_settings(self) -> Mapping[str, object]:
+        """Return provider-neutral continuation settings."""
+        return dict(self._generation_settings)
+
+    @property
+    def continuation_tool_loop_count(self) -> int:
+        """Return completed tool cycles before suspension."""
+        return self._tool_loop_count
 
 
 class _EngineProviderCleanup:
@@ -687,6 +746,7 @@ class EngineAgent(ABC):
                 },
             )
         )
+        conversation_turn = context.conversation_turn
         model_task = ModelCall(
             engine_uri=self._engine_uri,
             model=self._model,
@@ -694,9 +754,69 @@ class EngineAgent(ABC):
             capability=capability,
             context=context,
         )
-        output = cast(
-            TextGenerationResponse, await self._model_manager(model_task)
-        )
+        if conversation_turn is None:
+            output = cast(
+                TextGenerationResponse, await self._model_manager(model_task)
+            )
+        else:
+            conversation_input = context.conversation_input
+            assert conversation_input is not None
+            try:
+                adapter = context.conversation_invocation_adapter
+                if adapter is None:
+                    conversation_result = await conversation_turn.execute(
+                        conversation_input
+                    )
+                else:
+
+                    async def invoke_model(call: object) -> object:
+                        if type(call) is not ModelCall:
+                            raise RuntimeError(
+                                "conversation adapter changed the model call"
+                            )
+                        candidate = call
+                        if (
+                            candidate.engine_uri != model_task.engine_uri
+                            or candidate.model is not model_task.model
+                            or candidate.capability
+                            is not model_task.capability
+                            or candidate.operation.input
+                            != candidate.context.input
+                            or replace(
+                                candidate.operation,
+                                input=model_task.operation.input,
+                            )
+                            != model_task.operation
+                            or replace(
+                                candidate.context,
+                                input=model_task.context.input,
+                            )
+                            != model_task.context
+                        ):
+                            raise RuntimeError(
+                                "conversation adapter changed the model call"
+                            )
+                        return await self._model_manager(candidate)
+
+                    conversation_result = await adapter.execute(
+                        conversation_turn,
+                        conversation_input,
+                        model_task,
+                        invoke_model,
+                    )
+            except AgentConversationSuspensionBoundary as boundary:
+                await self._stage_conversation_input_required(
+                    context,
+                    settings,
+                    boundary,
+                )
+                raise AssertionError("suspension staging must not return")
+            output = TextGenerationResponse(
+                lambda: conversation_result.output,
+                logger=getLogger(__name__),
+                use_async_generator=False,
+                generation_settings=settings,
+            )
         try:
             if isinstance(output, TextGenerationResponse):
                 self._retain_provider_cleanup(output, context.execution)
@@ -732,6 +852,231 @@ class EngineAgent(ABC):
             raise
 
         return output
+
+    async def _stage_conversation_input_required(
+        self,
+        context: ModelCallContext,
+        settings: GenerationSettings,
+        boundary: AgentConversationSuspensionBoundary,
+    ) -> None:
+        """Stage one coordinated request through the durable host boundary."""
+        if type(settings) is not GenerationSettings:
+            raise TypeError("settings must be generation settings")
+        execution = context.execution
+        turn = context.conversation_turn
+        capability = context.capability
+        if (
+            execution is None
+            or turn is None
+            or capability is None
+            or not isinstance(
+                execution.interaction_runtime,
+                DurableInteractionRuntime,
+            )
+        ):
+            raise RuntimeError(
+                "coordinated structured input requires a durable "
+                "interaction runtime"
+            )
+        runtime = execution.interaction_runtime
+        binding = capability.revision_binding
+        if binding is None:
+            raise RuntimeError(
+                "coordinated structured input requires an exact revision "
+                "binding"
+            )
+        provider_name = boundary.call.canonical_input.get("name")
+        provider_arguments = boundary.call.canonical_input.get("arguments")
+        call_id = boundary.call.call_id
+        if (
+            type(provider_name) is not str
+            or type(provider_arguments) is not str
+            or call_id is None
+        ):
+            raise ExecutionCorrelationError(
+                "conversation suspension changed its provider call"
+            )
+        decoded = capability.decode_call(
+            ProviderCapabilityCall(
+                call_id=str(call_id),
+                provider_name=provider_name,
+                arguments=provider_arguments,
+            ),
+            provider_family=capability.support.provider_family,
+        )
+        if (
+            type(decoded) is not TaskInputCapabilityCall
+            or decoded.advertisement
+            is not TaskInputCapabilityAdvertisement.DURABLE
+            or decoded.arguments != boundary.request.arguments
+            or str(decoded.call_id) != str(boundary.tool.call_id)
+        ):
+            raise ExecutionCorrelationError(
+                "conversation suspension is not the reserved durable call"
+            )
+        enforce_task_input_questions_policy(
+            decoded.questions,
+            "engine.conversation_input.questions",
+            surrounding_text=(
+                decoded.reason,
+                runtime.context_label or "",
+            ),
+        )
+        fingerprint = sha256(
+            repr((decoded.mode, decoded.reason, decoded.questions)).encode()
+        ).hexdigest()
+        assistant_message = Message(
+            role=MessageRole.ASSISTANT,
+            tool_calls=[
+                MessageToolCall(
+                    id=str(decoded.call_id),
+                    name=decoded.provider_name,
+                    arguments=normalize_tool_arguments(decoded.arguments),
+                )
+            ],
+        )
+        await execution.begin_interaction(
+            fingerprint,
+            decoded,
+            assistant_message,
+        )
+        conversation_unit: object | None = None
+        try:
+            continuation_id = ContinuationId(f"continuation-{uuid4()}")
+            dispatch_id = derive_continuation_dispatch_id(continuation_id)
+            provider_idempotency_key = derive_provider_idempotency_key(
+                continuation_id,
+                dispatch_id,
+            )
+            checkpoint_reference = PortableConversationCheckpointReference(
+                checkpoint_id=str(boundary.checkpoint.identity.checkpoint_id),
+                execution_segment_id=str(
+                    boundary.checkpoint.identity.execution_segment_id
+                ),
+            )
+            staging = DurableInteractionStagingContext(
+                continuation_id=continuation_id,
+                dispatch_id=dispatch_id,
+                revision_binding=binding,
+                provider_idempotency_key=provider_idempotency_key,
+                provider_call_correlation_id=str(decoded.call_id),
+                task_input_call=decoded,
+                conversation_checkpoint_reference=checkpoint_reference,
+            )
+            request_spec = InteractionBrokerRequest(
+                actor=runtime.actor,
+                origin=execution.origin,
+                mode=decoded.mode,
+                reason=decoded.reason,
+                questions=decoded.questions,
+                context_label=runtime.context_label,
+            )
+            response_state = _ConversationDurableResponseState(
+                context.engine_args,
+                sum(
+                    segment.phase.value == "tool_output"
+                    for segment in (
+                        boundary.checkpoint.content.execution_segments
+                    )
+                ),
+            )
+            durable = await runtime.stager(
+                request_spec,
+                execution=execution,
+                response=response_state,
+                stream_sequence=len(
+                    boundary.checkpoint.content.execution_segments
+                ),
+                staging=staging,
+            )
+            self._validate_conversation_durable_staging(
+                request_spec,
+                durable,
+                staging=staging,
+            )
+            continuation = durable.continuation
+            portable_reference = PortableContinuationReference(
+                continuation_id=continuation.continuation_id,
+                state_revision=continuation.state_revision,
+                digest=ContinuationDigest(
+                    portable_continuation_binding_digest(continuation)
+                ),
+                definition=continuation.definition,
+                revision_binding=continuation.revision_binding,
+            )
+            conversation_unit = await turn.stage_structured_input_suspension(
+                boundary.checkpoint,
+                portable_reference,
+            )
+            request = durable.command.request
+            required = InputRequiredResult(
+                request_id=request.request_id,
+                continuation_id=request.continuation_id,
+                detached_resumption_available=True,
+            )
+            await execution.stage_durable_input_required(request, required)
+        except BaseException:
+            if conversation_unit is not None:
+                rollback = getattr(conversation_unit, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+            if execution.status is AgentExecutionStatus.PREPARING_INPUT:
+                await execution.abandon_interaction()
+            raise
+        raise ExecutionInputRequiredError(
+            required,
+            request=request,
+            durable=durable,
+            checkpoint_id=checkpoint_reference.checkpoint_id,
+            conversation_unit=conversation_unit,
+        )
+
+    @staticmethod
+    def _validate_conversation_durable_staging(
+        request_spec: InteractionBrokerRequest,
+        durable: DurableInteractionSuspension,
+        *,
+        staging: DurableInteractionStagingContext,
+    ) -> None:
+        """Reject a stager result that changes conversation replay state."""
+        if type(durable) is not DurableInteractionSuspension:
+            raise TypeError(
+                "durable interaction stager returned an invalid suspension"
+            )
+        request = durable.command.request
+        expected_request = (
+            request_spec.actor,
+            request_spec.origin,
+            request_spec.mode,
+            request_spec.reason,
+            request_spec.questions,
+            request_spec.continuation_ttl_seconds,
+            request_spec.advisory_wait_seconds,
+        )
+        actual_request = (
+            durable.command.actor,
+            request.origin,
+            request.mode,
+            request.reason,
+            request.questions,
+            request.continuation_ttl_seconds,
+            request.advisory_wait_seconds,
+        )
+        continuation = durable.continuation
+        if (
+            actual_request != expected_request
+            or request.state is not RequestState.CREATED
+            or request.continuation_id != staging.continuation_id
+            or continuation.provider_snapshot is not None
+            or continuation.conversation_checkpoint_reference
+            != staging.conversation_checkpoint_reference
+            or continuation.revision_binding != staging.revision_binding
+            or continuation.provider_call_correlation_id
+            != staging.provider_call_correlation_id
+        ):
+            raise ExecutionCorrelationError(
+                "durable staging changed conversation replay state"
+            )
 
     async def _settle_failed_output(
         self,

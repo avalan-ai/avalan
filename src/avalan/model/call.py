@@ -1,4 +1,8 @@
 from ..agent import Specification
+from ..conversation.agent import (
+    AgentConversationInvocationAdapter,
+    AgentConversationTurn,
+)
 from ..conversation.binding import ProviderLaneBinding
 from ..conversation.contract import AuthorityScope
 from ..conversation.errors import (
@@ -38,6 +42,11 @@ class ModelCallContext:
     conversation_authority: AuthorityScope | None = None
     conversation_lane: ProviderLaneBinding | None = None
     conversation_checkpoint: ConversationCheckpoint | None = None
+    conversation_turn: AgentConversationTurn | None = None
+    conversation_input: str | None = None
+    conversation_invocation_adapter: (
+        AgentConversationInvocationAdapter | None
+    ) = None
 
     def __post_init__(self) -> None:
         configured = (
@@ -46,6 +55,33 @@ class ModelCallContext:
             self.conversation_lane is not None,
             self.conversation_checkpoint is not None,
         )
+        if self.conversation_turn is not None:
+            if (
+                type(self.conversation_turn) is not AgentConversationTurn
+                or any(configured)
+                or type(self.conversation_input) is not str
+                or not self.conversation_input.strip()
+                or (
+                    self.conversation_invocation_adapter is not None
+                    and not callable(
+                        getattr(
+                            self.conversation_invocation_adapter,
+                            "execute",
+                            None,
+                        )
+                    )
+                )
+            ):
+                raise ConversationValidationError()
+            if self.agent_id is not None and str(self.agent_id) != str(
+                self.conversation_turn.authority.agent_id
+            ):
+                raise ConversationValidationError()
+            return
+        if self.conversation_input is not None:
+            raise ConversationValidationError()
+        if self.conversation_invocation_adapter is not None:
+            raise ConversationValidationError()
         if not any(configured):
             return
         if not all(configured[:3]):
@@ -96,6 +132,9 @@ def validate_native_model_call_context(
             context.conversation_authority,
             context.conversation_lane,
             context.conversation_checkpoint,
+            context.conversation_turn,
+            context.conversation_input,
+            context.conversation_invocation_adapter,
         )
     ):
         # Native provider lanes remain intentionally dormant in Phase 4.

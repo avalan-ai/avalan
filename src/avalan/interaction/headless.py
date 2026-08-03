@@ -1,5 +1,6 @@
 """Define explicit async policies for headless task-input handling."""
 
+from ..pgsql import PgsqlAtomicSuspensionParticipant
 from .durable import DurableInteractionSuspension
 from .entities import (
     AnsweredResolution,
@@ -30,7 +31,7 @@ from asyncio import CancelledError, Future, ensure_future, sleep
 from asyncio import wait as wait_for_tasks
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field, replace
-from typing import NoReturn, Protocol, TypeAlias, final
+from typing import NoReturn, Protocol, TypeAlias, cast, final
 
 MIN_DURABLE_HANDOFF_WAIT_SECONDS = 1
 DEFAULT_DURABLE_HANDOFF_WAIT_SECONDS = 30
@@ -285,6 +286,8 @@ class DurableHandoffInputPolicy(_CancellationAwarePolicy):
     async def persist(
         self,
         suspension: DurableInteractionSuspension,
+        *,
+        conversation_unit: PgsqlAtomicSuspensionParticipant | None = None,
     ) -> InputRequest:
         """Persist and return one exact authoritative pending request."""
         if type(suspension) is not DurableInteractionSuspension:
@@ -293,7 +296,49 @@ class DurableHandoffInputPolicy(_CancellationAwarePolicy):
                 "headless.suspension",
                 "value must be a durable interaction suspension",
             )
-        request = await self.handoff(suspension)
+        reference = suspension.continuation.conversation_checkpoint_reference
+        if reference is None:
+            if conversation_unit is not None:
+                raise InputValidationError(
+                    InputErrorCode.CORRELATION_MISMATCH,
+                    "headless.conversation_unit",
+                    "non-conversation handoff cannot carry a participant",
+                )
+            request = await self.handoff(suspension)
+            return _validate_handoff_request(suspension, request)
+        if (
+            conversation_unit is None
+            or conversation_unit.checkpoint_id != reference.checkpoint_id
+            or conversation_unit.execution_segment_id
+            != reference.execution_segment_id
+            or conversation_unit.continuation_id
+            != str(suspension.continuation.continuation_id)
+            or conversation_unit.continuation_state_revision
+            != int(suspension.continuation.state_revision)
+        ):
+            raise InputValidationError(
+                InputErrorCode.CORRELATION_MISMATCH,
+                "headless.conversation_unit",
+                "conversation handoff requires its exact atomic participant",
+            )
+        atomic = getattr(self.handoff, "persist_atomic", None)
+        if not _is_async_callable(atomic):
+            raise InputValidationError(
+                InputErrorCode.UNAVAILABLE,
+                "headless.conversation_unit",
+                "durable host cannot atomically persist conversation state",
+            )
+        persist_atomic = cast(
+            Callable[
+                [
+                    DurableInteractionSuspension,
+                    PgsqlAtomicSuspensionParticipant,
+                ],
+                Awaitable[InputRequest],
+            ],
+            atomic,
+        )
+        request = await persist_atomic(suspension, conversation_unit)
         return _validate_handoff_request(suspension, request)
 
     async def wait(self) -> None:

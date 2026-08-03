@@ -1,0 +1,335 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 8,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase8-agent-tool-provider-review",
+  "reason": "Bind canonical agent, tool, structured-input, durable-task, and isolated lane execution to the frozen provider and coordinator implementations.",
+  "transitions": [
+    {
+      "path": "src/avalan/__init__.py",
+      "from_size": 10046,
+      "from_sha256": "34094438bb8b6b2b3ba6197127c6903e5f8c7dc76cc6873f61976f58d1ab7ed3",
+      "to_size": 10199,
+      "to_sha256": "b29ddd5626e1a5948771867701e91d44dcebeaf512f06f7c0841da17a3036edd"
+    },
+    {
+      "path": "src/avalan/agent/continuation.py",
+      "from_size": 66840,
+      "from_sha256": "e69eb32ad886c9c64aaae18af7dcf1cf373e5db2058015068f5c40c22af3c4f5",
+      "to_size": 76613,
+      "to_sha256": "d776a3086eb27d6c4f2df88e0beaedb9c3f3d169d7f011bb3f340daf60a34afb"
+    },
+    {
+      "path": "src/avalan/agent/continuation_stager.py",
+      "from_size": 12490,
+      "from_sha256": "319466371c1b924fa4f81ab7d5a04dd0b0e61327cabb432f5ea4cb31e213c083",
+      "to_size": 12841,
+      "to_sha256": "8b3f62e38271ca85cc11c18bb95e1e5d56fbcf0735547ba22b2a6784337fc63c"
+    },
+    {
+      "path": "src/avalan/agent/durable_runtime.py",
+      "from_size": 32471,
+      "from_sha256": "c3cc71be5f5a755df31a13b9186c49334f77b3286ee4ba5a89ed26025792f017",
+      "to_size": 32921,
+      "to_sha256": "321b92e4ed64aa75c3f54c4b4845411eb7d91ca7b12a4588c2647f08811ef559"
+    },
+    {
+      "path": "src/avalan/agent/engine.py",
+      "from_size": 38703,
+      "from_sha256": "14fc069b32c863cbcdd97efb81480244e6e4c02469d246cf0220da50607c22a2",
+      "to_size": 52517,
+      "to_sha256": "21d9cc1d8df4caa3d330a1b1ae67893ccbcc9b327033465e48978d4894897e7c"
+    },
+    {
+      "path": "src/avalan/agent/execution.py",
+      "from_size": 134396,
+      "from_sha256": "a22e6463859da4e94096720fad28b3da5f97c80641f395a52c51196a51a309a4",
+      "to_size": 136518,
+      "to_sha256": "73e1b7ce7093749d6f876a765b3b19af4ba1c1dbc6762eecbf08abab9f6af6b7"
+    },
+    {
+      "path": "src/avalan/agent/orchestrator/__init__.py",
+      "from_size": 74074,
+      "from_sha256": "4b66538a71381ade3e00a107eb8e9ddde51d585b2b3a917c41933350d5ef2121",
+      "to_size": 105053,
+      "to_sha256": "95e8249e9f8845e0940cbeec90a34a399774f1ecbd1773af19cf02566f0f37a1"
+    },
+    {
+      "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "from_size": 233473,
+      "from_sha256": "562cffb1a9e392ebaab99da87e1468688980fdaa091be53c2fe3c093585d010c",
+      "to_size": 235545,
+      "to_sha256": "0c02ad374f43185e69199d1bb10a4c404cb73c16596763df2ebcc8129c0a2962"
+    },
+    {
+      "path": "src/avalan/conversation/__init__.py",
+      "from_size": 28960,
+      "from_sha256": "98a018f55684c85faca8eac4cc0e650a7f6ab6d0068d8f18ee6fe8c7cd0a04a0",
+      "to_size": 31365,
+      "to_sha256": "36935d16f5ee5fd01bd79f87068b61f19accf7dcf3fde2eae913af5b80ec2b5d"
+    },
+    {
+      "path": "src/avalan/conversation/codec.py",
+      "from_size": 33233,
+      "from_sha256": "eb7dfd3f39946fe8bbad368f73082cb47acfcd9b130bdac51bba390e5aa3ce1a",
+      "to_size": 40971,
+      "to_sha256": "df48c8f79fc0866f1b0b235ed18b4efd03f36b8398bb3bb72ab93f25298b0893"
+    },
+    {
+      "path": "src/avalan/conversation/coordinator.py",
+      "from_size": 127460,
+      "from_sha256": "7fd15c415a3a28a9f7fa477a9c01cfc076542fce1a2fe6fbb18686151630e838",
+      "to_size": 176909,
+      "to_sha256": "8540e63b4ecb75022ae13348d0f6302bfb2f3596d9366b2d9376bfd92fab07fa"
+    },
+    {
+      "path": "src/avalan/conversation/durable_codec.py",
+      "from_size": 15379,
+      "from_sha256": "b0d03812a65cf02db15addf6e73bcf84e43bd53ed2a8293f99900e1c9bc7bd8c",
+      "to_size": 15588,
+      "to_sha256": "59079dfd5531e9e68058536af10b7aa4d287acdb2925d44406a80bb1e4e4d2e4"
+    },
+    {
+      "path": "src/avalan/conversation/execution.py",
+      "from_size": 12583,
+      "from_sha256": "d806dff61d781719b60b1fe9e0aa737a625ae8eed79b38bbfee73a70002f06b7",
+      "to_size": 26774,
+      "to_sha256": "dc5f2dd4773df5a24b1423f314f529e4468bc551a045006128b3c1f25ff27767"
+    },
+    {
+      "path": "src/avalan/conversation/providers/__init__.py",
+      "from_size": 1347,
+      "from_sha256": "c28bddfd6a1465d8539d852a7bbb0dca3e9543f8d40f03e95897b704e761098a",
+      "to_size": 1441,
+      "to_sha256": "3eb47986bc270711f9325c85f680d467b097e2e23d1476cb15cc145256bb80e0"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai.py",
+      "from_size": 59231,
+      "from_sha256": "9ccca73e880c89dd7699482b730476fd920036d559ab076a430323f775832d2b",
+      "to_size": 68407,
+      "to_sha256": "831e765abe92b2f39e63fa3c4735bb36204cdfec413bf2828984cea551492d70"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai_stored.py",
+      "from_size": 34824,
+      "from_sha256": "aed336669d63d4784f9facd901190951956f389bda16b06d033ac160a139857c",
+      "to_size": 35093,
+      "to_sha256": "a7458a083c0fc8cc5d4abcc2ec43fb51ceccc16f5da8ccf1b9eacf5f206ece3f"
+    },
+    {
+      "path": "src/avalan/conversation/runtime.py",
+      "from_size": 38477,
+      "from_sha256": "a8bf7538728adb7999d698fcc18dc116785e3dd200363d7f5bd687719871fba9",
+      "to_size": 52135,
+      "to_sha256": "e8821a589136b7241d9381a6fa3298b441457ea913f450051431518f0acf403c"
+    },
+    {
+      "path": "src/avalan/conversation/state.py",
+      "from_size": 25880,
+      "from_sha256": "1cc077709f50104307c078e7304a11782059d7fdc322d4c0d6f80d1f1f445f82",
+      "to_size": 35775,
+      "to_sha256": "415ad506ce88379d068ef9ee08fd49118d010ed91443b9668b9e1d98970053ca"
+    },
+    {
+      "path": "src/avalan/conversation/store.py",
+      "from_size": 102450,
+      "from_sha256": "92c0864f3eef0974f1eed606b802635aed6e51714bbabedfb211f2cabb010ce3",
+      "to_size": 111380,
+      "to_sha256": "99cc6586e4cd4002035330c4383f07dc215b024da87e2e309392ab6b87ac90d0"
+    },
+    {
+      "path": "src/avalan/interaction/__init__.py",
+      "from_size": 25760,
+      "from_sha256": "eb0c821dbdc84b42da74d8718287e3573e3423387bab7ef538a43bf6628c420f",
+      "to_size": 25886,
+      "to_sha256": "44e12a5b627ad8a898ee35c28e773a734c9310602d9a589b897a698844b89501"
+    },
+    {
+      "path": "src/avalan/interaction/continuation.py",
+      "from_size": 60539,
+      "from_sha256": "85ebd74aa69eae73dd178020bbae8e04fe774c75e6c3c845553a9e9a99073ae5",
+      "to_size": 61241,
+      "to_sha256": "31c276d5836c5ee7ab4b30046553477c955e95bbcff2cdfdf08a67519f4544fc"
+    },
+    {
+      "path": "src/avalan/model/call.py",
+      "from_size": 4796,
+      "from_sha256": "14e0b97dd5dbcb3e8c03f2fec53ddef07e8fa4f2bc01fab4b7a7a73ac6403a0b",
+      "to_size": 6377,
+      "to_sha256": "1192ec8cce17293da9ee2050002e155baed8723170bcc39da9d2006921bf26ee"
+    },
+    {
+      "path": "src/avalan/sdk.py",
+      "from_size": 77558,
+      "from_sha256": "00091d7b4092444777217918e04a30116792fa88617d3e80857a4e16a84b042b",
+      "to_size": 79420,
+      "to_sha256": "475cdbd0b3bfd54fb2d3d2184533e3f0a8accb11d99ee867d36f8e827cee075c"
+    },
+    {
+      "path": "tests/agent/durable_continuation_resume_test.py",
+      "from_size": 148726,
+      "from_sha256": "759ccfe458701fe9e0ffa0a549afc0b0a0a9ec0258c2385e4c25062d946b326c",
+      "to_size": 165025,
+      "to_sha256": "844b19047a150df3e148b771b55ef758a96f54a5d20ce648ffb283adebe0467b"
+    },
+    {
+      "path": "tests/agent/execution_wrapper_input_required_test.py",
+      "from_size": 70746,
+      "from_sha256": "fd868276a07f8b9893641bdeadd16448c15c2336772a554b484c01149981f81e",
+      "to_size": 74612,
+      "to_sha256": "2dcdae56699ea1fa7903f6897c51c0a3b6c6222cba3c0260b7c9dfb572d2e81e"
+    },
+    {
+      "path": "tests/conversation/native_openai_provider_test.py",
+      "from_size": 40120,
+      "from_sha256": "efc8b5908542e8c9cabf5da3aabe991cff52d7a57f06b7a5c57f2062a48bdc60",
+      "to_size": 65100,
+      "to_sha256": "a19fdeed54472fb58a59dece74010ff85d25f0fb4b1db3935f88a6455c3bc592"
+    },
+    {
+      "path": "tests/conversation/native_openai_stored_provider_test.py",
+      "from_size": 63776,
+      "from_sha256": "9688ce9407c1b33940aafec26d1a108b74c59579ee7d0e77bf79a013b75723ef",
+      "to_size": 64266,
+      "to_sha256": "0338a527a9f982037d71ab033523ae87bc5d2035b4ffbd699a4b11bf3aaeef7d"
+    },
+    {
+      "path": "tests/conversation/phase6_validation_test.py",
+      "from_size": 69226,
+      "from_sha256": "43c337c9f430a36c2472b2b5f40f5d5513b804c86d71e961afd2724f7b2a2d08",
+      "to_size": 69736,
+      "to_sha256": "7368c52da284c26a6413c34fb931f47482240182e1b04f15745eea8f526dcaa1"
+    },
+    {
+      "path": "tests/interaction/stores/conversation_atomic_pgsql_test.py",
+      "from_size": 15055,
+      "from_sha256": "d31c5f667fff1a4a54ed51cc0e16c8953b7c4e7126128ee1098ce5958354ee74",
+      "to_size": 31309,
+      "to_sha256": "485056d0126b70ec0903dec3a90967cd7f999237ac1a4c1f3dde79157d9fa816"
+    },
+    {
+      "path": "src/avalan/conversation/agent.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 39216,
+      "to_sha256": "dd55e149f724b772e405b7c5615983bbabe6a7fefbf9065cf55f1146668e8bbc"
+    },
+    {
+      "path": "tests/conversation/agent_integration_contract_test.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 37613,
+      "to_sha256": "220a35d7f920094502ddd4330f683095223481e7ed75cc23d84af04e568c7cc9"
+    },
+    {
+      "path": "tests/conversation/agent_integration_pgsql_test.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 18866,
+      "to_sha256": "da91301a8f19175c550fc97b1523951983550bdf08a32bc876f8d01cd7508bb5"
+    },
+    {
+      "path": "src/avalan/agent/conversation_child.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 3203,
+      "to_sha256": "79624f08b7f5b9da240a330306dfb75e4d4941038760fcc2975f61a0fa92bf8a"
+    },
+    {
+      "path": "src/avalan/agent/conversation_trace.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 1561,
+      "to_sha256": "b2a0fe4d239e96083891ceb4b700efa5604c8492809a8bd1bb557bbe924cf4a0"
+    },
+    {
+      "path": "src/avalan/conversation/protocols.py",
+      "from_size": 21895,
+      "from_sha256": "35a00f98479afca3182663e9e2a8b8199b324a703650ffa6e8636b0b769a46ba",
+      "to_size": 22227,
+      "to_sha256": "262c032ff36fb216b03d47dbb4a8c2c9c383dcaa48e844eeef3c2c3f472e0505"
+    },
+    {
+      "path": "src/avalan/conversation/stores/pgsql.py",
+      "from_size": 193033,
+      "from_sha256": "20bcfc86a6d5a66a5fb6089ddf76e9598c3765ca05b2e596ae3a84469cf602e3",
+      "to_size": 199994,
+      "to_sha256": "eb485a39ef6708a481339815676b97e673583a16205c605ad559f2593b56936e"
+    },
+    {
+      "path": "src/avalan/interaction/headless.py",
+      "from_size": 15274,
+      "from_sha256": "f6066dda523cf2f0e34fe9b6891778da687ee466aae33324576a4291eb9f6ce5",
+      "to_size": 17260,
+      "to_sha256": "2db17b279842022ffd2bdb33926eba7984a095ef3faf2a4a90f146860e697032"
+    },
+    {
+      "path": "src/avalan/task/durable_agent.py",
+      "from_size": 5301,
+      "from_sha256": "67350d3514fc69683405c92852cbbcc7f4cdb17f2a82bf1a4a4569c06d461997",
+      "to_size": 10977,
+      "to_sha256": "773ce8ed457bb6e0525bd8809c79cfa5288965299d8f68fa6e72bb98133017a9"
+    },
+    {
+      "path": "src/avalan/task/targets/agent.py",
+      "from_size": 52863,
+      "from_sha256": "6cc96ab7b3df3f4c75f77bd46ae76181d3542db5499d388203297ac0dc8aa272",
+      "to_size": 53920,
+      "to_sha256": "658f5ea93ca0c41c0c293251043a4b73c1e24d8da01e96f60c3271d6d0a49501"
+    },
+    {
+      "path": "tests/conversation/agent_integration_e2e_test.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 55009,
+      "to_sha256": "d47bae5836f139be483381232d17a51e6b0caac2082afaf60b7f96f88f680af6"
+    },
+    {
+      "path": "tests/conversation/native_openai_provider_validation_test.py",
+      "from_size": 93865,
+      "from_sha256": "37d0e30e733e56c9e388ae0492aac931d2b98245497b4359ca9740e950c1dc74",
+      "to_size": 98204,
+      "to_sha256": "c6a9a8f786c293df7d4e8571cd16c6cfc587bf9ed75e938c217c36378f55da3c"
+    },
+    {
+      "path": "tests/interaction/headless_policy_test.py",
+      "from_size": 41457,
+      "from_sha256": "531b4a900e33ad05836c55415c587979833efb60b19019cc3d9a1c762fc06c5e",
+      "to_size": 43528,
+      "to_sha256": "0c038c4859717bcd53ec4e9cfb82d26607a85946cd777a489991747fe4e6ff80"
+    },
+    {
+      "path": "tests/task/targets/agent_target_test.py",
+      "from_size": 180291,
+      "from_sha256": "23a7077f6331152f4eb367dfad63f9ed5d1d4fd31fe17fbfbcb7856ef82b18c0",
+      "to_size": 182154,
+      "to_sha256": "5ae7a8070d8afaf651d7c16831738a62f48f86e716efecf99d077dbab2e04d79"
+    },
+    {
+      "path": "tests/conversation/pgsql_store_test.py",
+      "from_size": 71441,
+      "from_sha256": "b585ff0ad94903b254b674112adadd55f7e2c9b42c69e312508288c7c88b6edb",
+      "to_size": 71550,
+      "to_sha256": "4eaf7c3ee9f26be4400befaf88c2f6b688c66dd3af0d7054a9d56e1c8eb76cc8"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/native_openai_provider_test.py::test_native_function_cycles_use_the_coordinator_ledger",
+    "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_invalid_schema_arguments_before_effect",
+    "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_rejects_nonlocal_schema_before_effect",
+    "tests/conversation/native_openai_provider_validation_test.py::test_native_function_tool_persists_only_validated_arguments",
+    "tests/conversation/native_openai_provider_validation_test.py::test_native_output_byte_limit_precedes_tool_effect_and_commit",
+    "tests/conversation/native_openai_provider_test.py::test_agent_turn_propagates_typed_structured_input_suspension",
+    "tests/conversation/native_openai_stored_provider_test.py::test_stored_tool_cycle_uses_only_immediate_id_and_tool_output",
+    "tests/conversation/agent_integration_e2e_test.py::test_parent_tool_effect_failure_fences_unsafe_retry",
+    "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+    "tests/conversation/agent_integration_e2e_test.py::test_child_merge_rejects_wrong_provider_and_model_binding",
+    "tests/conversation/agent_integration_contract_test.py::test_parent_kind_policy_rejects_agent_coordinator_and_store_bypasses",
+    "tests/conversation/agent_integration_contract_test.py::test_agent_conversation_surfaces_are_explicit_and_fail_closed",
+    "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
+  ],
+  "canonical_sha256": "2ed5dc7274142e9dceef58c2049fb9732704ee63dddb370d5eda5eb7e5fcdd00"
+}

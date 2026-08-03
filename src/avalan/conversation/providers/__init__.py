@@ -24,6 +24,9 @@ from .openai import (
 from .openai import (
     native_openai_compaction_policy_digest as native_openai_compaction_policy_digest,  # noqa: E501
 )
+from .openai import (
+    request_agent_structured_input as request_agent_structured_input,
+)
 from .openai_stored import (
     NativeOpenAIStoredExecution as NativeOpenAIStoredExecution,
 )

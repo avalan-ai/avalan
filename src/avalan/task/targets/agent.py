@@ -27,6 +27,7 @@ from ...model.file_delivery import (
     LocalFileDeliveryProfile,
     resolve_file_delivery_profile,
 )
+from ...pgsql import PgsqlAtomicSuspensionParticipant
 from ...tool.context import ToolSettingsContext
 from ..artifact import ArtifactStoreError
 from ..context import (
@@ -1417,14 +1418,41 @@ def _suspended_agent_target_outcome(
         raise ExecutionCorrelationError(
             "durable replay state requires a durable task runtime"
         ) from error
-    return suspended_task_target_outcome(
-        error.result,
-        checkpoint_id=(
+    reference = (
+        durable.continuation.conversation_checkpoint_reference
+        if durable is not None
+        else None
+    )
+    conversation_unit = cast(
+        PgsqlAtomicSuspensionParticipant | None,
+        error.conversation_unit,
+    )
+    checkpoint_id: str | None
+    if reference is not None:
+        if (
+            error.checkpoint_id != reference.checkpoint_id
+            or conversation_unit is None
+            or conversation_unit.checkpoint_id != reference.checkpoint_id
+        ):
+            raise ExecutionCorrelationError(
+                "conversation suspension handoff is incomplete"
+            ) from error
+        checkpoint_id = error.checkpoint_id
+    else:
+        if error.checkpoint_id is not None or conversation_unit is not None:
+            raise ExecutionCorrelationError(
+                "non-conversation suspension carried conversation state"
+            ) from error
+        checkpoint_id = (
             str(durable.continuation.continuation_id)
             if durable is not None
             else None
-        ),
+        )
+    return suspended_task_target_outcome(
+        error.result,
+        checkpoint_id=checkpoint_id,
         durable=durable,
+        conversation_unit=conversation_unit,
     )
 
 

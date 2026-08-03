@@ -1,5 +1,10 @@
 """Coordinate deterministic fake-lane conversation execution."""
 
+from .agent import (
+    AgentConversationLaneInvocation,
+    AgentConversationLaneInvocationResult,
+    AgentConversationSuspensionBoundary,
+)
 from .binding import (
     ConversationCapability,
     ConversationCapabilityProfile,
@@ -24,7 +29,9 @@ from .contract import (
     IdempotencyDisposition,
     LogicalTurnId,
     NamedHeadRevision,
+    PortableContinuationReference,
     ProviderLaneId,
+    ProviderLaneOwnerKind,
     PublicResponseId,
     RequestIdempotencyIdentity,
     RetryRule,
@@ -47,11 +54,20 @@ from .errors import (
     DurableConversationErrorCode,
 )
 from .execution import (
+    AgentStructuredInputRequested,
     ConversationExecutionReservation,
+    DurableToolRecoveryAction,
+    DurableToolRecoveryAdmission,
+    ProviderExecutionSegment,
+    ProviderExecutionSegmentPhase,
     ProviderLaneExecutionAttestation,
     ProviderLaneExecutionReceipt,
     ProviderLaneExecutionReservation,
     ProviderLaneExecutionStage,
+    ProviderToolExecution,
+    ToolEffectPolicy,
+    ToolExecutionPhase,
+    durable_tool_recovery_action,
     provider_lane_execution_receipt,
 )
 from .fakes import (
@@ -77,6 +93,7 @@ from .items import (
     ProviderItemLedger,
     ProviderItemPhase,
     VisibleTranscript,
+    VisibleTranscriptEntry,
     provider_item_byte_count,
     validate_provider_item_sequence,
 )
@@ -95,6 +112,7 @@ from .protocols import (
     ConversationPublisher,
     ConversationRetryWaiter,
     ConversationStore,
+    ConversationUnitOfWork,
     CoordinatorBoundaryHook,
     FirstStoredProviderPlan,
     ProviderPlan,
@@ -133,6 +151,8 @@ from .runtime import (
     ResetAdvance,
     StoreCloseDisposition,
     StoreCloseResolution,
+    conversation_run_request_from_recovery_payload,
+    conversation_run_request_recovery_payload,
     request_operation,
 )
 from .settings import (
@@ -159,8 +179,12 @@ from .state import (
     StandaloneCompactCheckpointCandidate,
     StatelessProviderLaneSnapshot,
     StoredProviderLaneSnapshot,
+    SuspensionCheckpointCandidate,
+    is_standalone_compact_bridge,
+    validate_checkpoint_parent_kind,
 )
 from .value import (
+    ProviderCallId,
     ProviderItemId,
     ProviderItemIndex,
     ProviderItemOrder,
@@ -171,10 +195,10 @@ from .value import (
 
 from asyncio import CancelledError, Task, create_task, wait
 from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
-from inspect import iscoroutinefunction
+from inspect import isawaitable, iscoroutinefunction
 from typing import TypeAlias, final
 
 
@@ -514,6 +538,33 @@ class _DispatchProgress:
 
 
 @final
+@dataclass(slots=True)
+class _SegmentExecutionContext:
+    """Own private durable segments for one outward execution attempt."""
+
+    request: ConversationRunRequest
+    idempotency: RequestIdempotencyIdentity
+    segments: list[ProviderExecutionSegment]
+    visible_transcript: VisibleTranscript
+    lane_snapshots: dict[ProviderLaneId, ProviderLaneSnapshot]
+
+    def __post_init__(self) -> None:
+        if (
+            type(self.request) is not ConversationRunRequest
+            or type(self.idempotency) is not RequestIdempotencyIdentity
+            or type(self.segments) is not list
+            or type(self.visible_transcript) is not VisibleTranscript
+            or type(self.lane_snapshots) is not dict
+            or any(
+                lane_id != snapshot.lane_id
+                for lane_id, snapshot in self.lane_snapshots.items()
+            )
+            or self.idempotency.authority != self.request.semantics.authority
+        ):
+            raise ConversationValidationError()
+
+
+@final
 @dataclass(frozen=True, slots=True, kw_only=True)
 class _CompletedStoredProviderResponse:
     """Retain one completed private response until checkpoint commit."""
@@ -826,6 +877,170 @@ class RunScopedConversationCoordinator:
             request,
             streaming=False,
             stored_provider_resolver=stored_provider_resolver,
+        )
+
+    async def execute_agent(
+        self,
+        request: ConversationRunRequest,
+        lane_invocations: tuple[AgentConversationLaneInvocation, ...],
+    ) -> AtomicCommitReceipt:
+        """Execute callbacks scoped to one prepared agent invocation."""
+        if (
+            type(lane_invocations) is not tuple
+            or not lane_invocations
+            or any(
+                type(item) is not AgentConversationLaneInvocation
+                for item in lane_invocations
+            )
+        ):
+            raise ConversationValidationError()
+        lane_ids = tuple(item.lane_id for item in lane_invocations)
+        if len(lane_ids) != len(set(lane_ids)) or set(lane_ids) != {
+            lane.lane_id for lane in request.lanes
+        }:
+            raise ConversationValidationError()
+        for invocation in lane_invocations:
+            runtime = self._lanes.get(invocation.lane_id)
+            if runtime is None or invocation.binding != runtime.binding:
+                raise ConversationBindingDriftError()
+        return await self._run(
+            request,
+            streaming=False,
+            lane_invocations={item.lane_id: item for item in lane_invocations},
+        )
+
+    async def recover_durable_tool_execution(
+        self,
+        checkpoint_id: CheckpointId,
+        authority: AuthorityScope,
+    ) -> AtomicCommitReceipt:
+        """Recover one exact durable tool suffix through outward commit."""
+        validate_identifier(checkpoint_id, "checkpoint_id")
+        if self._closed or type(authority) is not AuthorityScope:
+            raise ConversationValidationError()
+        execution_token = self._activate_execution()
+        owner_token: str | None = None
+        committed = False
+        identity: RequestIdempotencyIdentity | None = None
+        try:
+            resolved_authority = await self._resolver.resolve()
+            if resolved_authority != authority:
+                raise ConversationAuthorizationError()
+            checkpoint = await self._store.load(checkpoint_id, authority)
+            segments = checkpoint.content.execution_segments
+            integrity = checkpoint.integrity
+            if (
+                checkpoint.kind
+                is not CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+                or integrity is None
+                or not segments
+                or any(
+                    segment.recovery_request is None for segment in segments
+                )
+            ):
+                raise ConversationValidationError()
+            recovery_request = segments[0].recovery_request
+            assert recovery_request is not None
+            if any(
+                segment.recovery_request != recovery_request
+                for segment in segments
+            ):
+                raise ConversationConflictError()
+            action = durable_tool_recovery_action(segments)
+            request = conversation_run_request_from_recovery_payload(
+                recovery_request,
+                authority=authority,
+                retention=checkpoint.retention,
+                lane_topology=checkpoint.content.lane_topology,
+                idempotency_key=segments[0].idempotency_key,
+            )
+            identity = self._idempotency(request)
+            if (
+                identity.request_digest != segments[0].request_digest
+                or checkpoint.identity.conversation_id
+                != request.identity.conversation_id
+                or checkpoint.identity.logical_turn_id
+                != request.identity.logical_turn_id
+            ):
+                raise ConversationConflictError()
+            self._validate_request_lane_authority(request, authority)
+            resolution_parent = await self._parent_for_runtime_resolution(
+                request,
+                authority,
+            )
+            resolved_runtimes = await self._resolve_lane_runtimes(
+                request,
+                resolution_parent,
+                None,
+            )
+            execution_reservation = self._execution_reservation(
+                request,
+                identity,
+                resolved_runtimes,
+            )
+            admission = DurableToolRecoveryAdmission(
+                checkpoint_id=checkpoint.identity.checkpoint_id,
+                checkpoint_integrity=integrity.digest,
+                idempotency=identity,
+                binding=segments[-1].binding,
+                action=action,
+                segment_count=len(segments),
+            )
+            lease = await self._store.admit_tool_recovery(
+                admission,
+                execution_reservation,
+            )
+            owner_token = lease.owner_token
+            parent = await self._resolve_parent(request, authority)
+            plans = self._plan_lanes(
+                request,
+                parent,
+                streaming=False,
+                runtimes=resolved_runtimes,
+            )
+            self._validate_limits_before_dispatch(request, parent, plans)
+            await self._allocate(request, owner_token, authority)
+            receipt = await self._recover_native_tool_suffix(
+                request=request,
+                parent=parent,
+                checkpoint=checkpoint,
+                segments=segments,
+                action=action,
+                plans=plans,
+                execution_reservation=execution_reservation,
+                owner_token=owner_token,
+            )
+            committed = True
+            return receipt
+        except BaseException:
+            if (
+                owner_token is not None
+                and not committed
+                and identity is not None
+            ):
+                await self._rollback(
+                    identity,
+                    owner_token,
+                    ambiguous=True,
+                )
+            raise
+        finally:
+            self._active_attempts.discard(execution_token)
+
+    async def stage_structured_input_suspension(
+        self,
+        checkpoint: ConversationCheckpoint,
+        continuation: PortableContinuationReference,
+    ) -> ConversationUnitOfWork:
+        """Stage one exact checkpoint/portable-continuation atomic unit."""
+        if self._closed:
+            raise ConversationTransitionError()
+        return await self._store.stage(
+            SuspensionCheckpointCandidate(
+                checkpoint=checkpoint,
+                continuation=continuation,
+            )
         )
 
     async def stream(
@@ -1165,10 +1380,24 @@ class RunScopedConversationCoordinator:
         streaming: bool,
         sink: ConversationProviderStateSink | None = None,
         stored_provider_resolver: StoredProviderResolver | None = None,
+        lane_invocations: (
+            Mapping[
+                ProviderLaneId,
+                AgentConversationLaneInvocation,
+            ]
+            | None
+        ) = None,
     ) -> AtomicCommitReceipt:
         if self._closed or type(request) is not ConversationRunRequest:
             raise ConversationValidationError()
         if sink is not None and not streaming:
+            raise ConversationValidationError()
+        if lane_invocations is not None and (
+            streaming
+            or sink is not None
+            or set(lane_invocations)
+            != {lane.lane_id for lane in request.lanes}
+        ):
             raise ConversationValidationError()
         if (
             stored_provider_resolver is not None
@@ -1204,12 +1433,7 @@ class RunScopedConversationCoordinator:
             authority = await self._resolver.resolve()
             if authority != request.semantics.authority:
                 raise ConversationAuthorizationError()
-            if any(
-                (runtime := self._lanes.get(lane_request.lane_id)) is not None
-                and runtime.binding.agent_id != authority.agent_id
-                for lane_request in request.lanes
-            ):
-                raise ConversationAuthorizationError()
+            self._validate_request_lane_authority(request, authority)
             await self._hook.reach(
                 CoordinatorAwaitBoundary.RESERVE_IDEMPOTENCY
             )
@@ -1288,16 +1512,19 @@ class RunScopedConversationCoordinator:
                 snapshots,
                 output_candidates,
                 execution_attestations,
+                execution_segments,
             ) = await self._dispatch_lanes(
                 plans,
                 execution_reservation=execution_reservation,
                 owner_token=owner_token,
                 authority=authority,
-                identity=request.identity,
+                request=request,
+                parent=parent,
                 streaming=streaming,
                 progress=progress,
                 sink=sink_owner,
                 completed_stored=completed_stored,
+                lane_invocations=lane_invocations,
             )
             if request.semantics.operation is ConversationOperation.COMPACT:
                 self._validate_compact_outputs(output_candidates)
@@ -1305,11 +1532,21 @@ class RunScopedConversationCoordinator:
                 await sink_owner.finalize(output_candidates)
                 await sink_owner.cleanup()
             now = await self._clock.now()
+            agent_visible_delta = (
+                self._agent_child_visible_delta(
+                    request,
+                    output_candidates,
+                )
+                if lane_invocations is not None
+                else ()
+            )
             candidate = build_checkpoint_candidate(
                 request,
                 parent=parent,
                 completed_lanes=snapshots,
                 created_at=now,
+                execution_segments=execution_segments,
+                additional_visible_delta=agent_visible_delta,
             )
             commit = AtomicConversationCommit(
                 candidate=candidate,
@@ -1399,7 +1636,10 @@ class RunScopedConversationCoordinator:
             )
             quarantine_error: BaseException | None = None
             if owner_token is not None and not committed:
-                if completed_stored:
+                if completed_stored and not isinstance(
+                    exc,
+                    AgentConversationSuspensionBoundary,
+                ):
                     try:
                         await self._persist_completed_upstream_quarantine(
                             request,
@@ -1413,19 +1653,25 @@ class RunScopedConversationCoordinator:
                         identity,
                         owner_token,
                         ambiguous=(
-                            isinstance(
+                            not isinstance(
                                 exc,
-                                ConversationAmbiguousDispatchError,
+                                AgentConversationSuspensionBoundary,
                             )
-                            or progress.may_have_dispatched
-                            and not isinstance(
-                                exc,
-                                ConversationProviderResponseError,
-                            )
-                            and not (
-                                isinstance(exc, ConversationError)
-                                and exc.boundary
-                                is FailureBoundary.PROVIDER_REJECTION
+                            and (
+                                isinstance(
+                                    exc,
+                                    ConversationAmbiguousDispatchError,
+                                )
+                                or progress.may_have_dispatched
+                                and not isinstance(
+                                    exc,
+                                    ConversationProviderResponseError,
+                                )
+                                and not (
+                                    isinstance(exc, ConversationError)
+                                    and exc.boundary
+                                    is FailureBoundary.PROVIDER_REJECTION
+                                )
                             )
                         ),
                     )
@@ -1644,7 +1890,53 @@ class RunScopedConversationCoordinator:
             idempotency=idempotency,
             identity=request.identity,
             lanes=tuple(lanes),
+            authorized_agent_ids=(
+                ()
+                if request.lane_topology is None
+                else tuple(
+                    entry.agent_id for entry in request.lane_topology.entries
+                )
+            ),
         )
+
+    def _validate_request_lane_authority(
+        self,
+        request: ConversationRunRequest,
+        authority: AuthorityScope,
+    ) -> None:
+        """Authorize child lanes only through exact persisted topology."""
+        topology = request.lane_topology
+        if topology is None:
+            if any(
+                (runtime := self._lanes.get(lane_request.lane_id)) is not None
+                and runtime.binding.agent_id != authority.agent_id
+                for lane_request in request.lanes
+            ):
+                raise ConversationAuthorizationError()
+            return
+        roots = tuple(
+            entry
+            for entry in topology.entries
+            if entry.owner_kind
+            in {
+                ProviderLaneOwnerKind.DIRECT_MODEL,
+                ProviderLaneOwnerKind.PARENT_AGENT,
+            }
+            and entry.agent_id == authority.agent_id
+        )
+        if not roots:
+            raise ConversationAuthorizationError()
+        for lane_request in request.lanes:
+            runtime = self._lanes.get(lane_request.lane_id)
+            if runtime is None:
+                continue
+            entry = topology.entry(lane_request.lane_id)
+            if (
+                runtime.binding.agent_id != entry.agent_id
+                or runtime.binding.integrity_digest != entry.binding_digest
+                or runtime.retention_policy != entry.retention_policy
+            ):
+                raise ConversationAuthorizationError()
 
     async def _parent_for_runtime_resolution(
         self,
@@ -1708,6 +2000,33 @@ class RunScopedConversationCoordinator:
         parent = await self._store.load(parent_id, authority)
         if isinstance(advance, ResetAdvance):
             return None
+        child_kind = (
+            CheckpointKind.STANDALONE_COMPACT_RESULT
+            if request.semantics.operation is ConversationOperation.COMPACT
+            else (
+                CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+                if request.boundary
+                is ConversationCommitBoundary.INTERNAL_SEGMENT
+                else CheckpointKind.COMPLETED_OUTWARD_TURN
+            )
+        )
+        compact_source = None
+        if (
+            parent.kind is CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            and parent.identity.parent_checkpoint_id is not None
+        ):
+            compact_source = await self._store.load(
+                parent.identity.parent_checkpoint_id,
+                authority,
+            )
+        validate_checkpoint_parent_kind(
+            child_kind,
+            parent.kind,
+            compact_continuation=is_standalone_compact_bridge(
+                parent,
+                compact_source,
+            ),
+        )
         identity = request.identity
         if (
             identity.conversation_id != parent.identity.conversation_id
@@ -1932,6 +2251,37 @@ class RunScopedConversationCoordinator:
                         runtime.binding.transport,
                     )
 
+    @staticmethod
+    def _agent_child_visible_delta(
+        request: ConversationRunRequest,
+        outputs: tuple[ProviderLaneOutputCandidate, ...],
+    ) -> tuple[VisibleTranscriptEntry, ...]:
+        """Project only child final messages in frozen topology order."""
+        topology = request.lane_topology
+        if topology is None:
+            raise ConversationValidationError()
+        by_lane = {output.lane_id: output for output in outputs}
+        if len(by_lane) != len(outputs):
+            raise ConversationValidationError()
+        entries: list[VisibleTranscriptEntry] = []
+        for lane in topology.entries:
+            if lane.owner_kind is not ProviderLaneOwnerKind.CHILD_AGENT:
+                continue
+            output = by_lane.get(lane.lane_id)
+            if (
+                output is None
+                or output.binding.integrity_digest != lane.binding_digest
+            ):
+                raise ConversationBindingDriftError()
+            entries.extend(output.public_output.items)
+        visible = tuple(entries)
+        if (
+            sum(len(entry.content.encode("utf-8")) for entry in visible)
+            > 1_048_576
+        ):
+            raise ConversationValidationError()
+        return visible
+
     async def _allocate(
         self,
         request: ConversationRunRequest,
@@ -1958,20 +2308,54 @@ class RunScopedConversationCoordinator:
         execution_reservation: ConversationExecutionReservation,
         owner_token: str,
         authority: AuthorityScope,
-        identity: CheckpointIdentity,
+        request: ConversationRunRequest,
+        parent: ConversationCheckpoint | None,
         streaming: bool,
         progress: _DispatchProgress,
         sink: _ProviderStateSinkOwner | None,
         completed_stored: list[_CompletedStoredProviderResponse],
+        lane_invocations: (
+            Mapping[
+                ProviderLaneId,
+                AgentConversationLaneInvocation,
+            ]
+            | None
+        ) = None,
     ) -> tuple[
         tuple[ProviderLaneSnapshot, ...],
         tuple[ProviderLaneOutputCandidate, ...],
         tuple[ProviderLaneExecutionAttestation, ...],
+        tuple[ProviderExecutionSegment, ...],
     ]:
         snapshots: list[ProviderLaneSnapshot] = []
         outputs: list[ProviderLaneOutputCandidate] = []
         attestations: list[ProviderLaneExecutionAttestation] = []
+        segment_context = _SegmentExecutionContext(
+            request=request,
+            idempotency=execution_reservation.idempotency,
+            segments=[],
+            visible_transcript=VisibleTranscript(
+                entries=(
+                    request.visible_delta
+                    if parent is None
+                    else parent.content.visible_transcript.entries
+                    + request.visible_delta
+                )
+            ),
+            lane_snapshots={
+                lane.lane_id: lane
+                for lane in (
+                    parent.content.lanes if parent is not None else ()
+                )
+                if lane.retention_policy is ChildLaneRetentionPolicy.RETAIN
+            },
+        )
         for lane_request, runtime, plan in plans:
+            invocation = (
+                lane_invocations.get(lane_request.lane_id)
+                if lane_invocations is not None
+                else None
+            )
             result = await self._dispatch_complete_lane(
                 runtime,
                 plan,
@@ -1979,6 +2363,8 @@ class RunScopedConversationCoordinator:
                 progress=progress,
                 sink=sink,
                 completed_stored=completed_stored,
+                segment_context=segment_context,
+                lane_invocation=invocation,
             )
             if lane_request.mode is ConversationMode.STORED:
                 _remember_completed_stored_response(
@@ -1989,7 +2375,7 @@ class RunScopedConversationCoordinator:
             scope = ProviderLaneOutputScope.CURRENT_CALL
             execution_receipt = provider_lane_execution_receipt(
                 authority=authority,
-                identity=identity,
+                identity=request.identity,
                 binding=runtime.binding,
                 mode=lane_request.mode,
                 scope=scope,
@@ -1998,15 +2384,15 @@ class RunScopedConversationCoordinator:
                 usage=result.usage,
                 upstream_response_id=result.upstream_response_id,
             )
-            snapshots.append(
-                self._lane_snapshot(
-                    lane_request,
-                    runtime,
-                    plan,
-                    result,
-                    execution_receipt,
-                )
+            snapshot = self._lane_snapshot(
+                lane_request,
+                runtime,
+                plan,
+                result,
+                execution_receipt,
             )
+            snapshots.append(snapshot)
+            segment_context.lane_snapshots[snapshot.lane_id] = snapshot
             output = ProviderLaneOutputCandidate(
                 lane_id=lane_request.lane_id,
                 binding=runtime.binding,
@@ -2025,7 +2411,7 @@ class RunScopedConversationCoordinator:
                     ProviderLaneExecutionStage(
                         idempotency=execution_reservation.idempotency,
                         owner_token=owner_token,
-                        identity=identity,
+                        identity=request.identity,
                         binding=output.binding,
                         mode=output.mode,
                         scope=output.scope,
@@ -2037,7 +2423,12 @@ class RunScopedConversationCoordinator:
                     )
                 )
             )
-        return tuple(snapshots), tuple(outputs), tuple(attestations)
+        return (
+            tuple(snapshots),
+            tuple(outputs),
+            tuple(attestations),
+            tuple(segment_context.segments),
+        )
 
     async def _dispatch_complete_lane(
         self,
@@ -2048,10 +2439,73 @@ class RunScopedConversationCoordinator:
         progress: _DispatchProgress,
         sink: _ProviderStateSinkOwner | None,
         completed_stored: list[_CompletedStoredProviderResponse] | None = None,
+        segment_context: _SegmentExecutionContext | None = None,
+        lane_invocation: AgentConversationLaneInvocation | None = None,
     ) -> ProviderResult:
         completed_targets = (
             completed_stored if completed_stored is not None else []
         )
+        if lane_invocation is not None:
+            if (
+                streaming
+                or sink is not None
+                or type(plan) is not StatelessProviderPlan
+                or lane_invocation.binding != runtime.binding
+            ):
+                raise ConversationCapabilityError()
+            await self._hook.reach(CoordinatorAwaitBoundary.PROVIDER_DISPATCH)
+            progress.mark_possible_dispatch()
+            pending = lane_invocation.dispatch(plan)
+            if not isawaitable(pending):
+                raise ConversationCapabilityError()
+            invocation_result = await pending
+            if (
+                type(invocation_result)
+                is not AgentConversationLaneInvocationResult
+            ):
+                raise ConversationProviderResponseError()
+            result = invocation_result.result
+            if segment_context is None:
+                raise ConversationCapabilityError()
+            for candidate in invocation_result.segments:
+                segment = ProviderExecutionSegment(
+                    schema_version=1,
+                    idempotency_key=segment_context.idempotency.key,
+                    request_digest=(
+                        segment_context.idempotency.request_digest
+                    ),
+                    binding=runtime.binding,
+                    mode=ConversationMode.STATELESS,
+                    segment_index=candidate.segment_index,
+                    phase=candidate.phase,
+                    items=candidate.items,
+                    reasoning=candidate.reasoning,
+                    usage=candidate.usage,
+                    tools=candidate.tools,
+                    recovery_request=conversation_run_request_recovery_payload(
+                        segment_context.request
+                    ),
+                )
+                if any(
+                    prior.lane_id == segment.lane_id
+                    and prior.segment_index == segment.segment_index
+                    and prior.phase is segment.phase
+                    for prior in segment_context.segments
+                ):
+                    raise ConversationConflictError()
+                segment_context.segments.append(segment)
+            staging = _AttemptStaging(
+                lane_id=runtime.binding.lane_id,
+                items=[],
+            )
+            try:
+                for item in result.items:
+                    staging.accept(item)
+                staging.finish(result)
+            except (AttributeError, ConversationValidationError):
+                raise ConversationProviderResponseError() from None
+            progress.mark_provider_output()
+            return result
         if type(plan) is StandaloneCompactProviderPlan:
             if streaming or type(runtime) is NativeOpenAIStoredLaneRuntime:
                 raise ConversationCapabilityError()
@@ -2096,6 +2550,7 @@ class RunScopedConversationCoordinator:
                 progress=progress,
                 sink=sink,
                 completed_stored=completed_targets,
+                segment_context=segment_context,
             )
         native = _validate_native_lane_runtime(runtime)
         if type(plan) is not StatelessProviderPlan:
@@ -2106,9 +2561,25 @@ class RunScopedConversationCoordinator:
         input_tokens = 0
         output_tokens = 0
         reasoning = plan.reasoning
-        segments = 0
-        output_item_count = 0
-        output_byte_count = 0
+        prior_lane_segments = (
+            tuple(
+                segment
+                for segment in segment_context.segments
+                if segment.lane_id == native.binding.lane_id
+            )
+            if segment_context is not None
+            else ()
+        )
+        recovered_items = _durable_execution_items(prior_lane_segments)
+        segments = (
+            max(segment.segment_index for segment in prior_lane_segments) + 1
+            if prior_lane_segments
+            else 0
+        )
+        output_item_count = len(recovered_items)
+        output_byte_count = sum(
+            provider_item_byte_count(item) for item in recovered_items
+        )
         while True:
             segments += 1
             if segments > native.max_output_segments:
@@ -2144,10 +2615,39 @@ class RunScopedConversationCoordinator:
                 for item in result.items
                 if item.kind is ProviderItemKind.FUNCTION_CALL
             )
+            requested_tools = self._requested_tool_executions(
+                native,
+                calls,
+                segment_context,
+            )
+            recovery_items = original.ledger.items + tuple(completed)
+            if not calls:
+                recovery_items += result.items
+            recovery_snapshot = self._stateless_lane_snapshot(
+                binding=native.binding,
+                retention_policy=native.retention_policy,
+                items=recovery_items,
+                reasoning=result.reasoning,
+            )
+            recovery_checkpoint = await self._persist_native_execution_segment(
+                native=native,
+                mode=ConversationMode.STATELESS,
+                segment_index=segments - 1,
+                phase=ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+                items=result.items,
+                result=result,
+                tools=requested_tools,
+                segment_context=segment_context,
+                lane_snapshot=recovery_snapshot,
+            )
             next_item_count += len(calls)
             if next_item_count > native.max_output_items:
                 raise ConversationLimitError()
-            tool_items, next_byte_count = await self._execute_native_tools(
+            (
+                tool_items,
+                next_byte_count,
+                completed_tools,
+            ) = await self._execute_native_tools(
                 native,
                 calls=calls,
                 completed=tuple(completed),
@@ -2155,7 +2655,33 @@ class RunScopedConversationCoordinator:
                 order_base=len(original.ledger.items),
                 current_byte_count=next_byte_count,
                 progress=progress,
+                segment_context=segment_context,
+                recovery_checkpoint=recovery_checkpoint,
+                requested_tools=requested_tools,
             )
+            if calls:
+                output_snapshot = self._stateless_lane_snapshot(
+                    binding=native.binding,
+                    retention_policy=native.retention_policy,
+                    items=(
+                        original.ledger.items
+                        + tuple(completed)
+                        + result.items
+                        + tool_items
+                    ),
+                    reasoning=result.reasoning,
+                )
+                await self._persist_native_execution_segment(
+                    native=native,
+                    mode=ConversationMode.STATELESS,
+                    segment_index=segments - 1,
+                    phase=ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+                    items=result.items + tool_items,
+                    result=result,
+                    tools=completed_tools,
+                    segment_context=segment_context,
+                    lane_snapshot=output_snapshot,
+                )
             output_item_count = next_item_count
             output_byte_count = next_byte_count
             segment_items = result.items + tool_items
@@ -2189,6 +2715,256 @@ class RunScopedConversationCoordinator:
                 compaction=original.compaction,
                 new_input=None,
             )
+
+    async def _recover_native_tool_suffix(
+        self,
+        *,
+        request: ConversationRunRequest,
+        parent: ConversationCheckpoint | None,
+        checkpoint: ConversationCheckpoint,
+        segments: tuple[ProviderExecutionSegment, ...],
+        action: DurableToolRecoveryAction,
+        plans: tuple[LanePlan, ...],
+        execution_reservation: ConversationExecutionReservation,
+        owner_token: str,
+    ) -> AtomicCommitReceipt:
+        """Execute an admitted native stateless suffix to outward commit."""
+        if (
+            len(plans) != 1
+            or len(request.lanes) != 1
+            or len(checkpoint.content.lanes) != 1
+        ):
+            raise ConversationCapabilityError()
+        lane_request, runtime, _ = plans[0]
+        native = _validate_native_lane_runtime(runtime)
+        if (
+            lane_request.mode is not ConversationMode.STATELESS
+            or native.binding != segments[-1].binding
+        ):
+            raise ConversationCapabilityError()
+        snapshot = checkpoint.content.lanes[0]
+        if (
+            type(snapshot) is not StatelessProviderLaneSnapshot
+            or snapshot.binding != native.binding
+        ):
+            raise ConversationConflictError()
+        segment_context = _SegmentExecutionContext(
+            request=request,
+            idempotency=execution_reservation.idempotency,
+            segments=list(segments),
+            visible_transcript=checkpoint.content.visible_transcript,
+            lane_snapshots={snapshot.lane_id: snapshot},
+        )
+        progress = _DispatchProgress()
+        reconciled_outputs: dict[ProviderCallId, str] = {}
+        if action is DurableToolRecoveryAction.REQUIRE_RECONCILIATION:
+            latest = segments[-1]
+            calls = tuple(
+                item
+                for item in latest.items
+                if item.kind is ProviderItemKind.FUNCTION_CALL
+            )
+            by_call = {tool.call_id: tool for tool in latest.tools}
+            for call in calls:
+                call_id = call.call_id
+                assert call_id is not None
+                tool = by_call.get(call_id)
+                if tool is None:
+                    raise ConversationConflictError()
+                if tool.effect_policy is ToolEffectPolicy.FENCED_UNPROTECTED:
+                    reconciliation = await native.provider.reconcile_tool(call)
+                    if reconciliation.applied:
+                        assert reconciliation.output is not None
+                        reconciled_outputs[call_id] = reconciliation.output
+            action = DurableToolRecoveryAction.REEXECUTE_PURE
+        if action in {
+            DurableToolRecoveryAction.REEXECUTE_PURE,
+            DurableToolRecoveryAction.REEXECUTE_IDEMPOTENT,
+        }:
+            latest = segments[-1]
+            calls = tuple(
+                item
+                for item in latest.items
+                if item.kind is ProviderItemKind.FUNCTION_CALL
+            )
+            requested_tools = self._requested_tool_executions(
+                native,
+                calls,
+                segment_context,
+            )
+            if not calls or requested_tools != latest.tools:
+                raise ConversationConflictError()
+            prior_items = _durable_execution_items(segments[:-1])
+            result = ProviderResult(
+                items=latest.items,
+                reasoning=latest.reasoning,
+                usage=latest.usage,
+            )
+            order_base = min(
+                (
+                    int(item.order)
+                    for item in _durable_execution_items(segments)
+                ),
+                default=0,
+            )
+            tool_items, _, completed_tools = await self._execute_native_tools(
+                native,
+                calls=calls,
+                completed=prior_items,
+                result=result,
+                order_base=order_base,
+                current_byte_count=sum(
+                    provider_item_byte_count(item)
+                    for item in (*prior_items, *latest.items)
+                ),
+                progress=progress,
+                segment_context=segment_context,
+                recovery_checkpoint=checkpoint,
+                requested_tools=requested_tools,
+                recovered_outputs=reconciled_outputs,
+            )
+            snapshot = self._stateless_lane_snapshot(
+                binding=native.binding,
+                retention_policy=native.retention_policy,
+                items=snapshot.ledger.items + latest.items + tool_items,
+                reasoning=latest.reasoning,
+            )
+            await self._persist_native_execution_segment(
+                native=native,
+                mode=ConversationMode.STATELESS,
+                segment_index=latest.segment_index,
+                phase=ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+                items=latest.items + tool_items,
+                result=result,
+                tools=completed_tools,
+                segment_context=segment_context,
+                lane_snapshot=snapshot,
+            )
+            action = DurableToolRecoveryAction.RESUME_PROVIDER
+        if action is DurableToolRecoveryAction.RESUME_PROVIDER:
+            snapshot = segment_context.lane_snapshots[native.binding.lane_id]
+            assert type(snapshot) is StatelessProviderLaneSnapshot
+            await self._dispatch_complete_lane(
+                native,
+                StatelessProviderPlan(
+                    binding=native.binding,
+                    ledger=snapshot.ledger,
+                    reasoning=snapshot.reasoning,
+                    compaction=lane_request.compaction,
+                ),
+                streaming=False,
+                progress=progress,
+                sink=None,
+                segment_context=segment_context,
+            )
+        durable_suffix = tuple(segment_context.segments)
+        if durable_tool_recovery_action(durable_suffix) is not (
+            DurableToolRecoveryAction.COMMIT_OUTWARD
+        ):
+            raise ConversationConflictError()
+        final_snapshot = segment_context.lane_snapshots[native.binding.lane_id]
+        if type(final_snapshot) is not StatelessProviderLaneSnapshot:
+            raise ConversationConflictError()
+        completed_items = _durable_execution_items(durable_suffix)
+        provider_segments = tuple(
+            segment
+            for segment in durable_suffix
+            if segment.phase is ProviderExecutionSegmentPhase.PROVIDER_RESPONSE
+        )
+        final_segment = provider_segments[-1]
+        usage = ProviderUsage(
+            input_tokens=sum(
+                segment.usage.input_tokens for segment in provider_segments
+            ),
+            output_tokens=sum(
+                segment.usage.output_tokens for segment in provider_segments
+            ),
+        )
+        execution_receipt = provider_lane_execution_receipt(
+            authority=request.semantics.authority,
+            identity=request.identity,
+            binding=native.binding,
+            mode=ConversationMode.STATELESS,
+            scope=ProviderLaneOutputScope.CURRENT_CALL,
+            completed_items=completed_items,
+            reasoning=final_segment.reasoning,
+            usage=usage,
+            upstream_response_id=None,
+        )
+        completed_snapshot = replace(
+            final_snapshot,
+            reasoning=final_segment.reasoning,
+            execution_receipt=execution_receipt,
+        )
+        output = ProviderLaneOutputCandidate(
+            lane_id=native.binding.lane_id,
+            binding=native.binding,
+            mode=ConversationMode.STATELESS,
+            scope=ProviderLaneOutputScope.CURRENT_CALL,
+            completed_items=completed_items,
+            reasoning=final_segment.reasoning,
+            usage=usage,
+            execution_receipt=execution_receipt,
+        )
+        await self._hook.reach(CoordinatorAwaitBoundary.STAGE_EXECUTION)
+        attestation = await self._store.stage_execution(
+            ProviderLaneExecutionStage(
+                idempotency=execution_reservation.idempotency,
+                owner_token=owner_token,
+                identity=request.identity,
+                binding=output.binding,
+                mode=output.mode,
+                scope=output.scope,
+                completed_items=output.completed_items,
+                reasoning=output.reasoning,
+                usage=output.usage,
+                execution_receipt=output.execution_receipt,
+            )
+        )
+        now = await self._clock.now()
+        candidate = build_checkpoint_candidate(
+            request,
+            parent=parent,
+            completed_lanes=(completed_snapshot,),
+            created_at=now,
+            execution_segments=durable_suffix,
+        )
+        commit = AtomicConversationCommit(
+            candidate=candidate,
+            idempotency=execution_reservation.idempotency,
+            owner_token=owner_token,
+            output_candidates=(output,),
+            committed_at=now,
+            result_mode=ConversationMode.STATELESS,
+            execution_attestations=(attestation,),
+            provisional_response_id=request.provisional_response_id,
+            public_response_id=request.public_response_id,
+            outbox_intent_id=(
+                f"publication-{request.public_response_id}"
+                if request.public_response_id is not None
+                else None
+            ),
+            head_id=(
+                request.advance.head_id
+                if isinstance(request.advance, NamedHeadAdvance)
+                else None
+            ),
+            expected_head_revision=(
+                request.advance.expected_revision
+                if isinstance(request.advance, NamedHeadAdvance)
+                else None
+            ),
+        )
+        await self._hook.reach(CoordinatorAwaitBoundary.COMMIT)
+        receipt = await self._store.commit_atomic(commit)
+        await self._observe("checkpoint_committed", receipt.checkpoint)
+        if receipt.outbox is not None:
+            await self._publish_one(
+                receipt.checkpoint,
+                receipt.outbox.intent.public_response_id,
+                receipt.outbox.intent.intent_id,
+            )
+        return receipt
 
     @staticmethod
     def _validate_standalone_provider_result(
@@ -2240,6 +3016,7 @@ class RunScopedConversationCoordinator:
         progress: _DispatchProgress,
         sink: _ProviderStateSinkOwner | None,
         completed_stored: list[_CompletedStoredProviderResponse] | None = None,
+        segment_context: _SegmentExecutionContext | None = None,
     ) -> ProviderResult:
         """Complete one stored lane using immediate response-ID chaining."""
         completed_targets = (
@@ -2294,10 +3071,35 @@ class RunScopedConversationCoordinator:
                 for item in result.items
                 if item.kind is ProviderItemKind.FUNCTION_CALL
             )
+            requested_tools = self._requested_tool_executions(
+                native,
+                calls,
+                segment_context,
+            )
+            recovery_snapshot = self._stored_lane_snapshot(
+                binding=native.binding,
+                retention_policy=native.retention_policy,
+                result=result,
+            )
+            recovery_checkpoint = await self._persist_native_execution_segment(
+                native=native,
+                mode=ConversationMode.STORED,
+                segment_index=segments - 1,
+                phase=ProviderExecutionSegmentPhase.PROVIDER_RESPONSE,
+                items=result.items,
+                result=result,
+                tools=requested_tools,
+                segment_context=segment_context,
+                lane_snapshot=recovery_snapshot,
+            )
             next_item_count += len(calls)
             if next_item_count > native.max_output_items:
                 raise ConversationLimitError()
-            tool_items, next_byte_count = await self._execute_native_tools(
+            (
+                tool_items,
+                next_byte_count,
+                completed_tools,
+            ) = await self._execute_native_tools(
                 native,
                 calls=calls,
                 completed=tuple(completed),
@@ -2305,7 +3107,22 @@ class RunScopedConversationCoordinator:
                 order_base=0,
                 current_byte_count=next_byte_count,
                 progress=progress,
+                segment_context=segment_context,
+                recovery_checkpoint=recovery_checkpoint,
+                requested_tools=requested_tools,
             )
+            if calls:
+                await self._persist_native_execution_segment(
+                    native=native,
+                    mode=ConversationMode.STORED,
+                    segment_index=segments - 1,
+                    phase=ProviderExecutionSegmentPhase.TOOL_OUTPUT,
+                    items=result.items + tool_items,
+                    result=result,
+                    tools=completed_tools,
+                    segment_context=segment_context,
+                    lane_snapshot=recovery_snapshot,
+                )
             output_item_count = next_item_count
             output_byte_count = next_byte_count
             segment_items = result.items + tool_items
@@ -2340,6 +3157,231 @@ class RunScopedConversationCoordinator:
                 item_order_offset=len(completed),
             )
 
+    @staticmethod
+    def _requested_tool_executions(
+        native: NativeLaneRuntime,
+        calls: tuple[ProviderItem, ...],
+        segment_context: _SegmentExecutionContext | None,
+    ) -> tuple[ProviderToolExecution, ...]:
+        """Return canonical pre-effect metadata for one provider segment."""
+        if segment_context is None:
+            return ()
+        return tuple(
+            native.provider.tool_execution_metadata(
+                call,
+                request_idempotency_key=segment_context.idempotency.key,
+                phase=ToolExecutionPhase.REQUESTED,
+            )
+            for call in calls
+        )
+
+    @staticmethod
+    def _stateless_lane_snapshot(
+        *,
+        binding: ProviderLaneBinding,
+        retention_policy: ChildLaneRetentionPolicy,
+        items: tuple[ProviderItem, ...],
+        reasoning: EffectiveReasoningMetadata,
+        execution_receipt: ProviderLaneExecutionReceipt | None = None,
+    ) -> StatelessProviderLaneSnapshot:
+        """Return one complete closed stateless recovery ledger."""
+        ledger = ProviderItemLedger(
+            lane_id=binding.lane_id,
+            normalization_version=binding.continuation_codec_version,
+            items=items,
+        )
+        compactions = tuple(
+            item
+            for item in ledger.items
+            if item.kind is ProviderItemKind.COMPACTION
+        )
+        boundary = None
+        if compactions:
+            latest = compactions[-1]
+            boundary = CompactionBoundary(
+                boundary_item_id=latest.item_id,
+                boundary_order=latest.order,
+                retained_suffix=tuple(
+                    item.item_id
+                    for item in ledger.items
+                    if item.order > latest.order
+                ),
+            )
+        return StatelessProviderLaneSnapshot(
+            binding=binding,
+            ledger=ledger,
+            reasoning=reasoning,
+            lifecycle=ProviderLaneLifecycle.COMMITTED,
+            retention_policy=retention_policy,
+            compaction_boundary=boundary,
+            execution_receipt=execution_receipt,
+        )
+
+    @staticmethod
+    def _stored_lane_snapshot(
+        *,
+        binding: ProviderLaneBinding,
+        retention_policy: ChildLaneRetentionPolicy,
+        result: ProviderResult,
+        execution_receipt: ProviderLaneExecutionReceipt | None = None,
+    ) -> StoredProviderLaneSnapshot:
+        """Return one immediate stored response recovery pointer."""
+        upstream_response_id = result.upstream_response_id
+        if upstream_response_id is None:
+            raise ConversationValidationError()
+        return StoredProviderLaneSnapshot(
+            binding=binding,
+            upstream_response_id=upstream_response_id,
+            reasoning=result.reasoning,
+            lifecycle=ProviderLaneLifecycle.COMMITTED,
+            retention_policy=retention_policy,
+            execution_receipt=execution_receipt,
+        )
+
+    async def _persist_native_execution_segment(
+        self,
+        *,
+        native: NativeLaneRuntime,
+        mode: ConversationMode,
+        segment_index: int,
+        phase: ProviderExecutionSegmentPhase,
+        items: tuple[ProviderItem, ...],
+        result: ProviderResult,
+        tools: tuple[ProviderToolExecution, ...],
+        segment_context: _SegmentExecutionContext | None,
+        lane_snapshot: ProviderLaneSnapshot,
+    ) -> ConversationCheckpoint | None:
+        """Commit one private recovery boundary before advancing effects."""
+        if segment_context is None:
+            return None
+        if lane_snapshot.lane_id != native.binding.lane_id:
+            raise ConversationValidationError()
+        segment = ProviderExecutionSegment(
+            schema_version=1,
+            idempotency_key=segment_context.idempotency.key,
+            request_digest=segment_context.idempotency.request_digest,
+            binding=native.binding,
+            mode=mode,
+            segment_index=segment_index,
+            phase=phase,
+            items=items,
+            reasoning=result.reasoning,
+            usage=result.usage,
+            tools=tools,
+            upstream_response_id=result.upstream_response_id,
+            recovery_request=conversation_run_request_recovery_payload(
+                segment_context.request
+            ),
+        )
+        key = (segment.lane_id, segment.segment_index, segment.phase)
+        if any(
+            (prior.lane_id, prior.segment_index, prior.phase) == key
+            for prior in segment_context.segments
+        ):
+            raise ConversationConflictError()
+        has_internal_cycle = bool(tools) or any(
+            prior.lane_id == segment.lane_id
+            for prior in segment_context.segments
+        )
+        checkpoint = None
+        if has_internal_cycle:
+            durable_suffix = (*segment_context.segments, segment)
+            lane_snapshots = dict(segment_context.lane_snapshots)
+            lane_snapshots[lane_snapshot.lane_id] = lane_snapshot
+            checkpoint = await self._commit_execution_segment_checkpoint(
+                segment_context.request,
+                segment,
+                durable_suffix,
+                tuple(lane_snapshots.values()),
+                segment_context.visible_transcript,
+            )
+            if (
+                checkpoint.content.execution_segments != durable_suffix
+                or checkpoint.content.lanes != tuple(lane_snapshots.values())
+            ):
+                raise ConversationConflictError()
+            segment_context.lane_snapshots = lane_snapshots
+        segment_context.segments.append(segment)
+        return checkpoint
+
+    async def _commit_execution_segment_checkpoint(
+        self,
+        request: ConversationRunRequest,
+        segment: ProviderExecutionSegment,
+        durable_suffix: tuple[ProviderExecutionSegment, ...],
+        lanes: tuple[ProviderLaneSnapshot, ...],
+        visible_transcript: VisibleTranscript,
+    ) -> ConversationCheckpoint:
+        """Create or exactly recover one deterministic private checkpoint."""
+        seed = canonical_json_bytes(
+            {
+                "checkpoint_id": request.identity.checkpoint_id,
+                "lane_id": segment.lane_id,
+                "phase": segment.phase.value,
+                "segment_index": segment.segment_index,
+            }
+        )
+        suffix = sha256(seed).hexdigest()
+        checkpoint_id = CheckpointId(f"internal-segment-{suffix}")
+        branch_id = ConversationBranchId(f"internal-segment-{suffix}")
+        created_at = await self._clock.now()
+        ttl = request.retention.effective_ttl_seconds
+        candidate = ExecutionSegmentCheckpointCandidate(
+            checkpoint=with_checkpoint_integrity(
+                ConversationCheckpoint(
+                    identity=CheckpointIdentity(
+                        conversation_id=request.identity.conversation_id,
+                        logical_turn_id=request.identity.logical_turn_id,
+                        execution_segment_id=ExecutionSegmentId(
+                            f"internal-segment-{suffix}"
+                        ),
+                        checkpoint_id=checkpoint_id,
+                        branch_id=branch_id,
+                        sequence=CheckpointSequence(0),
+                    ),
+                    kind=CheckpointKind.INTERNAL_PROVIDER_BOUNDARY,
+                    lifecycle=CheckpointLifecycle.STAGED,
+                    authority=request.semantics.authority,
+                    content=MultiLaneCheckpointContent(
+                        visible_transcript=visible_transcript,
+                        lanes=lanes,
+                        execution_segments=durable_suffix,
+                        lane_topology=request.lane_topology,
+                    ),
+                    timestamps=CheckpointTimestamps(
+                        created_at=created_at,
+                        expires_at=(
+                            created_at + timedelta(seconds=ttl)
+                            if ttl is not None
+                            else None
+                        ),
+                    ),
+                    retention=request.retention,
+                )
+            )
+        )
+        try:
+            committed = await self._store.commit(candidate)
+        except ConversationConflictError:
+            committed = await self._store.load(
+                checkpoint_id,
+                request.semantics.authority,
+            )
+        if (
+            committed.kind is not CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            or committed.authority != request.semantics.authority
+            or committed.identity.conversation_id
+            != request.identity.conversation_id
+            or committed.identity.logical_turn_id
+            != request.identity.logical_turn_id
+            or committed.identity.branch_id != branch_id
+            or committed.content.visible_transcript != visible_transcript
+            or committed.content.lanes != lanes
+            or committed.content.execution_segments != durable_suffix
+        ):
+            raise ConversationConflictError()
+        return committed
+
     async def _execute_native_tools(
         self,
         native: NativeLaneRuntime,
@@ -2350,19 +3392,84 @@ class RunScopedConversationCoordinator:
         order_base: int,
         current_byte_count: int,
         progress: _DispatchProgress,
-    ) -> tuple[tuple[ProviderItem, ...], int]:
+        segment_context: _SegmentExecutionContext | None = None,
+        recovery_checkpoint: ConversationCheckpoint | None = None,
+        requested_tools: tuple[ProviderToolExecution, ...] = (),
+        recovered_outputs: Mapping[ProviderCallId, str] | None = None,
+    ) -> tuple[
+        tuple[ProviderItem, ...],
+        int,
+        tuple[ProviderToolExecution, ...],
+    ]:
         """Execute validated native calls and return canonical tool items."""
         tool_items: list[ProviderItem] = []
+        tool_executions: list[ProviderToolExecution] = []
         byte_count = current_byte_count
+        recovered = recovered_outputs or {}
+        call_ids = {call.call_id for call in calls}
+        if (
+            not isinstance(recovered, Mapping)
+            or not set(recovered) <= call_ids
+            or any(
+                type(call_id) is not str or type(output) is not str
+                for call_id, output in recovered.items()
+            )
+        ):
+            raise ConversationValidationError()
         for call in calls:
-            progress.mark_tool_effect()
-            output = await native.provider.execute_tool(call)
             call_id = call.call_id
             assert call_id is not None
+            if call_id in recovered:
+                output = recovered[call_id]
+            else:
+                previous_tool_effect = progress.tool_effect
+                progress.mark_tool_effect()
+                try:
+                    output = await native.provider.execute_tool(call)
+                except AgentStructuredInputRequested as request:
+                    progress.tool_effect = previous_tool_effect
+                    if segment_context is None or recovery_checkpoint is None:
+                        raise ConversationCapabilityError() from None
+                    tool = next(
+                        (
+                            candidate
+                            for candidate in requested_tools
+                            if candidate.call_id == call_id
+                        ),
+                        None,
+                    )
+                    if (
+                        tool is None
+                        or request.arguments != tool.arguments
+                        or recovery_checkpoint.content.execution_segments
+                        != tuple(segment_context.segments)
+                    ):
+                        raise ConversationValidationError() from None
+                    checkpoint = self._structured_input_checkpoint(
+                        segment_context,
+                        recovery_checkpoint,
+                        call,
+                    )
+                    raise AgentConversationSuspensionBoundary(
+                        request=request,
+                        call=call,
+                        tool=tool,
+                        checkpoint=checkpoint,
+                    ) from None
+            output_seed = canonical_json_bytes(
+                {
+                    "call_id": call_id,
+                    "checkpoint_id": (
+                        segment_context.request.identity.checkpoint_id
+                        if segment_context is not None
+                        else "uncoordinated"
+                    ),
+                    "lane_id": native.binding.lane_id,
+                }
+            )
             tool_item = ProviderItem(
                 item_id=ProviderItemId(
-                    "tool-output-"
-                    + sha256(str(call_id).encode("utf-8")).hexdigest()[:24]
+                    "tool-output-" + sha256(output_seed).hexdigest()[:24]
                 ),
                 lane_id=native.binding.lane_id,
                 model_call_id=call.model_call_id,
@@ -2399,7 +3506,93 @@ class RunScopedConversationCoordinator:
             if byte_count > native.max_output_bytes:
                 raise ConversationLimitError()
             tool_items.append(tool_item)
-        return tuple(tool_items), byte_count
+            if segment_context is not None:
+                tool_executions.append(
+                    native.provider.tool_execution_metadata(
+                        call,
+                        request_idempotency_key=(
+                            segment_context.idempotency.key
+                        ),
+                        phase=ToolExecutionPhase.OUTPUT_PERSISTED,
+                        output_id=tool_item.item_id,
+                    )
+                )
+        return tuple(tool_items), byte_count, tuple(tool_executions)
+
+    @staticmethod
+    def _structured_input_checkpoint(
+        segment_context: _SegmentExecutionContext,
+        recovery_checkpoint: ConversationCheckpoint,
+        call: ProviderItem,
+    ) -> ConversationCheckpoint:
+        """Return one deterministic staged suspension after a durable fence."""
+        if (
+            recovery_checkpoint.kind
+            is not CheckpointKind.INTERNAL_PROVIDER_BOUNDARY
+            or recovery_checkpoint.lifecycle
+            is not CheckpointLifecycle.COMMITTED
+            or recovery_checkpoint.authority
+            != segment_context.request.semantics.authority
+            or call.call_id is None
+        ):
+            raise ConversationValidationError()
+        seed = canonical_json_bytes(
+            {
+                "call_id": call.call_id,
+                "checkpoint_id": recovery_checkpoint.identity.checkpoint_id,
+                "execution_segment_id": (
+                    recovery_checkpoint.identity.execution_segment_id
+                ),
+            }
+        )
+        suffix = sha256(seed).hexdigest()
+        identity = recovery_checkpoint.identity
+        lanes = tuple(
+            replace(
+                lane,
+                lifecycle=(
+                    ProviderLaneLifecycle.SUSPENDED
+                    if lane.lane_id == call.lane_id
+                    else lane.lifecycle
+                ),
+            )
+            for lane in recovery_checkpoint.content.lanes
+        )
+        created_at = recovery_checkpoint.timestamps.created_at
+        return with_checkpoint_integrity(
+            ConversationCheckpoint(
+                identity=CheckpointIdentity(
+                    conversation_id=identity.conversation_id,
+                    logical_turn_id=identity.logical_turn_id,
+                    execution_segment_id=ExecutionSegmentId(
+                        f"structured-input-segment-{suffix}"
+                    ),
+                    checkpoint_id=CheckpointId(
+                        f"structured-input-checkpoint-{suffix}"
+                    ),
+                    branch_id=identity.branch_id,
+                    sequence=CheckpointSequence(identity.sequence + 1),
+                    parent_checkpoint_id=identity.checkpoint_id,
+                    parent_sequence=identity.sequence,
+                ),
+                kind=CheckpointKind.STRUCTURED_INPUT_SUSPENSION,
+                lifecycle=CheckpointLifecycle.STAGED,
+                authority=recovery_checkpoint.authority,
+                content=MultiLaneCheckpointContent(
+                    visible_transcript=(
+                        recovery_checkpoint.content.visible_transcript
+                    ),
+                    lanes=lanes,
+                    execution_segments=tuple(segment_context.segments),
+                    lane_topology=(recovery_checkpoint.content.lane_topology),
+                ),
+                timestamps=CheckpointTimestamps(
+                    created_at=created_at,
+                    expires_at=recovery_checkpoint.timestamps.expires_at,
+                ),
+                retention=recovery_checkpoint.retention,
+            )
+        )
 
     @staticmethod
     def _validate_native_provider_segment(
@@ -2853,35 +4046,11 @@ class RunScopedConversationCoordinator:
                 if type(plan) is StandaloneCompactProviderPlan
                 else plan.ledger.items
             )
-            ledger = ProviderItemLedger(
-                lane_id=lane_request.lane_id,
-                normalization_version=runtime.binding.continuation_codec_version,
-                items=prior_items + result.items,
-            )
-            compactions = tuple(
-                item
-                for item in ledger.items
-                if item.kind is ProviderItemKind.COMPACTION
-            )
-            boundary = None
-            if compactions:
-                latest = compactions[-1]
-                boundary = CompactionBoundary(
-                    boundary_item_id=latest.item_id,
-                    boundary_order=latest.order,
-                    retained_suffix=tuple(
-                        item.item_id
-                        for item in ledger.items
-                        if item.order > latest.order
-                    ),
-                )
-            return StatelessProviderLaneSnapshot(
+            return RunScopedConversationCoordinator._stateless_lane_snapshot(
                 binding=runtime.binding,
-                ledger=ledger,
-                reasoning=result.reasoning,
-                lifecycle=ProviderLaneLifecycle.COMMITTED,
                 retention_policy=runtime.retention_policy,
-                compaction_boundary=boundary,
+                items=prior_items + result.items,
+                reasoning=result.reasoning,
                 execution_receipt=execution_receipt,
             )
         ProviderItemLedger(
@@ -2889,14 +4058,10 @@ class RunScopedConversationCoordinator:
             normalization_version=runtime.binding.continuation_codec_version,
             items=result.items,
         )
-        if result.upstream_response_id is None:
-            raise ConversationValidationError()
-        return StoredProviderLaneSnapshot(
+        return RunScopedConversationCoordinator._stored_lane_snapshot(
             binding=runtime.binding,
-            upstream_response_id=result.upstream_response_id,
-            reasoning=result.reasoning,
-            lifecycle=ProviderLaneLifecycle.COMMITTED,
             retention_policy=runtime.retention_policy,
+            result=result,
             execution_receipt=execution_receipt,
         )
 
@@ -3215,6 +4380,23 @@ class RunScopedConversationCoordinator:
                 "lanes": lane_payload,
                 "advance": advance_payload,
                 "boundary": request.boundary.value,
+                "lane_topology": (
+                    None
+                    if request.lane_topology is None
+                    else tuple(
+                        {
+                            "agent_id": entry.agent_id,
+                            "binding_digest": entry.binding_digest,
+                            "lane_id": entry.lane_id,
+                            "model_slot": entry.model_slot,
+                            "owner_kind": entry.owner_kind.value,
+                            "parent_lane_id": entry.parent_lane_id,
+                            "retention_policy": entry.retention_policy.value,
+                            "topology_path": entry.topology_path,
+                        }
+                        for entry in request.lane_topology.entries
+                    )
+                ),
             }
         )
         digest = sha256(canonical_json_bytes(payload)).hexdigest()
@@ -3235,12 +4417,31 @@ class RunScopedConversationCoordinator:
         return token
 
 
+def _durable_execution_items(
+    segments: tuple[ProviderExecutionSegment, ...],
+) -> tuple[ProviderItem, ...]:
+    """Return one non-duplicated canonical item sequence from a suffix."""
+    items: list[ProviderItem] = []
+    for segment in segments:
+        if segment.phase is ProviderExecutionSegmentPhase.PROVIDER_RESPONSE:
+            items.extend(segment.items)
+        else:
+            items.extend(
+                item
+                for item in segment.items
+                if item.caller is ProviderItemCaller.TOOL
+            )
+    return tuple(items)
+
+
 def build_checkpoint_candidate(
     request: ConversationRunRequest,
     *,
     parent: ConversationCheckpoint | None,
     completed_lanes: tuple[ProviderLaneSnapshot, ...],
     created_at: datetime,
+    execution_segments: tuple[ProviderExecutionSegment, ...] = (),
+    additional_visible_delta: tuple[VisibleTranscriptEntry, ...] = (),
 ) -> CheckpointCandidate:
     """Build one immutable staged candidate at a validated boundary."""
     if (
@@ -3249,14 +4450,26 @@ def build_checkpoint_candidate(
         or created_at.utcoffset() is None
         or type(completed_lanes) is not tuple
         or not completed_lanes
+        or type(execution_segments) is not tuple
+        or type(additional_visible_delta) is not tuple
+        or any(
+            type(segment) is not ProviderExecutionSegment
+            for segment in execution_segments
+        )
+        or any(
+            type(entry) is not VisibleTranscriptEntry
+            for entry in additional_visible_delta
+        )
     ):
         raise ConversationValidationError()
     selected = {lane.lane_id for lane in completed_lanes}
     retained: tuple[ProviderLaneSnapshot, ...] = ()
-    transcript_entries = request.visible_delta
+    transcript_entries = request.visible_delta + additional_visible_delta
     if parent is not None:
         transcript_entries = (
-            parent.content.visible_transcript.entries + request.visible_delta
+            parent.content.visible_transcript.entries
+            + request.visible_delta
+            + additional_visible_delta
         )
         retained = tuple(
             lane
@@ -3264,7 +4477,13 @@ def build_checkpoint_candidate(
             if lane.lane_id not in selected
             and lane.retention_policy is ChildLaneRetentionPolicy.RETAIN
         )
-    lanes = completed_lanes + retained
+    committed_lanes = tuple(
+        lane
+        for lane in completed_lanes
+        if request.boundary is not ConversationCommitBoundary.OUTWARD_TURN
+        or lane.retention_policy is ChildLaneRetentionPolicy.RETAIN
+    )
+    lanes = committed_lanes + retained
     ttl = request.retention.effective_ttl_seconds
     head = None
     if isinstance(request.advance, NamedHeadAdvance):
@@ -3292,6 +4511,8 @@ def build_checkpoint_candidate(
                     entries=transcript_entries
                 ),
                 lanes=lanes,
+                execution_segments=execution_segments,
+                lane_topology=request.lane_topology,
             ),
             timestamps=CheckpointTimestamps(
                 created_at=created_at,

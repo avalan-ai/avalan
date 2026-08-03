@@ -1,6 +1,29 @@
 """Expose dormant conversation contract definitions."""
 
 from . import state as _state
+from .agent import AgentConversationLane as AgentConversationLane
+from .agent import AgentConversationResult as AgentConversationResult
+from .agent import (
+    AgentConversationSuspensionBoundary as AgentConversationSuspensionBoundary,
+)
+from .agent import AgentConversationTurn as AgentConversationTurn
+from .agent import AgentLaneTopology as AgentLaneTopology
+from .agent import AgentModelSlot as AgentModelSlot
+from .agent import AgentProviderLane as AgentProviderLane
+from .agent import AgentTopologyPath as AgentTopologyPath
+from .agent import (
+    agent_conversation_surface_disposition as agent_conversation_surface_disposition,  # noqa: E501
+)
+from .agent import agent_topology_digest as agent_topology_digest
+from .agent import child_agent_topology_path as child_agent_topology_path
+from .agent import (
+    derive_agent_provider_lane_id as derive_agent_provider_lane_id,
+)
+from .agent import direct_model_topology_path as direct_model_topology_path
+from .agent import parent_agent_topology_path as parent_agent_topology_path
+from .agent import (
+    require_agent_conversation_surface as require_agent_conversation_surface,
+)
 from .binding import CapabilityEvidence as CapabilityEvidence
 from .binding import CapabilityEvidenceState as CapabilityEvidenceState
 from .binding import ConversationCapability as ConversationCapability
@@ -213,7 +236,23 @@ from .errors import (
     DurableConversationErrorCode as DurableConversationErrorCode,
 )
 from .execution import (
+    AgentStructuredInputRequested as AgentStructuredInputRequested,
+)
+from .execution import (
     ConversationExecutionReservation as ConversationExecutionReservation,
+)
+from .execution import (
+    DurableToolRecoveryAction as DurableToolRecoveryAction,
+)
+from .execution import (
+    DurableToolRecoveryAdmission as DurableToolRecoveryAdmission,
+)
+from .execution import DurableToolRecoveryLease as DurableToolRecoveryLease
+from .execution import (
+    ProviderExecutionSegment as ProviderExecutionSegment,
+)
+from .execution import (
+    ProviderExecutionSegmentPhase as ProviderExecutionSegmentPhase,
 )
 from .execution import (
     ProviderLaneExecutionAttestation as ProviderLaneExecutionAttestation,
@@ -226,6 +265,13 @@ from .execution import (
 )
 from .execution import (
     ProviderLaneExecutionStage as ProviderLaneExecutionStage,
+)
+from .execution import ProviderToolExecution as ProviderToolExecution
+from .execution import ToolEffectPolicy as ToolEffectPolicy
+from .execution import ToolEffectReconciliation as ToolEffectReconciliation
+from .execution import ToolExecutionPhase as ToolExecutionPhase
+from .execution import (
+    durable_tool_recovery_action as durable_tool_recovery_action,
 )
 from .execution import (
     provider_lane_execution_receipt as provider_lane_execution_receipt,
@@ -400,6 +446,9 @@ from .providers import (
 from .providers import (
     native_openai_stored_execution_digest as native_openai_stored_execution_digest,  # noqa: E501
 )
+from .providers import (
+    request_agent_structured_input as request_agent_structured_input,
+)
 from .runtime import (
     AtomicCommitReceipt as AtomicCommitReceipt,
 )
@@ -548,6 +597,10 @@ from .state import (
 )
 from .state import ProviderLaneLifecycle as ProviderLaneLifecycle
 from .state import ProviderLaneSnapshot as ProviderLaneSnapshot
+from .state import ProviderLaneTopology as ProviderLaneTopology
+from .state import (
+    ProviderLaneTopologyEntry as ProviderLaneTopologyEntry,
+)
 from .state import SafeCheckpointCounts as SafeCheckpointCounts
 from .state import (
     StatelessProviderLaneSnapshot as StatelessProviderLaneSnapshot,
@@ -555,6 +608,9 @@ from .state import (
 from .state import StoredProviderLaneSnapshot as StoredProviderLaneSnapshot
 from .state import (
     SuspensionCheckpointCandidate as SuspensionCheckpointCandidate,
+)
+from .state import (
+    SuspensionContinuationCheckpointCandidate as SuspensionContinuationCheckpointCandidate,  # noqa: E501
 )
 from .state import reduce_checkpoint_lifecycle as reduce_checkpoint_lifecycle
 from .state import reduce_deletion as reduce_deletion

@@ -1,5 +1,10 @@
 """Claim, reconstruct, and fence one durable agent continuation."""
 
+from ..conversation.contract import (
+    CheckpointKind,
+    PortableContinuationReference,
+)
+from ..conversation.state import CheckpointLifecycle, ConversationCheckpoint
 from ..event import Event
 from ..interaction.a2a_continuation import (
     A2AToolContinuationCheckpoint,
@@ -28,6 +33,7 @@ from ..interaction.continuation import (
     PortableContinuation,
     ResolvedContinuationRuntime,
     derive_provider_idempotency_key,
+    portable_continuation_binding_digest,
 )
 from ..interaction.entities import (
     ContinuationId,
@@ -114,6 +120,130 @@ class AgentContinuationExecutor(Protocol):
     async def close_continuation_runtime(self) -> None:
         """Close resources owned by this reconstructed admission."""
         ...
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentConversationContinuationResult:
+    """Return one committed continuation of the suspended logical turn."""
+
+    checkpoint: ConversationCheckpoint
+    output: object
+
+    def __post_init__(self) -> None:
+        if type(self.checkpoint) is not ConversationCheckpoint:
+            _invalid_type(
+                "resume.conversation.result.checkpoint",
+                "a conversation checkpoint",
+            )
+
+
+AgentConversationContinuationApply = Callable[
+    [TaskInputCapabilityCall, CorrelatedCapabilityResult],
+    Awaitable[AgentConversationContinuationResult],
+]
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class ResolvedAgentConversationContinuation:
+    """Carry one trusted conversation suspension and durable reference."""
+
+    checkpoint: ConversationCheckpoint
+    continuation_reference: PortableContinuationReference
+    apply_result: AgentConversationContinuationApply
+
+    def __post_init__(self) -> None:
+        if type(self.checkpoint) is not ConversationCheckpoint:
+            _invalid_type(
+                "resume.conversation.checkpoint",
+                "a conversation checkpoint",
+            )
+        if (
+            type(self.continuation_reference)
+            is not PortableContinuationReference
+        ):
+            _invalid_type(
+                "resume.conversation.continuation_reference",
+                "a portable continuation reference",
+            )
+        if not iscoroutinefunction(self.apply_result):
+            _invalid_type(
+                "resume.conversation.apply_result",
+                "an asynchronous correlated-result applier",
+            )
+
+    async def apply(
+        self,
+        call: TaskInputCapabilityCall,
+        result: CorrelatedCapabilityResult,
+    ) -> AgentConversationContinuationResult:
+        """Apply one correlated answer and verify its logical-turn child."""
+        applied = await self.apply_result(call, result)
+        if type(applied) is not AgentConversationContinuationResult:
+            _invalid_type(
+                "resume.conversation.result",
+                "an agent conversation continuation result",
+            )
+        suspension = self.checkpoint
+        checkpoint = applied.checkpoint
+        if (
+            checkpoint.kind is not CheckpointKind.COMPLETED_OUTWARD_TURN
+            or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+            or checkpoint.authority != suspension.authority
+            or checkpoint.identity.conversation_id
+            != suspension.identity.conversation_id
+            or checkpoint.identity.logical_turn_id
+            != suspension.identity.logical_turn_id
+            or checkpoint.identity.parent_checkpoint_id
+            != suspension.identity.checkpoint_id
+            or checkpoint.identity.parent_sequence
+            != suspension.identity.sequence
+            or checkpoint.identity.sequence != suspension.identity.sequence + 1
+        ):
+            _correlation_error(
+                "resume.conversation.result.checkpoint",
+                "answer did not continue the exact suspended logical turn",
+            )
+        return applied
+
+
+AgentConversationContinuationResolve = Callable[
+    [PortableContinuation, str],
+    Awaitable[ResolvedAgentConversationContinuation],
+]
+
+
+@final
+@dataclass(frozen=True, slots=True, kw_only=True)
+class AgentConversationContinuationResolver:
+    """Resolve one exact durable conversation suspension boundary."""
+
+    resolve_continuation: AgentConversationContinuationResolve
+
+    def __post_init__(self) -> None:
+        if not iscoroutinefunction(self.resolve_continuation):
+            _invalid_type(
+                "resume.conversation_resolver.resolve_continuation",
+                "an asynchronous resolver",
+            )
+
+    async def resolve(
+        self,
+        continuation: PortableContinuation,
+        continuation_digest: str,
+    ) -> ResolvedAgentConversationContinuation:
+        """Resolve one exact checkpoint and its persisted reference."""
+        resolved = await self.resolve_continuation(
+            continuation,
+            continuation_digest,
+        )
+        if type(resolved) is not ResolvedAgentConversationContinuation:
+            _invalid_type(
+                "resume.conversation_resolver.result",
+                "a resolved agent conversation continuation",
+            )
+        return resolved
 
 
 class AgentDurableContinuationStore(Protocol):
@@ -222,6 +352,8 @@ class AgentContinuationResumeCommand:
     task_input_call: TaskInputCapabilityCall | None = None
     correlated_result: CorrelatedCapabilityResult | None = None
     a2a_checkpoint: A2AToolContinuationCheckpoint | None = None
+    resolved_conversation: ResolvedAgentConversationContinuation | None = None
+    conversation_continuation_digest: str | None = None
 
     def __post_init__(self) -> None:
         continuation = self.continuation
@@ -338,6 +470,16 @@ class AgentContinuationResumeCommand:
             _correlation_error(
                 "resume.command.resolved_runtime",
                 "fresh runtime does not match the continuation revision",
+            )
+        _validate_resolved_conversation(
+            continuation,
+            self.resolved_conversation,
+            expected_digest=self.conversation_continuation_digest,
+        )
+        if checkpoint is not None and self.resolved_conversation is not None:
+            _correlation_error(
+                "resume.command.resolved_conversation",
+                "A2A continuation cannot use a conversation suspension",
             )
 
 
@@ -1007,6 +1149,9 @@ class DurableAgentContinuationResumer:
         store: AgentDurableContinuationStore,
         resolver: ContinuationRuntimeResolver,
         *,
+        conversation_resolver: (
+            AgentConversationContinuationResolver | None
+        ) = None,
         clock: Callable[[], datetime] | None = None,
     ) -> None:
         _validate_store(store)
@@ -1017,8 +1162,18 @@ class DurableAgentContinuationResumer:
             )
         if clock is not None and not callable(clock):
             _invalid_type("resume.clock", "a clock callable")
+        if (
+            conversation_resolver is not None
+            and type(conversation_resolver)
+            is not AgentConversationContinuationResolver
+        ):
+            _invalid_type(
+                "resume.conversation_resolver",
+                "an agent conversation continuation resolver",
+            )
         self._store = store
         self._resolver = resolver
+        self._conversation_resolver = conversation_resolver
         self._clock = clock or (lambda: datetime.now(UTC))
 
     async def admit(
@@ -1063,6 +1218,9 @@ class DurableAgentContinuationResumer:
                 "an asynchronous claim lease observer",
             )
         continuation = record.continuation
+        continuation_digest = portable_continuation_binding_digest(
+            continuation
+        )
         _validate_expected_identity(
             record,
             actor=actor,
@@ -1076,15 +1234,29 @@ class DurableAgentContinuationResumer:
         )
         snapshot = continuation.provider_snapshot
         if snapshot is None:
-            _unavailable(
-                "resume.continuation.provider_snapshot",
-                "durable provider replay state is unavailable",
+            if continuation.conversation_checkpoint_reference is None:
+                _unavailable(
+                    "resume.continuation.provider_snapshot",
+                    "durable provider replay state is unavailable",
+                )
+            if self._conversation_resolver is None:
+                _unavailable(
+                    "resume.conversation_resolver",
+                    "durable conversation suspension resolver is unavailable",
+                )
+        elif continuation.conversation_checkpoint_reference is not None:
+            _correlation_error(
+                "resume.continuation",
+                "continuation cannot carry provider and conversation replay",
             )
         provider_idempotency_key = derive_provider_idempotency_key(
             continuation.continuation_id,
             dispatch_id,
         )
-        if snapshot.provider_idempotency_key != provider_idempotency_key:
+        if (
+            snapshot is not None
+            and snapshot.provider_idempotency_key != provider_idempotency_key
+        ):
             _correlation_error(
                 "resume.continuation.provider_snapshot."
                 "provider_idempotency_key",
@@ -1147,6 +1319,19 @@ class DurableAgentContinuationResumer:
                     "continuation expired during runtime reconstruction",
                 )
             catalog = _validated_catalog(resolved, claimed)
+            resolved_conversation = None
+            if claimed.conversation_checkpoint_reference is not None:
+                conversation_resolver = self._conversation_resolver
+                assert conversation_resolver is not None
+                resolved_conversation = await conversation_resolver.resolve(
+                    claimed,
+                    continuation_digest,
+                )
+                _validate_resolved_conversation(
+                    claimed,
+                    resolved_conversation,
+                    expected_digest=continuation_digest,
+                )
             outcome = project_resolution_to_model(
                 terminal_request,
                 containing_run_exists=True,
@@ -1218,7 +1403,8 @@ class DurableAgentContinuationResumer:
                 )
             if checkpoint is None:
                 call = _task_input_call(claimed, terminal_request, catalog)
-                _restore_provider_snapshot(resolved, claimed, call)
+                if resolved_conversation is None:
+                    _restore_provider_snapshot(resolved, claimed, call)
                 correlated = catalog.project_result(call, outcome.result)
                 command = AgentContinuationResumeCommand(
                     continuation=claimed,
@@ -1227,6 +1413,12 @@ class DurableAgentContinuationResumer:
                     task_input_call=call,
                     correlated_result=correlated,
                     resolved_runtime=resolved,
+                    resolved_conversation=resolved_conversation,
+                    conversation_continuation_digest=(
+                        continuation_digest
+                        if resolved_conversation is not None
+                        else None
+                    ),
                 )
             else:
                 command = AgentContinuationResumeCommand(
@@ -1619,7 +1811,8 @@ def _validated_catalog(
             "fresh runtime does not advertise the exact durable capability",
         )
     snapshot = continuation.provider_snapshot
-    assert snapshot is not None
+    if snapshot is None:
+        return catalog
     registry = catalog.support.continuation_snapshot_codec_registry
     codec = catalog.support.continuation_snapshot_codec
     if (
@@ -1646,6 +1839,67 @@ def _validated_catalog(
             "provider snapshot codec changed replay state",
         )
     return catalog
+
+
+def _validate_resolved_conversation(
+    continuation: PortableContinuation,
+    resolved: ResolvedAgentConversationContinuation | None,
+    *,
+    expected_digest: str | None,
+) -> None:
+    checkpoint_reference = continuation.conversation_checkpoint_reference
+    snapshot = continuation.provider_snapshot
+    if snapshot is not None:
+        if (
+            checkpoint_reference is not None
+            or resolved is not None
+            or expected_digest is not None
+        ):
+            _correlation_error(
+                "resume.command.resolved_conversation",
+                "provider replay cannot carry conversation replay state",
+            )
+        return
+    if checkpoint_reference is None:
+        _unavailable(
+            "resume.command.resolved_conversation",
+            "continuation lacks both provider and conversation replay state",
+        )
+    if (
+        type(resolved) is not ResolvedAgentConversationContinuation
+        or type(expected_digest) is not str
+        or fullmatch(_SHA256_PATTERN, expected_digest) is None
+    ):
+        _unavailable(
+            "resume.command.resolved_conversation",
+            "conversation replay state was not resolved",
+        )
+    checkpoint = resolved.checkpoint
+    reference = resolved.continuation_reference
+    if (
+        checkpoint.kind is not CheckpointKind.STRUCTURED_INPUT_SUSPENSION
+        or checkpoint.lifecycle is not CheckpointLifecycle.COMMITTED
+        or str(checkpoint.identity.checkpoint_id)
+        != checkpoint_reference.checkpoint_id
+        or str(checkpoint.identity.execution_segment_id)
+        != checkpoint_reference.execution_segment_id
+    ):
+        _correlation_error(
+            "resume.command.resolved_conversation.checkpoint",
+            "resolved checkpoint does not match the suspension reference",
+        )
+    if (
+        reference.continuation_id != continuation.continuation_id
+        or int(reference.state_revision) + 1
+        != int(continuation.state_revision)
+        or str(reference.digest) != expected_digest
+        or reference.definition != continuation.definition
+        or reference.revision_binding != continuation.revision_binding
+    ):
+        _correlation_error(
+            "resume.command.resolved_conversation.continuation_reference",
+            "persisted continuation reference does not match the continuation",
+        )
 
 
 def _restore_provider_snapshot(
