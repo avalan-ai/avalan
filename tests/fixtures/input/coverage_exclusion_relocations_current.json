@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "45f7b2f19f9229a61bc84193580f3c39a98af6cc2e7f9412cbb6aa33a0d35f4d",
+  "current_snapshot_sha256": "fb48c6412e47854825da97ebe06a22ad8ee990480b5e2a7c212ce83425208acf",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1370,
+    "added": 1381,
     "removed": 285,
-    "sha256": "c58cc14fd18e7b2a4563472129a3fb843f009aa9b3cbe05c64013789a1ff44d3"
+    "sha256": "27faf5f427ac58bbb0bb5a8988464a6d4413ab24f3699ae460dbd3b030cabaed"
   },
   "review": {
-    "reviewed_by": "conversation Phase 10 exclusion inventory audit",
-    "rationale": "The current snapshot preserves the reviewed directive inventory and records only parser-generated Protocol exclusions in the caller-envelope and stateless Responses modules plus parser-line relocations in two touched modules."
+    "reviewed_by": "conversation Phase 11 exclusion inventory audit",
+    "rationale": "The current snapshot preserves the reviewed directive inventory and mechanically refreshes only parser-generated Protocol exclusions after hardening source movement."
   },
-  "ledger_sha256": "da6147b6effb251564aa92a369bf37a57b88b716a3d7c5a93df73f213af5e1bd"
+  "ledger_sha256": "f614862fbcb07ff9267a756043be119b27a1c726b602b4eb26c50cedee10d6ea"
 }

@@ -1,0 +1,136 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 11,
+  "requirements": [
+    {
+      "id": "CONV-N-118",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-119",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-120",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-121",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-122",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-123",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-124",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-125",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-126",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-127",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-128",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-129",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    },
+    {
+      "id": "CONV-N-130",
+      "test_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+        "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+        "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+      ],
+      "replacement_root_node_ids": [
+        "tests/conversation/security_e2e_test.py::test_normative_hardening_contract"
+      ]
+    }
+  ],
+  "evidence_sha256": "006243096c0f1de32d433926af4d14d3add899ed81198fccb8a7d4a721b0d16d"
+}

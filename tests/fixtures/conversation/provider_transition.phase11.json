@@ -1,0 +1,49 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 11,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase11-hardening-review",
+  "reason": "Install required production hardening on direct and served continuation dispatch while preserving reviewed source provenance.",
+  "transitions": [
+    {
+      "path": "src/avalan/conversation/coordinator.py",
+      "from_size": 176909,
+      "from_sha256": "8540e63b4ecb75022ae13348d0f6302bfb2f3596d9366b2d9376bfd92fab07fa",
+      "to_size": 177927,
+      "to_sha256": "1349cf96bd4600ebc6fa2fd7fd14e81a578067673a924cfbd09f86a7039c8141"
+    },
+    {
+      "path": "src/avalan/conversation/sdk.py",
+      "from_size": 52924,
+      "from_sha256": "0e127adcfd4677fb9184f0e9704f33906bc371e3629f1b79a07e30d38110a216",
+      "to_size": 53156,
+      "to_sha256": "609b2ef3d838525c4323cbf592889c9a981a2385985aeb0ae6dffda91a0df34a"
+    },
+    {
+      "path": "src/avalan/server/__init__.py",
+      "from_size": 19921,
+      "from_sha256": "00d942b87b99b590a8557dc6180e146278bc4a74d3a72c0a7588485b444c1393",
+      "to_size": 19999,
+      "to_sha256": "fece0ed20d3fabf00a432f3d838460bd7a4fccbaa734e4ea4445a4aca7a4601e"
+    },
+    {
+      "path": "src/avalan/server/responses_lifecycle.py",
+      "from_size": 28416,
+      "from_sha256": "e87642b0e2f4c095473de553393be3dcc7c3100ca314368b69ec06b87cb54e03",
+      "to_size": 30689,
+      "to_sha256": "46f56180512d82259b0e21c62449451f96e779376dce1f3396f8c866f82edb9a"
+    },
+    {
+      "path": "tests/conversation/server_stored_e2e_test.py",
+      "from_size": 97091,
+      "from_sha256": "f0cfbc664524d7378bafcd4a9a38bb8748e91d5cbadf207e659a55f487380a9c",
+      "to_size": 106129,
+      "to_sha256": "a123b0e31442851a78c1867bc3a949a3557e377419fde162869a3638cd02572d"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
+  ],
+  "canonical_sha256": "e2857960835f50947c63262b10192c9e9c9989cf5639c1744b390931fd0cd9ce"
+}

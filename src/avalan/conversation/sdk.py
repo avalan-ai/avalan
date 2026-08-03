@@ -214,6 +214,7 @@ class DirectConversationRuntime:
     id_namespace: str | None = None
     provider_resolver: StoredProviderResolver | None = None
     lifecycle_reconciler: ProviderLifecycleReconciler | None = None
+    hardening_required: bool = False
 
     def __post_init__(self) -> None:
         if type(self.coordinator) is not RunScopedConversationCoordinator:
@@ -223,6 +224,10 @@ class DirectConversationRuntime:
         if type(self.lane) is not ProviderLaneBinding:
             raise ConversationValidationError()
         if type(self.retention) is not RetentionLimits:
+            raise ConversationValidationError()
+        if type(self.hardening_required) is not bool or (
+            self.hardening_required and not self.coordinator.hardening_active
+        ):
             raise ConversationValidationError()
         if (
             self.lane.provider_family

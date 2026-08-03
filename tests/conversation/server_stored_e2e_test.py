@@ -20,6 +20,7 @@ import pytest
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
 from fastapi.testclient import TestClient
+from httpx import ASGITransport, AsyncClient
 from openai import AsyncOpenAI, ConflictError, NotFoundError
 from phase2_fixtures import binding, empty_stateless_plan, next_stateless_plan
 from pydantic import ValidationError
@@ -33,6 +34,7 @@ from avalan.agent.orchestrator import Orchestrator
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
+from avalan.conversation import security
 from avalan.entities import GenerationSettings
 from avalan.model.response.text import TextGenerationResponse
 from avalan.pgsql import (
@@ -58,6 +60,7 @@ from avalan.server.responses_lifecycle import (
     StoredResponsesResource,
     close_served_responses,
     configure_served_responses,
+    start_served_responses,
 )
 from avalan.server.responses_schema import (
     ResponsesDeletedResource,
@@ -293,6 +296,8 @@ def _turn_resolver(
                     ),
                 ),
             ),
+            boundary_hook=plan.hardening_hook,
+            hardening_required=plan.hardening_required,
         )
         suffix = str(plan.public_response_id).removeprefix("resp_avl_")
         topology = conversation.AgentLaneTopology(
@@ -353,6 +358,9 @@ def _configuration(
         conversation.DeterministicFaultController | None
     ) = None,
     sweep_limit: int = 100,
+    hardening_hook: (
+        security.ConversationHardeningCoordinatorHook | None
+    ) = None,
 ) -> ServedResponsesConfiguration:
     """Return one strict service configuration for a durable test facade."""
 
@@ -386,8 +394,107 @@ def _configuration(
             min_compact_threshold=10,
             max_compact_threshold=1000,
             sweep_limit=sweep_limit,
+            hardening_required=hardening_hook is not None,
         ),
         clock=clock,
+        hardening_hook=hardening_hook,
+    )
+
+
+def _hardening_hook(
+    store: conversation.InMemoryConversationStore,
+    clock: _MutableClock,
+) -> security.ConversationHardeningCoordinatorHook:
+    """Return production hardening bound to the served test authority."""
+    authority = _authority()
+    authority_scope_digest = conversation.AuthorityDigest(
+        conversation.authority_digest(authority)
+    )
+    key_ring = security.AsyncConversationKeyRing(
+        {
+            authority_scope_digest: (
+                security.ConversationOperationalKey(
+                    key_id="served-hardening-key",
+                    revision=1,
+                    status=(security.ConversationOperationalKeyStatus.ACTIVE),
+                    purposes=frozenset(security.ConversationKeyPurpose),
+                    key_bytes=b"h" * 32,
+                    activated_at=_NOW,
+                ),
+            )
+        },
+        clock=clock,
+    )
+    worker = security.ConversationMaintenanceWorker(
+        (
+            security.ConversationRetentionMaintenanceOperation(
+                store=store,
+                clock=clock,
+            ),
+        ),
+        batch_size=10,
+        interval_seconds=60,
+        shutdown_timeout_seconds=0.1,
+    )
+
+    async def backend() -> security.ConversationBackendHealth:
+        return security.ConversationBackendHealth(
+            migration_ready=True,
+            schema_version=1,
+            application_version=1,
+            outbox_lag=0,
+            maximum_outbox_lag=0,
+        )
+
+    async def capability() -> security.ConversationCapabilityHealth:
+        return security.ConversationCapabilityHealth(
+            resolver_available=True,
+            active_profiles=0,
+            resolvable_profiles=0,
+        )
+
+    activation_digest = conversation.IntegrityDigest("a" * 64)
+    readiness = security.ConversationReadinessChecker(
+        backend_probe=backend,
+        key_ring=key_ring,
+        authority=authority_scope_digest,
+        workers=(worker,),
+        capability_probe=capability,
+        activation=security.ConversationActivationHealth(
+            expected_digest=activation_digest,
+            loaded_digest=activation_digest,
+        ),
+    )
+    policy = security.resolve_conversation_policy(
+        security.ConversationHardeningPolicy(
+            default_mode=conversation.ConversationMode.STATELESS,
+            allowed_modes=frozenset({conversation.ConversationMode.STATELESS}),
+            allowed_reasoning_contexts=frozenset(
+                conversation.ReasoningContext
+            ),
+            compaction=security.ConversationCompactionPolicy(
+                allowed_operations=frozenset(conversation.CompactionOperation)
+            ),
+            backend=security.ConversationCheckpointBackend.POSTGRESQL,
+            retention=_retention(),
+            resources=security.ConversationResourcePolicy(),
+            checkpoint_keys=security.ConversationKeyRotationPolicy(),
+            envelope_keys=security.ConversationKeyRotationPolicy(),
+            capability_profiles=(),
+            telemetry=security.ConversationTelemetryPolicy(),
+        )
+    )
+    return security.ConversationHardeningCoordinatorHook(
+        policy=policy,
+        admission=security.FairConversationAdmissionController(
+            policy.resources
+        ),
+        admission_key=security.ConversationAdmissionKey(
+            authority_digest=authority_scope_digest,
+            conversation_digest=conversation.IntegrityDigest("b" * 64),
+        ),
+        readiness=readiness,
+        telemetry=security.BoundedConversationTelemetry(max_events=32),
     )
 
 
@@ -1204,6 +1311,154 @@ def test_explicit_idempotency_replays_without_provider_redispatch(
     assert changed.status_code == 409
     assert changed.json()["error"]["code"] == "conversation_conflict"
     assert provider_controller.visited.count("provider:dispatch") == 1
+
+
+@pytest.mark.anyio
+async def test_phase11_served_dispatch_installs_required_hardening(
+    monkeypatch: pytest.MonkeyPatch,
+    record_property: Callable[[str, object], None],
+) -> None:
+    """Dispatch store=true only through the trusted production hook."""
+    record_property("conversation_acceptance_evidence", "public")
+    store = conversation.InMemoryConversationStore()
+    clock = _MutableClock()
+    hook = _hardening_hook(store, clock)
+    configuration = _configuration(
+        store,
+        clock,
+        hardening_hook=hook,
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(
+            configuration.policy,
+            hardening_required=cast(bool, 1),
+        )
+    bound_plan = ServedResponsesTurnPlan(
+        authority=_authority(),
+        input_text="hardening-binding",
+        public_response_id=conversation.PublicResponseId(
+            "resp_avl_" + "e" * 32
+        ),
+        provisional_response_id=conversation.ProvisionalResponseId(
+            "provisional-avl-" + "e" * 32
+        ),
+        idempotency_key=conversation.RequestIdempotencyKey(
+            "hardening-binding"
+        ),
+        request_fingerprint="e" * 64,
+        retention=_retention(),
+        reasoning_context=conversation.ReasoningContext.AUTO,
+        compact_threshold=None,
+        includes=(),
+        tool_names=(),
+        parent=None,
+        streaming=False,
+        hardening_hook=hook,
+        hardening_required=True,
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        replace(bound_plan, hardening_required=False)
+
+    forged_dispatches: list[str] = []
+
+    class _ForgedCoordinator:
+        async def execute(self, *args: object, **kwargs: object) -> object:
+            del args, kwargs
+            forged_dispatches.append("dispatch")
+            raise AssertionError("forged coordinator dispatched")
+
+    forged_coordinator = _ForgedCoordinator()
+    forged_store = conversation.InMemoryConversationStore()
+
+    async def forged_turn_resolver(
+        plan: ServedResponsesTurnPlan,
+    ) -> PreparedServedResponsesTurn:
+        prepared = await _turn_resolver(forged_store, clock)(plan)
+        coordinator = cast(
+            conversation.RunScopedConversationCoordinator,
+            prepared.turn.coordinator,
+        )
+        await coordinator.close()
+        return replace(
+            prepared,
+            turn=replace(
+                prepared.turn,
+                coordinator=cast(
+                    conversation.ConversationCoordinator,
+                    forged_coordinator,
+                ),
+            ),
+        )
+
+    forged_service = ServedResponsesService(
+        replace(configuration, turn_resolver=forged_turn_resolver)
+    )
+    with pytest.raises(conversation.ConversationValidationError):
+        await forged_service.prepare_turn(
+            authority=_authority(),
+            input_text="forged",
+            parent=None,
+            reasoning_context=conversation.ReasoningContext.AUTO,
+            compact_threshold=None,
+            includes=(),
+            tool_names=(),
+            streaming=False,
+            idempotency_key="forged-hardening",
+            request_fingerprint="d" * 64,
+        )
+    assert forged_dispatches == []
+
+    dispatches: list[str] = []
+    monkeypatch.setattr(
+        responses_router,
+        "orchestrate",
+        _stored_orchestrate(dispatches),
+    )
+    app = FastAPI()
+    app.include_router(responses_router.router)
+    app.dependency_overrides[di_get_logger] = lambda: getLogger(__name__)
+    app.dependency_overrides[di_get_orchestrator] = lambda: object.__new__(
+        _ResponsesOrchestrator
+    )
+    app.dependency_overrides[
+        responses_router._server_output_redaction_settings
+    ] = lambda: ServerOutputRedactionSettings()
+    configure_served_responses(app, configuration)
+    service = app.state.served_responses_service
+    assert isinstance(service, ServedResponsesService)
+    await start_served_responses(app)
+    await start_served_responses(app)
+    try:
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://served.test",
+        ) as client:
+            response = await client.post(
+                "/responses",
+                headers={"Authorization": "Bearer owner"},
+                json={
+                    "input": "hardened",
+                    "model": "served-model",
+                    "store": True,
+                },
+            )
+        assert response.status_code == 200, response.text
+        assert response.json()["output"][0]["content"][0]["text"] == (
+            "turn-1:hardened"
+        )
+        assert len(dispatches) == 1
+    finally:
+        await service.aclose()
+
+    with pytest.raises(TypeError, match="hardening_hook"):
+        replace(
+            configuration,
+            policy=replace(
+                configuration.policy,
+                hardening_required=True,
+            ),
+            hardening_hook=None,
+        )
 
 
 def test_target_ttl_is_independent_of_bounded_sweep_backlog(

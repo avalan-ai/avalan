@@ -68,6 +68,10 @@ def _repository(tmp_path: Path) -> Path:
             "tests/fixtures/conversation/acceptance_manifest.phase10.json",
             '{"current_phase":10}\n',
         ),
+        (
+            "tests/fixtures/conversation/acceptance_manifest.phase11.json",
+            '{"current_phase":11}\n',
+        ),
         ("scripts/gate.py", "VALUE = 1\n"),
         ("Makefile", "test:\n\ttrue\n"),
         ("pyproject.toml", "[project]\nname = 'sample'\n"),
@@ -544,7 +548,7 @@ def test_phase_five_owns_database_across_entire_mirrored_gate(
     ]
 
 
-@pytest.mark.parametrize("through_phase", (-1, 11))
+@pytest.mark.parametrize("through_phase", (-1, 12))
 def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
@@ -562,7 +566,7 @@ def test_runner_rejects_unimplemented_phase_before_cleanup_or_coverage(
         lambda *args, **kwargs: calls.append(args[0]),
     )
 
-    with pytest.raises(_RUNNER.ContractGateError, match="range 0..10"):
+    with pytest.raises(_RUNNER.ContractGateError, match="range 0..11"):
         _RUNNER.run_gate(through_phase, repo_root=root)
     assert report.read_text(encoding="utf-8") == "stale\n"
     assert calls == []
@@ -680,7 +684,7 @@ def test_makefile_exposes_explicit_conversation_gates() -> None:
     ("target", "phase"),
     (
         ("test-conversation-exact", "-1"),
-        ("test-conversation-pgsql-exact", "11"),
+        ("test-conversation-pgsql-exact", "12"),
     ),
 )
 def test_make_preflight_rejects_closed_phase_before_installation(

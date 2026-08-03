@@ -564,14 +564,27 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     assert current.report_lines[
         "src/avalan/conversation/providers/openai.py"
     ] == (707, 708, 711, 712, 713)
+    assert current.report_lines["src/avalan/conversation/security.py"] == (
+        829,
+        830,
+        831,
+        1411,
+        1412,
+        1413,
+        1946,
+        1947,
+        1950,
+        1951,
+        1952,
+    )
     protocol_path = "src/avalan/conversation/protocols.py"
     assert current.report_lines[protocol_path] == protocol_lines
     direct_sdk_path = "src/avalan/conversation/sdk.py"
     assert current.report_lines[direct_sdk_path] == (
-        *range(665, 685),
-        *range(711, 731),
-        *range(769, 789),
-        *range(824, 846),
+        *range(670, 690),
+        *range(716, 736),
+        *range(774, 794),
+        *range(829, 851),
     )
     assert current.report_lines["src/avalan/model/provider_state.py"] == (
         35,
@@ -590,34 +603,34 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     assert current.report_lines[
         "src/avalan/server/responses_lifecycle.py"
     ] == (
-        138,
-        139,
         140,
-        146,
-        147,
+        141,
+        142,
         148,
-        238,
-        239,
-        240,
-        247,
-        248,
-        255,
-        256,
-        263,
-        264,
+        149,
+        150,
+        250,
+        251,
+        252,
+        259,
+        260,
         267,
         268,
         275,
         276,
-        284,
-        285,
+        279,
+        280,
+        287,
         288,
-        289,
-        290,
+        296,
+        297,
+        300,
+        301,
+        302,
     )
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2310
+    assert sum(map(len, current.report_lines.values())) == 2321
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

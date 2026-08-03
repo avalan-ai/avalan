@@ -5,7 +5,7 @@ from argparse import ArgumentParser, Namespace
 from ast import Constant, walk
 from ast import parse as parse_python
 from collections.abc import Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from hashlib import sha256
 from pathlib import Path, PurePosixPath
 from re import compile as compile_regex
@@ -133,6 +133,9 @@ _DIMENSIONS = {
 }
 _NODE_PATTERN = compile_regex(r"^tests/[A-Za-z0-9_./-]+\.py::[^\s]+$")
 _REQUIREMENT_PATTERN = compile_regex(r"^CONV-N-[0-9]{3}$")
+_PHASE11_REQUIREMENT_IDS = frozenset(
+    f"CONV-N-{ordinal:03d}" for ordinal in range(118, 131)
+)
 _ACTIVE_INTEGRATED_FIXTURES = (
     "contract_decisions.json",
     "deterministic_fixtures.json",
@@ -448,6 +451,12 @@ _PHASE10_PROVIDER_TRANSITION_PATH = (
 _PHASE10_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
     "607948018a995c00e326e09733243e189e7ac2f51a2696c8c4591ccd97945de7"
 )
+_PHASE11_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase11.json"
+)
+_PHASE11_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "e2857960835f50947c63262b10192c9e9c9989cf5639c1744b390931fd0cd9ce"
+)
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
         9_978,
@@ -699,6 +708,14 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
             "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
         ),
     },
+    11: {
+        "tests/conversation/security_e2e_test.py": (
+            "aca93bf163c7497de675ac296e93f612a6c59d8b768644622a9101a053ce6ebb"
+        ),
+        "tests/conversation/server_stored_e2e_test.py": (
+            "f0cfbc664524d7378bafcd4a9a38bb8748e91d5cbadf207e659a55f487380a9c"
+        ),
+    },
 }
 _NODE_PAYLOAD_SHA256_BY_PHASE = {
     0: _PHASE0_NODE_PAYLOAD_SHA256,
@@ -712,6 +729,7 @@ _NODE_PAYLOAD_SHA256_BY_PHASE = {
     8: "c922e9081f5944d65b923222372029f365f65e7a7ce4350cdbe43c74d0ce9110",
     9: "2002bcaa8330005dc9cd01574c75ee4f2be2ddaca3bbff93dd9d77996e4ff527",
     10: "1f610ea0f07a58132dc7a829c44b31b8b4c697f680dd896836d3de5b8f63d1c2",
+    11: "6cd469aa39cd7948f4c83fa99d24bd1177b92ce7c8e3f096d9b897fa857b0ce3",
 }
 _ACTIVATION_HISTORY_BY_PHASE = {
     0: "b8385b1c2ee8c56e7118ccd6c27a25d746974378808e92699953e5c846567f74",
@@ -725,6 +743,7 @@ _ACTIVATION_HISTORY_BY_PHASE = {
     8: "f7dfd4dc132cd9007d09a73a6f884688e7084324ba01773b6be585b7ad261365",
     9: "3ba2b5064970f4fbfabd203b9fe0c453c2ddbd2751c511224df807850e1c3355",
     10: "4cbc71ed23fca55866c3b2f0b5d2c1eb0efa2cb05c1649b0bd92ef0002a0cb4c",
+    11: "4238a684e10e5e484a08c360444288b3bea188e133a196901f3d208906c9ecf6",
 }
 _REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -770,6 +789,10 @@ _REPLACEMENT_HISTORY_BY_PHASE = {
     10: (
         22,
         "39fe2f2258df939cdf93338a2ed4bf797f9bfbdd1324dbe6856f1e8fe12d0395",
+    ),
+    11: (
+        23,
+        "c158a591a5bfb68718fb08bfd2300611bada6a908e2d7a565a31a14d40f0daa1",
     ),
 }
 _FAILURE_STRUCTURE_BY_PHASE = {
@@ -925,6 +948,12 @@ _PHASE9_CORRECTED_FAILURE_STRUCTURE_BY_PHASE = {
         190,
         "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
     ),
+    11: (
+        19,
+        10,
+        190,
+        "7527fe33d610969b1e5f1380315181ea7488c103613e17c2ba1a6d5b90842ba4",
+    ),
 }
 _THREAT_STRUCTURE_BY_PHASE = {
     0: (5, 5, 8, _PHASE0_THREAT_STRUCTURE_SHA256),
@@ -977,6 +1006,12 @@ _THREAT_STRUCTURE_BY_PHASE = {
         14,
         29,
         "045c3597d6633aeb595b5081e9944b52742d09fb132aae62cf6f4c73826192d8",
+    ),
+    11: (
+        15,
+        14,
+        35,
+        "2a4fbfa4ade6e77a4517219259ff2179aed76b4bac19ef1844623720f079dce5",
     ),
 }
 _PHASE0_NODE_INVENTORY = (
@@ -1178,6 +1213,7 @@ class Requirement:
     owner_phase: int
     production_artifact: str
     test_node_ids: tuple[str, ...]
+    replacement_root_node_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1231,7 +1267,7 @@ def fixture_root() -> Path:
 
 def default_manifest_path() -> Path:
     """Return the tracked acceptance manifest path."""
-    return fixture_root() / "acceptance_manifest.phase10.json"
+    return fixture_root() / "acceptance_manifest.phase11.json"
 
 
 def companion_fixture_path(manifest_path: Path, stem: str) -> Path:
@@ -1466,6 +1502,11 @@ def load_requirements(
     requirements = tuple(
         _requirement(raw, repo_root=repo_root) for raw in raw_requirements
     )
+    if manifest.current_phase >= 11:
+        requirements = _apply_phase11_requirement_evidence(
+            path.parent / "requirements_evidence.phase11.json",
+            requirements,
+        )
     expected_ids = tuple(
         f"CONV-N-{ordinal:03d}"
         for ordinal in range(1, _NORMATIVE_OCCURRENCES + 1)
@@ -1490,7 +1531,10 @@ def load_requirements(
         for replacement in manifest.replacements
     }
     for requirement in requirements:
-        for node_id in requirement.test_node_ids:
+        for node_id in (
+            *requirement.replacement_root_node_ids,
+            *requirement.test_node_ids,
+        ):
             owner_node = node_by_id.get(node_id)
             if owner_node is None:
                 raise ConversationAcceptanceError(
@@ -1502,7 +1546,7 @@ def load_requirements(
                     f"{requirement.id}"
                 )
         allowed = _replacement_closure(
-            requirement.test_node_ids,
+            requirement.replacement_root_node_ids,
             replacement_by_old,
             node_by_id,
             requirement.id,
@@ -1514,12 +1558,26 @@ def load_requirements(
             )
         if requirement.owner_phase <= manifest.current_phase:
             leaves = allowed - set(replacement_by_old)
-            if not leaves or any(
-                node_by_id[node_id].lifecycle != "active" for node_id in leaves
+            exact_phase11_evidence = (
+                requirement.owner_phase != 11
+                or leaves == set(requirement.test_node_ids)
+            )
+            if (
+                not leaves
+                or not exact_phase11_evidence
+                or any(
+                    node_by_id[node_id].lifecycle != "active"
+                    for node_id in leaves
+                )
             ):
+                evidence_label = (
+                    "exact active replacement evidence"
+                    if requirement.owner_phase == 11
+                    else "active replacement-chain evidence"
+                )
                 raise ConversationAcceptanceError(
-                    "implemented requirement lacks active replacement-chain "
-                    f"evidence: {requirement.id}"
+                    f"implemented requirement lacks {evidence_label}: "
+                    f"{requirement.id}"
                 )
     if payload.get("catalog_sha256") != canonical_sha256(raw_requirements):
         raise ConversationAcceptanceError(
@@ -1530,6 +1588,85 @@ def load_requirements(
             "requirement catalog differs from the independent Phase 0 anchor"
         )
     return requirements
+
+
+def _apply_phase11_requirement_evidence(
+    path: Path,
+    requirements: tuple[Requirement, ...],
+) -> tuple[Requirement, ...]:
+    """Apply exact Phase 11 leaves without rewriting the frozen catalog."""
+    payload = _strict_mapping(path, "Phase 11 requirement evidence")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "requirements",
+            "evidence_sha256",
+        },
+        "Phase 11 requirement evidence",
+    )
+    _header(payload, "Phase 11 requirement evidence")
+    if payload.get("phase") != 11:
+        raise ConversationAcceptanceError(
+            "Phase 11 requirement evidence has the wrong phase"
+        )
+    raw_records = object_list(
+        payload.get("requirements"), "Phase 11 requirement records"
+    )
+    expected_ids = tuple(
+        f"CONV-N-{ordinal:03d}" for ordinal in range(118, 131)
+    )
+    replacements: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+    observed_ids: list[str] = []
+    for raw_record in raw_records:
+        record = mapping(raw_record, "Phase 11 requirement record")
+        _exact_keys(
+            record,
+            {"id", "test_node_ids", "replacement_root_node_ids"},
+            "Phase 11 requirement record",
+        )
+        identifier = _nonempty_string(
+            record.get("id"), "Phase 11 requirement ID"
+        )
+        observed_ids.append(identifier)
+        test_nodes = _string_list(
+            record.get("test_node_ids"), "Phase 11 exact test nodes"
+        )
+        roots = _string_list(
+            record.get("replacement_root_node_ids"),
+            "Phase 11 replacement roots",
+        )
+        if not test_nodes or not roots:
+            raise ConversationAcceptanceError(
+                "Phase 11 requirement evidence must be non-empty"
+            )
+        for node_id in (*test_nodes, *roots):
+            _test_node(node_id)
+        _unique(test_nodes, "Phase 11 exact test node")
+        _unique(roots, "Phase 11 replacement root")
+        replacements[identifier] = (test_nodes, roots)
+    if tuple(observed_ids) != expected_ids:
+        raise ConversationAcceptanceError(
+            "Phase 11 requirement evidence must cover ordinals 118-130"
+        )
+    if payload.get("evidence_sha256") != canonical_sha256(raw_records):
+        raise ConversationAcceptanceError(
+            "Phase 11 requirement evidence digest is invalid"
+        )
+    return tuple(
+        (
+            replace(
+                requirement,
+                test_node_ids=replacements[requirement.id][0],
+                replacement_root_node_ids=replacements[requirement.id][1],
+            )
+            if requirement.id in replacements
+            else requirement
+        )
+        for requirement in requirements
+    )
 
 
 def _replacement_closure(
@@ -1859,6 +1996,18 @@ def verify_gate_source_isolation(
         _phase8_provider_transitions(root),
         _phase9_provider_transitions(root),
         _phase10_provider_transitions(root),
+        (
+            _phase11_provider_transitions(root)
+            if manifest.current_phase >= 11
+            or (
+                root
+                / (
+                    "tests/fixtures/conversation/"
+                    "provider_transition.phase11.json"
+                )
+            ).is_file()
+            else {}
+        ),
     )
     transition_chains: dict[
         str,
@@ -2073,18 +2222,20 @@ def _dimension_values(raw: object, name: str) -> tuple[str, ...]:
 
 def _requirement(raw: object, *, repo_root: Path) -> Requirement:
     item = mapping(raw, "requirement")
+    phase = _phase(item.get("owner_phase"), "requirement owner phase")
+    expected_keys = {
+        "id",
+        "normative_ordinal",
+        "source_section",
+        "normative_level",
+        "paraphrase",
+        "owner_phase",
+        "production_artifact",
+        "test_node_ids",
+    }
     _exact_keys(
         item,
-        {
-            "id",
-            "normative_ordinal",
-            "source_section",
-            "normative_level",
-            "paraphrase",
-            "owner_phase",
-            "production_artifact",
-            "test_node_ids",
-        },
+        expected_keys,
         "requirement",
     )
     identifier = _nonempty_string(item.get("id"), "requirement ID")
@@ -2106,7 +2257,6 @@ def _requirement(raw: object, *, repo_root: Path) -> Requirement:
     paraphrase = _nonempty_string(
         item.get("paraphrase"), "requirement paraphrase"
     )
-    phase = _phase(item.get("owner_phase"), "requirement owner phase")
     artifact = _relative_path(
         item.get("production_artifact"), "production artifact"
     )
@@ -2131,6 +2281,7 @@ def _requirement(raw: object, *, repo_root: Path) -> Requirement:
         owner_phase=phase,
         production_artifact=artifact,
         test_node_ids=nodes,
+        replacement_root_node_ids=nodes,
     )
 
 
@@ -2225,16 +2376,32 @@ def _failure_cell(
         )
     phase = _phase(item.get("active_from_phase"), "cell active phase")
     lifecycle = _nonempty_string(item.get("lifecycle"), "cell lifecycle")
-    expected_lifecycle = "active" if phase <= current_phase else "planned"
-    if lifecycle != expected_lifecycle:
+    if lifecycle not in {"active", "planned"}:
         raise ConversationAcceptanceError(
-            "failure cell lifecycle disagrees with activation"
+            "failure cell lifecycle must be active or planned"
         )
     evidence_node_id = _test_node(item.get("evidence_node_id"))
     evidence = node_by_id.get(evidence_node_id)
-    if evidence is None or evidence.active_from_phase > phase:
+    if evidence is None:
+        raise ConversationAcceptanceError("failure cell evidence is missing")
+    if lifecycle == "active" and (
+        phase > current_phase
+        or evidence.lifecycle == "planned"
+        or evidence.active_from_phase > current_phase
+    ):
         raise ConversationAcceptanceError(
-            "failure cell evidence is missing or activates too late"
+            "active failure cell evidence is not active"
+        )
+    if (
+        lifecycle == "planned"
+        and phase <= current_phase
+        and (
+            evidence.lifecycle != "planned"
+            or evidence.active_from_phase <= current_phase
+        )
+    ):
+        raise ConversationAcceptanceError(
+            "planned failure cell evidence is not future evidence"
         )
     counts = tuple(
         _nonnegative_int(item.get(field), f"failure cell {field}")
@@ -2301,19 +2468,18 @@ def _validate_threat_model(
     requirement_ids: frozenset[str],
 ) -> None:
     payload = _strict_mapping(path, "threat model")
-    _exact_keys(
-        payload,
-        {
-            "schema_version",
-            "feature",
-            "current_phase",
-            "assets",
-            "trust_boundaries",
-            "threats",
-            "threat_model_sha256",
-        },
-        "threat model",
-    )
+    expected_payload_keys = {
+        "schema_version",
+        "feature",
+        "current_phase",
+        "assets",
+        "trust_boundaries",
+        "threats",
+        "threat_model_sha256",
+    }
+    if manifest.current_phase >= 11:
+        expected_payload_keys.add("inherited_traceability")
+    _exact_keys(payload, expected_payload_keys, "threat model")
     _header(payload, "threat model")
     if payload.get("current_phase") != manifest.current_phase:
         raise ConversationAcceptanceError(
@@ -2332,30 +2498,54 @@ def _validate_threat_model(
         for node in manifest.nodes
         if node.lifecycle in {"active", "replaced"}
     }
+    active_node_ids = {
+        node.node_id
+        for node in manifest.nodes
+        if node.lifecycle == "active"
+        and node.active_from_phase <= manifest.current_phase
+    }
     observed: list[str] = []
+    threat_items: dict[str, Mapping[str, object]] = {}
     raw_threats = object_list(payload.get("threats"), "threats")
-    for raw in raw_threats:
+    phase10_threat_count = _THREAT_STRUCTURE_BY_PHASE[10][2]
+    for index, raw in enumerate(raw_threats):
         item = mapping(raw, "threat")
+        hardened = index >= phase10_threat_count
+        expected_keys = {
+            "id",
+            "asset",
+            "actor",
+            "boundary",
+            "attack",
+            "controls",
+            "requirement_ids",
+            "owner_phase",
+            "lifecycle",
+            "evidence_node_ids",
+        }
+        if hardened:
+            expected_keys.update(
+                {
+                    "control_owners",
+                    "positive_evidence_node_ids",
+                    "negative_evidence_node_ids",
+                    "operator_detection",
+                    "incident_response",
+                    "residual_risk",
+                }
+            )
         _exact_keys(
             item,
-            {
-                "id",
-                "asset",
-                "actor",
-                "boundary",
-                "attack",
-                "controls",
-                "requirement_ids",
-                "owner_phase",
-                "lifecycle",
-                "evidence_node_ids",
-            },
+            expected_keys,
             "threat",
         )
-        observed.append(_nonempty_string(item.get("id"), "threat ID"))
+        identifier = _nonempty_string(item.get("id"), "threat ID")
+        observed.append(identifier)
+        threat_items[identifier] = item
         for field in ("asset", "actor", "boundary", "attack"):
             _nonempty_string(item.get(field), f"threat {field}")
-        if not _string_list(item.get("controls"), "threat controls"):
+        controls = _string_list(item.get("controls"), "threat controls")
+        if not controls:
             raise ConversationAcceptanceError(
                 "threat controls must be non-empty"
             )
@@ -2366,7 +2556,7 @@ def _validate_threat_model(
             raise ConversationAcceptanceError(
                 "threat references unknown requirements"
             )
-        _phase(item.get("owner_phase"), "threat owner phase")
+        owner_phase = _phase(item.get("owner_phase"), "threat owner phase")
         if item.get("lifecycle") != "active":
             raise ConversationAcceptanceError(
                 "Phase 0 threat entries must be active"
@@ -2377,6 +2567,79 @@ def _validate_threat_model(
         if not evidence or not set(evidence) <= node_ids:
             raise ConversationAcceptanceError(
                 "threat evidence must use active exact nodes"
+            )
+        if hardened:
+            if owner_phase != 11:
+                raise ConversationAcceptanceError(
+                    "Phase 11 hardening threats must be owned by Phase 11"
+                )
+            _validate_threat_traceability(
+                item,
+                identifier=identifier,
+                controls=controls,
+                active_node_ids=active_node_ids,
+                expected_evidence=frozenset(evidence),
+            )
+    if manifest.current_phase >= 11:
+        required_inherited = {
+            identifier
+            for identifier, item in threat_items.items()
+            if identifier in set(observed[:phase10_threat_count])
+            and (
+                item.get("owner_phase") == 11
+                or bool(
+                    set(
+                        _string_list(
+                            item.get("requirement_ids"),
+                            "threat requirements",
+                        )
+                    )
+                    & _PHASE11_REQUIREMENT_IDS
+                )
+            )
+        }
+        inherited = object_list(
+            payload.get("inherited_traceability"),
+            "inherited threat traceability",
+        )
+        inherited_ids: list[str] = []
+        for raw_trace in inherited:
+            trace = mapping(raw_trace, "inherited threat traceability")
+            _exact_keys(
+                trace,
+                {
+                    "threat_id",
+                    "control_owners",
+                    "positive_evidence_node_ids",
+                    "negative_evidence_node_ids",
+                    "operator_detection",
+                    "incident_response",
+                    "residual_risk",
+                },
+                "inherited threat traceability",
+            )
+            threat_id = _nonempty_string(
+                trace.get("threat_id"), "inherited threat ID"
+            )
+            inherited_ids.append(threat_id)
+            source = threat_items.get(threat_id)
+            if source is None:
+                raise ConversationAcceptanceError(
+                    "inherited traceability references an unknown threat"
+                )
+            _validate_threat_traceability(
+                trace,
+                identifier=threat_id,
+                controls=_string_list(
+                    source.get("controls"), "threat controls"
+                ),
+                active_node_ids=active_node_ids,
+                expected_evidence=None,
+            )
+        _unique(inherited_ids, "inherited threat traceability ID")
+        if set(inherited_ids) != required_inherited:
+            raise ConversationAcceptanceError(
+                "Phase 11 inherited threat traceability is incomplete"
             )
     phase0_threat_count = len(_THREAT_IDS)
     _unique(observed, "threat ID")
@@ -2400,6 +2663,100 @@ def _validate_threat_model(
         raw_threats,
         manifest.current_phase,
     )
+
+
+def _validate_threat_traceability(
+    item: Mapping[str, object],
+    *,
+    identifier: str,
+    controls: tuple[str, ...],
+    active_node_ids: set[str],
+    expected_evidence: frozenset[str] | None,
+) -> None:
+    """Validate one complete operational control and evidence mapping."""
+    for value in (
+        identifier,
+        *controls,
+        _nonempty_string(
+            item.get("operator_detection"),
+            "threat operator detection",
+        ),
+        _nonempty_string(
+            item.get("incident_response"),
+            "threat incident response",
+        ),
+        _nonempty_string(
+            item.get("residual_risk"),
+            "threat residual risk",
+        ),
+    ):
+        _reject_threat_placeholder(value)
+    raw_owners = object_list(
+        item.get("control_owners"), "threat control owners"
+    )
+    owners: dict[str, str] = {}
+    for raw_owner in raw_owners:
+        owner = mapping(raw_owner, "threat control owner")
+        _exact_keys(owner, {"control_id", "owner"}, "threat control owner")
+        control_id = _nonempty_string(
+            owner.get("control_id"), "threat control ID"
+        )
+        owner_name = _nonempty_string(
+            owner.get("owner"), "threat control owner"
+        )
+        _reject_threat_placeholder(control_id)
+        _reject_threat_placeholder(owner_name)
+        if control_id in owners:
+            raise ConversationAcceptanceError(
+                "threat control ownership is duplicated"
+            )
+        owners[control_id] = owner_name
+    if set(owners) != set(controls):
+        raise ConversationAcceptanceError(
+            "every threat control needs one explicit owner"
+        )
+    positive = _string_list(
+        item.get("positive_evidence_node_ids"),
+        "positive threat evidence",
+    )
+    negative = _string_list(
+        item.get("negative_evidence_node_ids"),
+        "negative threat evidence",
+    )
+    _unique(positive, "positive threat evidence node")
+    _unique(negative, "negative threat evidence node")
+    if (
+        not positive
+        or not negative
+        or set(positive) & set(negative)
+        or not set(positive) <= active_node_ids
+        or not set(negative) <= active_node_ids
+        or (
+            expected_evidence is not None
+            and expected_evidence != frozenset((*positive, *negative))
+        )
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 11 threats need distinct active positive and negative "
+            "evidence"
+        )
+
+
+def _reject_threat_placeholder(value: str) -> None:
+    """Reject placeholder traceability text from active threat evidence."""
+    normalized = value.casefold()
+    markers = (
+        "placeholder",
+        "positive-evidence",
+        "negative-evidence",
+        "production-control",
+        "todo",
+        "tbd",
+    )
+    if any(marker in normalized for marker in markers):
+        raise ConversationAcceptanceError(
+            "active threat traceability contains placeholder text"
+        )
 
 
 def _validate_threat_structure_anchors(
@@ -3335,6 +3692,113 @@ def _phase10_provider_transitions(
     if len(transitions) != 17:
         raise ConversationAcceptanceError(
             "Phase 10 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase11_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact hardening integration source transitions."""
+    path = root / _PHASE11_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE11_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 11 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 11 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 11
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase11-hardening-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 11 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE11_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 11 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 11 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/server_stored_e2e_test.py::"
+            "test_phase11_served_dispatch_installs_required_hardening"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 11 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 11 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 11 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 11 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"), "transition source digest"
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"), "transition target digest"
+        )
+        if (
+            type(from_size) is not int
+            or from_size <= 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 11 provider byte transition is invalid"
+            )
+        transitions[relative] = (
+            from_size,
+            from_sha256,
+            to_size,
+            to_sha256,
+        )
+    if len(transitions) != 5:
+        raise ConversationAcceptanceError(
+            "Phase 11 provider transition inventory is invalid"
         )
     return transitions
 
