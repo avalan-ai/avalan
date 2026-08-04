@@ -175,6 +175,25 @@ async def test_protocol_fallbacks_raise_explicitly() -> None:
             "fallback",
         )
 
+    provider_stream = conversation.ConversationProviderStream
+    provider = conversation.ConversationProvider
+    with pytest.raises(NotImplementedError):
+        provider_stream.__aiter__(cast(Any, object()))
+    with pytest.raises(NotImplementedError):
+        await provider_stream.terminal(cast(Any, object()))
+    with pytest.raises(NotImplementedError):
+        await provider_stream.aclose(cast(Any, object()))
+    with pytest.raises(NotImplementedError):
+        await provider.dispatch(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await provider.stream(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+
     stored_adapter = conversation_lifecycle.StoredResponseLifecycleAdapter
     lifecycle_store = conversation_lifecycle.ProviderLifecycleStore
     binding_descriptor = vars(stored_adapter)["binding"]

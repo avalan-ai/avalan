@@ -248,8 +248,8 @@
       "path": "src/avalan/conversation/protocols.py",
       "from_size": 21895,
       "from_sha256": "35a00f98479afca3182663e9e2a8b8199b324a703650ffa6e8636b0b769a46ba",
-      "to_size": 22227,
-      "to_sha256": "262c032ff36fb216b03d47dbb4a8c2c9c383dcaa48e844eeef3c2c3f472e0505"
+      "to_size": 22337,
+      "to_sha256": "a725aafb8403ce24266870b92d75d3932e4a4f40553e8993fc4b18570a2748fb"
     },
     {
       "path": "src/avalan/conversation/stores/pgsql.py",
@@ -331,5 +331,5 @@
     "tests/conversation/agent_integration_pgsql_test.py::test_pgsql_tool_boundaries_recover_without_duplicate_effect",
     "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
   ],
-  "canonical_sha256": "a8529ac015697119b67e783cb1278f40aba8a6df9ebfad27accdea0dcbb41d6f"
+  "canonical_sha256": "7ffc46ca679f9e9fbac82eee530ae0474a8e1cf90a8b8ee11d71357ac95e4284"
 }

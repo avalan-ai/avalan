@@ -478,11 +478,6 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     _VERIFIER.verify_observed_exclusions(current, _ROOT)
 
     protocol_lines = (
-        *range(253, 255),
-        *range(257, 259),
-        *range(261, 264),
-        *range(269, 271),
-        *range(273, 276),
         *range(281, 283),
         *range(288, 290),
         *range(292, 295),
@@ -620,7 +615,7 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     )
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2246
+    assert sum(map(len, current.report_lines.values())) == 2234
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

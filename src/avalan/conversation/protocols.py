@@ -250,15 +250,15 @@ class ConversationProviderStream(Protocol):
 
     def __aiter__(self) -> AsyncIterator[ProviderItem]:
         """Return the asynchronous item iterator."""
-        ...
+        raise NotImplementedError
 
     async def terminal(self) -> ProviderResult:
         """Return validated terminal provider metadata."""
-        ...
+        raise NotImplementedError
 
     async def aclose(self) -> None:
         """Close and await the owned provider stream."""
-        ...
+        raise NotImplementedError
 
 
 class ConversationProvider(Protocol):
@@ -266,11 +266,11 @@ class ConversationProvider(Protocol):
 
     async def dispatch(self, plan: ProviderPlan) -> ProviderResult:
         """Dispatch one non-streaming provider request."""
-        ...
+        raise NotImplementedError
 
     async def stream(self, plan: ProviderPlan) -> ConversationProviderStream:
         """Open one owned asynchronous provider stream."""
-        ...
+        raise NotImplementedError
 
 
 class ConversationProviderStateSink(Protocol):
