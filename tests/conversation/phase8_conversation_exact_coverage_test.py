@@ -175,14 +175,46 @@ async def test_protocol_fallbacks_raise_explicitly() -> None:
             "fallback",
         )
 
-    binding_descriptor = vars(
-        conversation_lifecycle.StoredResponseLifecycleAdapter
-    )["binding"]
+    stored_adapter = conversation_lifecycle.StoredResponseLifecycleAdapter
+    lifecycle_store = conversation_lifecycle.ProviderLifecycleStore
+    binding_descriptor = vars(stored_adapter)["binding"]
     assert isinstance(binding_descriptor, property)
     binding_getter = binding_descriptor.fget
     assert binding_getter is not None
     with pytest.raises(NotImplementedError):
         binding_getter(cast(Any, object()))
+    with pytest.raises(NotImplementedError):
+        await stored_adapter.retrieve(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await stored_adapter.delete(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await lifecycle_store.claim_provider_lifecycle(
+            cast(Any, object()),
+            cast(Any, object()),
+            limit=1,
+        )
+    with pytest.raises(NotImplementedError):
+        await lifecycle_store.acknowledge_provider_lifecycle(
+            cast(Any, object()),
+            cast(Any, object()),
+            succeeded=False,
+        )
+    with pytest.raises(NotImplementedError):
+        await lifecycle_store.quarantine_provider_checkpoint(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await lifecycle_store.reconcile_ambiguous_dispatch(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
 
     for name in ("id", "operations", "tool", "event_manager"):
         descriptor = vars(ConfiguredChildOrchestrator)[name]

@@ -42,6 +42,7 @@ from avalan.sandbox.backend import (
     _default_command_runner,
     _process_limit_preexec,
     _replace_path_prefix,
+    _seatbelt_path_aliases,
     _system_prefix_resolves_equivalently,
 )
 
@@ -167,6 +168,27 @@ class SandboxPhase6Test(TestCase):
                     f'(allow file-write* (subpath "{resolved_output_dir}"))',
                     profile,
                 )
+
+    def test_seatbelt_path_aliases_include_equivalent_resolved_path(
+        self,
+    ) -> None:
+        with patch.object(
+            backend_module,
+            "_real_path",
+            return_value="/private/tmp/avalan-seatbelt-output",
+        ) as real_path:
+            aliases = _seatbelt_path_aliases(
+                "/tmp/avalan-seatbelt-session/../avalan-seatbelt-output"
+            )
+
+        self.assertEqual(
+            aliases,
+            (
+                "/tmp/avalan-seatbelt-output",
+                "/private/tmp/avalan-seatbelt-output",
+            ),
+        )
+        real_path.assert_called_once_with("/tmp/avalan-seatbelt-output")
 
     def test_bubblewrap_argument_generation_is_policy_derived(self) -> None:
         with TemporaryDirectory() as tmpdir:
