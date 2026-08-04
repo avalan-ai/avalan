@@ -1,0 +1,118 @@
+{
+  "schema_version": 1,
+  "manifest_id": "conversation-native-provider-activation-phase12",
+  "revision": "phase12-azure-live-complete-pending-review-2026-08-04",
+  "activation_state": "inactive",
+  "production_dispatch_enabled": false,
+  "production_advertisement_enabled": false,
+  "provider_evidence": {
+    "path": "provider_evidence.phase12.json",
+    "byte_sha256": "c0eec1c17a11963d204bf3d94e57dbb60cc36c07b149ecc604810c844682c151",
+    "canonical_digest": "7076e4ee05f29d7dc759f01af8eb6f657c3ea1eb075de57d8cd4f140f41ad4ef"
+  },
+  "live_evidence": {
+    "path": "live_conformance_results.phase12.json",
+    "byte_sha256": "470c02c15c4b2cc9b5f8849c8b35dcfaa17845d3027ff763e24bca71ed82fb97",
+    "canonical_digest": "b76caa8cf691ca10df406abf9e4aa17da18cad30e4ca550fe36377d0ebe06013"
+  },
+  "sdk_range": ">=2.42.0,<3.0.0",
+  "candidate_lanes": [
+    {
+      "provider_family": "openai",
+      "api_form": "openai_responses_v1",
+      "provider_api_revision": "openapi-2.3.0",
+      "endpoint_form": "https://api.openai.com/v1",
+      "model_source": "explicit OPENAI_MODEL",
+      "state": "inactive_authorized_live_blocked_account_credit_quota"
+    },
+    {
+      "provider_family": "azure_openai",
+      "api_form": "azure-openai-v1-preview",
+      "provider_api_revision": "azure-openai-v1-preview",
+      "endpoint_form": "https://{resource}.openai.azure.com/openai/v1",
+      "model_source": "explicit AZURE_OPENAI_DEPLOYMENT",
+      "state": "inactive_complete_live_matrix_pending_post_live_harness_delta_review"
+    }
+  ],
+  "required_live_matrix": [
+    "inline_compaction",
+    "standalone_compaction_and_unpruned_replay",
+    "stateless_all_turns_replay",
+    "stateless_current_turn_tool",
+    "stored_create",
+    "stored_previous_response_chain",
+    "stored_retrieve_delete",
+    "streaming_tool"
+  ],
+  "active_production_rows": [],
+  "live_proof_ids": [
+    "conversation-live-receipt-v1:identity-sha256:e34b6735e4c6087c68884bde1257a7384422669107b42af835dd2eb36f4b2668:structural-sha256:f76c0c145f3775c5e445cb55efb3c9cb5b9293a01695e6850f3764ee6badc5f3"
+  ],
+  "zero_active_evidence_mapping": {
+    "mapping_state": "non_vacuous_fail_closed",
+    "evaluated_openai_profile_count": 1,
+    "evaluated_azure_profile_count": 6,
+    "completed_live_profile_count": 1,
+    "active_row_count": 0,
+    "deterministic_evidence_nodes": [
+      "tests/conversation/activation_test.py::test_native_provider_dispatch_requires_exact_active_registry",
+      "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+      "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch",
+      "tests/conversation/documentation_test.py::test_capability_table_matches_inactive_activation_fixture"
+    ],
+    "public_e2e": {
+      "id": "CONV-E2E-015",
+      "state": "incomplete_cross_provider_live_matrix",
+      "completed_live_profile_count": 1,
+      "negative_evidence_nodes": [
+        "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+        "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch"
+      ]
+    },
+    "documentation_evidence": [
+      "docs/CONVERSATIONS.md",
+      "docs/CONVERSATION_OPERATIONS.md",
+      "tests/fixtures/conversation/provider_evidence.phase12.json",
+      "tests/fixtures/conversation/live_conformance_results.phase12.json"
+    ],
+    "reason": "The exact Azure gpt-5.6-terra deployment and revision completed all eight required live cases through the intrinsically accounted tracked harness, but native OpenAI account credit quota rejected inference before any case completed and the post-live harness and traceability delta has not received independent review, so no row is mapped or activated."
+  },
+  "review": {
+    "status": "pending_post_live_harness_delta_review",
+    "decision": "no_activation",
+    "required_roles": [
+      "architecture",
+      "security",
+      "test_traceability"
+    ],
+    "completed_review_ids": [
+      "phase12-architecture-security-review",
+      "phase12-test-traceability-review"
+    ],
+    "pending_review_scope": "strict_sdk_normalization_intrinsic_zero_retry_transport_accounting_and_traceability_anchors"
+  },
+  "activation_prerequisites": [
+    "authorized_native_openai_live_matrix",
+    "authorized_native_azure_openai_live_matrix",
+    "independent_architecture_review",
+    "independent_security_review",
+    "independent_test_traceability_review",
+    "atomic_activation_and_rollback_rehearsal"
+  ],
+  "unmet_prerequisites": [
+    "complete_native_openai_live_matrix_account_credit_quota",
+    "review_post_live_harness_and_traceability_delta"
+  ],
+  "review_signature": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": "all top-level fields except review_signature and canonical_digest",
+    "value": "5a505ceaac0dd27e61d54a65d4c1f4f7b5e665894968253010001918fac9d4e3"
+  },
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": "all top-level fields except canonical_digest",
+    "value": "84ebd3aa147af648530c798a1df0b96ca5b8fbb889d9f42b6bd5f2d02653348b"
+  }
+}

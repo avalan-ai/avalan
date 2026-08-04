@@ -1,6 +1,7 @@
 """Adapt exact native OpenAI Responses profiles to stateless replay."""
 
 from ...types import JsonValue
+from ..activation import AZURE_OPENAI_API_REVISIONS, AsyncActivationRegistry
 from ..binding import (
     ConversationCapability,
     ConversationCapabilityProfile,
@@ -41,7 +42,9 @@ from ..items import (
     ProviderItemCaller,
     ProviderItemKind,
     ProviderItemLedger,
+    ProviderItemNormalizationRule,
     ProviderItemPhase,
+    _validate_output_content_part,
     provider_item_byte_count,
     provider_replay_items,
 )
@@ -55,6 +58,8 @@ from ..protocols import (
     StoredProviderPlan,
 )
 from ..settings import (
+    CompactionOperation,
+    ConversationMode,
     DisabledCompaction,
     EffectiveReasoningContext,
     EffectiveReasoningMetadata,
@@ -88,6 +93,7 @@ from types import ModuleType
 from typing import Protocol, TypeAlias, cast, final
 from urllib.parse import urlsplit
 
+from httpx import MockTransport
 from openai import (
     APIConnectionError,
     APIResponseValidationError,
@@ -119,14 +125,9 @@ _ADAPTER_TYPE = (
 )
 _SDK_REVISION = "openai-python-2.42.0"
 _OPENAI_API_REVISION = "openapi-2.3.0"
-_AZURE_API_REVISIONS = frozenset(
-    {
-        "azure-openai-v1",
-        "azure-openai-v1-preview",
-    }
-)
 _ENCRYPTED_CONTENT_INCLUDE: ResponseIncludable = "reasoning.encrypted_content"
 _MAX_OPAQUE_BYTES = 1_048_576
+_RESPONSE_OUTPUT_ONLY_INPUT_FIELDS = frozenset({"status"})
 
 NativeOpenAIResponsePlan: TypeAlias = (
     StatelessProviderPlan
@@ -407,7 +408,7 @@ class NativeOpenAIStatelessProfile:
             ):
                 raise ConversationCapabilityError()
         elif (
-            binding.provider_api_revision not in _AZURE_API_REVISIONS
+            binding.provider_api_revision not in AZURE_OPENAI_API_REVISIONS
             or self.encrypted_content
             is not NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
         ):
@@ -416,6 +417,77 @@ class NativeOpenAIStatelessProfile:
             native_openai_compaction_policy_digest(self.compaction_limits)
         ):
             raise ConversationBindingDriftError()
+
+
+@final
+class _NativeOpenAITestAuthority:
+    """Authorize only one exact loopback or mocked provider test client."""
+
+    def __init__(
+        self,
+        *,
+        client: AsyncOpenAI,
+        binding: ProviderLaneBinding,
+        scripted_tcp_test: bool,
+        capability_profile: ConversationCapabilityProfile,
+    ) -> None:
+        _validate_sdk_client_binding(
+            client,
+            binding=binding,
+            scripted_tcp_test=scripted_tcp_test,
+            capability_profile=capability_profile,
+        )
+        transport = client._client._transport
+        mounts = client._client._mounts
+        if not capability_profile.test_only or not (
+            scripted_tcp_test
+            or type(transport) is MockTransport
+            and not mounts
+        ):
+            raise ConversationCapabilityError()
+        self._client = client
+        self._binding = binding
+        self._scripted_tcp_test = scripted_tcp_test
+        self._capability_profile = capability_profile
+
+    def assert_bound(
+        self,
+        *,
+        client: AsyncOpenAI,
+        binding: ProviderLaneBinding,
+        scripted_tcp_test: bool,
+        capability_profile: ConversationCapabilityProfile,
+    ) -> None:
+        """Reject reuse for any different client or provider identity."""
+        if (
+            client is not self._client
+            or binding != self._binding
+            or scripted_tcp_test is not self._scripted_tcp_test
+            or capability_profile != self._capability_profile
+        ):
+            raise ConversationCapabilityError()
+        _validate_sdk_client_binding(
+            client,
+            binding=binding,
+            scripted_tcp_test=scripted_tcp_test,
+            capability_profile=capability_profile,
+        )
+
+
+def _native_openai_test_authority(
+    *,
+    client: AsyncOpenAI,
+    binding: ProviderLaneBinding,
+    scripted_tcp_test: bool,
+    capability_profile: ConversationCapabilityProfile,
+) -> _NativeOpenAITestAuthority:
+    """Return explicit authority for one loopback or mocked test transport."""
+    return _NativeOpenAITestAuthority(
+        client=client,
+        binding=binding,
+        scripted_tcp_test=scripted_tcp_test,
+        capability_profile=capability_profile,
+    )
 
 
 @final
@@ -722,12 +794,23 @@ class NativeOpenAIStatelessProvider:
         profile: NativeOpenAIStatelessProfile,
         capability_profile: ConversationCapabilityProfile,
         tools: tuple[NativeOpenAIFunctionTool, ...] = (),
+        activation_registry: AsyncActivationRegistry | None = None,
+        test_authority: _NativeOpenAITestAuthority | None = None,
     ) -> None:
         if (
             type(client) is not AsyncOpenAI
             or type(profile) is not NativeOpenAIStatelessProfile
             or type(capability_profile) is not ConversationCapabilityProfile
             or type(tools) is not tuple
+            or (
+                activation_registry is not None
+                and type(activation_registry) is not AsyncActivationRegistry
+            )
+            or (
+                test_authority is not None
+                and type(test_authority) is not _NativeOpenAITestAuthority
+            )
+            or (activation_registry is not None and test_authority is not None)
             or any(
                 type(tool) is not NativeOpenAIFunctionTool for tool in tools
             )
@@ -738,10 +821,19 @@ class NativeOpenAIStatelessProvider:
         if len({tool.name for tool in tools}) != len(tools):
             raise ConversationValidationError()
         _validate_sdk_client(client, profile, capability_profile)
+        if test_authority is not None:
+            test_authority.assert_bound(
+                client=client,
+                binding=profile.binding,
+                scripted_tcp_test=profile.scripted_tcp_test,
+                capability_profile=capability_profile,
+            )
         self._client = client
         self._profile = profile
         self._capability_profile = capability_profile
         self._tools = {tool.name: tool for tool in tools}
+        self._activation_registry = activation_registry
+        self._test_authority = test_authority
         self._diagnostics = _NativeOpenAIDiagnosticsState()
         self._closed = False
         self._close_task: Task[None] | None = None
@@ -795,10 +887,18 @@ class NativeOpenAIStatelessProvider:
                 plan,
                 ProviderTransport.NON_STREAMING,
             )
+            await self._authorize_dispatch(
+                stateless,
+                operation=(
+                    CompactionOperation.INLINE
+                    if inline
+                    else CompactionOperation.NONE
+                ),
+            )
             limits = self._profile.compaction_limits if inline else None
             input_items = _request_input_items(stateless, limits=limits)
             response = await self._create(input_items, stateless, stream=False)
-            if type(response) is not Response:
+            if not isinstance(response, Response):
                 raise _provider_failure(boundary="failure_before_output")
             result = _provider_result(response, stateless, limits=limits)
         except CancelledError:
@@ -820,6 +920,10 @@ class NativeOpenAIStatelessProvider:
         """Dispatch one exact standalone compact operation."""
         try:
             compact_plan = self._validate_compact_plan(plan)
+            await self._authorize_dispatch(
+                compact_plan,
+                operation=CompactionOperation.STANDALONE,
+            )
             limits = self._profile.compaction_limits
             assert limits is not None
             input_items = _request_input_items(compact_plan, limits=limits)
@@ -829,7 +933,7 @@ class NativeOpenAIStatelessProvider:
                 model=self.binding.model_or_deployment,
                 input=input_items,
             )
-            if type(response) is not CompactedResponse:
+            if not isinstance(response, CompactedResponse):
                 raise _provider_failure(boundary="failure_before_output")
             result = _compact_provider_result(
                 response,
@@ -876,6 +980,14 @@ class NativeOpenAIStatelessProvider:
             stateless = self._validate_plan(
                 plan,
                 ProviderTransport.STREAMING,
+            )
+            await self._authorize_dispatch(
+                stateless,
+                operation=(
+                    CompactionOperation.INLINE
+                    if inline
+                    else CompactionOperation.NONE
+                ),
             )
             limits = self._profile.compaction_limits if inline else None
             input_items = _request_input_items(stateless, limits=limits)
@@ -1019,6 +1131,32 @@ class NativeOpenAIStatelessProvider:
         limits = self._profile.compaction_limits
         assert limits is not None
         _request_input_items(stateless, limits=limits)
+
+    async def _authorize_dispatch(
+        self,
+        plan: StatelessProviderPlan | StandaloneCompactProviderPlan,
+        *,
+        operation: CompactionOperation,
+    ) -> None:
+        """Authorize one exact production row before any SDK effect."""
+        test_authority = self._test_authority
+        if test_authority is not None:
+            test_authority.assert_bound(
+                client=self._client,
+                binding=self.binding,
+                scripted_tcp_test=self._profile.scripted_tcp_test,
+                capability_profile=self._capability_profile,
+            )
+            return
+        registry = self._activation_registry
+        if registry is None:
+            raise ConversationCapabilityError()
+        await registry.resolve(
+            self.binding,
+            mode=ConversationMode.STATELESS,
+            reasoning_context=plan.reasoning.requested,
+            compaction_operation=operation,
+        )
 
     def _validate_inline_compaction(
         self,
@@ -1425,18 +1563,19 @@ def _request_input_items(
         if type(value) is not dict:
             raise ConversationValidationError()
         payload = cast(dict[str, object], value)
-        if item.kind is ProviderItemKind.COMPACTION:
-            payload.pop("created_by", None)
         if item.opaque_state is not None:
             try:
                 opaque = item.opaque_state._codec_bytes().decode("utf-8")
             except UnicodeDecodeError:
                 raise ConversationValidationError() from None
-            _validate_opaque_text(opaque)
             payload["encrypted_content"] = opaque
+        normalized = _replay_item_to_input_item(
+            payload,
+            provider_family=plan.binding.provider_family,
+        )
         byte_count = _append_bounded_input_item(
             items,
-            payload,
+            cast(dict[str, object], normalized),
             limits,
             byte_count,
         )
@@ -1460,6 +1599,123 @@ def _request_input_items(
     if not items:
         raise ConversationValidationError()
     return items
+
+
+def _replay_item_to_input_item(
+    value: Mapping[str, object],
+    *,
+    provider_family: ProviderFamily,
+) -> ResponseInputItemParam:
+    """Return one exact replay input without response-only metadata."""
+    if type(provider_family) is not ProviderFamily or provider_family not in {
+        ProviderFamily.OPENAI,
+        ProviderFamily.AZURE_OPENAI,
+    }:
+        raise ConversationValidationError()
+    frozen = cast(Mapping[str, JsonValue], freeze_json_value(value))
+    raw_type = frozen.get("type")
+    try:
+        if type(raw_type) is not str:
+            raise ValueError()
+        kind = ProviderItemKind(raw_type)
+    except ValueError:
+        raise ConversationValidationError() from None
+    fields = frozenset(frozen)
+    rules = tuple(
+        rule
+        for rule in PROVIDER_ITEM_SEMANTICS[kind]
+        if rule.required_fields <= fields
+        and fields
+        <= rule.allowed_fields
+        | (
+            frozenset({"encrypted_content"})
+            if rule.opaque_required
+            else frozenset()
+        )
+        and rule.opaque_required == ("encrypted_content" in fields)
+    )
+    if len(rules) != 1:
+        raise ConversationValidationError()
+    rule = rules[0]
+    status = frozen.get("status")
+    if status is not None and status != "completed":
+        raise ConversationValidationError()
+    identifier = frozen.get("id")
+    if identifier is not None:
+        validate_identifier(identifier, "provider_output_id")
+    if rule.correlation_field is not None:
+        validate_identifier(
+            frozen.get(rule.correlation_field),
+            rule.correlation_field,
+        )
+    if rule.opaque_required:
+        opaque = frozen.get("encrypted_content")
+        if type(opaque) is not str:
+            raise ConversationValidationError()
+        try:
+            _validate_opaque_text(opaque)
+        except ConversationError:
+            raise ConversationValidationError() from None
+    normalized = cast(dict[str, object], thaw_json_value(frozen))
+    for field_name in _RESPONSE_OUTPUT_ONLY_INPUT_FIELDS:
+        normalized.pop(field_name, None)
+    if kind is ProviderItemKind.COMPACTION:
+        created_by = normalized.get("created_by")
+        if created_by is not None:
+            validate_identifier(created_by, "created_by")
+        normalized.pop("created_by", None)
+    if (
+        kind is ProviderItemKind.MESSAGE
+        and rule.normalization
+        is ProviderItemNormalizationRule.PROVIDER_OUTPUT_REPLAY
+    ):
+        _normalize_replayed_output_message(
+            normalized,
+            provider_family=provider_family,
+        )
+    return cast(ResponseInputItemParam, normalized)
+
+
+def _normalize_replayed_output_message(
+    payload: dict[str, object],
+    *,
+    provider_family: ProviderFamily,
+) -> None:
+    """Normalize one exact provider-specific assistant replay message."""
+    if payload.get("role") != "assistant":
+        raise ConversationValidationError()
+    if "phase" in payload:
+        phase = payload.get("phase")
+        if phase is None:
+            payload.pop("phase")
+        elif provider_family is ProviderFamily.AZURE_OPENAI or phase not in {
+            "commentary",
+            "final_answer",
+        }:
+            raise ConversationValidationError()
+    content = payload.get("content")
+    if type(content) is not list or not content:
+        raise ConversationValidationError()
+    for raw_part in content:
+        if type(raw_part) is not dict:
+            raise ConversationValidationError()
+        part = cast(dict[str, object], raw_part)
+        part_type = part.get("type")
+        if part_type == "output_text":
+            for metadata_field in ("annotations", "logprobs"):
+                if metadata_field not in part:
+                    continue
+                metadata = part.get(metadata_field)
+                if (
+                    provider_family is ProviderFamily.AZURE_OPENAI
+                    and metadata is not None
+                ):
+                    raise ConversationValidationError()
+                if metadata is None:
+                    part.pop(metadata_field)
+        elif part_type != "refusal":
+            raise ConversationValidationError()
+        _validate_output_content_part(freeze_json_value(part))
 
 
 def _provider_result(

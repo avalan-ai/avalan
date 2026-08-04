@@ -1144,11 +1144,12 @@ def _validate_output_content_part(value: JsonValue) -> None:
     if part["type"] == "output_text":
         text_part = _canonical_mapping(
             value,
-            required=frozenset({"annotations", "text", "type"}),
+            required=frozenset({"text", "type"}),
             allowed=frozenset({"annotations", "logprobs", "text", "type"}),
         )
         _canonical_text(text_part["text"], allow_empty=True)
-        _validate_annotations(text_part["annotations"])
+        if "annotations" in text_part:
+            _validate_annotations(text_part["annotations"])
         if "logprobs" in text_part:
             _validate_logprobs(text_part["logprobs"])
     elif part["type"] == "refusal":

@@ -5,16 +5,21 @@ from collections.abc import Callable, Coroutine, Mapping
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from json import dumps, loads
-from typing import cast
+from typing import Any, cast
 
 import httpx
 import pytest
 from openai import AsyncOpenAI
+from openai.types.responses import Response
+from openai.types.responses.parsed_response import ParsedResponse
 from phase2_fixtures import authority, child_identity, request
 
 import avalan
 import avalan.conversation as conversation
 from avalan.conversation import coordinator as coordinator_module
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.types import JsonValue
 
 pytestmark = pytest.mark.anyio
@@ -188,11 +193,19 @@ def _provider(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         max_retries=0,
     )
+    profile = _profile(binding)
+    selected_capabilities = capabilities or _capabilities(binding)
     return conversation.NativeOpenAIStoredProvider(
         client=client,
-        profile=_profile(binding),
-        capability_profile=capabilities or _capabilities(binding),
+        profile=profile,
+        capability_profile=selected_capabilities,
         tools=tools,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=selected_capabilities,
+        ),
     )
 
 
@@ -1474,6 +1487,70 @@ async def test_retrieve_validates_exact_stored_profile(
         await provider.retrieve(
             conversation.UpstreamResponseId("private-retrieve-profile")
         )
+    await provider.aclose()
+
+
+async def test_retrieve_requires_a_typed_response_or_subclass(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Accept SDK subclasses and reject callable model-dump ducks."""
+
+    async def unused_handler(request: httpx.Request) -> httpx.Response:
+        del request
+        raise AssertionError("HTTP transport must not be reached")
+
+    provider = _provider(
+        _binding(lane_id="lane-retrieve-response-type"),
+        unused_handler,
+    )
+    upstream_response_id = conversation.UpstreamResponseId(
+        "private-retrieve-response-type"
+    )
+    parsed = ParsedResponse[object].model_validate(
+        _response(
+            str(upstream_response_id),
+            [_message("retrieve-response-type", "retained")],
+        )
+    )
+    assert isinstance(parsed, Response)
+
+    async def retrieve_parsed(response_id: str) -> ParsedResponse[object]:
+        assert response_id == str(upstream_response_id)
+        return parsed
+
+    monkeypatch.setattr(
+        provider._client.responses,
+        "retrieve",
+        retrieve_parsed,
+    )
+    retrieved = await provider.retrieve(upstream_response_id)
+    assert (
+        retrieved.availability is conversation.UpstreamAvailability.AVAILABLE
+    )
+
+    class ModelDumpDuck:
+        def __init__(self) -> None:
+            self.called = False
+
+        def model_dump(self, **kwargs: object) -> dict[str, object]:
+            del kwargs
+            self.called = True
+            return _response(str(upstream_response_id), [])
+
+    duck = ModelDumpDuck()
+
+    async def retrieve_duck(response_id: str) -> Any:
+        assert response_id == str(upstream_response_id)
+        return duck
+
+    monkeypatch.setattr(
+        provider._client.responses,
+        "retrieve",
+        retrieve_duck,
+    )
+    with pytest.raises(conversation.ConversationProviderResponseError):
+        await provider.retrieve(upstream_response_id)
+    assert not duck.called
     await provider.aclose()
 
 

@@ -18,6 +18,9 @@ agents and workflows across local and hosted models.
   explicit nodes, review boundaries, and task-backed execution.
 - [Tasks](TASKS.md) - Define durable task contracts, file delivery, queues,
   storage, schema validation, and repeatable execution.
+- [Conversation continuity](CONVERSATIONS.md) - Use direct and served
+  continuation modes, typed handles, branches, compaction, lifecycle operations,
+  capability evidence, and deterministic examples.
 
 ## Setup and references
 
@@ -65,3 +68,10 @@ agents and workflows across local and hosted models.
   flow behavior.
 - [Terminal recording](RECORDING.md) - Capture Avalan CLI sessions as real
   terminal video with colors, live panels, and tool-call updates.
+- [Conversation security](CONVERSATION_SECURITY.md) - Protect caller-held
+  envelopes, authority, identifiers, retention, replay, and encryption keys.
+- [Conversation operations](CONVERSATION_OPERATIONS.md) - Migrate durable
+  storage, operate workers, rotate keys, activate exact profiles, and roll back.
+- [Conversation migration v1](CONVERSATION_MIGRATION_V1.md) - Move one-shot,
+  tool, served Responses, structured-input, multi-agent, and CLI users to the
+  versioned continuity contract.

@@ -1,0 +1,211 @@
+{
+  "schema_version": 1,
+  "documents": [
+    "docs/CONVERSATIONS.md",
+    "docs/CONVERSATION_SECURITY.md",
+    "docs/CONVERSATION_OPERATIONS.md",
+    "docs/CONVERSATION_MIGRATION_V1.md"
+  ],
+  "examples": [
+    {
+      "path": "docs/examples/conversation_continuity_sdk.py",
+      "command": "poetry run python docs/examples/conversation_continuity_sdk.py",
+      "entrypoint": "run_example"
+    },
+    {
+      "path": "docs/examples/conversation_responses_local.py",
+      "command": "poetry run python docs/examples/conversation_responses_local.py",
+      "entrypoint": "run_example"
+    }
+  ],
+  "openapi_fixture": "tests/fixtures/conversation/served_responses_openapi.phase10.json",
+  "openapi_operations": {
+    "create": ["post", "/responses"],
+    "compact": ["post", "/responses/compact"],
+    "retrieve": ["get", "/responses/{response_id}"],
+    "delete": ["delete", "/responses/{response_id}"]
+  },
+  "served_request_fields": [
+    "background",
+    "container",
+    "context_management",
+    "extensions",
+    "include",
+    "input",
+    "instructions",
+    "max_output_tokens",
+    "max_tokens",
+    "max_tool_calls",
+    "metadata",
+    "model",
+    "n",
+    "parallel_tool_calls",
+    "previous_response_id",
+    "reasoning",
+    "response_format",
+    "stop",
+    "store",
+    "stream",
+    "stream_options",
+    "temperature",
+    "text",
+    "tool_choice",
+    "tools",
+    "top_p",
+    "user"
+  ],
+  "served_compact_fields": [
+    "extensions",
+    "input",
+    "instructions",
+    "model",
+    "previous_response_id"
+  ],
+  "stateless_settings_fields": [
+    "branch",
+    "compaction",
+    "mode",
+    "named_head",
+    "parent",
+    "reasoning_context",
+    "retention"
+  ],
+  "stored_settings_fields": [
+    "branch",
+    "compaction",
+    "mode",
+    "named_head",
+    "parent",
+    "provider_storage_disclosed",
+    "reasoning_context",
+    "retention"
+  ],
+  "error_codes": [
+    "conversation_validation_failed",
+    "conversation_capability_unsupported",
+    "conversation_binding_drift",
+    "conversation_conflict",
+    "conversation_integrity_failed",
+    "conversation_expired",
+    "conversation_deleted",
+    "conversation_storage_failed",
+    "conversation_dispatch_ambiguous",
+    "conversation_state_commit_failed",
+    "conversation_publication_failed",
+    "conversation_authorization_failed",
+    "conversation_limit_exceeded",
+    "conversation_codec_failed",
+    "conversation_transition_invalid"
+  ],
+  "durable_error_codes": [
+    "conversation_key_missing",
+    "conversation_key_retired",
+    "conversation_key_compromised",
+    "conversation_key_policy_invalid",
+    "conversation_crypto_authentication_failed",
+    "conversation_feature_unavailable",
+    "conversation_migration_required"
+  ],
+  "surface_dispositions": {
+    "direct_model_sdk": "activated",
+    "agent_sdk": "activated",
+    "cli": "deferred",
+    "flow": "deferred",
+    "mcp": "deferred",
+    "a2a": "deferred",
+    "served_responses": "activated"
+  },
+  "activation_expectation": {
+    "fixture": "tests/fixtures/conversation/activation_manifest.phase12.json",
+    "activation_state": "inactive",
+    "production_dispatch_enabled": false,
+    "production_advertisement_enabled": false,
+    "active_production_rows": 0,
+    "live_proof_ids": 1,
+    "review_status": "pending_post_live_harness_delta_review",
+    "provider_states": {
+      "openai": "inactive_authorized_live_blocked_account_credit_quota",
+      "azure_openai": "inactive_complete_live_matrix_pending_post_live_harness_delta_review"
+    }
+  },
+  "live_evidence_expectation": {
+    "fixture": "tests/fixtures/conversation/live_conformance_results.phase12.json",
+    "observed_at": "2026-08-04",
+    "provider_families": [
+      "openai",
+      "azure_openai"
+    ],
+    "evaluated_openai_profiles": 1,
+    "evaluated_azure_profiles": 6,
+    "native_openai_total_http_calls": 3,
+    "native_openai_completed_cases": 0,
+    "native_openai_state": "inactive_account_credit_exhausted_before_inference",
+    "completed_full_matrix_profiles": 1,
+    "azure_tracked_cli_logical_operations": 11,
+    "azure_tracked_cli_http_requests": 11,
+    "azure_tracked_cli_sdk_configured_max_retries": 0,
+    "azure_tracked_cli_observed_sdk_retries": 0,
+    "azure_tracked_cli_unexpected_requests": 0,
+    "azure_tracked_cli_cleanup_completed": true,
+    "active_profiles": 0,
+    "activation_decision": "remain_inactive"
+  },
+  "provider_evidence_expectation": {
+    "fixture": "tests/fixtures/conversation/provider_evidence.phase12.json",
+    "accessed_at": "2026-08-03",
+    "sdk_distribution": "openai",
+    "installed_version": "2.42.0",
+    "sdk_range": ">=2.42.0,<3.0.0",
+    "untyped_extra_body_permitted": false,
+    "source_urls": [
+      "https://developers.openai.com/api/docs/guides/compaction",
+      "https://developers.openai.com/api/docs/guides/conversation-state",
+      "https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls",
+      "https://developers.openai.com/api/reference/resources/responses/methods/compact",
+      "https://developers.openai.com/api/reference/resources/responses/methods/create",
+      "https://developers.openai.com/api/reference/resources/responses/methods/delete",
+      "https://developers.openai.com/api/reference/resources/responses/methods/retrieve",
+      "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses",
+      "https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/responses"
+    ]
+  },
+  "migration_paths": [
+    "one-shot direct calls",
+    "tool replay loops",
+    "served responses clients",
+    "structured input",
+    "agent and multi-agent applications",
+    "cli users",
+    "versioned durable deployment"
+  ],
+  "security_terms": [
+    "authenticated tls",
+    "never put it in a url",
+    "ttl",
+    "replay",
+    "branch",
+    "rotation",
+    "compromise response"
+  ],
+  "operator_terms": [
+    "durable storage migration",
+    "keys",
+    "retention and sweeping",
+    "outbox and reconciliation",
+    "provider capability rollout and retirement",
+    "provider and sdk drift",
+    "backup and restore",
+    "atomic activation",
+    "rollback",
+    "deletion outage checklist"
+  ],
+  "runbook_pytest_nodes": [
+    "tests/conversation/activation_test.py::test_registry_starts_dormant_and_load_does_not_activate",
+    "tests/conversation/activation_test.py::test_generation_cas_makes_concurrent_apply_atomic",
+    "tests/conversation/activation_test.py::test_rollback_restores_prior_manifest_or_dormant_state",
+    "tests/conversation/security_e2e_test.py::test_phase11_pgsql_migration_restart_and_rollback",
+    "tests/conversation/phase6_lifecycle_test.py::test_reconciler_retries_failure_without_restoring_local_access",
+    "tests/conversation/pgsql_conformance_test.py::test_pgsql_atomic_idempotency_and_outbox_recovery"
+  ],
+  "canonical_sha256": "b16958348bd3cde606cf7ca18f17dd8770d23e5fb5caac8faa70b5a74679b016"
+}

@@ -36,6 +36,9 @@ from avalan.conversation import items as items_module
 from avalan.conversation import protocols as protocols_module
 from avalan.conversation import sdk as sdk_module
 from avalan.conversation.providers import openai as provider_module
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.model.nlp.text.vendor import openai as legacy_openai_module
 from avalan.model.stream import StreamRetentionPolicy
 from avalan.types import JsonValue
@@ -235,10 +238,22 @@ def _raw_provider(
         http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
         max_retries=0,
     )
+    selected_profile = profile or _profile(binding)
+    test_authority = (
+        _native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=selected_profile.scripted_tcp_test,
+            capability_profile=capability_profile,
+        )
+        if capability_profile.test_only
+        else None
+    )
     return conversation.NativeOpenAIStatelessProvider(
         client=client,
-        profile=profile or _profile(binding),
+        profile=selected_profile,
         capability_profile=capability_profile,
+        test_authority=test_authority,
     )
 
 
@@ -294,6 +309,60 @@ def _terminal_event(
             ),
         }
     )
+
+
+async def test_authority_rejects_network_transport_and_rebinding() -> None:
+    """Reject network-backed authority and reuse by another SDK client."""
+    binding = _binding(lane_id="lane-test-authority-boundary")
+    capabilities = _capabilities(binding)
+    network_client = AsyncOpenAI(
+        api_key="network-transport-key",
+        base_url=binding.normalized_endpoint,
+        http_client=httpx.AsyncClient(transport=httpx.AsyncHTTPTransport()),
+        max_retries=0,
+    )
+    first_client = AsyncOpenAI(
+        api_key="first-mock-key",
+        base_url=binding.normalized_endpoint,
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_unused_handler)
+        ),
+        max_retries=0,
+    )
+    second_client = AsyncOpenAI(
+        api_key="second-mock-key",
+        base_url=binding.normalized_endpoint,
+        http_client=httpx.AsyncClient(
+            transport=httpx.MockTransport(_unused_handler)
+        ),
+        max_retries=0,
+    )
+    try:
+        with pytest.raises(conversation.ConversationCapabilityError):
+            _native_openai_test_authority(
+                client=network_client,
+                binding=binding,
+                scripted_tcp_test=False,
+                capability_profile=capabilities,
+            )
+
+        test_authority = _native_openai_test_authority(
+            client=first_client,
+            binding=binding,
+            scripted_tcp_test=False,
+            capability_profile=capabilities,
+        )
+        with pytest.raises(conversation.ConversationCapabilityError):
+            conversation.NativeOpenAIStatelessProvider(
+                client=second_client,
+                profile=_profile(binding),
+                capability_profile=capabilities,
+                test_authority=test_authority,
+            )
+    finally:
+        await network_client.close()
+        await first_client.close()
+        await second_client.close()
 
 
 async def test_profiles_tools_and_runtime_fail_closed() -> None:
@@ -1625,6 +1694,41 @@ async def test_tool_arguments_effects_and_results_are_bounded() -> None:
 
     with pytest.raises(conversation.ConversationValidationError):
         await replace(tool, handler=too_large).execute('{"x":1}')
+
+    reconciled = conversation.ToolEffectReconciliation(
+        applied=True,
+        output="reconciled",
+    )
+
+    async def reconcile(
+        arguments: Mapping[str, JsonValue],
+    ) -> conversation.ToolEffectReconciliation:
+        assert arguments == {"x": 1}
+        return reconciled
+
+    reconciling_tool = replace(tool, reconciliation_handler=reconcile)
+    binding = _binding(lane_id="lane-tool-reconciliation")
+    provider = _provider(
+        binding,
+        _unused_handler,
+        tools=(reconciling_tool,),
+    )
+    function_call = _provider_result(
+        _response(
+            "tool-reconciliation-response",
+            [
+                _function_call(
+                    "tool-reconciliation-call",
+                    "tool-reconciliation-call-id",
+                    name="validation-tool",
+                    arguments='{"x":1}',
+                )
+            ],
+        ),
+        binding,
+    ).items[0]
+    assert await provider.reconcile_tool(function_call) is reconciled
+    await provider.aclose()
 
 
 async def test_provider_constructor_and_plan_validation_are_closed() -> None:

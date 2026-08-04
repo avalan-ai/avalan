@@ -1,6 +1,12 @@
 """Expose conversation continuity contracts."""
 
 from . import state as _state
+from .activation import ActivationEvidenceRow as ActivationEvidenceRow
+from .activation import ActivationManifest as ActivationManifest
+from .activation import ActivationProofSet as ActivationProofSet
+from .activation import ActivationSnapshot as ActivationSnapshot
+from .activation import AsyncActivationRegistry as AsyncActivationRegistry
+from .activation import ProviderApiForm as ProviderApiForm
 from .agent import AgentConversationLane as AgentConversationLane
 from .agent import AgentConversationResult as AgentConversationResult
 from .agent import (

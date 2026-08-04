@@ -18,6 +18,9 @@ import avalan.conversation as conversation
 from avalan.conversation import codec as codec_module
 from avalan.conversation import coordinator as coordinator_module
 from avalan.conversation.providers import openai as provider_module
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.types import JsonValue
 
 pytestmark = pytest.mark.anyio
@@ -346,19 +349,25 @@ def _stateless_provider(
     compaction: bool = True,
     limits: conversation.NativeOpenAICompactionLimits | None = None,
 ) -> conversation.NativeOpenAIStatelessProvider:
-    return conversation.NativeOpenAIStatelessProvider(
-        client=_client(binding, handler),
-        profile=conversation.NativeOpenAIStatelessProfile(
-            profile_id=f"compact-{binding.lane_id}",
-            binding=binding,
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=limits or _limits(),
+    client = _client(binding, handler)
+    profile = conversation.NativeOpenAIStatelessProfile(
+        profile_id=f"compact-{binding.lane_id}",
+        binding=binding,
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
         ),
-        capability_profile=_capabilities(
-            binding,
-            compaction=compaction,
+        compaction_limits=limits or _limits(),
+    )
+    capabilities = _capabilities(binding, compaction=compaction)
+    return conversation.NativeOpenAIStatelessProvider(
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
         ),
     )
 
@@ -388,18 +397,27 @@ def _stored_provider(
             )
         ),
     )
-    return conversation.NativeOpenAIStoredProvider(
-        client=_client(bound, handler),
-        profile=conversation.NativeOpenAIStoredProfile(
-            profile_id=f"compact-{bound.lane_id}",
-            binding=bound,
-            execution=execution,
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=limits,
+    client = _client(bound, handler)
+    profile = conversation.NativeOpenAIStoredProfile(
+        profile_id=f"compact-{bound.lane_id}",
+        binding=bound,
+        execution=execution,
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
         ),
-        capability_profile=_capabilities(bound, stored=True),
+        compaction_limits=limits,
+    )
+    capabilities = _capabilities(bound, stored=True)
+    return conversation.NativeOpenAIStoredProvider(
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=bound,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
+        ),
     )
 
 
@@ -446,6 +464,10 @@ async def test_compaction_preflight_and_policy_validation_are_closed(
             compact_plan,
             conversation.ProviderTransport.STREAMING,
         )
+    stateless.validate_compaction_request(
+        compact_plan,
+        conversation.ProviderTransport.NON_STREAMING,
+    )
     with pytest.raises(conversation.ConversationValidationError):
         stateless.validate_compaction_request(
             stateless_plan,
@@ -524,6 +546,13 @@ async def test_compaction_preflight_and_policy_validation_are_closed(
             stored_plan,
             conversation.ProviderTransport.NON_STREAMING,
         )
+    stored.validate_compaction_request(
+        replace(
+            stored_plan,
+            compaction=conversation.InlineCompaction(compact_threshold=128),
+        ),
+        conversation.ProviderTransport.NON_STREAMING,
+    )
     await stateless.aclose()
     await stored.aclose()
 
@@ -1236,20 +1265,26 @@ async def test_stored_inline_compaction_only_sends_new_input_and_parent() -> (
             )
         ),
     )
-    provider = conversation.NativeOpenAIStoredProvider(
-        client=_client(binding, handler),
-        profile=conversation.NativeOpenAIStoredProfile(
-            profile_id="compact-stored-inline",
-            binding=binding,
-            execution=execution,
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=limits,
+    client = _client(binding, handler)
+    profile = conversation.NativeOpenAIStoredProfile(
+        profile_id="compact-stored-inline",
+        binding=binding,
+        execution=execution,
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
         ),
-        capability_profile=_capabilities(
-            binding,
-            stored=True,
+        compaction_limits=limits,
+    )
+    capabilities = _capabilities(binding, stored=True)
+    provider = conversation.NativeOpenAIStoredProvider(
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
         ),
     )
     result = await provider.dispatch(
@@ -1688,7 +1723,10 @@ async def _verify_stateless_inline_input_limits_are_exact_and_predispatch(
             ),
         )
 
-    prefix_payload = _message("prefix-message", "prefix")
+    prefix_payload = provider_module._replay_item_to_input_item(
+        _message("prefix-message", "prefix"),
+        provider_family=conversation.ProviderFamily.OPENAI,
+    )
     new_payload = {
         "type": "message",
         "role": "user",

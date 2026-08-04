@@ -1,0 +1,160 @@
+{
+  "schema_version": 1,
+  "evidence_id": "conversation-provider-evidence-phase12-2026-08-03",
+  "feature": "conversation_continuity",
+  "accessed_at": "2026-08-03",
+  "evidence_state": "current_documentation_and_installed_sdk",
+  "production_activation_authority": false,
+  "providers": [
+    {
+      "provider_family": "openai",
+      "api_form": "openai_responses_v1",
+      "provider_api_revision": "openapi-2.3.0",
+      "endpoint_form": "https://api.openai.com/v1",
+      "model_field_semantics": "native OpenAI model identifier",
+      "model_identity_semantics": "requested_model_and_response_model_revision_exact",
+      "encrypted_content_policy": "default_return",
+      "sources": [
+        {
+          "url": "https://developers.openai.com/api/docs/guides/conversation-state",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Stateless continuation replays every output item in original order.",
+            "Encrypted reasoning items are returned by default for stateless reasoning responses.",
+            "previous_response_id chains stored responses.",
+            "Response objects are stored for 30 days by default and store=false disables response storage.",
+            "Conversation items are not subject to the response 30-day TTL."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/docs/guides/reasoning#preserve-reasoning-across-calls",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "reasoning.context accepts auto, current_turn, and all_turns.",
+            "GPT-5.6 defaults reasoning.context to all_turns.",
+            "store=false all_turns continuation requires complete output replay."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/docs/guides/compaction",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "context_management compact_threshold can emit an opaque encrypted compaction item.",
+            "Standalone compact output is the canonical next context window.",
+            "Standalone compact output must be replayed unpruned."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/resources/responses/methods/create",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Responses create is typed for store, stream, tools, reasoning, context_management, and previous_response_id."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/resources/responses/methods/compact",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Responses compact returns a typed compacted response."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/resources/responses/methods/retrieve",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Stored responses have a typed retrieve lifecycle operation."
+          ]
+        },
+        {
+          "url": "https://developers.openai.com/api/reference/resources/responses/methods/delete",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Stored responses have a typed delete lifecycle operation."
+          ]
+        }
+      ]
+    },
+    {
+      "provider_family": "azure_openai",
+      "api_form": "azure-openai-v1-preview",
+      "provider_api_revision": "azure-openai-v1-preview",
+      "endpoint_form": "https://{resource}.openai.azure.com/openai/v1",
+      "model_field_semantics": "request uses the exact deployment name, response.model reports its model identity, and the deployment revision is pinned separately by reviewed configuration",
+      "model_identity_semantics": "requested_deployment_response_model_and_revision_pin_exact",
+      "encrypted_content_policy": "explicit_include",
+      "sources": [
+        {
+          "url": "https://learn.microsoft.com/en-us/azure/foundry/openai/how-to/responses",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Azure native Responses uses the OpenAI client with an /openai/v1 base URL.",
+            "The model request field is the Azure deployment name.",
+            "Azure store=false requests explicitly include reasoning.encrypted_content to receive encrypted reasoning for replay.",
+            "The v1 API supports create, retrieve, delete, previous_response_id, compact, and context_management."
+          ]
+        },
+        {
+          "url": "https://learn.microsoft.com/en-us/rest/api/microsoft-foundry/azureopenai/responses",
+          "accessed_at": "2026-08-03",
+          "facts": [
+            "Azure native REST Responses uses /openai/v1/responses endpoint forms.",
+            "api-version is optional and v1 is the documented default."
+          ]
+        }
+      ]
+    }
+  ],
+  "sdk": {
+    "distribution": "openai",
+    "installed_version": "2.42.0",
+    "declared_supported_range": ">=2.42.0,<3.0.0",
+    "client_type": "openai.AsyncOpenAI",
+    "typed_async_methods": [
+      "responses.compact",
+      "responses.create",
+      "responses.delete",
+      "responses.retrieve",
+      "responses.stream"
+    ],
+    "typed_request_fields": [
+      "context_management",
+      "include",
+      "input",
+      "model",
+      "previous_response_id",
+      "reasoning",
+      "store",
+      "stream",
+      "tools"
+    ],
+    "typed_symbols": [
+      "openai.types.responses.CompactedResponse",
+      "openai.types.responses.Response",
+      "openai.types.responses.ResponseCompactionItem",
+      "openai.types.responses.ResponseFunctionToolCall",
+      "openai.types.responses.ResponseInputItemParam",
+      "openai.types.responses.ResponseOutputMessage",
+      "openai.types.responses.ResponseReasoningItem",
+      "openai.types.responses.ResponseStreamEvent",
+      "openai.types.responses.response_create_params.ContextManagement",
+      "openai.types.shared_params.Reasoning"
+    ],
+    "untyped_extra_body_permitted": false
+  },
+  "required_live_matrix": [
+    "inline_compaction",
+    "standalone_compaction_and_unpruned_replay",
+    "stateless_all_turns_replay",
+    "stateless_current_turn_tool",
+    "stored_create",
+    "stored_previous_response_chain",
+    "stored_retrieve_delete",
+    "streaming_tool"
+  ],
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": "all top-level fields except canonical_digest",
+    "value": "7076e4ee05f29d7dc759f01af8eb6f657c3ea1eb075de57d8cd4f140f41ad4ef"
+  }
+}

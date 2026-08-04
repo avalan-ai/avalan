@@ -1,0 +1,551 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 12,
+  "authoritative_phase": 11,
+  "candidate_state": "azure_live_complete_openai_blocked_zero_active",
+  "planned_nodes": [
+    {
+      "id": "phase12-live-completion",
+      "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+      "evidence_class": "live",
+      "evidence_state": "planned_external",
+      "provider_families": [
+        "native_openai",
+        "native_azure"
+      ],
+      "observable_cases": [
+        "inline_compaction",
+        "standalone_compaction_and_unpruned_replay",
+        "stateless_all_turns_replay",
+        "stateless_current_turn_tool",
+        "stored_create",
+        "stored_previous_response_chain",
+        "stored_retrieve_delete",
+        "streaming_tool"
+      ]
+    },
+    {
+      "id": "phase12-full-matrix",
+      "node_id": "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+      "evidence_class": "matrix",
+      "evidence_state": "candidate_deterministic",
+      "provider_families": [
+        "native_openai",
+        "native_azure",
+        "incapable_generic_compatible"
+      ],
+      "observable_cases": [
+        "activation_apply_exact",
+        "authorization_rejected_before_dispatch",
+        "dispatch_failure_withholds_commit",
+        "durable_storage_absence_rejects_stored_mode",
+        "expired_manifest_rejected_before_dispatch",
+        "generic_compatible_rejected_before_dispatch",
+        "historical_deletion_survives_revocation",
+        "key_rotation_retains_grace_read",
+        "native_transport_mode_reasoning_compaction_cross_product",
+        "revocation_blocks_new_dispatch",
+        "rollback_restores_dormant_state",
+        "stored_standalone_compaction_rejected"
+      ]
+    }
+  ],
+  "public_e2e_inventory": [
+    {
+      "id": "CONV-E2E-001",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/openai_stateless_e2e_test.py::test_native_openai_fresh_process_durable_replay",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/direct_sdk_pgsql_test.py::test_public_handle_fresh_process_and_opaque_state_privacy",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-002",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/compaction_e2e_test.py::test_tool_cycles_across_two_boundaries_keep_exact_final_order",
+          "evidence_class": "wire",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_provider_test.py::test_parallel_branches_do_not_share_provider_state",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-003",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/openai_stored_e2e_test.py::test_stored_restart_retrieval_and_deletion",
+          "evidence_class": "public",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/direct_sdk_test.py::test_stored_continue_and_explicit_reset",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-004",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/native_openai_compaction_test.py::test_native_inline_latest_replay_and_standalone_wire",
+          "evidence_class": "wire",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/compaction_e2e_test.py::test_standalone_fork_restart_and_original_branch_remain_exact",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-005",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_prepared_call_runs_real_tool_loop_once",
+          "evidence_class": "runtime",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_tool_effect_failure_fences_unsafe_retry",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-006",
+      "evidence": [
+        {
+          "node_id": "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/agent/durable_continuation_resume_test.py::test_conversation_answer_applies_once_across_race_and_replay",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-007",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_child_merge_rejects_wrong_provider_and_model_binding",
+          "evidence_class": "pre_dispatch_rejection",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-008",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-009",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-010",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-011",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/direct_sdk_pgsql_test.py::test_public_pgsql_stream_failure_redacts_opaque_sidecar",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-012",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/coordinator_e2e_test.py::test_explicit_branches_reuse_one_immutable_parent",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/compaction_contract_test.py::test_two_named_head_compactions_have_one_cas_winner",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-013",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/pgsql_conformance_test.py::test_pgsql_stored_expiry_waits_for_upstream_reconciliation",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/pgsql_conformance_test.py::test_pgsql_write_key_generation_rejects_stale_writer",
+          "evidence_class": "security",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-014",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/activation_test.py::test_rollback_restores_prior_manifest_or_dormant_state",
+          "evidence_class": "runtime",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/documentation_test.py::test_security_migration_and_operator_contracts_are_complete",
+          "evidence_class": "contract",
+          "evidence_state": "candidate_deterministic"
+        }
+      ]
+    },
+    {
+      "id": "CONV-E2E-015",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+          "evidence_class": "live",
+          "evidence_state": "planned_external"
+        },
+        {
+          "node_id": "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+          "evidence_class": "matrix",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch",
+          "evidence_class": "pre_dispatch_rejection",
+          "evidence_state": "active"
+        }
+      ]
+    }
+  ],
+  "normative_requirements": [
+    {
+      "id": "CONV-N-136",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/documentation_test.py::test_security_migration_and_operator_contracts_are_complete",
+          "evidence_class": "contract",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/activation_test.py::test_rollback_restores_prior_manifest_or_dormant_state",
+          "evidence_class": "runtime",
+          "evidence_state": "candidate_deterministic"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-137",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/domain_contract_test.py::test_provider_item_union_round_trips_in_exact_order",
+          "evidence_class": "wire",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/domain_contract_test.py::test_binding_and_capability_profiles_require_exact_evidence",
+          "evidence_class": "contract",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_provider_validation_test.py::test_native_output_item_limit_precedes_tool_effect_and_commit",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_provider_validation_test.py::test_native_output_byte_limit_precedes_tool_effect_and_commit",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-138",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/openai_stateless_e2e_test.py::test_native_openai_fresh_process_durable_replay",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/compaction_e2e_test.py::test_tool_cycles_across_two_boundaries_keep_exact_final_order",
+          "evidence_class": "wire",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/openai_stored_e2e_test.py::test_stored_restart_retrieval_and_deletion",
+          "evidence_class": "public",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_compaction_test.py::test_native_inline_latest_replay_and_standalone_wire",
+          "evidence_class": "wire",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_prepared_call_runs_real_tool_loop_once",
+          "evidence_class": "runtime",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_negative_runtime",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_stream_failure_after_visible_output_never_retries",
+          "evidence_class": "negative",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/coordinator_failure_matrix_test.py::test_named_head_contenders_have_one_success_and_one_conflict",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/security_e2e_test.py::test_phase11_hardening_positive_runtime",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/activation_test.py::test_rollback_restores_prior_manifest_or_dormant_state",
+          "evidence_class": "runtime",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+          "evidence_class": "matrix",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch",
+          "evidence_class": "pre_dispatch_rejection",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+          "evidence_class": "live",
+          "evidence_state": "planned_external"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-139",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/native_openai_provider_test.py::test_exact_profile_request_matrix",
+          "evidence_class": "matrix",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/live_conformance_harness_test.py::test_full_fake_sdk_matrix_is_typed_redacted_and_closed",
+          "evidence_class": "wire",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+          "evidence_class": "live",
+          "evidence_state": "planned_external"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-140",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/live_conformance_harness_test.py::test_structural_assertions_reject_each_invalid_live_branch",
+          "evidence_class": "negative",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+          "evidence_class": "live",
+          "evidence_state": "planned_external"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-141",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract",
+          "evidence_class": "public",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/agent_integration_e2e_test.py::test_parent_two_children_persist_isolation_and_restart",
+          "evidence_class": "runtime",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once",
+          "evidence_class": "database",
+          "evidence_state": "active"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-142",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract",
+          "evidence_class": "live",
+          "evidence_state": "planned_external"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-143",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/native_openai_provider_test.py::test_unproven_or_drifted_profiles_fail_without_dispatch",
+          "evidence_class": "pre_dispatch_rejection",
+          "evidence_state": "active"
+        },
+        {
+          "node_id": "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product",
+          "evidence_class": "matrix",
+          "evidence_state": "candidate_deterministic"
+        }
+      ]
+    },
+    {
+      "id": "CONV-N-144",
+      "evidence": [
+        {
+          "node_id": "tests/conversation/documentation_test.py::test_security_migration_and_operator_contracts_are_complete",
+          "evidence_class": "contract",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/documentation_test.py::test_documentation_and_examples_are_safe_and_indexed",
+          "evidence_class": "contract",
+          "evidence_state": "candidate_deterministic"
+        },
+        {
+          "node_id": "tests/conversation/documentation_test.py::test_runbook_commands_reference_real_nodes_and_tracked_fixtures",
+          "evidence_class": "contract",
+          "evidence_state": "candidate_deterministic"
+        }
+      ]
+    }
+  ],
+  "external_blockers": [
+    {
+      "id": "native_openai_live_receipt",
+      "state": "authorized_model_present_account_credit_quota_blocked_before_inference",
+      "node_id": "tests/conversation/live_conformance_test.py::test_normative_completion_contract"
+    }
+  ],
+  "canonical_sha256": "0517adf8b2cfd0d35c78eb330c56167a1c23773ede08e444c9ee8cfae957dcdc"
+}

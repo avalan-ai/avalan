@@ -776,11 +776,11 @@
       728
     ],
     "src/avalan/conversation/providers/openai.py": [
-      707,
-      708,
-      711,
-      712,
-      713
+      779,
+      780,
+      783,
+      784,
+      785
     ],
     "src/avalan/conversation/security.py": [
       829,
@@ -2799,5 +2799,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "178901b6a6b60730324e975424f98b14af5f25919c3cb5c1c7d553f2224b1c6f"
+  "snapshot_sha256": "736404399822efdbf1985df4f44339029f43f5fa3f37f2447c148bb7495221de"
 }

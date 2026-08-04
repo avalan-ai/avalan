@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "manifest_id": "conversation-native-provider-activation-phase12",
+  "revision": "phase12-inactive-2026-08-03",
+  "activation_state": "inactive",
+  "production_dispatch_enabled": false,
+  "production_advertisement_enabled": false,
+  "provider_evidence": {
+    "path": "provider_evidence.phase12.json",
+    "byte_sha256": "c0eec1c17a11963d204bf3d94e57dbb60cc36c07b149ecc604810c844682c151",
+    "canonical_digest": "7076e4ee05f29d7dc759f01af8eb6f657c3ea1eb075de57d8cd4f140f41ad4ef"
+  },
+  "sdk_range": ">=2.42.0,<3.0.0",
+  "candidate_lanes": [
+    {
+      "provider_family": "openai",
+      "api_form": "openai_responses_v1",
+      "provider_api_revision": "openapi-2.3.0",
+      "endpoint_form": "https://api.openai.com/v1",
+      "model_source": "explicit OPENAI_MODEL",
+      "state": "inactive_pending_authorized_live_proof"
+    },
+    {
+      "provider_family": "azure_openai",
+      "api_form": "azure-openai-v1-preview",
+      "provider_api_revision": "azure-openai-v1-preview",
+      "endpoint_form": "https://{resource}.openai.azure.com/openai/v1",
+      "model_source": "explicit AZURE_OPENAI_DEPLOYMENT",
+      "state": "inactive_pending_authorized_live_proof"
+    }
+  ],
+  "required_live_matrix": [
+    "inline_compaction",
+    "standalone_compaction_and_unpruned_replay",
+    "stateless_all_turns_replay",
+    "stateless_current_turn_tool",
+    "stored_create",
+    "stored_previous_response_chain",
+    "stored_retrieve_delete",
+    "streaming_tool"
+  ],
+  "active_production_rows": [],
+  "live_proof_ids": [],
+  "review": {
+    "status": "pending",
+    "required_roles": [
+      "architecture",
+      "security",
+      "test_traceability"
+    ],
+    "completed_review_ids": []
+  },
+  "activation_prerequisites": [
+    "authorized_native_openai_live_matrix",
+    "authorized_native_azure_openai_live_matrix",
+    "independent_architecture_review",
+    "independent_security_review",
+    "independent_test_traceability_review",
+    "atomic_activation_and_rollback_rehearsal"
+  ],
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": "all top-level fields except canonical_digest",
+    "value": "975f79f7a30d304fe0598206fe2ba59ee65911f14bd072585f81c3f800af0d4d"
+  }
+}

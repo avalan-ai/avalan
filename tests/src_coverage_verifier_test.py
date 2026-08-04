@@ -548,7 +548,7 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
         assert fallback_path not in current.report_lines
     assert current.report_lines[
         "src/avalan/conversation/providers/openai.py"
-    ] == (707, 708, 711, 712, 713)
+    ] == (779, 780, 783, 784, 785)
     assert current.report_lines["src/avalan/conversation/security.py"] == (
         829,
         830,

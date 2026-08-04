@@ -24,6 +24,9 @@ from phase2_fixtures import authority, retention
 
 import avalan
 import avalan.conversation as conversation
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.pgsql import (
     PsycopgAsyncDatabase,
     PsycopgPoolSettings,
@@ -522,23 +525,32 @@ def _stateless_provider(
         if tools
         else ()
     )
+    client = AsyncOpenAI(
+        api_key="compaction-test-key",
+        base_url=binding.normalized_endpoint,
+        max_retries=0,
+    )
+    profile = conversation.NativeOpenAIStatelessProfile(
+        profile_id=f"compaction-{binding.lane_id}",
+        binding=binding,
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
+        ),
+        compaction_limits=_limits(),
+        scripted_tcp_test=True,
+    )
+    capabilities = _capabilities(binding)
     return conversation.NativeOpenAIStatelessProvider(
-        client=AsyncOpenAI(
-            api_key="compaction-test-key",
-            base_url=binding.normalized_endpoint,
-            max_retries=0,
-        ),
-        profile=conversation.NativeOpenAIStatelessProfile(
-            profile_id=f"compaction-{binding.lane_id}",
-            binding=binding,
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=_limits(),
-            scripted_tcp_test=True,
-        ),
-        capability_profile=_capabilities(binding),
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
         tools=configured_tools,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
+        ),
     )
 
 
@@ -553,23 +565,32 @@ def _stored_execution() -> conversation.NativeOpenAIStoredExecution:
 def _stored_provider(
     binding: conversation.ProviderLaneBinding,
 ) -> conversation.NativeOpenAIStoredProvider:
+    client = AsyncOpenAI(
+        api_key="stored-compaction-test-key",
+        base_url=binding.normalized_endpoint,
+        max_retries=0,
+    )
+    profile = conversation.NativeOpenAIStoredProfile(
+        profile_id=f"stored-compaction-{binding.lane_id}",
+        binding=binding,
+        execution=_stored_execution(),
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
+        ),
+        compaction_limits=_limits(),
+        scripted_tcp_test=True,
+    )
+    capabilities = _capabilities(binding, stored=True)
     return conversation.NativeOpenAIStoredProvider(
-        client=AsyncOpenAI(
-            api_key="stored-compaction-test-key",
-            base_url=binding.normalized_endpoint,
-            max_retries=0,
-        ),
-        profile=conversation.NativeOpenAIStoredProfile(
-            profile_id=f"stored-compaction-{binding.lane_id}",
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
+        test_authority=_native_openai_test_authority(
+            client=client,
             binding=binding,
-            execution=_stored_execution(),
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=_limits(),
-            scripted_tcp_test=True,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
         ),
-        capability_profile=_capabilities(binding, stored=True),
     )
 
 
