@@ -3277,14 +3277,18 @@ def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
     assert captured["capture_output"] is True
     assert captured["check"] is False
     assert captured["text"] is True
-    assert captured["timeout"] == 60
+    assert captured["timeout"] == 120
     assert captured["cwd"] == Path(__file__).resolve().parents[1]
+
+    timeout_calls = 0
 
     def timeout_run(
         command: list[str],
         **_: object,
     ) -> CompletedProcess[str]:
-        raise TimeoutExpired(command, 60)
+        nonlocal timeout_calls
+        timeout_calls += 1
+        raise TimeoutExpired(command, 120)
 
     monkeypatch.setattr(
         "reasoning_summary_script_loader.run_process",
@@ -3292,9 +3296,10 @@ def test_phase9_subprocess_runner_is_sanitized_and_fail_closed(
     )
     with pytest.raises(
         Phase9BenchmarkSubprocessError,
-        match="timed out after 60 seconds",
+        match="wrapper wall timeout after 120 seconds",
     ):
         run_phase9_benchmark_subprocess()
+    assert timeout_calls == 1
 
     monkeypatch.setattr(
         "reasoning_summary_script_loader.run_process",

@@ -22,7 +22,10 @@ _HELPER_CONTENT_SHA256 = sha256(_HELPER_PATH.read_bytes()).hexdigest()
 _BENCHMARK_PATH = (
     _LOADER_PATH.parents[1] / "scripts" / "benchmark_reasoning_summary.py"
 ).resolve()
-_PHASE9_SUBPROCESS_TIMEOUT_SECONDS = 60
+# Bound the wrapper process independently of the benchmark's measured timing
+# and nested memory-probe budgets. A timeout has no valid hard-gate report, so
+# it remains non-retriable while allowing slow runners bounded headroom.
+_PHASE9_SUBPROCESS_WALL_TIMEOUT_SECONDS = 120
 _PHASE9_SUBPROCESS_MAXIMUM_ATTEMPTS = 3
 _PHASE9_EXPECTED_HARD_GATE_EXIT_CODE = 1
 _PHASE9_TIMING_FAILURE_REASONS = frozenset(
@@ -366,12 +369,12 @@ def run_phase9_benchmark_subprocess() -> dict[str, object]:
                 cwd=_LOADER_PATH.parents[1],
                 env=_phase9_subprocess_environment(),
                 text=True,
-                timeout=_PHASE9_SUBPROCESS_TIMEOUT_SECONDS,
+                timeout=_PHASE9_SUBPROCESS_WALL_TIMEOUT_SECONDS,
             )
         except TimeoutExpired:
             raise Phase9BenchmarkSubprocessError(
-                "Phase 9 benchmark subprocess timed out after "
-                f"{_PHASE9_SUBPROCESS_TIMEOUT_SECONDS} seconds"
+                "Phase 9 benchmark subprocess wrapper wall timeout after "
+                f"{_PHASE9_SUBPROCESS_WALL_TIMEOUT_SECONDS} seconds"
             ) from None
 
         if completed.returncode not in {
