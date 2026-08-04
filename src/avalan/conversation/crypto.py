@@ -277,15 +277,18 @@ class ConversationCipher(Protocol):
 class _AesGcmPrimitive(Protocol):
     def encrypt(
         self, nonce: bytes, data: bytes, associated_data: bytes
-    ) -> bytes: ...
+    ) -> bytes:
+        raise NotImplementedError
 
     def decrypt(
         self, nonce: bytes, data: bytes, associated_data: bytes
-    ) -> bytes: ...
+    ) -> bytes:
+        raise NotImplementedError
 
 
 class _AesGcmType(Protocol):
-    def __call__(self, key: bytes) -> _AesGcmPrimitive: ...
+    def __call__(self, key: bytes) -> _AesGcmPrimitive:
+        raise NotImplementedError
 
 
 class _AeadModule(Protocol):

@@ -545,8 +545,6 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
         *range(727, 729),
     )
     assert current.report_lines["src/avalan/conversation/lifecycle.py"] == (
-        393,
-        394,
         400,
         401,
         407,
@@ -561,6 +559,12 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
         610,
         611,
     )
+    for fallback_path in (
+        "src/avalan/conversation/crypto.py",
+        "src/avalan/conversation/envelope.py",
+        "src/avalan/conversation/fakes.py",
+    ):
+        assert fallback_path not in current.report_lines
     assert current.report_lines[
         "src/avalan/conversation/providers/openai.py"
     ] == (707, 708, 711, 712, 713)
@@ -630,7 +634,7 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     )
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2286
+    assert sum(map(len, current.report_lines.values())) == 2259
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

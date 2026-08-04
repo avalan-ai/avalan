@@ -144,7 +144,7 @@ class ContinuationEnvelopeKeyResolver(Protocol):
         authority_scope_digest: AuthorityDigest,
     ) -> ContinuationEnvelopeKey:
         """Return the only active sealing key."""
-        ...
+        raise NotImplementedError
 
     async def read_key(
         self,
@@ -154,7 +154,7 @@ class ContinuationEnvelopeKeyResolver(Protocol):
         revision: int,
     ) -> ContinuationEnvelopeKey:
         """Return one exact key for opening under rotation policy."""
-        ...
+        raise NotImplementedError
 
 
 @final

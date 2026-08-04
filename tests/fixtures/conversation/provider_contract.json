@@ -182,8 +182,8 @@
           "service_tier": "95d36af7e59565bbd42071dbe84ab823617b22880265dce6ae555ed06d2575e8",
           "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
           "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
-          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
-          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+          "extra_body": "a22c03a6f6a0ffd5cf58fbac12c9c12acc25897f2d7f1d73dc39decc99d38ac9",
+          "timeout": "15a9159582a2b71f9f38f7d192bb8f69cfc70006081c30c137313c717591b777"
         },
         "resolved_return_annotation_sha256": "058397f00c32c60fd199fddfe6146b0e068f0f252f5885c82d985073115e969a"
       },
@@ -321,26 +321,26 @@
           "parallel_tool_calls": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
           "previous_response_id": "4efc8b8a148d6eaa124c4a7e873c121ab76e3cc1afe99e0d0fcb1a3ee37bda0e",
           "prompt": "b0dcbf82aafe15e7183540c97a50dafefe1aede9e8a0c33d4cd7a3808daa0b27",
-          "prompt_cache_key": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "prompt_cache_key": "e6241f6459ad777a2a1f0d14f34ac04ae67c57a25b4d645dbd69ab6388d0db9c",
           "prompt_cache_retention": "e100913f12fa67f0529713a8d9b29b24b8c261c285317ae7b68ad73e5d72e790",
           "reasoning": "590b4bfa48d159accb00fb821d40412ba7ecd4a899ec9041f299502588d10465",
-          "safety_identifier": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "safety_identifier": "e6241f6459ad777a2a1f0d14f34ac04ae67c57a25b4d645dbd69ab6388d0db9c",
           "service_tier": "8968cd9f4aeed204a6fb27f2b950dfaa9a24dbb82ab3f43093c48342ecca6ab7",
           "store": "80624365ea5db072b2ea31b2a3bf9d483b05fd5f828c7fc0ed7da554518892a5",
           "stream": "803a2a5ed0bc3c6a5976a9a351ebd6a73ef77450d6449dbcff07acf5e078d27c",
           "stream_options": "f3f88c3ef70915334648121f5a50cac6513c7ff2ee2688e3663bbe28e02ab9f3",
           "temperature": "11f32bda3f3fe3a97553e2d502ae6818aa1168564a6712873076258c7951b132",
-          "text": "f19fb80fabe87f910f2fe1e2f05cfed4206fad6e3d1db006e159c7da9e527fa9",
+          "text": "70721e029ef7521066420c3372804cc478ed0610df3ddcceb0abdd13d1396dc5",
           "tool_choice": "89290a18cb21c44eaf141e08f383a73ab7bb6f60f36bc7ed60691703453baffd",
           "tools": "f1b79de4695887177bd7ad05d3f36670aa0c40bc79d925cd90a0bd4618d93d2f",
           "top_logprobs": "06ea45fb4e9aa1bb22d649439bc4f1d7aa3dec648960d0a2e894cac57d6820ee",
           "top_p": "11f32bda3f3fe3a97553e2d502ae6818aa1168564a6712873076258c7951b132",
           "truncation": "e0ae5f754133feb4b9d7e9f7cb40b5682ab7ff01aa17a72fff37de78ada02767",
-          "user": "11e54e2fb2a843e938b7a8a3696fa5ac3eea3ae8b233944da2dcf0d0c46f5d69",
+          "user": "e6241f6459ad777a2a1f0d14f34ac04ae67c57a25b4d645dbd69ab6388d0db9c",
           "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
           "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
-          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
-          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+          "extra_body": "a22c03a6f6a0ffd5cf58fbac12c9c12acc25897f2d7f1d73dc39decc99d38ac9",
+          "timeout": "15a9159582a2b71f9f38f7d192bb8f69cfc70006081c30c137313c717591b777"
         },
         "resolved_return_annotation_sha256": "ead856529520900e1928e1125e830e87c4165dd246ce4c27fa35ce0dea3b8486"
       },
@@ -381,8 +381,8 @@
           "response_id": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4",
           "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
           "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
-          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
-          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+          "extra_body": "a22c03a6f6a0ffd5cf58fbac12c9c12acc25897f2d7f1d73dc39decc99d38ac9",
+          "timeout": "15a9159582a2b71f9f38f7d192bb8f69cfc70006081c30c137313c717591b777"
         },
         "resolved_return_annotation_sha256": "c331502f1524434f14ba39e319d48a90ab5f81287c08b275b638c3d35d130a05"
       },
@@ -436,13 +436,13 @@
         "resolved_parameter_annotations_sha256": {
           "response_id": "0b3478d2c559d7e55c5f2381cad41fb2af65cf4294d5eaa233e7b6d33c1ebdd4",
           "include": "1b3aa25e76f751bbd7fc804d9e03af5ed8dc613bb50fdd9a1efcd321bf348839",
-          "include_obfuscation": "db0eb4fc5cfd32e2dab4e1335ed13aa4fcc517b3f6fa154781532470ef6c5e9a",
-          "starting_after": "ba77e98336e4b95073cf224f663c648c984ebdeb7516716f9a0ac3216c8be6bd",
+          "include_obfuscation": "648c27ed20a0293d46dfefccbbc4f979aa1cee758735a8f422e270fbb660c3f2",
+          "starting_after": "6b4b0b49350a6f55b7864f3b5e36cdef56764d03f0cb9080c2c6c4565d4f9ebc",
           "stream": "9a69a8b29683b748e696516bd1afb1711e98776a9d683638f39c670f90fea981",
           "extra_headers": "c5afcf53b936e10d9cdb39c566bef7e61ec4f7f4fa078870a6dc840d7a17427b",
           "extra_query": "9ebdeba38c0078ead867b016f41cb8434d628af1304f883cc1f2243ef4dc5f44",
-          "extra_body": "7585393e63055d9b0281d3538905dbb56f4fa314d39bf0324a471108dc4ccae0",
-          "timeout": "588b15fc10d729df18dfb7e93017558cdcbb6132ffd038a7109c9f1d69ff366c"
+          "extra_body": "a22c03a6f6a0ffd5cf58fbac12c9c12acc25897f2d7f1d73dc39decc99d38ac9",
+          "timeout": "15a9159582a2b71f9f38f7d192bb8f69cfc70006081c30c137313c717591b777"
         },
         "resolved_return_annotation_sha256": "ead856529520900e1928e1125e830e87c4165dd246ce4c27fa35ce0dea3b8486"
       }
@@ -860,6 +860,6 @@
       "sdk_boundary",
       "conformance_digest"
     ],
-    "value": "f479bc544e1c3c41033cc5bc719428647f02552277f38912a99a85ec1c27c15f"
+    "value": "2c5e6e8fd1757bcf669ffdcb6e433b4ca5b35b64f5e26d31d6aa0900e918750f"
   }
 }

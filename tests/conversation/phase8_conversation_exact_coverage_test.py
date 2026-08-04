@@ -25,7 +25,11 @@ from phase2_fixtures import empty_stateless_plan, retention
 
 import avalan.conversation as conversation
 import avalan.conversation.agent as conversation_agent
+import avalan.conversation.crypto as conversation_crypto
+import avalan.conversation.envelope as conversation_envelope
 import avalan.conversation.execution as execution_module
+import avalan.conversation.fakes as conversation_fakes
+import avalan.conversation.lifecycle as conversation_lifecycle
 import avalan.conversation.providers.openai as openai_provider
 import avalan.conversation.runtime as runtime_module
 import avalan.conversation.state as state_module
@@ -133,6 +137,52 @@ async def test_protocol_fallbacks_raise_explicitly() -> None:
             key=cast(Any, object()),
             associated_data=cast(Any, object()),
         )
+    with pytest.raises(NotImplementedError):
+        conversation_crypto._AesGcmPrimitive.encrypt(
+            cast(Any, object()),
+            b"nonce",
+            b"fallback",
+            b"associated-data",
+        )
+    with pytest.raises(NotImplementedError):
+        conversation_crypto._AesGcmPrimitive.decrypt(
+            cast(Any, object()),
+            b"nonce",
+            b"fallback",
+            b"associated-data",
+        )
+    with pytest.raises(NotImplementedError):
+        conversation_crypto._AesGcmType.__call__(
+            cast(Any, object()),
+            b"fallback-key",
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation_envelope.ContinuationEnvelopeKeyResolver.active_key(
+            cast(Any, object()),
+            conversation.AuthorityDigest("fallback-authority"),
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation_envelope.ContinuationEnvelopeKeyResolver.read_key(
+            cast(Any, object()),
+            conversation.AuthorityDigest("fallback-authority"),
+            key_id="fallback-key",
+            revision=1,
+        )
+    with pytest.raises(NotImplementedError):
+        conversation_fakes._ClosedCast.__call__(
+            cast(Any, object()),
+            str,
+            "fallback",
+        )
+
+    binding_descriptor = vars(
+        conversation_lifecycle.StoredResponseLifecycleAdapter
+    )["binding"]
+    assert isinstance(binding_descriptor, property)
+    binding_getter = binding_descriptor.fget
+    assert binding_getter is not None
+    with pytest.raises(NotImplementedError):
+        binding_getter(cast(Any, object()))
 
     for name in ("id", "operations", "tool", "event_manager"):
         descriptor = vars(ConfiguredChildOrchestrator)[name]

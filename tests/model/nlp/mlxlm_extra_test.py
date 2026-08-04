@@ -1170,6 +1170,22 @@ class MlxLmCoverageGapTestCase(IsolatedAsyncioTestCase):
 
 
 class MlxImportGuardTestCase(IsolatedAsyncioTestCase):
+    def test_loaded_module_skips_subprocess_import_probe(self) -> None:
+        mod = importlib.import_module("avalan.model.nlp.text.mlxlm")
+        loaded = types.ModuleType("mlx_lm")
+        mod._mlx_lm_import_is_safe.cache_clear()
+        self.addCleanup(mod._mlx_lm_import_is_safe.cache_clear)
+
+        with (
+            patch.dict(mod.modules, {"mlx_lm": loaded}),
+            patch.object(mod, "find_spec") as find_spec,
+            patch.object(mod, "run") as run,
+        ):
+            self.assertTrue(mod.MlxLmModel.is_available())
+
+        find_spec.assert_not_called()
+        run.assert_not_called()
+
     async def test_import_guard_behaviors(self) -> None:
         mod = importlib.import_module("avalan.model.nlp.text.mlxlm")
         mod._mlx_lm_import_is_safe.cache_clear()

@@ -31,8 +31,8 @@
       "path": "src/avalan/conversation/lifecycle.py",
       "from_size": 0,
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "to_size": 21054,
-      "to_sha256": "fddefa4f3c8f62450f5de68531bb7a1d9f5fc348b12a00d28fc1a19aef1c2df7"
+      "to_size": 21076,
+      "to_sha256": "16b3b7f03afc0532504c6fc8f700afb9149f1923a3c186dcd8c2f4961950fb05"
     },
     {
       "path": "src/avalan/conversation/protocols.py",
@@ -94,8 +94,8 @@
       "path": "tests/conversation/pgsql_conformance_test.py",
       "from_size": 42709,
       "from_sha256": "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5",
-      "to_size": 47586,
-      "to_sha256": "2e6ab3c8048ddc6461ad13e214ca0c47a67bb94f2655d686bf22a59280328090"
+      "to_size": 47841,
+      "to_sha256": "752c8e8abfbf7f62bbcf02974229ceb81c808fd1fcee4362a9dfd31a0b3538d6"
     }
   ],
   "evidence_node_ids": [
@@ -110,5 +110,5 @@
     "tests/conversation/openai_stored_e2e_test.py::test_generated_checkpoint_alias_fails_pgsql_codec_and_sdk",
     "tests/conversation/openai_stored_e2e_test.py::test_retrieve_execution_drift_fails_over_tcp_and_pgsql"
   ],
-  "canonical_sha256": "470e683a7ec1b7f85816979f71b72af6e622249f382d74f035218b1a5702d855"
+  "canonical_sha256": "eb524a333115e0a2296936b0ee43d2a5186897ed44a1c689d1c8f1351f44719b"
 }

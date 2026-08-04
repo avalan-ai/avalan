@@ -100,7 +100,8 @@ class _ClosedCast(Protocol):
         target: type[_CastTarget],
         value: object,
         /,
-    ) -> _CastTarget: ...
+    ) -> _CastTarget:
+        raise NotImplementedError
 
 
 def _build_fault_action_post_init(

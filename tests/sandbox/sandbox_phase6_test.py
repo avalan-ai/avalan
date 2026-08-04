@@ -47,6 +47,24 @@ from avalan.sandbox.backend import (
 
 
 class SandboxPhase6Test(TestCase):
+    def test_seatbelt_defaults_use_runtime_platform(self) -> None:
+        with (
+            patch.object(backend_module, "which", return_value=None),
+            patch.object(
+                backend_module, "system", return_value="Darwin"
+            ) as system,
+            patch.object(
+                backend_module, "machine", return_value="arm64"
+            ) as machine,
+        ):
+            backend = SeatbeltSandboxBackend()
+
+        self.assertEqual(backend._sandbox_executable, "/usr/bin/sandbox-exec")
+        self.assertEqual(backend._host_os, "darwin")
+        self.assertEqual(backend._architecture, "arm64")
+        system.assert_called_once_with()
+        machine.assert_called_once_with()
+
     def test_seatbelt_profile_generation_is_deterministic(self) -> None:
         with TemporaryDirectory() as tmpdir:
             roots = _roots(tmpdir)

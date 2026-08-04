@@ -450,9 +450,14 @@ def test_opaque_token_blocks_serialization_and_recursion() -> None:
     with pytest.raises(conversation.ConversationLimitError):
         codec._decode_json(b"{}", max_bytes=1)
 
-    adversarial = b"[" * 2_000 + b"0" + b"]" * 2_000
-    with pytest.raises(conversation.ConversationCodecError) as raised:
+    adversarial_depth = codec.limits.max_depth + 1
+    adversarial = b"[" * adversarial_depth + b"0" + b"]" * adversarial_depth
+    with pytest.raises(conversation.ConversationLimitError) as raised:
         codec._decode_json(adversarial)
+    assert (
+        raised.value.code is conversation.ConversationErrorCode.LIMIT_EXCEEDED
+    )
+    assert str(raised.value) == "conversation state exceeds a configured limit"
     assert "[" not in str(raised.value)
 
 

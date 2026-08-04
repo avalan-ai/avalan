@@ -232,9 +232,7 @@ def json_mapping_entries(
 
 def _phase9_subprocess_environment() -> dict[str, str]:
     """Return an environment without pytest or coverage instrumentation."""
-    allowed_python_path = environ.get(
-        "AVALAN_CONTRACT_ALLOWED_PYTHONPATH"
-    )
+    allowed_python_path = environ.get("AVALAN_CONTRACT_ALLOWED_PYTHONPATH")
     guarded_python_path = (
         environ.get("PYTHONSAFEPATH") == "1"
         and environ.get("PYTHONNOUSERSITE") == "1"

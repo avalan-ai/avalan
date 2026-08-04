@@ -10,10 +10,21 @@ from typing import cast
 from uuid import uuid4
 
 import pytest
-from durable_codec_test import _continuation_reference
-from phase2_fixtures import NOW, authority
-from psycopg.errors import CheckViolation
-from store_conformance_test import (
+
+_DSN = environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")
+
+if _DSN is None:
+    pytest.skip(
+        "AVALAN_TASK_TEST_POSTGRESQL_DSN is not set",
+        allow_module_level=True,
+    )
+
+# Keep PostgreSQL-only imports below the module skip. Non-PostgreSQL matrix
+# jobs may intentionally lack a usable libpq implementation.
+from durable_codec_test import _continuation_reference  # noqa: E402
+from phase2_fixtures import NOW, authority  # noqa: E402
+from psycopg.errors import CheckViolation  # noqa: E402
+from store_conformance_test import (  # noqa: E402
     _atomic_commit,
     _child_candidate,
     _claimed_record,
@@ -25,28 +36,20 @@ from store_conformance_test import (
     _stored_atomic_commit,
 )
 
-import avalan.conversation as conversation
-from avalan.conversation.store import StoreBoundaryHook
-from avalan.pgsql import (
+import avalan.conversation as conversation  # noqa: E402
+from avalan.conversation.store import StoreBoundaryHook  # noqa: E402
+from avalan.pgsql import (  # noqa: E402
     PgsqlConnection,
     PsycopgAsyncDatabase,
     PsycopgPoolSettings,
     quote_pgsql_identifier,
 )
-from avalan.task.stores import (
+from avalan.task.stores import (  # noqa: E402
     PgsqlTaskMigrationSettings,
     task_pgsql_upgrade,
 )
 
-_DSN = environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")
-
-pytestmark = [
-    pytest.mark.anyio,
-    pytest.mark.skipif(
-        _DSN is None,
-        reason="AVALAN_TASK_TEST_POSTGRESQL_DSN is not set",
-    ),
-]
+pytestmark = pytest.mark.anyio
 
 
 @pytest.fixture

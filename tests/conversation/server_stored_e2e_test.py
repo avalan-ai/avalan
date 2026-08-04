@@ -1443,8 +1443,9 @@ async def test_phase11_served_dispatch_installs_required_hardening(
                 },
             )
         assert response.status_code == 200, response.text
-        assert response.json()["output"][0]["content"][0]["text"] == (
-            "turn-1:hardened"
+        assert (
+            response.json()["output"][0]["content"][0]["text"]
+            == "turn-1:hardened"
         )
         assert len(dispatches) == 1
     finally:
