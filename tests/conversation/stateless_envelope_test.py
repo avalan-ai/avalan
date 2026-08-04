@@ -427,8 +427,7 @@ async def test_key_selection_authenticates_before_lifecycle_policy() -> None:
         )
 
 
-def test_opaque_token_blocks_generic_serialization_and_recursive_exhaustion(
-) -> None:
+def test_opaque_token_blocks_serialization_and_recursion() -> None:
     """Reject generic disclosure and adversarial recursive JSON safely."""
     scope = _authority()
     codec, _ = _codec(

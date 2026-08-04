@@ -71,7 +71,7 @@ class ConversationCryptoBoundaryHook(Protocol):
 
     async def reach(self, boundary: ConversationCryptoBoundary) -> None:
         """Reach one named cryptographic boundary."""
-        ...
+        raise NotImplementedError
 
 
 @final
@@ -227,7 +227,7 @@ class ConversationKeyResolver(Protocol):
         authority_digest: AuthorityDigest,
     ) -> ConversationDataKey:
         """Return the current write key for one trusted authority."""
-        ...
+        raise NotImplementedError
 
     async def read_key(
         self,
@@ -237,7 +237,7 @@ class ConversationKeyResolver(Protocol):
         revision: int,
     ) -> ConversationDataKey:
         """Return one current or grace read key for an exact revision."""
-        ...
+        raise NotImplementedError
 
 
 class ConversationCipher(Protocol):
@@ -251,7 +251,7 @@ class ConversationCipher(Protocol):
         associated_data: ConversationPayloadAssociatedData,
     ) -> EncryptedConversationPayload:
         """Encrypt one bounded payload with exact associated data."""
-        ...
+        raise NotImplementedError
 
     async def decrypt(
         self,
@@ -261,7 +261,7 @@ class ConversationCipher(Protocol):
         associated_data: ConversationPayloadAssociatedData,
     ) -> bytes:
         """Authenticate and decrypt one bounded payload."""
-        ...
+        raise NotImplementedError
 
     async def authenticated_digest(
         self,
@@ -271,7 +271,7 @@ class ConversationCipher(Protocol):
         associated_data: ConversationPayloadAssociatedData,
     ) -> str:
         """Return one authority- and key-scoped content digest."""
-        ...
+        raise NotImplementedError
 
 
 class _AesGcmPrimitive(Protocol):

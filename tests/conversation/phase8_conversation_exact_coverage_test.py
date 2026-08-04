@@ -35,6 +35,7 @@ from avalan.agent.conversation_child import (
     ConfiguredChildOrchestrator,
 )
 from avalan.agent.conversation_trace import (
+    AgentConversationTraceSink,
     AgentProviderResponseTrace,
     AgentToolOutputTrace,
 )
@@ -81,6 +82,56 @@ async def test_protocol_fallbacks_raise_explicitly() -> None:
             "coverage input",
             object(),
             cast(Any, AsyncMock()),
+        )
+
+    with pytest.raises(NotImplementedError):
+        await AgentConversationTraceSink.record_provider_response(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await AgentConversationTraceSink.record_tool_output(
+            cast(Any, object()),
+            cast(Any, object()),
+        )
+
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationCryptoBoundaryHook.reach(
+            cast(Any, object()),
+            conversation.ConversationCryptoBoundary.ENCRYPT_BEFORE,
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationKeyResolver.current_write_key(
+            cast(Any, object()),
+            conversation.AuthorityDigest("fallback-authority"),
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationKeyResolver.read_key(
+            cast(Any, object()),
+            conversation.AuthorityDigest("fallback-authority"),
+            key_id="fallback-key",
+            revision=1,
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationCipher.encrypt(
+            cast(Any, object()),
+            b"fallback",
+            key=cast(Any, object()),
+            associated_data=cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationCipher.decrypt(
+            cast(Any, object()),
+            cast(Any, object()),
+            key=cast(Any, object()),
+            associated_data=cast(Any, object()),
+        )
+    with pytest.raises(NotImplementedError):
+        await conversation.ConversationCipher.authenticated_digest(
+            cast(Any, object()),
+            b"fallback",
+            key=cast(Any, object()),
+            associated_data=cast(Any, object()),
         )
 
     for name in ("id", "operations", "tool", "event_manager"):

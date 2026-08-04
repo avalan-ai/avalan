@@ -42,8 +42,8 @@ class AgentConversationTraceSink(Protocol):
         trace: AgentProviderResponseTrace,
     ) -> None:
         """Record one provider response before advancing its tool loop."""
-        ...
+        raise NotImplementedError
 
     async def record_tool_output(self, trace: AgentToolOutputTrace) -> None:
         """Record one completed ToolManager outcome."""
-        ...
+        raise NotImplementedError

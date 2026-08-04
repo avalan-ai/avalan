@@ -1,4 +1,4 @@
-REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract version release
+REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract version release
 TEST_ARGS := $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
@@ -52,7 +52,7 @@ else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract
+.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract
 tests: test
 
 test-pgsql:
@@ -81,6 +81,14 @@ endif
 typecheck-input-contract:
 	@test -n "$(INPUT_PHASE)" || (echo "INPUT_PHASE is required" >&2; exit 2)
 	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/verify_input_types.py --through-phase $(INPUT_PHASE)
+
+test-conversation-current-exact:
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --preflight --through-current-phase
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_conversation_contract_gate.py --through-current-phase
 
 test-conversation-exact:
 	@test -n "$(CONVERSATION_PHASE)" || (echo "CONVERSATION_PHASE is required" >&2; exit 2)
