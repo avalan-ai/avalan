@@ -397,14 +397,14 @@ class StoredResponseLifecycleAdapter(Protocol):
         upstream_response_id: UpstreamResponseId,
     ) -> RetrievedUpstreamResponse:
         """Retrieve one proven private upstream response."""
-        ...
+        raise NotImplementedError
 
     async def delete(
         self,
         upstream_response_id: UpstreamResponseId,
     ) -> UpstreamDeleteResult:
         """Delete one proven private upstream response idempotently."""
-        ...
+        raise NotImplementedError
 
 
 @final
@@ -584,7 +584,7 @@ class ProviderLifecycleStore(Protocol):
         limit: int,
     ) -> tuple[ProviderLifecycleWorkRecord, ...]:
         """Claim bounded provider lifecycle work for one authority."""
-        ...
+        raise NotImplementedError
 
     async def acknowledge_provider_lifecycle(
         self,
@@ -593,18 +593,18 @@ class ProviderLifecycleStore(Protocol):
         succeeded: bool,
     ) -> None:
         """Settle one exact provider lifecycle attempt."""
-        ...
+        raise NotImplementedError
 
     async def quarantine_provider_checkpoint(
         self,
         request: ProviderQuarantineRequest,
     ) -> ProviderQuarantineReceipt:
         """Persist one private cleanup checkpoint transactionally."""
-        ...
+        raise NotImplementedError
 
     async def reconcile_ambiguous_dispatch(
         self,
         request: AmbiguousDispatchReconciliationRequest,
     ) -> AmbiguousDispatchReconciliationResult:
         """Apply one explicit durable ambiguity decision."""
-        ...
+        raise NotImplementedError

@@ -642,21 +642,6 @@
       524,
       531
     ],
-    "src/avalan/conversation/lifecycle.py": [
-      400,
-      401,
-      407,
-      408,
-      409,
-      587,
-      588,
-      596,
-      597,
-      603,
-      604,
-      610,
-      611
-    ],
     "src/avalan/conversation/protocols.py": [
       253,
       254,
@@ -2826,5 +2811,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "211fdda3dec5a6f64e5bc6b203db3d0952b8999db1bb19ba020d68bb53f572d9"
+  "snapshot_sha256": "f288d60d5f7f2787363e2928eb3cae36cc62f58f2d2090f55ba9e1e1e5719954"
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "211fdda3dec5a6f64e5bc6b203db3d0952b8999db1bb19ba020d68bb53f572d9",
+  "current_snapshot_sha256": "f288d60d5f7f2787363e2928eb3cae36cc62f58f2d2090f55ba9e1e1e5719954",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1319,
+    "added": 1306,
     "removed": 285,
-    "sha256": "dee3d37f75264282a4bbec70d41005add5eece756739245af420e5092692d474"
+    "sha256": "7c0a438766322abf89ca95720beb69270ea97e3edd6c6e4f915aa8e8575dd58b"
   },
   "review": {
     "reviewed_by": "conversation Phase 11 exclusion inventory audit",
-    "rationale": "The current snapshot preserves the reviewed directive inventory, refreshes parser-generated Protocol exclusions after hardening source movement, and removes exclusions for explicitly covered protocol fallbacks."
+    "rationale": "The current snapshot preserves the reviewed directive inventory and parser-generated exclusions while removing 13 report-excluded source lines for six newly executable lifecycle Protocol methods."
   },
-  "ledger_sha256": "b8eda116b8d5570adaa1a82b10db2f62efb39c110b5efa22cfde8ca776529573"
+  "ledger_sha256": "3ebbb6cd5dfae8bcda3f91908dcc49a3d11f930f399e47a193d9ca93cf5163a4"
 }

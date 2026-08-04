@@ -667,6 +667,29 @@ def test_phase5_provider_transition_target_has_independent_byte_anchor(
         _VERIFIER._phase5_provider_transitions(tmp_path)
 
 
+def test_phase6_lifecycle_transition_pins_exact_bytes() -> None:
+    """Bind lifecycle transition evidence to executable fallback bytes."""
+    expected = (
+        0,
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        21_208,
+        "edea170ab18293bcb91dcef38a95e7359cc0ee099636472cf24a52b1e288e943",
+    )
+
+    assert (
+        _VERIFIER._PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS[
+            "src/avalan/conversation/lifecycle.py"
+        ]
+        == expected
+    )
+    assert (
+        _VERIFIER._phase6_provider_transitions(_ROOT)[
+            "src/avalan/conversation/lifecycle.py"
+        ]
+        == expected
+    )
+
+
 def test_phase1_failure_and_threat_snapshots_are_append_only(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

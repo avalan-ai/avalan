@@ -372,8 +372,8 @@ _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/conversation/lifecycle.py": (
         0,
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        21_076,
-        "16b3b7f03afc0532504c6fc8f700afb9149f1923a3c186dcd8c2f4961950fb05",
+        21_208,
+        "edea170ab18293bcb91dcef38a95e7359cc0ee099636472cf24a52b1e288e943",
     ),
     "src/avalan/conversation/protocols.py": (
         17_492,
