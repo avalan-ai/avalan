@@ -108,8 +108,8 @@
       "path": "tests/conversation/stateless_envelope_test.py",
       "from_size": 0,
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-      "to_size": 38718,
-      "to_sha256": "465efb3496b07a006999e2e90516c3016d6b178158fae6dc5cdf985433f4e69a"
+      "to_size": 38698,
+      "to_sha256": "e519dd19cec340a781a90af2ef95d0705d9924a40a14727c3c21f434d61b876b"
     },
     {
       "path": "tests/server/responses_phase7_contract_test.py",
@@ -129,5 +129,5 @@
   "evidence_node_ids": [
     "tests/conversation/server_stateless_e2e_test.py::test_normative_server_stateless_contract"
   ],
-  "canonical_sha256": "7e1741ceaadcced8784fa5b1056f2aff8267c79b20b7c34983d4d4b26c41b3d4"
+  "canonical_sha256": "494a04afcaba83a86d6c99fad31a85cf61648304a1fc8881da4e33d07f0aa43b"
 }

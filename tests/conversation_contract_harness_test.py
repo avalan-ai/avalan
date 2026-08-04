@@ -632,10 +632,27 @@ def test_makefile_exposes_explicit_conversation_gates() -> None:
     assert "CONTRACT_PYTHON_ENV := PYTHONSAFEPATH=1" in makefile
     assert "PYTHONNOUSERSITE=1" in makefile
     assert "AVALAN_CONTRACT_ALLOWED_PYTHONPATH=" in makefile
+    assert "test-conversation-current-exact:" in makefile
     assert "test-conversation-exact:" in makefile
     assert "test-conversation-pgsql-exact:" in makefile
     assert "typecheck-conversation-contract:" in makefile
     runner = "scripts/run_conversation_contract_gate.py"
+    current_command = f"{runner} --through-current-phase"
+    current_preflight = f"{runner} --preflight --through-current-phase"
+    assert makefile.count(current_command) == 1
+    assert makefile.count(current_preflight) == 1
+    current_target = makefile.split(
+        "test-conversation-current-exact:",
+        1,
+    )[
+        1
+    ].split("test-conversation-exact:", 1)[0]
+    assert current_target.index(current_preflight) < current_target.index(
+        "poetry sync"
+    )
+    assert current_target.index(current_preflight) < current_target.index(
+        "python -m pip install"
+    )
     phase = "$(CONVERSATION_PHASE)"
     exact_command = f"{runner} --through-phase {phase}"
     preflight_command = f"{runner} --preflight --through-phase {phase}"

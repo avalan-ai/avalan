@@ -173,6 +173,8 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     assert "run: make test no-install" in workflow
     assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
     assert "make test-pgsql" not in workflow
-    assert "run: make test coverage" in coverage_workflow
+    assert "run: make test-conversation-current-exact" in coverage_workflow
+    assert "run: make test coverage" not in coverage_workflow
+    assert "CONVERSATION_PHASE" not in coverage_workflow
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow

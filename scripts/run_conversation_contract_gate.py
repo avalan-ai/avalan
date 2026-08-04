@@ -328,7 +328,9 @@ def _parse_args() -> Namespace:
             "acceptance against one sealed input inventory."
         )
     )
-    parser.add_argument("--through-phase", required=True, type=int)
+    phase = parser.add_mutually_exclusive_group(required=True)
+    phase.add_argument("--through-phase", type=int)
+    phase.add_argument("--through-current-phase", action="store_true")
     parser.add_argument("--preflight", action="store_true")
     return parser.parse_args()
 
@@ -336,15 +338,20 @@ def _parse_args() -> Namespace:
 def main() -> int:
     """Run the sealed conversation gate from the command line."""
     args = _parse_args()
+    through_phase = (
+        _CONVERSATION_CURRENT_PHASE
+        if args.through_current_phase
+        else args.through_phase
+    )
     try:
         if args.preflight:
-            _validate_through_phase(repository_root(), args.through_phase)
+            _validate_through_phase(repository_root(), through_phase)
             print(
                 "conversation contract preflight passed: "
-                f"through_phase={args.through_phase}"
+                f"through_phase={through_phase}"
             )
             return 0
-        return run_gate(args.through_phase)
+        return run_gate(through_phase)
     except ContractGateError as exc:
         print(f"conversation contract gate failed: {exc}", file=stderr)
         return 1
