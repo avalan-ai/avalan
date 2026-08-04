@@ -38,12 +38,12 @@
       "path": "tests/conversation/server_stored_e2e_test.py",
       "from_size": 97091,
       "from_sha256": "f0cfbc664524d7378bafcd4a9a38bb8748e91d5cbadf207e659a55f487380a9c",
-      "to_size": 106129,
-      "to_sha256": "a123b0e31442851a78c1867bc3a949a3557e377419fde162869a3638cd02572d"
+      "to_size": 106141,
+      "to_sha256": "e2785691f465a5e51ac1d3fda13b898ddf65df959fc9b3d9ff3d962c15743d8f"
     }
   ],
   "evidence_node_ids": [
     "tests/conversation/server_stored_e2e_test.py::test_phase11_served_dispatch_installs_required_hardening"
   ],
-  "canonical_sha256": "e2857960835f50947c63262b10192c9e9c9989cf5639c1744b390931fd0cd9ce"
+  "canonical_sha256": "dac171d752f887957a9c02db7e1eac2cc83e47145b5fd65486a3aa666b5f787e"
 }

@@ -1451,14 +1451,16 @@ async def _resume_segment(
             state=record.request.state.value,
             surface=segment.protocol.value,
         )
-        yield extension_sse_message({
-            "type": "execution.resumed",
-            "request_id": str(record.request.request_id),
-            "run_id": str(record.request.origin.run_id),
-            "turn_id": str(record.request.origin.turn_id),
-            "previous_stream_session_id": previous_stream_session_id,
-            "stream_session_id": stream_session_id,
-        })
+        yield extension_sse_message(
+            {
+                "type": "execution.resumed",
+                "request_id": str(record.request.request_id),
+                "run_id": str(record.request.origin.run_id),
+                "turn_id": str(record.request.origin.turn_id),
+                "previous_stream_session_id": previous_stream_session_id,
+                "stream_session_id": stream_session_id,
+            }
+        )
         redactor = ModelVisibleServerProtocolTextRedactor(
             segment.output_redaction_settings,
             protocol="openai",
@@ -1629,19 +1631,21 @@ def _resume_text_message(
             event="response.output_text.delta",
         )
     return sse_message(
-        to_json({
-            "id": segment.response_id,
-            "object": "chat.completion.chunk",
-            "created": segment.created,
-            "model": segment.model_id,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {"content": text},
-                    "finish_reason": None,
-                }
-            ],
-        })
+        to_json(
+            {
+                "id": segment.response_id,
+                "object": "chat.completion.chunk",
+                "created": segment.created,
+                "model": segment.model_id,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {"content": text},
+                        "finish_reason": None,
+                    }
+                ],
+            }
+        )
     )
 
 
@@ -1668,30 +1672,34 @@ def _resume_terminal_message(
             else "chat.completion.failed"
         )
         return sse_message(
-            to_json({
+            to_json(
+                {
+                    "id": segment.response_id,
+                    "object": "chat.completion.chunk",
+                    "created": segment.created,
+                    "model": segment.model_id,
+                    "type": event,
+                    "choices": [],
+                }
+            ),
+            event=event,
+        )
+    return sse_message(
+        to_json(
+            {
                 "id": segment.response_id,
                 "object": "chat.completion.chunk",
                 "created": segment.created,
                 "model": segment.model_id,
-                "type": event,
-                "choices": [],
-            }),
-            event=event,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": {},
+                        "finish_reason": "stop",
+                    }
+                ],
+            }
         )
-    return sse_message(
-        to_json({
-            "id": segment.response_id,
-            "object": "chat.completion.chunk",
-            "created": segment.created,
-            "model": segment.model_id,
-            "choices": [
-                {
-                    "index": 0,
-                    "delta": {},
-                    "finish_reason": "stop",
-                }
-            ],
-        })
     ) + sse_message("[DONE]")
 
 

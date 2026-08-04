@@ -223,6 +223,25 @@ def test_workflow_postgresql_gate_detection_rejects_docker() -> None:
     assert not _workflow_enforces_single_postgresql_lane(workflow)
 
 
+def test_pgsql_conformance_defers_driver_imports_until_owned_dsn() -> None:
+    source = _read_repository_text(
+        "tests/conversation/pgsql_conformance_test.py"
+    )
+    dsn = source.index('_DSN = environ.get("AVALAN_TASK_TEST_POSTGRESQL_DSN")')
+    guard = source.index("if _DSN is None:")
+    skip = source.index("pytest.skip(", guard)
+    allow_module_skip = source.index("allow_module_level=True", skip)
+    helper_import = source.index("from durable_codec_test import")
+    driver_import = source.index("from psycopg.errors import")
+    pgsql_import = source.index("from avalan.pgsql import")
+
+    assert dsn < guard < skip < allow_module_skip < helper_import
+    assert helper_import < driver_import
+    assert allow_module_skip < pgsql_import
+    assert "pytest.mark.skipif" not in source
+    assert "except ImportError" not in source
+
+
 def test_make_coverage_command_enforces_fail_under_gate() -> None:
     makefile = _read_repository_text("Makefile")
 

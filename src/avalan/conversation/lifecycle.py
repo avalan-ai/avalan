@@ -390,7 +390,7 @@ class StoredResponseLifecycleAdapter(Protocol):
     @property
     def binding(self) -> ProviderLaneBinding:
         """Return the exact immutable provider binding."""
-        ...
+        raise NotImplementedError
 
     async def retrieve(
         self,

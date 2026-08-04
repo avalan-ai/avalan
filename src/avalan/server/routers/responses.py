@@ -116,20 +116,24 @@ _RESPONSE_SSE_TOOL_ITEM_TYPES = {
     "function_call",
     "custom_tool_call_input",
 }
-_RESPONSE_SSE_OUTPUT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType({
-    "output_index": 0
-})
-_RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType({
-    "output_index": 0,
-    "content_index": 0,
-})
+_RESPONSE_SSE_OUTPUT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
+    {"output_index": 0}
+)
+_RESPONSE_SSE_CONTENT_INDEX_FIELDS: Mapping[str, int] = MappingProxyType(
+    {
+        "output_index": 0,
+        "content_index": 0,
+    }
+)
 _RESPONSE_SSE_UNSET = object()
-_RESPONSES_TERMINAL_STATUSES = MappingProxyType({
-    StreamTerminalOutcome.COMPLETED: "completed",
-    StreamTerminalOutcome.ERRORED: "failed",
-    StreamTerminalOutcome.CANCELLED: "cancelled",
-    StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
-})
+_RESPONSES_TERMINAL_STATUSES = MappingProxyType(
+    {
+        StreamTerminalOutcome.COMPLETED: "completed",
+        StreamTerminalOutcome.ERRORED: "failed",
+        StreamTerminalOutcome.CANCELLED: "cancelled",
+        StreamTerminalOutcome.INPUT_REQUIRED: "incomplete",
+    }
+)
 
 
 def _response_sse_index_value(
@@ -369,23 +373,27 @@ class _ResponsesSSEProjectionAdapter:
         assert isinstance(seq, int) and not isinstance(seq, bool)
         ordered_events: list[tuple[int, list[_ResponsesSSEEvent]]] = []
         if self.reasoning_redactor.has_pending:
-            ordered_events.append((
+            ordered_events.append(
                 (
-                    seq
-                    if self.reasoning_pending_sequence is None
-                    else self.reasoning_pending_sequence
-                ),
-                self._flush_reasoning_text(seq),
-            ))
+                    (
+                        seq
+                        if self.reasoning_pending_sequence is None
+                        else self.reasoning_pending_sequence
+                    ),
+                    self._flush_reasoning_text(seq),
+                )
+            )
         if self.answer_redactor.has_pending:
-            ordered_events.append((
+            ordered_events.append(
                 (
-                    seq
-                    if self.answer_pending_sequence is None
-                    else self.answer_pending_sequence
-                ),
-                self._flush_answer_text(seq),
-            ))
+                    (
+                        seq
+                        if self.answer_pending_sequence is None
+                        else self.answer_pending_sequence
+                    ),
+                    self._flush_answer_text(seq),
+                )
+            )
         events: list[_ResponsesSSEEvent] = []
         for _sequence, sequence_events in sorted(
             ordered_events,
@@ -1509,20 +1517,24 @@ class _ResponsesSSEProjector:
     ) -> _ResponsesSSEEvent:
         item: dict[str, Any] = {"id": state.item_id}
         if state.kind == "reasoning_summary":
-            item.update({
-                "type": "reasoning",
-                "status": "in_progress",
-                "summary": [],
-            })
+            item.update(
+                {
+                    "type": "reasoning",
+                    "status": "in_progress",
+                    "summary": [],
+                }
+            )
         elif state.kind == "reasoning_text":
             item.update({"type": "reasoning_text", "status": "in_progress"})
         elif state.kind == "output_text":
-            item.update({
-                "type": "message",
-                "role": "assistant",
-                "status": "in_progress",
-                "content": [],
-            })
+            item.update(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "status": "in_progress",
+                    "content": [],
+                }
+            )
         else:
             item["type"] = state.kind
             if state.tool_name is not None:
@@ -1545,26 +1557,30 @@ class _ResponsesSSEProjector:
         if state.kind == "reasoning_summary":
             item.update({"type": "reasoning", "summary": list(state.summary)})
         elif state.kind == "reasoning_text":
-            item.update({
-                "type": "reasoning_text",
-                "content": [
-                    {
-                        "type": "reasoning_text",
-                        "text": "".join(state.text),
-                    }
-                ],
-            })
+            item.update(
+                {
+                    "type": "reasoning_text",
+                    "content": [
+                        {
+                            "type": "reasoning_text",
+                            "text": "".join(state.text),
+                        }
+                    ],
+                }
+            )
         elif state.kind == "output_text":
-            item.update({
-                "type": "message",
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "output_text",
-                        "text": "".join(state.text),
-                    }
-                ],
-            })
+            item.update(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "output_text",
+                            "text": "".join(state.text),
+                        }
+                    ],
+                }
+            )
         else:
             item["type"] = state.kind
             if state.kind == "function_call":

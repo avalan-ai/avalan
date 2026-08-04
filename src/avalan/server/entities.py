@@ -219,21 +219,23 @@ _SKILL_BODY_HEADING_SEPARATOR_PATTERN = compile_pattern(r"\s*\n")
 _URL_SCHEME_PATTERN = compile_pattern(r"(?i)[A-Za-z][A-Za-z0-9+.-]*:")
 _SKILLS_TOOL_PREFIX = "skills."
 _SKILL_CONTENT_KEYS = frozenset({"content"})
-_ORDINARY_TITLE_HEADING_WORDS = frozenset({
-    "answer",
-    "conclusion",
-    "intro",
-    "introduction",
-    "notes",
-    "overview",
-    "plan",
-    "reason",
-    "reasoning",
-    "report",
-    "results",
-    "summary",
-    "update",
-})
+_ORDINARY_TITLE_HEADING_WORDS = frozenset(
+    {
+        "answer",
+        "conclusion",
+        "intro",
+        "introduction",
+        "notes",
+        "overview",
+        "plan",
+        "reason",
+        "reasoning",
+        "report",
+        "results",
+        "summary",
+        "update",
+    }
+)
 
 
 @dataclass(kw_only=True, frozen=True)

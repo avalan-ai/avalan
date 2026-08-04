@@ -307,7 +307,7 @@ _PHASE0_THREAT_STRUCTURE_SHA256 = (
     "7d3e7470e5d978da1c5bfaba2c734c15de169f97045f33188633abc77266f239"
 )
 _PHASE0_PROVIDER_CANONICAL_SHA256 = (
-    "f479bc544e1c3c41033cc5bc719428647f02552277f38912a99a85ec1c27c15f"
+    "2c5e6e8fd1757bcf669ffdcb6e433b4ca5b35b64f5e26d31d6aa0900e918750f"
 )
 _PHASE0_PROVIDER_SOURCE_SHA256 = (
     "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
@@ -315,7 +315,7 @@ _PHASE0_PROVIDER_SOURCE_SHA256 = (
 _PHASE0_PROVIDER_BYTE_ANCHORS = {
     "tests/fixtures/conversation/provider_contract.json": (
         34_882,
-        "7c97b7eaf359d91523828f93a5e5bea8475eb5f08c1db7616fd19c6512a08b61",
+        "4ed471bf7a4018e0baca9c691c039fb0c0c9befc1931f176ad82265f04147fe5",
     ),
     "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
         96_247,
@@ -372,8 +372,8 @@ _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/conversation/lifecycle.py": (
         0,
         "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
-        21_054,
-        "fddefa4f3c8f62450f5de68531bb7a1d9f5fc348b12a00d28fc1a19aef1c2df7",
+        21_076,
+        "16b3b7f03afc0532504c6fc8f700afb9149f1923a3c186dcd8c2f4961950fb05",
     ),
     "src/avalan/conversation/protocols.py": (
         17_492,
@@ -426,8 +426,8 @@ _PHASE6_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "tests/conversation/pgsql_conformance_test.py": (
         42_709,
         "9d6ae807cec43b4b006fdc14113f9fb5c26290cc69c465522adb36e1acbfc5d5",
-        47_586,
-        "2e6ab3c8048ddc6461ad13e214ca0c47a67bb94f2655d686bf22a59280328090",
+        47_841,
+        "752c8e8abfbf7f62bbcf02974229ceb81c808fd1fcee4362a9dfd31a0b3538d6",
     ),
 }
 _PHASE7_PROVIDER_TRANSITION_PATH = (
@@ -443,19 +443,19 @@ _PHASE9_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase9.json"
 )
 _PHASE9_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "24703b5cad97d8ba01f10d0167092f817874387a3a72ccf3e69db6749afbe4f1"
+    "2a3ac941941ad358c54d13e8ac07dfda9a829efbec3aa45b7d3efee69ac51d10"
 )
 _PHASE10_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase10.json"
 )
 _PHASE10_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "494a04afcaba83a86d6c99fad31a85cf61648304a1fc8881da4e33d07f0aa43b"
+    "6ac6074869fc20f3be0e7e5ecd6bab853be859b690443e68540791a1d8d0c688"
 )
 _PHASE11_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase11.json"
 )
 _PHASE11_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "e2857960835f50947c63262b10192c9e9c9989cf5639c1744b390931fd0cd9ce"
+    "dac171d752f887957a9c02db7e1eac2cc83e47145b5fd65486a3aa666b5f787e"
 )
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
@@ -491,8 +491,8 @@ _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/conversation/fakes.py": (
         61_349,
         "feeab4cbcc14e4882d7b8de19481353cff60e0eb787655e22cab4faf2e782957",
-        61_529,
-        "add73527adf4b488a13d80a618bfa060d1586db5fd9b4c31dbc68fafbe94bb81",
+        61_559,
+        "642941f1bf429e0187242da7fbf89f4debc4c4746ec15585ad959ca742cc4b35",
     ),
     "src/avalan/conversation/items.py": (
         69_302,

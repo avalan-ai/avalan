@@ -95,18 +95,18 @@
       "from_size": 18110,
       "from_sha256": "da96d1a90cf07648d33cba6c3b8701dc9dfe3e8116729071a3660fcdc584a6b5",
       "to_size": 18529,
-      "to_sha256": "70075f71bb78d78dc967ccdb6891bd19a2dda826a54a5d4dcf20d722039c9532"
+      "to_sha256": "d1e79894842e426a72edc75ea23e2ecb16861bc61b94755516962711310f6b48"
     },
     {
       "path": "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
       "from_size": 97796,
       "from_sha256": "67614ab06d27b44fa49c8553b5f7a7a0cad2de3979dd3cd44ee8adf8c134e08b",
-      "to_size": 97687,
-      "to_sha256": "bf674bba2de7a7f0ec36a5c1095efec9ecf2fb2e82c38a21232787d88d6c7306"
+      "to_size": 98550,
+      "to_sha256": "8d324471af2263aa28e1e36ff66d2371e3fa1f57e1bf37f155fd57a994167772"
     }
   ],
   "evidence_node_ids": [
     "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
   ],
-  "canonical_sha256": "24703b5cad97d8ba01f10d0167092f817874387a3a72ccf3e69db6749afbe4f1"
+  "canonical_sha256": "2a3ac941941ad358c54d13e8ac07dfda9a829efbec3aa45b7d3efee69ac51d10"
 }

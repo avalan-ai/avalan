@@ -642,40 +642,7 @@
       524,
       531
     ],
-    "src/avalan/conversation/crypto.py": [
-      278,
-      279,
-      280,
-      281,
-      282,
-      283,
-      284,
-      285,
-      286,
-      288,
-      289,
-      290
-    ],
-    "src/avalan/conversation/envelope.py": [
-      147,
-      148,
-      157,
-      158,
-      159
-    ],
-    "src/avalan/conversation/fakes.py": [
-      98,
-      99,
-      100,
-      101,
-      102,
-      103,
-      104,
-      105
-    ],
     "src/avalan/conversation/lifecycle.py": [
-      393,
-      394,
       400,
       401,
       407,
@@ -2859,5 +2826,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "ede732c216553deaef0179b6f9f5f2262efd7801527063abaddd5b9b4290c88f"
+  "snapshot_sha256": "211fdda3dec5a6f64e5bc6b203db3d0952b8999db1bb19ba020d68bb53f572d9"
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "ede732c216553deaef0179b6f9f5f2262efd7801527063abaddd5b9b4290c88f",
+  "current_snapshot_sha256": "211fdda3dec5a6f64e5bc6b203db3d0952b8999db1bb19ba020d68bb53f572d9",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1346,
+    "added": 1319,
     "removed": 285,
-    "sha256": "fb1fe204738944cb0df303ee6cbac38688edba07018382bc9f952768986c387b"
+    "sha256": "dee3d37f75264282a4bbec70d41005add5eece756739245af420e5092692d474"
   },
   "review": {
     "reviewed_by": "conversation Phase 11 exclusion inventory audit",
     "rationale": "The current snapshot preserves the reviewed directive inventory, refreshes parser-generated Protocol exclusions after hardening source movement, and removes exclusions for explicitly covered protocol fallbacks."
   },
-  "ledger_sha256": "bd81af8b54c749d39337f620bc0d6357449a1158ab1abaedc56ceb6369610df9"
+  "ledger_sha256": "b8eda116b8d5570adaa1a82b10db2f62efb39c110b5efa22cfde8ca776529573"
 }

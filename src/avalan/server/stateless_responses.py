@@ -1209,11 +1209,13 @@ class StatelessResponsesService:
             return uuid4().hex
         validate_identifier(idempotency_key, "idempotency_key")
         return sha256(
-            canonical_json_bytes({
-                "authority": str(authority_digest(authority)),
-                "idempotency_key": idempotency_key,
-                "request_fingerprint": request_fingerprint,
-            })
+            canonical_json_bytes(
+                {
+                    "authority": str(authority_digest(authority)),
+                    "idempotency_key": idempotency_key,
+                    "request_fingerprint": request_fingerprint,
+                }
+            )
         ).hexdigest()[:32]
 
     @staticmethod

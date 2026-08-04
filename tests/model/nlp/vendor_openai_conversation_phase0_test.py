@@ -44,6 +44,7 @@ from inspect import Parameter, signature
 from json import dumps, loads
 from pathlib import Path
 from tomllib import load as load_toml
+from types import UnionType
 from typing import (
     Annotated,
     Callable,
@@ -51,6 +52,7 @@ from typing import (
     Required,
     Self,
     TypeVar,
+    Union,
     get_args,
     get_origin,
     get_type_hints,
@@ -115,7 +117,7 @@ _ADAPTER_PATH = (
     / "openai.py"
 )
 _PROVIDER_CONTRACT_CANONICAL_SHA256 = (
-    "f479bc544e1c3c41033cc5bc719428647f02552277f38912a99a85ec1c27c15f"
+    "2c5e6e8fd1757bcf669ffdcb6e433b4ca5b35b64f5e26d31d6aa0900e918750f"
 )
 _PROVIDER_CONFORMANCE_CANONICAL_SHA256 = (
     "02d8f97d27572258cd4c8fcec7bc193500f7c2a293b025be63b75975dfaed3cc"
@@ -365,6 +367,8 @@ def _literal_strings(annotation: object) -> list[str]:
 def _type_symbol(value: object) -> str:
     if value is OpenAITimeout:
         return "openai.Timeout"
+    if value is UnionType:
+        return "typing.Union"
     module = getattr(value, "__module__", None)
     qualified_name = getattr(value, "__qualname__", None)
     assert type(module) is str
@@ -413,6 +417,27 @@ def _annotation_contract(annotation: object) -> dict[str, object]:
 
 def _annotation_sha256(annotation: object) -> str:
     return _canonical_digest(_annotation_contract(annotation))
+
+
+def test_annotation_contract_normalizes_union_origins() -> None:
+    """Normalize equivalent union spellings without changing arguments."""
+    pep_604_contract = _annotation_contract(str | int)
+    typing_annotation = Union[str, int]  # noqa: UP007
+    typing_contract = _annotation_contract(typing_annotation)
+
+    assert pep_604_contract == {
+        "kind": "generic",
+        "origin": "typing.Union",
+        "arguments": [
+            {"kind": "type", "symbol": "builtins.str"},
+            {"kind": "type", "symbol": "builtins.int"},
+        ],
+    }
+    assert pep_604_contract == typing_contract
+    assert _annotation_sha256(str | int) == _annotation_sha256(
+        typing_annotation
+    )
+    assert pep_604_contract != _annotation_contract(int | str)
 
 
 def _default_contract(value: object) -> str:
