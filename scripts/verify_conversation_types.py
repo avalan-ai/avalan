@@ -62,6 +62,7 @@ _TYPE_FIXTURE_PAYLOAD_SHA256_BY_PHASE = {
     9: "21e29fe78f7b4d440823ebbaee67cf6860b39bd56ff5d9991f7f705e6d1de3ba",
     10: "83fbf7cc9f79eb58b9726e428c53e5efcba49b06a34b01781b1eacd3ec1386e5",
     11: "b76b9fb644986f94835e7142e6216b336df74342770e4d9ce90156ce029c1796",
+    12: "9386adf9b19b9dadf8c72081c081cfe4d3f715ffaf2f304929ceecc01d9719fb",
 }
 _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     0: "fdc3c82ff02fcbfb54491d748f5568a9fb4c4783ec846bdb11bd9e189c809491",
@@ -76,6 +77,7 @@ _TYPE_ACTIVATION_HISTORY_BY_PHASE = {
     9: "37e7f1d8febe592d8d74b5685144ee3d0d723b12372c3dcb81b4a45d580cab5f",
     10: "faf38741233053a0d2c13d1e6f14049672a67b5991d3952ec936a3fb2b1c6302",
     11: "2615940a2c3f5901f9444f11d59b92b22e1756ac3592ac668339a40f41919b0c",
+    12: "e93cf2addf56bdcae9d542281a593fecf72acedce2fd00e561938c982528ce87",
 }
 _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
     0: (
@@ -123,6 +125,10 @@ _TYPE_REPLACEMENT_HISTORY_BY_PHASE = {
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
     11: (
+        1,
+        "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
+    ),
+    12: (
         1,
         "921a38443dedb906b3f8c0c68b0ac7cb435dd4180ad3d9a540ca0718dea734b5",
     ),
@@ -267,6 +273,15 @@ _TYPE_SOURCE_SHA256_BY_PHASE = {
             "tests/conversation_type_contracts/"
             + "phase11_sync_hardening_negative.py"
         ): "a7010538ea3e0cba3173043ec96e94e59760f61f912c1afc579a683f49e55efd",
+    },
+    12: {
+        "tests/conversation_type_contracts/phase12_positive.py": (
+            "fe87b7e96ca14a6ef2dd9a500758d51135722e999204dfeacc8adff3e2848650"
+        ),
+        (
+            "tests/conversation_type_contracts/"
+            + "phase12_sync_activation_negative.py"
+        ): "baa1ca87d0102fa69c25cfdd93e83f4b9555a2426a8b8553d12316fd9d05cc43",
     },
 }
 

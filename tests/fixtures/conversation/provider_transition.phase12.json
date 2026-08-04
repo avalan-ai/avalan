@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 12,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase12-activation-review",
+  "reason": "Install exact reviewed native-provider activation boundaries while preserving inactive production defaults and historical lifecycle cleanup.",
+  "transitions": [
+    {
+      "path": "src/avalan/conversation/__init__.py",
+      "from_size": 32712,
+      "from_sha256": "2cb7b7ec4c85ca5ddb5b93ce530715d68ea6b114e94e3d96d37da3931d456860",
+      "to_size": 33112,
+      "to_sha256": "f1cb16bbd8db2e268a76b30e2d9c4df9f7d5cae5f622ede5742f4a879083b4bc"
+    },
+    {
+      "path": "src/avalan/conversation/activation.py",
+      "from_size": 0,
+      "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "to_size": 33978,
+      "to_sha256": "f34c6ae950d47bedab5f050b631859aa22b22429b464766032a8a78c0502ddad"
+    },
+    {
+      "path": "src/avalan/conversation/items.py",
+      "from_size": 71181,
+      "from_sha256": "8d5d2e2342513f688aa8d7478dec666a86d857ca21d23d79b734fba8062594e8",
+      "to_size": 71209,
+      "to_sha256": "bda5123c0bfc417973295c00ddc946ffeda78fed5c133b078bdcbb2a4ab7097d"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai.py",
+      "from_size": 68407,
+      "from_sha256": "831e765abe92b2f39e63fa3c4735bb36204cdfec413bf2828984cea551492d70",
+            "to_size": 77671,
+            "to_sha256": "a925fc94efb593fb29fcc3c925075fb25798ef69017fb70175ab0d91dd3a2d35"
+    },
+    {
+      "path": "src/avalan/conversation/providers/openai_stored.py",
+      "from_size": 35093,
+      "from_sha256": "a7458a083c0fc8cc5d4abcc2ec43fb51ceccc16f5da8ccf1b9eacf5f206ece3f",
+            "to_size": 38284,
+            "to_sha256": "bd7f7839df4b019e883ce569a3c4f478cb3ffc79ca6fab0db6ee32613aecb8f8"
+    },
+    {
+      "path": "tests/conversation/native_openai_provider_test.py",
+      "from_size": 65100,
+      "from_sha256": "a19fdeed54472fb58a59dece74010ff85d25f0fb4b1db3935f88a6455c3bc592",
+            "to_size": 80444,
+            "to_sha256": "81561b2e734ae8c3bcecac668ea8b7c97d503cc5b5bdf4d2515f9d0e6afcb199"
+    },
+    {
+      "path": "tests/conversation/native_openai_stored_provider_test.py",
+      "from_size": 64266,
+      "from_sha256": "0338a527a9f982037d71ab033523ae87bc5d2035b4ffbd699a4b11bf3aaeef7d",
+            "to_size": 66720,
+            "to_sha256": "fb06093415f9c518f642d1e877c456b1ace9afb1dc3e0e5507f56f86372d68c8"
+    },
+    {
+      "path": "tests/conversation/native_openai_compaction_test.py",
+      "from_size": 84510,
+      "from_sha256": "7e1f208d3a44a756dcdeca127117c75844ce22ec935ef16b48576bf484b41211",
+            "to_size": 85799,
+            "to_sha256": "c2d35f7471dc5da43aef392254ced25bc5b5179f067b626752e6d86a79a39f89"
+    },
+    {
+      "path": "tests/conversation/openai_stateless_e2e_test.py",
+      "from_size": 37250,
+      "from_sha256": "3e9d28ace23a848add8cd479d1060a86f77c0abb9d0e34f979197098f32accb2",
+      "to_size": 38025,
+      "to_sha256": "15c16b70228b10749c62c9cb8453c10d1d30b64cf2d29e6980537c34014de0d3"
+    },
+    {
+      "path": "tests/conversation/compaction_e2e_test.py",
+      "from_size": 40631,
+      "from_sha256": "6b1186ecedf1e40e7b34d3ad8335e166a059c12c39878ed7742c3f0ec4e277bf",
+      "to_size": 41213,
+      "to_sha256": "d9640b0d4811dd5b98f5f1c48d6c4314460a2a2f391ac5dd0a09afd993e37f8f"
+    },
+    {
+      "path": "tests/conversation/server_stateless_e2e_test.py",
+      "from_size": 164800,
+      "from_sha256": "9fd1e90c5f723c73f76f2ce3ed03c8a22e0c8721457ba713bb6539ed1c1f3e5e",
+      "to_size": 165125,
+      "to_sha256": "7342ea302819cb3abaff296c5cb135d4fb742ae130624525f531dedf2ed4979f"
+    },
+    {
+      "path": "tests/conversation/openai_stored_e2e_test.py",
+      "from_size": 72131,
+      "from_sha256": "a0fcaa163b736849392e9c51f32de70a95a7da0b5b5b903e17ca44a8db540892",
+      "to_size": 72931,
+      "to_sha256": "fd98c2c3ef0027bf6e4cbd10ed24262ee5fd2381a76d924f6f9e518b4ff8d76c"
+    },
+    {
+      "path": "tests/conversation/native_openai_provider_validation_test.py",
+      "from_size": 98204,
+      "from_sha256": "c6a9a8f786c293df7d4e8571cd16c6cfc587bf9ed75e938c217c36378f55da3c",
+      "to_size": 101654,
+      "to_sha256": "7f76c1744a80bba0b208b17c80e84160e0f58fa3f16737d7fd2f79d448b2e81a"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/conversation/activation_test.py::test_native_provider_dispatch_requires_exact_active_registry",
+    "tests/conversation/activation_test.py::test_stored_dispatch_and_lifecycle_use_registry_boundaries",
+    "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product"
+  ],
+    "canonical_sha256": "cb706818138b5eba79f54e40d5237de26b75b28d3a8c8e74f3439ca3d33f2424"
+}

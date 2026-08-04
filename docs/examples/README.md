@@ -19,6 +19,15 @@ This directory showcases configuration files and small programs that demonstrate
 - [openai_client_agent_messi.py](openai_client_agent_messi.py) – Queries a locally served `agent_messi` through the OpenAI client. Change the message content, `model`, or `base_url`.
 - [openai_client_agent_tool.py](openai_client_agent_tool.py) – Similar client hitting a tool‑enabled agent. Modify the prompt, `model`, or server `base_url`.
 
+## Conversation continuity
+
+- [conversation_continuity_sdk.py](conversation_continuity_sdk.py) – Runs
+  direct streaming, immutable continuation and branch operations, standalone
+  compaction, and explicit reset through a deterministic process-local provider.
+- [conversation_responses_local.py](conversation_responses_local.py) – Exercises
+  strict served Responses replay, compact, stored lifecycle, and streaming
+  through a process-local HTTP transport that never opens a socket.
+
 ## Tasks
 - [tasks](tasks/) – Task definition examples for scalar input, structured JSON, large direct files, provider file ids, hosted URLs, object-store URIs, conversion, retrieval and map-reduce fallback, local text conversion, local multimodal media, queued file tasks, artifact outputs, SDK construction, and intentionally invalid diagnostics.
 

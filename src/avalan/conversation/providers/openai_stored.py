@@ -1,5 +1,6 @@
 """Adapt exact native OpenAI Responses profiles to stored chaining."""
 
+from ..activation import AZURE_OPENAI_API_REVISIONS, AsyncActivationRegistry
 from ..binding import (
     ConversationCapability,
     ConversationCapabilityProfile,
@@ -42,6 +43,8 @@ from ..protocols import (
     StoredProviderPlan,
 )
 from ..settings import (
+    CompactionOperation,
+    ConversationMode,
     DisabledCompaction,
     EffectiveReasoningContext,
     InlineCompaction,
@@ -56,7 +59,6 @@ from ..value import (
     validate_identifier,
 )
 from .openai import (
-    _AZURE_API_REVISIONS,
     _ENCRYPTED_CONTENT_INCLUDE,
     _OPENAI_API_REVISION,
     _SDK_REVISION,
@@ -69,6 +71,7 @@ from .openai import (
     _configured_tool_execution_metadata,
     _NativeOpenAIDiagnosticsState,
     _NativeOpenAIProviderStream,
+    _NativeOpenAITestAuthority,
     _owned_close_outcome,
     _provider_failure,
     _provider_result_mapping,
@@ -268,7 +271,7 @@ class NativeOpenAIStoredProfile:
             ):
                 raise ConversationCapabilityError()
         elif (
-            binding.provider_api_revision not in _AZURE_API_REVISIONS
+            binding.provider_api_revision not in AZURE_OPENAI_API_REVISIONS
             or self.encrypted_content
             is not NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
         ):
@@ -290,12 +293,23 @@ class NativeOpenAIStoredProvider:
         profile: NativeOpenAIStoredProfile,
         capability_profile: ConversationCapabilityProfile,
         tools: tuple[NativeOpenAIFunctionTool, ...] = (),
+        activation_registry: AsyncActivationRegistry | None = None,
+        test_authority: _NativeOpenAITestAuthority | None = None,
     ) -> None:
         if (
             type(client) is not AsyncOpenAI
             or type(profile) is not NativeOpenAIStoredProfile
             or type(capability_profile) is not ConversationCapabilityProfile
             or type(tools) is not tuple
+            or (
+                activation_registry is not None
+                and type(activation_registry) is not AsyncActivationRegistry
+            )
+            or (
+                test_authority is not None
+                and type(test_authority) is not _NativeOpenAITestAuthority
+            )
+            or (activation_registry is not None and test_authority is not None)
             or any(
                 type(tool) is not NativeOpenAIFunctionTool for tool in tools
             )
@@ -323,10 +337,19 @@ class NativeOpenAIStoredProvider:
             scripted_tcp_test=profile.scripted_tcp_test,
             capability_profile=capability_profile,
         )
+        if test_authority is not None:
+            test_authority.assert_bound(
+                client=client,
+                binding=profile.binding,
+                scripted_tcp_test=profile.scripted_tcp_test,
+                capability_profile=capability_profile,
+            )
         self._client = client
         self._profile = profile
         self._capability_profile = capability_profile
         self._tools = {tool.name: tool for tool in tools}
+        self._activation_registry = activation_registry
+        self._test_authority = test_authority
         self._diagnostics = _NativeOpenAIDiagnosticsState()
         self._closed = False
         self._close_task: Task[None] | None = None
@@ -380,10 +403,18 @@ class NativeOpenAIStoredProvider:
                 plan,
                 ProviderTransport.NON_STREAMING,
             )
+            await self._authorize_dispatch(
+                stored,
+                operation=(
+                    CompactionOperation.INLINE
+                    if inline
+                    else CompactionOperation.NONE
+                ),
+            )
             limits = self._profile.compaction_limits if inline else None
             input_items = _stored_request_input_items(stored, limits=limits)
             response = await self._create(input_items, stored, stream=False)
-            if type(response) is not Response:
+            if not isinstance(response, Response):
                 raise _provider_failure(boundary="failure_before_output")
             result = _provider_result_mapping(
                 _sdk_mapping(response),
@@ -410,6 +441,14 @@ class NativeOpenAIStoredProvider:
         )
         try:
             stored = self._validate_plan(plan, ProviderTransport.STREAMING)
+            await self._authorize_dispatch(
+                stored,
+                operation=(
+                    CompactionOperation.INLINE
+                    if inline
+                    else CompactionOperation.NONE
+                ),
+            )
             limits = self._profile.compaction_limits if inline else None
             input_items = _stored_request_input_items(stored, limits=limits)
             response = await self._create(input_items, stored, stream=True)
@@ -463,7 +502,7 @@ class NativeOpenAIStoredProvider:
         upstream_response_id: UpstreamResponseId,
     ) -> RetrievedUpstreamResponse:
         """Retrieve one private stored response without exposing its body."""
-        self._validate_lifecycle(
+        await self._validate_lifecycle(
             upstream_response_id,
             ConversationCapability.STORED_RESPONSE_RETRIEVAL,
         )
@@ -489,6 +528,8 @@ class NativeOpenAIStoredProvider:
             raise ConversationAmbiguousDispatchError() from None
         except Exception:
             raise ConversationProviderResponseError() from None
+        if not isinstance(response, Response):
+            raise ConversationProviderResponseError()
         payload = _sdk_mapping(response)
         effective_reasoning_context = self._validate_retrieved_execution(
             payload,
@@ -565,7 +606,7 @@ class NativeOpenAIStoredProvider:
         upstream_response_id: UpstreamResponseId,
     ) -> UpstreamDeleteResult:
         """Delete one private stored response idempotently."""
-        self._validate_lifecycle(
+        await self._validate_lifecycle(
             upstream_response_id,
             ConversationCapability.STORED_RESPONSE_DELETION,
         )
@@ -674,7 +715,7 @@ class NativeOpenAIStoredProvider:
         assert limits is not None
         _stored_request_input_items(stored, limits=limits)
 
-    def _validate_lifecycle(
+    async def _validate_lifecycle(
         self,
         upstream_response_id: UpstreamResponseId,
         capability: ConversationCapability,
@@ -689,6 +730,48 @@ class NativeOpenAIStoredProvider:
             binding=self.binding,
             scripted_tcp_test=self._profile.scripted_tcp_test,
             capability_profile=self._capability_profile,
+        )
+        test_authority = self._test_authority
+        if test_authority is not None:
+            test_authority.assert_bound(
+                client=self._client,
+                binding=self.binding,
+                scripted_tcp_test=self._profile.scripted_tcp_test,
+                capability_profile=self._capability_profile,
+            )
+            return
+        registry = self._activation_registry
+        if registry is None:
+            raise ConversationCapabilityError()
+        await registry.resolve_lifecycle(
+            self.binding,
+            capability=capability,
+        )
+
+    async def _authorize_dispatch(
+        self,
+        plan: NativeOpenAIStoredPlan,
+        *,
+        operation: CompactionOperation,
+    ) -> None:
+        """Authorize one exact production row before any SDK effect."""
+        test_authority = self._test_authority
+        if test_authority is not None:
+            test_authority.assert_bound(
+                client=self._client,
+                binding=self.binding,
+                scripted_tcp_test=self._profile.scripted_tcp_test,
+                capability_profile=self._capability_profile,
+            )
+            return
+        registry = self._activation_registry
+        if registry is None:
+            raise ConversationCapabilityError()
+        await registry.resolve(
+            self.binding,
+            mode=ConversationMode.STORED,
+            reasoning_context=plan.reasoning.requested,
+            compaction_operation=operation,
         )
 
     async def _create(

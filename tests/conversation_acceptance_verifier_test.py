@@ -66,6 +66,22 @@ def _resign(payload: dict[str, object], digest_field: str) -> None:
     payload[digest_field] = _VERIFIER.canonical_sha256(canonical)
 
 
+def _resign_scoped(payload: dict[str, object]) -> None:
+    """Update one whole-object canonical digest value."""
+    canonical = dict(payload)
+    digest = cast(dict[str, object], canonical.pop("canonical_digest"))
+    digest["value"] = _VERIFIER.canonical_sha256(canonical)
+
+
+def _resign_activation(payload: dict[str, object]) -> None:
+    """Update one activation review signature and canonical digest."""
+    signed = dict(payload)
+    signature = cast(dict[str, object], signed.pop("review_signature"))
+    signed.pop("canonical_digest")
+    signature["value"] = _VERIFIER.canonical_sha256(signed)
+    _resign_scoped(payload)
+
+
 def _manifest() -> object:
     """Return the validated Phase 0 acceptance manifest."""
     return _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
@@ -1394,3 +1410,542 @@ def test_deterministic_fixture_requires_its_canonical_digest() -> None:
         match="not the version 1 inventory",
     ):
         _VERIFIER._validate_deterministic_fixtures(payload)
+
+
+def _phase12_candidate_path(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    payload: dict[str, object],
+    *,
+    anchor_candidate: bool = True,
+    anchor_mappings: bool = True,
+) -> Path:
+    """Write and optionally re-anchor one resigned candidate variant."""
+    _resign(payload, "canonical_sha256")
+    path = tmp_path / "acceptance_candidate.phase12.json"
+    _write(path, payload)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_TRACEABILITY_CANDIDATE_PATH",
+        str(path),
+    )
+    if anchor_candidate:
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_PHASE12_TRACEABILITY_CANDIDATE_BYTE_SHA256",
+            _VERIFIER.sha256(path.read_bytes()).hexdigest(),
+        )
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_PHASE12_TRACEABILITY_CANDIDATE_CANONICAL_SHA256",
+            payload["canonical_sha256"],
+        )
+    if anchor_mappings:
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_PHASE12_TRACEABILITY_MAPPING_CANONICAL_SHA256",
+            _VERIFIER.canonical_sha256(
+                {
+                    "public_e2e_inventory": payload["public_e2e_inventory"],
+                    "normative_requirements": payload[
+                        "normative_requirements"
+                    ],
+                }
+            ),
+        )
+    return path
+
+
+def _phase12_live_identity(
+    live_results: dict[str, object],
+    **changes: str,
+) -> Any:
+    """Return the exact identity encoded by the tracked Terra receipt."""
+    azure = cast(dict[str, object], live_results["azure_openai_matrix"])
+    results = cast(list[dict[str, object]], azure["results"])
+    terra = next(
+        row for row in results if row["deployment"] == "gpt-5.6-terra"
+    )
+    receipt = cast(dict[str, object], terra["tracked_cli_receipt"])
+    values = {
+        "provider_family": cast(str, receipt["provider_family"]),
+        "profile": cast(str, receipt["model_or_deployment"]),
+        "revision": cast(str, receipt["model_or_deployment_revision"]),
+        "structural_observations_digest": cast(
+            str,
+            receipt["structural_observations_digest"],
+        ),
+    }
+    values.update(changes)
+    return _VERIFIER._Phase12LiveReceiptIdentity(**values)
+
+
+def _phase12_live_proof_root(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    activation: dict[str, object],
+    live_results: dict[str, object],
+) -> Path:
+    """Write and source-anchor one linked activation/live evidence pair."""
+    _resign_scoped(live_results)
+    live_path = tmp_path / "live_conformance_results.phase12.json"
+    _write(live_path, live_results)
+    live_digest = cast(dict[str, object], live_results["canonical_digest"])[
+        "value"
+    ]
+    live_link = cast(dict[str, object], activation["live_evidence"])
+    live_link["path"] = live_path.name
+    live_link["byte_sha256"] = _VERIFIER.sha256(
+        live_path.read_bytes()
+    ).hexdigest()
+    live_link["canonical_digest"] = live_digest
+    _resign_activation(activation)
+    activation_path = tmp_path / "activation_manifest.phase12.json"
+    _write(activation_path, activation)
+    activation_digest = cast(
+        dict[str, object], activation["canonical_digest"]
+    )["value"]
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_ACTIVATION_DECISION_PATH",
+        activation_path.name,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_ACTIVATION_DECISION_BYTE_SHA256",
+        _VERIFIER.sha256(activation_path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_ACTIVATION_DECISION_CANONICAL_SHA256",
+        activation_digest,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_LIVE_RESULTS_PATH",
+        live_path.name,
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_LIVE_RESULTS_BYTE_SHA256",
+        _VERIFIER.sha256(live_path.read_bytes()).hexdigest(),
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_LIVE_RESULTS_CANONICAL_SHA256",
+        live_digest,
+    )
+    return tmp_path
+
+
+def test_phase12_live_proof_resolves_to_exact_current_receipt() -> None:
+    """Resolve the full-digest proof to one exact Terra receipt identity."""
+    activation = _read("activation_manifest.phase12.json")
+    live_results = _read("live_conformance_results.phase12.json")
+    proof_ids = cast(list[str], activation["live_proof_ids"])
+    identity = _phase12_live_identity(live_results)
+
+    assert proof_ids == [identity.proof_id]
+    assert proof_ids[0].endswith(
+        ":structural-sha256:"
+        "f76c0c145f3775c5e445cb55efb3c9cb5b9293a01695e6850f3764ee6badc5f3"
+    )
+    _VERIFIER._validate_phase12_live_proof_resolution(_ROOT)
+
+
+def test_phase12_live_proof_rejects_stale_structural_suffix(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject the prior prefix-only proof after locally valid resealing."""
+    activation = _read("activation_manifest.phase12.json")
+    activation["live_proof_ids"] = [
+        "azure-openai-gpt-5.6-terra-2026-07-09-dd2482cf"
+    ]
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        _read("live_conformance_results.phase12.json"),
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="live proof",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+def test_phase12_live_proof_rejects_resigned_activation_without_source_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject locally resigned proof drift absent source-owned authority."""
+    activation = _read("activation_manifest.phase12.json")
+    activation["live_proof_ids"] = ["locally-resigned-unknown-proof"]
+    _resign_activation(activation)
+    path = tmp_path / "activation_manifest.phase12.json"
+    _write(path, activation)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE12_ACTIVATION_DECISION_PATH",
+        path.name,
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="activation decision byte anchor is invalid",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(tmp_path)
+
+
+def test_phase12_live_proof_rejects_unknown_well_formed_proof(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a well-formed proof absent from the current receipt set."""
+    activation = _read("activation_manifest.phase12.json")
+    activation["live_proof_ids"] = [
+        f"{_VERIFIER._PHASE12_LIVE_PROOF_PREFIX}:identity-sha256:"
+        f"{'f' * 64}:structural-sha256:{'e' * 64}"
+    ]
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        _read("live_conformance_results.phase12.json"),
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="live proof does not resolve",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+def test_phase12_live_proof_rejects_mismatched_referenced_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a full digest that disagrees with its bound receipt identity."""
+    activation = _read("activation_manifest.phase12.json")
+    proof_id = cast(list[str], activation["live_proof_ids"])[0]
+    activation["live_proof_ids"] = [
+        f"{proof_id.rsplit(':', maxsplit=1)[0]}:{'0' * 64}"
+    ]
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        _read("live_conformance_results.phase12.json"),
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="live proof digest does not match",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("provider_family", "openai"),
+        ("profile", "gpt-5.6-sol"),
+        ("revision", "2026-07-10"),
+        ("structural_observations_digest", "0" * 64),
+    ),
+)
+def test_phase12_live_proof_rejects_wrong_receipt_identity_or_digest(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    """Reject a proof bound to any wrong provider/profile/revision/digest."""
+    activation = _read("activation_manifest.phase12.json")
+    live_results = _read("live_conformance_results.phase12.json")
+    activation["live_proof_ids"] = [
+        _phase12_live_identity(live_results, **{field: value}).proof_id
+    ]
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        live_results,
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="live proof does not resolve",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+def test_phase12_live_proof_rejects_duplicate_identifier(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a duplicate activation proof before receipt resolution."""
+    activation = _read("activation_manifest.phase12.json")
+    proof_id = cast(list[str], activation["live_proof_ids"])[0]
+    activation["live_proof_ids"] = [proof_id, proof_id]
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        _read("live_conformance_results.phase12.json"),
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="duplicate or noncanonical",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+def test_phase12_live_proof_rejects_ambiguous_duplicate_receipt(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject one proof resolving to duplicate current receipt identities."""
+    activation = _read("activation_manifest.phase12.json")
+    live_results = _read("live_conformance_results.phase12.json")
+    azure = cast(dict[str, object], live_results["azure_openai_matrix"])
+    results = cast(list[dict[str, object]], azure["results"])
+    terra = next(
+        row for row in results if row["deployment"] == "gpt-5.6-terra"
+    )
+    results.append(deepcopy(terra))
+    live_results["completed_full_matrix_profile_count"] = 2
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        live_results,
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="resolves ambiguously",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (
+        ("provider_family", "openai"),
+        ("model_or_deployment", "gpt-5.6-sol"),
+        ("model_or_deployment_revision", "2026-07-10"),
+    ),
+)
+def test_phase12_live_proof_rejects_receipt_profile_identity_drift(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: str,
+) -> None:
+    """Reject a receipt whose identity differs from its containing profile."""
+    activation = _read("activation_manifest.phase12.json")
+    live_results = _read("live_conformance_results.phase12.json")
+    azure = cast(dict[str, object], live_results["azure_openai_matrix"])
+    results = cast(list[dict[str, object]], azure["results"])
+    terra = next(
+        row for row in results if row["deployment"] == "gpt-5.6-terra"
+    )
+    receipt = cast(dict[str, object], terra["tracked_cli_receipt"])
+    receipt[field] = value
+    root = _phase12_live_proof_root(
+        tmp_path,
+        monkeypatch,
+        activation,
+        live_results,
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="receipt identity differs from its provider profile",
+    ):
+        _VERIFIER._validate_phase12_live_proof_resolution(root)
+
+
+def test_phase12_traceability_candidate_is_exact_and_non_promoting() -> None:
+    """Validate exact planned, public, normative, and blocker evidence."""
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_self_digest_without_source_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a locally resigned candidate absent source-owned authority."""
+    payload = _read("acceptance_candidate.phase12.json")
+    payload["candidate_state"] = "locally_resigned_substitution"
+    _phase12_candidate_path(
+        tmp_path,
+        monkeypatch,
+        payload,
+        anchor_candidate=False,
+        anchor_mappings=False,
+    )
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="byte anchor is invalid",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_mapping_anchor_rejects_unrelated_same_class_active_node(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject same-class active-node substitution in a normative mapping."""
+    payload = _read("acceptance_candidate.phase12.json")
+    requirements = cast(
+        list[dict[str, object]], payload["normative_requirements"]
+    )
+    evidence = cast(list[dict[str, object]], requirements[1]["evidence"])
+    evidence[0] = {
+        "node_id": (
+            "tests/conversation/compaction_e2e_test.py::"
+            "test_tool_cycles_across_two_boundaries_keep_exact_final_order"
+        ),
+        "evidence_class": "wire",
+        "evidence_state": "active",
+    }
+    _phase12_candidate_path(
+        tmp_path,
+        monkeypatch,
+        payload,
+        anchor_mappings=False,
+    )
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="mapping authority digest is invalid",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_live_outcome_overclaim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep exact external live blocker states non-interchangeable."""
+    payload = _read("acceptance_candidate.phase12.json")
+    blockers = cast(list[dict[str, object]], payload["external_blockers"])
+    blockers[0][
+        "state"
+    ] = "requires_operator_authority_credentials_and_cost_acknowledgement"
+    _phase12_candidate_path(tmp_path, monkeypatch, payload)
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="external blocker is not precise",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_broad_planned_claim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject broad provider or dimension labels absent from the node."""
+    payload = _read("acceptance_candidate.phase12.json")
+    planned = cast(list[dict[str, object]], payload["planned_nodes"])
+    providers = cast(list[str], planned[0]["provider_families"])
+    providers.append("incapable_generic_compatible")
+    _phase12_candidate_path(tmp_path, monkeypatch, payload)
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="label-only or broad claims",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_provider_e2e_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject CONV-E2E-015 without exact native and compatible evidence."""
+    payload = _read("acceptance_candidate.phase12.json")
+    inventory = cast(list[dict[str, object]], payload["public_e2e_inventory"])
+    evidence = cast(list[dict[str, object]], inventory[-1]["evidence"])
+    evidence.pop()
+    _phase12_candidate_path(tmp_path, monkeypatch, payload)
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="CONV-E2E-015 provider evidence is not exact",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_live_requirement_substitution(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep the live-provider normative requirement externally planned."""
+    payload = _read("acceptance_candidate.phase12.json")
+    requirements = cast(
+        list[dict[str, object]], payload["normative_requirements"]
+    )
+    live_evidence = cast(list[dict[str, object]], requirements[6]["evidence"])
+    live_evidence[0] = {
+        "node_id": _VERIFIER._PHASE12_MATRIX_NODE_ID,
+        "evidence_class": "matrix",
+        "evidence_state": "candidate_deterministic",
+    }
+    _phase12_candidate_path(tmp_path, monkeypatch, payload)
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="live provider verification must remain externally planned",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_phase12_candidate_rejects_resigned_active_evidence_overclaim(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject an executable historical node relabeled as currently active."""
+    payload = _read("acceptance_candidate.phase12.json")
+    inventory = cast(list[dict[str, object]], payload["public_e2e_inventory"])
+    evidence = cast(list[dict[str, object]], inventory[2]["evidence"])
+    evidence[0]["evidence_state"] = "active"
+    _phase12_candidate_path(tmp_path, monkeypatch, payload)
+    manifest = _VERIFIER.load_manifest(
+        _FIXTURES / "acceptance_manifest.phase11.json"
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="labels inactive evidence active",
+    ):
+        _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)

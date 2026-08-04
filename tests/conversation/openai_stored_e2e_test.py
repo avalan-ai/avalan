@@ -30,6 +30,9 @@ from store_conformance_test import _stored_atomic_commit
 import avalan
 import avalan.conversation as conversation
 from avalan.conversation import sdk as sdk_module
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.pgsql import (
     PsycopgAsyncDatabase,
     PsycopgPoolSettings,
@@ -205,6 +208,10 @@ class _LoopbackTcpTransport(httpx.AsyncBaseTransport):
         self._target = target
         self._transport = httpx.AsyncHTTPTransport()
         self.request_urls: list[str] = []
+
+    def mock_transport(self) -> httpx.MockTransport:
+        """Return an exact mocked SDK boundary backed by loopback TCP."""
+        return httpx.MockTransport(self.handle_async_request)
 
     async def handle_async_request(
         self,
@@ -604,32 +611,38 @@ def _provider(
         if tools
         else ()
     )
+    profile = conversation.NativeOpenAIStoredProfile(
+        profile_id=f"stored-{binding.lane_id}",
+        binding=binding,
+        execution=conversation.NativeOpenAIStoredExecution(
+            instructions="Use the exact Phase 6 stored execution.",
+            max_output_tokens=512,
+            max_tool_calls=4,
+            parallel_tool_calls=False,
+            temperature=0.2,
+            top_p=0.8,
+            truncation="disabled",
+        ),
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
+            if binding.provider_family
+            is conversation.ProviderFamily.AZURE_OPENAI
+            else conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
+        ),
+        scripted_tcp_test=transport is None,
+    )
+    capabilities = _capabilities(binding)
     return conversation.NativeOpenAIStoredProvider(
         client=client,
-        profile=conversation.NativeOpenAIStoredProfile(
-            profile_id=f"stored-{binding.lane_id}",
-            binding=binding,
-            execution=conversation.NativeOpenAIStoredExecution(
-                instructions="Use the exact Phase 6 stored execution.",
-                max_output_tokens=512,
-                max_tool_calls=4,
-                parallel_tool_calls=False,
-                temperature=0.2,
-                top_p=0.8,
-                truncation="disabled",
-            ),
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.EXPLICIT_INCLUDE
-                if binding.provider_family
-                is conversation.ProviderFamily.AZURE_OPENAI
-                else (
-                    conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-                )
-            ),
-            scripted_tcp_test=transport is None,
-        ),
-        capability_profile=_capabilities(binding),
+        profile=profile,
+        capability_profile=capabilities,
         tools=configured_tools,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
+        ),
     )
 
 
@@ -894,7 +907,10 @@ async def test_native_azure_stored_exact_identity_over_loopback_transport(
         azure=True,
         azure_resource_identity=exact_resource,
     )
-    provider = _provider(binding, transport=loopback_transport)
+    provider = _provider(
+        binding,
+        transport=loopback_transport.mock_transport(),
+    )
     client, coordinator = _client(
         store,
         provider,
@@ -912,16 +928,24 @@ async def test_native_azure_stored_exact_identity_over_loopback_transport(
                 conversation.PublicResponseId("phase6-unknown-response"),
                 authority(),
             )
-        created = await client.create(
-            "azure stored exact wire",
-            avalan.StoredConversationSettings(provider_storage_disclosed=True),
-            stream=streaming,
+        settings = avalan.StoredConversationSettings(
+            provider_storage_disclosed=True
         )
-        result = (
-            await _stream_result(created)
-            if type(created) is avalan.DirectConversationStream
-            else created
-        )
+        if streaming:
+            stream = await client.create(
+                "azure stored exact wire",
+                settings,
+                stream=True,
+            )
+            assert type(stream) is avalan.DirectConversationStream
+            result = await _stream_result(stream)
+        else:
+            result = await client.create(
+                "azure stored exact wire",
+                settings,
+                stream=False,
+            )
+            assert type(result) is avalan.DirectConversationResult
         assert type(result) is avalan.DirectConversationResult
         assert result.output == "azure-stored"
         assert binding.normalized_endpoint == exact_endpoint
@@ -943,6 +967,7 @@ async def test_native_azure_stored_exact_identity_over_loopback_transport(
     finally:
         await coordinator.close()
         await store.close()
+        await loopback_transport.aclose()
         await server.close()
 
 

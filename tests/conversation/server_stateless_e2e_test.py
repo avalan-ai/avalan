@@ -43,6 +43,9 @@ from uvicorn import Config, Server
 import avalan.conversation as conversation
 import avalan.server.stateless_responses as stateless_module
 from avalan.agent.orchestrator import Orchestrator
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+)
 from avalan.entities import ReasoningSummaryMode
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import (
@@ -3922,26 +3925,35 @@ def _native_provider(
     *,
     compaction_limits: conversation.NativeOpenAICompactionLimits | None = None,
 ) -> conversation.NativeOpenAIStatelessProvider:
+    client = AsyncOpenAI(
+        api_key="native-upstream-key",
+        base_url=binding.normalized_endpoint,
+        max_retries=0,
+    )
+    profile = conversation.NativeOpenAIStatelessProfile(
+        profile_id=f"native-{binding.lane_id}",
+        binding=binding,
+        encrypted_content=(
+            conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
+        ),
+        compaction_limits=compaction_limits,
+        scripted_tcp_test=True,
+    )
+    capabilities = _native_capabilities(
+        binding,
+        compact=compaction_limits is not None,
+    )
     return conversation.NativeOpenAIStatelessProvider(
-        client=AsyncOpenAI(
-            api_key="native-upstream-key",
-            base_url=binding.normalized_endpoint,
-            max_retries=0,
-        ),
-        profile=conversation.NativeOpenAIStatelessProfile(
-            profile_id=f"native-{binding.lane_id}",
-            binding=binding,
-            encrypted_content=(
-                conversation.NativeOpenAIEncryptedContentPolicy.DEFAULT_RETURN
-            ),
-            compaction_limits=compaction_limits,
-            scripted_tcp_test=True,
-        ),
-        capability_profile=_native_capabilities(
-            binding,
-            compact=compaction_limits is not None,
-        ),
+        client=client,
+        profile=profile,
+        capability_profile=capabilities,
         tools=(),
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
+        ),
     )
 
 

@@ -2,7 +2,7 @@
 """Validate and execute conversation-continuity acceptance evidence."""
 
 from argparse import ArgumentParser, Namespace
-from ast import Constant, walk
+from ast import AsyncFunctionDef, ClassDef, Constant, FunctionDef, walk
 from ast import parse as parse_python
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, replace
@@ -16,6 +16,7 @@ from contract_gate import (
     POSTGRESQL_TEST_DSN_ENV,
     ContractGateError,
     StrictJsonError,
+    _validate_node_sources,
     canonical_sha256,
     execute_pytest_nodes,
     mapping,
@@ -457,6 +458,112 @@ _PHASE11_PROVIDER_TRANSITION_PATH = (
 _PHASE11_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
     "dac171d752f887957a9c02db7e1eac2cc83e47145b5fd65486a3aa666b5f787e"
 )
+_PHASE12_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase12.json"
+)
+_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "cb706818138b5eba79f54e40d5237de26b75b28d3a8c8e74f3439ca3d33f2424"
+)
+_PHASE12_TRACEABILITY_CANDIDATE_PATH = (
+    "tests/fixtures/conversation/acceptance_candidate.phase12.json"
+)
+_PHASE12_TRACEABILITY_CANDIDATE_BYTE_SHA256 = (
+    "069bfd96411f55a84eba36d600cc7f77c9566bde1a3129a20149bd88addd54ce"
+)
+_PHASE12_TRACEABILITY_CANDIDATE_CANONICAL_SHA256 = (
+    "0517adf8b2cfd0d35c78eb330c56167a1c23773ede08e444c9ee8cfae957dcdc"
+)
+_PHASE12_TRACEABILITY_MAPPING_CANONICAL_SHA256 = (
+    "463e962f400c96c61a63671cfb3b0c06acbe2f5e8b29f50c428008e6129ea160"
+)
+_PHASE12_ACTIVATION_DECISION_PATH = (
+    "tests/fixtures/conversation/activation_manifest.phase12.json"
+)
+_PHASE12_ACTIVATION_DECISION_BYTE_SHA256 = (
+    "58f44e195dc343811f2368583b82e9118b92822a88959cabefb853109328e66a"
+)
+_PHASE12_ACTIVATION_DECISION_CANONICAL_SHA256 = (
+    "84ebd3aa147af648530c798a1df0b96ca5b8fbb889d9f42b6bd5f2d02653348b"
+)
+_PHASE12_LIVE_RESULTS_PATH = (
+    "tests/fixtures/conversation/live_conformance_results.phase12.json"
+)
+_PHASE12_LIVE_RESULTS_BYTE_SHA256 = (
+    "470c02c15c4b2cc9b5f8849c8b35dcfaa17845d3027ff763e24bca71ed82fb97"
+)
+_PHASE12_LIVE_RESULTS_CANONICAL_SHA256 = (
+    "b76caa8cf691ca10df406abf9e4aa17da18cad30e4ca550fe36377d0ebe06013"
+)
+_PHASE12_LIVE_PROOF_PREFIX = "conversation-live-receipt-v1"
+_PHASE12_LIVE_NODE_ID = (
+    "tests/conversation/live_conformance_test.py::"
+    "test_normative_completion_contract"
+)
+_PHASE12_MATRIX_NODE_ID = (
+    "tests/conversation/full_matrix_e2e_test.py::"
+    "test_required_matrix_cross_product"
+)
+_PHASE12_LIVE_CASES = (
+    "inline_compaction",
+    "standalone_compaction_and_unpruned_replay",
+    "stateless_all_turns_replay",
+    "stateless_current_turn_tool",
+    "stored_create",
+    "stored_previous_response_chain",
+    "stored_retrieve_delete",
+    "streaming_tool",
+)
+_PHASE12_MATRIX_CASES = (
+    "activation_apply_exact",
+    "authorization_rejected_before_dispatch",
+    "dispatch_failure_withholds_commit",
+    "durable_storage_absence_rejects_stored_mode",
+    "expired_manifest_rejected_before_dispatch",
+    "generic_compatible_rejected_before_dispatch",
+    "historical_deletion_survives_revocation",
+    "key_rotation_retains_grace_read",
+    "native_transport_mode_reasoning_compaction_cross_product",
+    "revocation_blocks_new_dispatch",
+    "rollback_restores_dormant_state",
+    "stored_standalone_compaction_rejected",
+)
+_PHASE12_EXTERNAL_BLOCKER_STATES = {
+    "native_openai_live_receipt": (
+        "authorized_model_present_account_credit_quota_blocked_before_inference"
+    ),
+}
+_PHASE12_ROLLBACK_NODE_ID = (
+    "tests/conversation/activation_test.py::"
+    "test_rollback_restores_prior_manifest_or_dormant_state"
+)
+_PHASE12_DOCUMENTATION_INDEX_NODE_ID = (
+    "tests/conversation/documentation_test.py::"
+    "test_documentation_and_examples_are_safe_and_indexed"
+)
+_PHASE12_RUNBOOK_NODE_ID = (
+    "tests/conversation/documentation_test.py::"
+    "test_runbook_commands_reference_real_nodes_and_tracked_fixtures"
+)
+_PHASE12_SECURITY_DOCUMENTATION_NODE_ID = (
+    "tests/conversation/documentation_test.py::"
+    "test_security_migration_and_operator_contracts_are_complete"
+)
+_PHASE12_FAKE_SDK_MATRIX_NODE_ID = (
+    "tests/conversation/live_conformance_harness_test.py::"
+    "test_full_fake_sdk_matrix_is_typed_redacted_and_closed"
+)
+_PHASE12_STRUCTURAL_ASSERTIONS_NODE_ID = (
+    "tests/conversation/live_conformance_harness_test.py::"
+    "test_structural_assertions_reject_each_invalid_live_branch"
+)
+_PHASE12_CANDIDATE_ONLY_EVIDENCE = {
+    _PHASE12_ROLLBACK_NODE_ID: "runtime",
+    _PHASE12_DOCUMENTATION_INDEX_NODE_ID: "contract",
+    _PHASE12_RUNBOOK_NODE_ID: "contract",
+    _PHASE12_SECURITY_DOCUMENTATION_NODE_ID: "contract",
+    _PHASE12_FAKE_SDK_MATRIX_NODE_ID: "wire",
+    _PHASE12_STRUCTURAL_ASSERTIONS_NODE_ID: "negative",
+}
 _PHASE7_PROVIDER_SOURCE_BYTE_ANCHORS = {
     "src/avalan/__init__.py": (
         9_978,
@@ -1138,6 +1245,38 @@ _RECONCILIATION_STATE_VALUES = _frozen(
 
 class ConversationAcceptanceError(RuntimeError):
     """Report invalid or non-passing conversation evidence."""
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class _Phase12LiveReceiptIdentity:
+    """Identify one exact current live provider receipt."""
+
+    provider_family: str
+    profile: str
+    revision: str
+    structural_observations_digest: str
+
+    @property
+    def identity_digest(self) -> str:
+        """Return the digest binding provider, profile, revision, and proof."""
+        identity = {
+            "profile": self.profile,
+            "provider_family": self.provider_family,
+            "revision": self.revision,
+            "structural_observations_digest": (
+                self.structural_observations_digest
+            ),
+        }
+        return canonical_sha256(identity)
+
+    @property
+    def proof_id(self) -> str:
+        """Return a deterministic identity- and full-digest-bound proof ID."""
+        return (
+            f"{_PHASE12_LIVE_PROOF_PREFIX}:identity-sha256:"
+            f"{self.identity_digest}:structural-sha256:"
+            f"{self.structural_observations_digest}"
+        )
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1938,6 +2077,9 @@ def verify_acceptance(
         manifest,
         repo_root=root,
     )
+    if manifest.current_phase >= 11:
+        _validate_phase12_live_proof_resolution(root)
+        _validate_phase12_traceability_candidate(root, manifest)
     requirement_ids = frozenset(item.id for item in requirements)
     load_failure_matrix(
         companion_fixture_path(path, "failure_matrix"),
@@ -2000,6 +2142,11 @@ def verify_gate_source_isolation(
             _phase11_provider_transitions(root)
             if manifest.current_phase >= 11
             or (root / _PHASE11_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase12_provider_transitions(root)
+            if (root / _PHASE12_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
     )
@@ -3795,6 +3942,833 @@ def _phase11_provider_transitions(
             "Phase 11 provider transition inventory is invalid"
         )
     return transitions
+
+
+def _phase12_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact native-provider activation source transitions."""
+    path = root / _PHASE12_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE12_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 12 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 12 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 12
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase12-activation-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = _string_list(
+        payload.get("evidence_node_ids"),
+        "Phase 12 provider transition evidence nodes",
+    )
+    if evidence != (
+        (
+            "tests/conversation/activation_test.py::"
+            "test_native_provider_dispatch_requires_exact_active_registry"
+        ),
+        (
+            "tests/conversation/activation_test.py::"
+            "test_stored_dispatch_and_lifecycle_use_registry_boundaries"
+        ),
+        (
+            "tests/conversation/full_matrix_e2e_test.py::"
+            "test_required_matrix_cross_product"
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    empty_sha256 = sha256(b"").hexdigest()
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 12 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 12 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 12 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"), "transition source digest"
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"), "transition target digest"
+        )
+        if (
+            type(from_size) is not int
+            or from_size < 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or (from_size == 0 and from_sha256 != empty_sha256)
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 provider byte transition is invalid"
+            )
+        transitions[relative] = (
+            from_size,
+            from_sha256,
+            to_size,
+            to_sha256,
+        )
+    if len(transitions) != 13:
+        raise ConversationAcceptanceError(
+            "Phase 12 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase12_sha256(value: object, label: str) -> str:
+    """Return one exact lowercase SHA-256 value."""
+    digest = _nonempty_string(value, label)
+    if len(digest) != 64 or any(
+        character not in "0123456789abcdef" for character in digest
+    ):
+        raise ConversationAcceptanceError(f"{label} is not a SHA-256 digest")
+    return digest
+
+
+def _phase12_parse_live_proof_id(proof_id: str) -> tuple[str, str]:
+    """Return the identity and referenced structural digests in one proof."""
+    parts = proof_id.split(":")
+    if (
+        len(parts) != 5
+        or parts[0] != _PHASE12_LIVE_PROOF_PREFIX
+        or parts[1] != "identity-sha256"
+        or parts[3] != "structural-sha256"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation live proof format is invalid"
+        )
+    return (
+        _phase12_sha256(parts[2], "Phase 12 live proof identity digest"),
+        _phase12_sha256(parts[4], "Phase 12 live proof structural digest"),
+    )
+
+
+def _phase12_scoped_digest(
+    payload: dict[str, object],
+    label: str,
+) -> str:
+    """Validate and return one Phase 12 whole-object canonical digest."""
+    digest = mapping(payload.get("canonical_digest"), f"{label} digest")
+    _exact_keys(
+        digest,
+        {"algorithm", "encoding", "scope", "value"},
+        f"{label} digest",
+    )
+    if (
+        digest.get("algorithm") != "sha256"
+        or digest.get("encoding")
+        != "utf-8 canonical JSON with sorted keys and compact separators"
+        or digest.get("scope")
+        != "all top-level fields except canonical_digest"
+    ):
+        raise ConversationAcceptanceError(
+            f"{label} digest metadata is invalid"
+        )
+    unsigned = dict(payload)
+    unsigned.pop("canonical_digest", None)
+    observed = _phase12_sha256(digest.get("value"), f"{label} digest")
+    if observed != canonical_sha256(unsigned):
+        raise ConversationAcceptanceError(f"{label} digest is invalid")
+    return observed
+
+
+def _phase12_anchored_payload(
+    root: Path,
+    relative: str,
+    *,
+    expected_byte_sha256: str,
+    expected_canonical_sha256: str,
+    label: str,
+) -> tuple[dict[str, object], bytes, str]:
+    """Load one source-anchored Phase 12 evidence object."""
+    path = root / relative
+    try:
+        payload_bytes = path.read_bytes()
+    except OSError as exc:
+        raise ConversationAcceptanceError(
+            f"cannot read {label} bytes"
+        ) from exc
+    if sha256(payload_bytes).hexdigest() != expected_byte_sha256:
+        raise ConversationAcceptanceError(f"{label} byte anchor is invalid")
+    payload = _strict_mapping(path, label)
+    canonical = _phase12_scoped_digest(payload, label)
+    if canonical != expected_canonical_sha256:
+        raise ConversationAcceptanceError(
+            f"{label} canonical anchor is invalid"
+        )
+    return payload, payload_bytes, canonical
+
+
+def _phase12_validate_review_signature(
+    activation: dict[str, object],
+) -> None:
+    """Validate the activation decision's content-digest review signature."""
+    signature = mapping(
+        activation.get("review_signature"),
+        "Phase 12 activation review signature",
+    )
+    _exact_keys(
+        signature,
+        {"algorithm", "encoding", "scope", "value"},
+        "Phase 12 activation review signature",
+    )
+    if (
+        signature.get("algorithm") != "sha256"
+        or signature.get("encoding")
+        != "utf-8 canonical JSON with sorted keys and compact separators"
+        or signature.get("scope")
+        != "all top-level fields except review_signature and canonical_digest"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation review signature metadata is invalid"
+        )
+    unsigned = dict(activation)
+    unsigned.pop("review_signature", None)
+    unsigned.pop("canonical_digest", None)
+    observed = _phase12_sha256(
+        signature.get("value"),
+        "Phase 12 activation review signature",
+    )
+    if observed != canonical_sha256(unsigned):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation review signature is invalid"
+        )
+
+
+def _phase12_live_receipt_identities(
+    live_results: dict[str, object],
+) -> tuple[_Phase12LiveReceiptIdentity, ...]:
+    """Return exact identities for every current complete live receipt."""
+    native = mapping(
+        live_results.get("native_openai_attempt"),
+        "Phase 12 native OpenAI result",
+    )
+    native_execution = mapping(
+        native.get("matrix_execution"),
+        "Phase 12 native OpenAI matrix execution",
+    )
+    if (
+        native_execution.get("state")
+        != "inactive_account_credit_exhausted_before_inference"
+        or native.get("live_capability_receipt") is not False
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 native OpenAI quota blocker drifted"
+        )
+    execution_order = _string_list(
+        live_results.get("execution_order"),
+        "Phase 12 live execution order",
+    )
+    if len(execution_order) != len(_PHASE12_LIVE_CASES) or frozenset(
+        execution_order
+    ) != frozenset(_PHASE12_LIVE_CASES):
+        raise ConversationAcceptanceError(
+            "Phase 12 live execution order is invalid"
+        )
+    azure = mapping(
+        live_results.get("azure_openai_matrix"),
+        "Phase 12 Azure OpenAI matrix",
+    )
+    identities: list[_Phase12LiveReceiptIdentity] = []
+    for raw in object_list(
+        azure.get("results"),
+        "Phase 12 Azure OpenAI results",
+    ):
+        profile = mapping(raw, "Phase 12 Azure OpenAI profile")
+        if "tracked_cli_receipt" not in profile:
+            continue
+        receipt = mapping(
+            profile.get("tracked_cli_receipt"),
+            "Phase 12 tracked CLI receipt",
+        )
+        provider_family = _nonempty_string(
+            receipt.get("provider_family"),
+            "Phase 12 receipt provider family",
+        )
+        model_or_deployment = _nonempty_string(
+            receipt.get("model_or_deployment"),
+            "Phase 12 receipt profile",
+        )
+        revision = _nonempty_string(
+            receipt.get("model_or_deployment_revision"),
+            "Phase 12 receipt revision",
+        )
+        structural_digest = _phase12_sha256(
+            receipt.get("structural_observations_digest"),
+            "Phase 12 receipt structural digest",
+        )
+        if (
+            provider_family != "azure_openai"
+            or model_or_deployment != profile.get("deployment")
+            or revision != profile.get("deployment_revision")
+            or profile.get("state")
+            != "inactive_complete_live_matrix_pending_review"
+            or profile.get("failed_case") is not None
+            or profile.get("safe_error") is not None
+            or _string_list(
+                profile.get("completed_cases"),
+                "Phase 12 profile completed cases",
+            )
+            != execution_order
+            or _string_list(
+                receipt.get("completed_cases"),
+                "Phase 12 receipt completed cases",
+            )
+            != execution_order
+            or receipt.get("production_activation_granted") is not False
+            or receipt.get("opaque_payloads_logged") is not False
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 receipt identity differs from its provider profile"
+            )
+        identities.append(
+            _Phase12LiveReceiptIdentity(
+                provider_family=provider_family,
+                profile=model_or_deployment,
+                revision=revision,
+                structural_observations_digest=structural_digest,
+            )
+        )
+    completed_count = live_results.get("completed_full_matrix_profile_count")
+    if (
+        type(completed_count) is not int
+        or completed_count != len(identities)
+        or not identities
+        or live_results.get("active_profile_count") != 0
+        or live_results.get("activation_decision") != "remain_inactive"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 current live receipt inventory is invalid"
+        )
+    return tuple(identities)
+
+
+def _validate_phase12_live_proof_resolution(root: Path) -> None:
+    """Resolve every activation proof to one exact current live receipt."""
+    activation, _, _ = _phase12_anchored_payload(
+        root,
+        _PHASE12_ACTIVATION_DECISION_PATH,
+        expected_byte_sha256=_PHASE12_ACTIVATION_DECISION_BYTE_SHA256,
+        expected_canonical_sha256=(
+            _PHASE12_ACTIVATION_DECISION_CANONICAL_SHA256
+        ),
+        label="Phase 12 activation decision",
+    )
+    _phase12_validate_review_signature(activation)
+    if (
+        activation.get("activation_state") != "inactive"
+        or activation.get("production_dispatch_enabled") is not False
+        or activation.get("production_advertisement_enabled") is not False
+        or activation.get("active_production_rows") != []
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation decision is not zero-active"
+        )
+    live_results, live_bytes, live_canonical = _phase12_anchored_payload(
+        root,
+        _PHASE12_LIVE_RESULTS_PATH,
+        expected_byte_sha256=_PHASE12_LIVE_RESULTS_BYTE_SHA256,
+        expected_canonical_sha256=_PHASE12_LIVE_RESULTS_CANONICAL_SHA256,
+        label="Phase 12 live results",
+    )
+    live_link = mapping(
+        activation.get("live_evidence"),
+        "Phase 12 activation live evidence link",
+    )
+    _exact_keys(
+        live_link,
+        {"path", "byte_sha256", "canonical_digest"},
+        "Phase 12 activation live evidence link",
+    )
+    if (
+        live_link.get("path") != PurePosixPath(_PHASE12_LIVE_RESULTS_PATH).name
+        or live_link.get("byte_sha256") != sha256(live_bytes).hexdigest()
+        or live_link.get("canonical_digest") != live_canonical
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation live evidence link is invalid"
+        )
+    proof_ids = _string_list(
+        activation.get("live_proof_ids"),
+        "Phase 12 activation live proof ID",
+    )
+    if (
+        not proof_ids
+        or proof_ids != tuple(sorted(proof_ids))
+        or len(proof_ids) != len(set(proof_ids))
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 activation live proof IDs are duplicate or noncanonical"
+        )
+    identities = _phase12_live_receipt_identities(live_results)
+    receipts_by_identity: dict[str, list[_Phase12LiveReceiptIdentity]] = {}
+    for identity in identities:
+        receipts_by_identity.setdefault(identity.identity_digest, []).append(
+            identity
+        )
+    for proof_id in proof_ids:
+        identity_digest, referenced_structural_digest = (
+            _phase12_parse_live_proof_id(proof_id)
+        )
+        matches = receipts_by_identity.get(identity_digest, [])
+        if not matches:
+            raise ConversationAcceptanceError(
+                "Phase 12 activation live proof does not resolve"
+            )
+        if len(matches) != 1:
+            raise ConversationAcceptanceError(
+                "Phase 12 activation live proof resolves ambiguously"
+            )
+        identity = matches[0]
+        if (
+            referenced_structural_digest
+            != identity.structural_observations_digest
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 activation live proof digest does not match"
+            )
+        if proof_id != identity.proof_id:
+            raise ConversationAcceptanceError(
+                "Phase 12 activation live proof is noncanonical"
+            )
+    if set(proof_ids) != {identity.proof_id for identity in identities}:
+        raise ConversationAcceptanceError(
+            "Phase 12 current live receipt is missing an activation proof"
+        )
+
+
+def _validate_phase12_traceability_candidate(
+    root: Path,
+    manifest: AcceptanceManifest,
+) -> None:
+    """Validate the non-promoting exact Phase 12 evidence candidate."""
+    path = root / _PHASE12_TRACEABILITY_CANDIDATE_PATH
+    try:
+        candidate_bytes = path.read_bytes()
+    except OSError as exc:
+        raise ConversationAcceptanceError(
+            "cannot read Phase 12 traceability candidate bytes"
+        ) from exc
+    if (
+        sha256(candidate_bytes).hexdigest()
+        != _PHASE12_TRACEABILITY_CANDIDATE_BYTE_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 traceability candidate byte anchor is invalid"
+        )
+    payload = _strict_mapping(path, "Phase 12 traceability candidate")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "authoritative_phase",
+            "candidate_state",
+            "planned_nodes",
+            "public_e2e_inventory",
+            "normative_requirements",
+            "external_blockers",
+            "canonical_sha256",
+        },
+        "Phase 12 traceability candidate",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 12
+        or payload.get("authoritative_phase") != 11
+        or payload.get("candidate_state")
+        != "azure_live_complete_openai_blocked_zero_active"
+        or manifest.current_phase != 11
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 traceability candidate promoted or drifted"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != _PHASE12_TRACEABILITY_CANDIDATE_CANONICAL_SHA256
+        or observed_digest != canonical_sha256(canonical)
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 traceability candidate digest is invalid"
+        )
+    mapping_authority = {
+        "public_e2e_inventory": payload.get("public_e2e_inventory"),
+        "normative_requirements": payload.get("normative_requirements"),
+    }
+    if (
+        canonical_sha256(mapping_authority)
+        != _PHASE12_TRACEABILITY_MAPPING_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 12 traceability mapping authority digest is invalid"
+        )
+
+    planned = object_list(
+        payload.get("planned_nodes"), "Phase 12 planned candidate nodes"
+    )
+    if len(planned) != 2:
+        raise ConversationAcceptanceError(
+            "Phase 12 candidate must retain exactly two planned nodes"
+        )
+    expected_plans = (
+        (
+            "phase12-live-completion",
+            _PHASE12_LIVE_NODE_ID,
+            "live",
+            "planned_external",
+            ("native_openai", "native_azure"),
+            _PHASE12_LIVE_CASES,
+        ),
+        (
+            "phase12-full-matrix",
+            _PHASE12_MATRIX_NODE_ID,
+            "matrix",
+            "candidate_deterministic",
+            (
+                "native_openai",
+                "native_azure",
+                "incapable_generic_compatible",
+            ),
+            _PHASE12_MATRIX_CASES,
+        ),
+    )
+    manifest_by_id = {node.id: node for node in manifest.nodes}
+    for raw, expected in zip(planned, expected_plans, strict=True):
+        record = mapping(raw, "Phase 12 planned candidate node")
+        _exact_keys(
+            record,
+            {
+                "id",
+                "node_id",
+                "evidence_class",
+                "evidence_state",
+                "provider_families",
+                "observable_cases",
+            },
+            "Phase 12 planned candidate node",
+        )
+        observed = (
+            record.get("id"),
+            record.get("node_id"),
+            record.get("evidence_class"),
+            record.get("evidence_state"),
+            _string_list(
+                record.get("provider_families"),
+                "Phase 12 candidate provider families",
+            ),
+            _string_list(
+                record.get("observable_cases"),
+                "Phase 12 candidate observable cases",
+            ),
+        )
+        if observed != expected:
+            raise ConversationAcceptanceError(
+                "Phase 12 planned node contains label-only or broad claims"
+            )
+        manifest_node = manifest_by_id.get(expected[0])
+        if (
+            manifest_node is None
+            or manifest_node.node_id != expected[1]
+            or manifest_node.evidence_class != expected[2]
+            or manifest_node.lifecycle != "planned"
+            or manifest_node.active_from_phase != 12
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 candidate differs from the frozen planned node"
+            )
+    try:
+        _validate_node_sources(
+            root,
+            (_PHASE12_LIVE_NODE_ID, _PHASE12_MATRIX_NODE_ID),
+            {
+                _PHASE12_LIVE_NODE_ID: "live",
+                _PHASE12_MATRIX_NODE_ID: "matrix",
+            },
+        )
+    except ContractGateError as exc:
+        raise ConversationAcceptanceError(str(exc)) from exc
+
+    manifest_by_node = {node.node_id: node for node in manifest.nodes}
+    public_rows = object_list(
+        payload.get("public_e2e_inventory"),
+        "Phase 12 public E2E inventory",
+    )
+    expected_public_ids = tuple(
+        f"CONV-E2E-{ordinal:03d}" for ordinal in range(1, 16)
+    )
+    observed_public_ids: list[str] = []
+    public_evidence: dict[str, tuple[tuple[str, str, str], ...]] = {}
+    for raw in public_rows:
+        record = mapping(raw, "Phase 12 public E2E record")
+        _exact_keys(record, {"id", "evidence"}, "Phase 12 public E2E record")
+        identifier = _nonempty_string(
+            record.get("id"), "Phase 12 public E2E ID"
+        )
+        observed_public_ids.append(identifier)
+        public_evidence[identifier] = _phase12_candidate_evidence(
+            root,
+            record.get("evidence"),
+            manifest_by_node,
+        )
+    if tuple(observed_public_ids) != expected_public_ids:
+        raise ConversationAcceptanceError(
+            "Phase 12 public E2E inventory must be exactly 001 through 015"
+        )
+    expected_provider_evidence = (
+        (_PHASE12_LIVE_NODE_ID, "live", "planned_external"),
+        (
+            _PHASE12_MATRIX_NODE_ID,
+            "matrix",
+            "candidate_deterministic",
+        ),
+        (
+            (
+                "tests/conversation/native_openai_provider_test.py::"
+                "test_unproven_or_drifted_profiles_fail_without_dispatch"
+            ),
+            "pre_dispatch_rejection",
+            "active",
+        ),
+    )
+    if public_evidence["CONV-E2E-015"] != expected_provider_evidence:
+        raise ConversationAcceptanceError(
+            "CONV-E2E-015 provider evidence is not exact"
+        )
+
+    normative_rows = object_list(
+        payload.get("normative_requirements"),
+        "Phase 12 normative requirement evidence",
+    )
+    expected_normative_ids = tuple(
+        f"CONV-N-{ordinal:03d}" for ordinal in range(136, 145)
+    )
+    normative: dict[str, tuple[tuple[str, str, str], ...]] = {}
+    for raw in normative_rows:
+        record = mapping(raw, "Phase 12 normative requirement record")
+        _exact_keys(
+            record,
+            {"id", "evidence"},
+            "Phase 12 normative requirement record",
+        )
+        identifier = _nonempty_string(
+            record.get("id"), "Phase 12 normative requirement ID"
+        )
+        normative[identifier] = _phase12_candidate_evidence(
+            root,
+            record.get("evidence"),
+            manifest_by_node,
+        )
+    if tuple(normative) != expected_normative_ids:
+        raise ConversationAcceptanceError(
+            "Phase 12 normative mappings must be exactly 136 through 144"
+        )
+    if normative["CONV-N-142"] != (
+        (_PHASE12_LIVE_NODE_ID, "live", "planned_external"),
+    ):
+        raise ConversationAcceptanceError(
+            "live provider verification must remain externally planned"
+        )
+    if normative["CONV-N-143"] != (
+        (
+            (
+                "tests/conversation/native_openai_provider_test.py::"
+                "test_unproven_or_drifted_profiles_fail_without_dispatch"
+            ),
+            "pre_dispatch_rejection",
+            "active",
+        ),
+        (
+            _PHASE12_MATRIX_NODE_ID,
+            "matrix",
+            "candidate_deterministic",
+        ),
+    ):
+        raise ConversationAcceptanceError(
+            "generic-compatible rejection evidence is not exact"
+        )
+    for node_id in (_PHASE12_LIVE_NODE_ID, _PHASE12_MATRIX_NODE_ID):
+        if not any(
+            node_id == evidence[0]
+            for rows in (*public_evidence.values(), *normative.values())
+            for evidence in rows
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 planned node lacks an exact evidence owner"
+            )
+
+    blockers = object_list(
+        payload.get("external_blockers"), "Phase 12 external blockers"
+    )
+    expected_blockers = ("native_openai_live_receipt",)
+    observed_blockers: list[str] = []
+    for raw in blockers:
+        record = mapping(raw, "Phase 12 external blocker")
+        _exact_keys(
+            record,
+            {"id", "state", "node_id"},
+            "Phase 12 external blocker",
+        )
+        identifier = _nonempty_string(record.get("id"), "external blocker ID")
+        observed_blockers.append(identifier)
+        if (
+            record.get("state")
+            != _PHASE12_EXTERNAL_BLOCKER_STATES.get(identifier)
+            or record.get("node_id") != _PHASE12_LIVE_NODE_ID
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 12 external blocker is not precise"
+            )
+    if tuple(observed_blockers) != expected_blockers:
+        raise ConversationAcceptanceError(
+            "Phase 12 external blocker inventory is invalid"
+        )
+
+
+def _phase12_candidate_evidence(
+    root: Path,
+    value: object,
+    manifest_by_node: Mapping[str, AcceptanceNode],
+) -> tuple[tuple[str, str, str], ...]:
+    """Validate exact node-level evidence in the Phase 12 candidate."""
+    rows: list[tuple[str, str, str]] = []
+    for raw in object_list(value, "Phase 12 candidate evidence"):
+        record = mapping(raw, "Phase 12 candidate evidence row")
+        _exact_keys(
+            record,
+            {"node_id", "evidence_class", "evidence_state"},
+            "Phase 12 candidate evidence row",
+        )
+        node_id = _test_node(record.get("node_id"))
+        evidence_class = _nonempty_string(
+            record.get("evidence_class"), "candidate evidence class"
+        )
+        evidence_state = _nonempty_string(
+            record.get("evidence_state"), "candidate evidence state"
+        )
+        manifest_node = manifest_by_node.get(node_id)
+        expected_class = (
+            manifest_node.evidence_class
+            if manifest_node is not None
+            else _PHASE12_CANDIDATE_ONLY_EVIDENCE.get(node_id)
+        )
+        if expected_class != evidence_class:
+            raise ConversationAcceptanceError(
+                f"candidate evidence class is not exact: {node_id}"
+            )
+        if evidence_state == "active":
+            if manifest_node is None or manifest_node.lifecycle != "active":
+                raise ConversationAcceptanceError(
+                    f"candidate labels inactive evidence active: {node_id}"
+                )
+        elif evidence_state == "planned_external":
+            if (
+                node_id != _PHASE12_LIVE_NODE_ID
+                or manifest_node is None
+                or manifest_node.lifecycle != "planned"
+            ):
+                raise ConversationAcceptanceError(
+                    "only the exact live node may remain externally planned"
+                )
+        elif evidence_state != "candidate_deterministic":
+            raise ConversationAcceptanceError(
+                f"candidate evidence state is invalid: {node_id}"
+            )
+        _phase12_candidate_node_exists(root, node_id)
+        rows.append((node_id, evidence_class, evidence_state))
+    if not rows or len(rows) != len(set(rows)):
+        raise ConversationAcceptanceError(
+            "Phase 12 candidate evidence is empty or duplicated"
+        )
+    return tuple(rows)
+
+
+def _phase12_candidate_node_exists(root: Path, node_id: str) -> None:
+    """Require a candidate node to resolve to one real test function."""
+    relative, *parts = node_id.split("::")
+    path = (root / relative).resolve()
+    test_root = (root / "tests").resolve()
+    if not path.is_relative_to(test_root) or not path.is_file():
+        raise ConversationAcceptanceError(
+            f"Phase 12 candidate test does not exist: {node_id}"
+        )
+    try:
+        children = tuple(parse_python(path.read_text(encoding="utf-8")).body)
+    except (OSError, SyntaxError, UnicodeError) as exc:
+        raise ConversationAcceptanceError(
+            f"Phase 12 candidate test cannot be inspected: {node_id}"
+        ) from exc
+    target: AsyncFunctionDef | ClassDef | FunctionDef | None = None
+    for part in parts:
+        target = next(
+            (
+                child
+                for child in children
+                if isinstance(
+                    child,
+                    (AsyncFunctionDef, ClassDef, FunctionDef),
+                )
+                and child.name == part.split("[", 1)[0]
+            ),
+            None,
+        )
+        if target is None:
+            raise ConversationAcceptanceError(
+                f"Phase 12 candidate node cannot be resolved: {node_id}"
+            )
+        children = tuple(target.body)
+    if not isinstance(target, (AsyncFunctionDef, FunctionDef)):
+        raise ConversationAcceptanceError(
+            f"Phase 12 candidate node is not a test: {node_id}"
+        )
 
 
 def _validate_contract_decisions(payload: dict[str, object]) -> None:

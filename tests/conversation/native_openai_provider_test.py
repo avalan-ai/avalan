@@ -23,6 +23,10 @@ from avalan.agent.execution import (
     ExecutionInputRequiredError,
     create_agent_execution,
 )
+from avalan.conversation.providers.openai import (
+    _native_openai_test_authority,
+    _replay_item_to_input_item,
+)
 from avalan.entities import GenerationSettings
 from avalan.interaction.codec import (
     decode_continuation_snapshot,
@@ -213,6 +217,59 @@ def _message(identifier: str, text: str) -> dict[str, object]:
     }
 
 
+def _rich_message(identifier: str, text: str) -> dict[str, object]:
+    """Return one typed OpenAI output with meaningful replay metadata."""
+    return {
+        "id": identifier,
+        "type": "message",
+        "status": "completed",
+        "phase": "final_answer",
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": text,
+                "annotations": [
+                    {
+                        "type": "url_citation",
+                        "start_index": 0,
+                        "end_index": len(text),
+                        "title": "Replay source",
+                        "url": "https://example.com/replay",
+                    }
+                ],
+                "logprobs": [
+                    {
+                        "token": text,
+                        "logprob": -0.25,
+                        "bytes": list(text.encode("utf-8")),
+                        "top_logprobs": [],
+                    }
+                ],
+            }
+        ],
+    }
+
+
+def _azure_null_message(identifier: str, text: str) -> dict[str, object]:
+    """Return the proven Azure null-metadata output shape."""
+    return {
+        "id": identifier,
+        "type": "message",
+        "status": "completed",
+        "phase": None,
+        "role": "assistant",
+        "content": [
+            {
+                "type": "output_text",
+                "text": text,
+                "annotations": None,
+                "logprobs": None,
+            }
+        ],
+    }
+
+
 def _function_call(
     identifier: str,
     call_id: str,
@@ -269,11 +326,19 @@ def _provider(
         http_client=http_client,
         max_retries=0,
     )
+    profile = _profile(binding)
+    capabilities = _capabilities(binding)
     return conversation.NativeOpenAIStatelessProvider(
         client=client,
-        profile=_profile(binding),
-        capability_profile=_capabilities(binding),
+        profile=profile,
+        capability_profile=capabilities,
         tools=tools,
+        test_authority=_native_openai_test_authority(
+            client=client,
+            binding=binding,
+            scripted_tcp_test=profile.scripted_tcp_test,
+            capability_profile=capabilities,
+        ),
     )
 
 
@@ -345,19 +410,28 @@ def _plan(
     )
 
 
+@pytest.mark.parametrize("azure", [False, True], ids=["openai", "azure"])
 async def test_native_openai_two_turn_replay_is_exact_and_private(
+    azure: bool,
     record_property: Callable[[str, object], None],
 ) -> None:
     """Replay complete ordered private items and append only new input."""
     record_property("conversation_acceptance_evidence", "wire")
     requests: list[dict[str, object]] = []
+    model = "deployment-native" if azure else "gpt-5"
+    first_message = (
+        _azure_null_message("message-one", "first")
+        if azure
+        else _rich_message("message-one", "first")
+    )
     responses = [
         _response(
             "upstream-response-one",
             [
                 _reasoning("reasoning-one", "opaque-private-one"),
-                _message("message-one", "first"),
+                first_message,
             ],
+            model=model,
         ),
         _response(
             "upstream-response-two",
@@ -366,6 +440,7 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
                 _message("message-two", "second"),
             ],
             context="all_turns",
+            model=model,
         ),
     ]
 
@@ -373,13 +448,29 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
         requests.append(cast(dict[str, object], loads(await request.aread())))
         return httpx.Response(200, json=responses[len(requests) - 1])
 
-    provider = _provider(_binding(), handler)
+    binding = _binding(
+        azure=azure,
+        lane_id=f"lane-two-turn-{'azure' if azure else 'openai'}",
+    )
+    provider = _provider(binding, handler)
     client, coordinator, store = _direct_client(provider)
     first = await client.create(
         "first input",
         avalan.StatelessConversationSettings(),
     )
     assert type(first.handle) is avalan.StatelessConversationHandle
+    parent_before_replay = await store.load(
+        first.handle.checkpoint_id,
+        authority(),
+    )
+    parent_lane_before_replay = parent_before_replay.content.lanes[0]
+    assert isinstance(
+        parent_lane_before_replay,
+        conversation.StatelessProviderLaneSnapshot,
+    )
+    canonical_message_before_replay = conversation.thaw_json_value(
+        parent_lane_before_replay.ledger.items[1].canonical_input
+    )
     second = await client.continue_conversation(
         "second input",
         avalan.StatelessConversationSettings(
@@ -392,7 +483,7 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
     assert second.reasoning.effective is (
         avalan.EffectiveReasoningContext.ALL_TURNS
     )
-    assert requests[0] == {
+    first_request = {
         "input": [
             {
                 "content": [{"text": "first input", "type": "input_text"}],
@@ -400,28 +491,32 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
                 "type": "message",
             }
         ],
-        "model": "gpt-5",
+        "model": model,
         "store": False,
         "stream": False,
         "tools": [],
     }
+    if azure:
+        first_request["include"] = ["reasoning.encrypted_content"]
+    assert requests[0] == first_request
+    replayed_message = cast(
+        dict[str, object],
+        loads(dumps(first_message)),
+    )
+    replayed_message.pop("status")
+    if azure:
+        replayed_message.pop("phase")
+        content = cast(list[dict[str, object]], replayed_message["content"])
+        content[0].pop("annotations")
+        content[0].pop("logprobs")
     assert requests[1]["input"] == [
         {
             "encrypted_content": "opaque-private-one",
             "id": "reasoning-one",
-            "status": "completed",
             "summary": [],
             "type": "reasoning",
         },
-        {
-            "content": [
-                {"annotations": [], "text": "first", "type": "output_text"}
-            ],
-            "id": "message-one",
-            "role": "assistant",
-            "status": "completed",
-            "type": "message",
-        },
+        replayed_message,
         {
             "content": [{"text": "second input", "type": "input_text"}],
             "role": "user",
@@ -430,8 +525,37 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
     ]
     assert requests[1]["store"] is False
     assert "previous_response_id" not in requests[1]
-    assert "include" not in requests[1]
+    assert (
+        requests[1].get("include") == ["reasoning.encrypted_content"]
+    ) is azure
     assert "reasoning" not in requests[1]
+    replay = cast(list[dict[str, object]], requests[1]["input"])
+    assert all("status" not in item for item in replay)
+    parent_checkpoint = await store.load(
+        first.handle.checkpoint_id,
+        authority(),
+    )
+    parent_lane = parent_checkpoint.content.lanes[0]
+    assert isinstance(parent_lane, conversation.StatelessProviderLaneSnapshot)
+    assert tuple(
+        item.canonical_input.get("status") for item in parent_lane.ledger.items
+    ) == ("completed", "completed")
+    assert (
+        conversation.thaw_json_value(
+            parent_lane.ledger.items[1].canonical_input
+        )
+        == canonical_message_before_replay
+    )
+    if azure:
+        assert canonical_message_before_replay == {
+            "content": [{"text": "first", "type": "output_text"}],
+            "id": "message-one",
+            "role": "assistant",
+            "status": "completed",
+            "type": "message",
+        }
+    else:
+        assert canonical_message_before_replay == first_message
     outward = repr((first, second, provider.diagnostics))
     assert "opaque-private" not in outward
     assert "upstream-response" not in outward
@@ -443,6 +567,349 @@ async def test_native_openai_two_turn_replay_is_exact_and_private(
     assert "message-one" not in checkpoint_text
     assert provider.diagnostics.request_item_count == 4
     await coordinator.close()
+
+
+def test_replay_item_normalization_is_exact_and_closed() -> None:
+    """Strip only response metadata and reject malformed replay items."""
+    azure_message = {
+        "content": [
+            {
+                "annotations": None,
+                "logprobs": None,
+                "text": "normalize answer",
+                "type": "output_text",
+            }
+        ],
+        "id": "normalize-message",
+        "phase": None,
+        "role": "assistant",
+        "status": "completed",
+        "type": "message",
+    }
+    source = (
+        (
+            _reasoning("normalize-reasoning", "normalize-private"),
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            _function_call("normalize-function", "normalize-call"),
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (azure_message, conversation.ProviderFamily.AZURE_OPENAI),
+        (
+            {
+                "id": "normalize-compaction",
+                "type": "compaction",
+                "encrypted_content": "normalize-compact-private",
+                "created_by": "provider-compact",
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                "id": "normalize-tool-output",
+                "type": "function_call_output",
+                "call_id": "normalize-call",
+                "output": "normalize output",
+                "status": "completed",
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+    )
+
+    normalized = tuple(
+        cast(
+            dict[str, object],
+            _replay_item_to_input_item(
+                item,
+                provider_family=provider_family,
+            ),
+        )
+        for item, provider_family in source
+    )
+
+    assert tuple(item["type"] for item in normalized) == (
+        "reasoning",
+        "function_call",
+        "message",
+        "compaction",
+        "function_call_output",
+    )
+    assert all("status" not in item for item in normalized)
+    assert "created_by" not in normalized[3]
+    assert normalized[0]["id"] == "normalize-reasoning"
+    assert normalized[0]["encrypted_content"] == "normalize-private"
+    assert normalized[1]["id"] == "normalize-function"
+    assert normalized[1]["call_id"] == "normalize-call"
+    assert normalized[2] == {
+        "content": [{"text": "normalize answer", "type": "output_text"}],
+        "id": "normalize-message",
+        "role": "assistant",
+        "type": "message",
+    }
+    assert azure_message["phase"] is None
+    assert cast(list[object], azure_message["content"])[0] == {
+        "annotations": None,
+        "logprobs": None,
+        "text": "normalize answer",
+        "type": "output_text",
+    }
+    assert normalized[3]["encrypted_content"] == "normalize-compact-private"
+    assert source[3][0]["created_by"] == "provider-compact"
+    assert normalized[4]["call_id"] == "normalize-call"
+
+    rich_message = _rich_message("rich-message", "rich answer")
+    rich_before = dumps(rich_message, sort_keys=True)
+    rich_normalized = _replay_item_to_input_item(
+        rich_message,
+        provider_family=conversation.ProviderFamily.OPENAI,
+    )
+    assert rich_normalized == {
+        key: value for key, value in rich_message.items() if key != "status"
+    }
+    assert dumps(rich_message, sort_keys=True) == rich_before
+    with pytest.raises(conversation.ConversationValidationError):
+        _replay_item_to_input_item(
+            rich_message,
+            provider_family=conversation.ProviderFamily.AZURE_OPENAI,
+        )
+    assert dumps(rich_message, sort_keys=True) == rich_before
+
+    malformed = (
+        (
+            {"type": "reasoning", "id": "missing-opaque", "summary": []},
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                "type": "reasoning",
+                "id": "untyped-opaque",
+                "summary": [],
+                "encrypted_content": 1,
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                **_reasoning("incomplete-reasoning", "private"),
+                "status": "incomplete",
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                **_function_call("unknown-field", "unknown-call"),
+                "unknown": 1,
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                "id": "missing-call-id",
+                "type": "function_call",
+                "name": "lookup",
+                "arguments": "{}",
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                "id": "empty-compaction",
+                "type": "compaction",
+                "encrypted_content": "",
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                "id": "invalid-created-compaction",
+                "type": "compaction",
+                "encrypted_content": "private",
+                "created_by": 1,
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {**azure_message, "phase": "final_answer"},
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "annotations": [],
+                        "text": "answer",
+                        "type": "output_text",
+                    }
+                ],
+            },
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "annotations": [{"type": "file_citation"}],
+                        "text": "answer",
+                        "type": "output_text",
+                    }
+                ],
+            },
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "logprobs": [{"token": "answer"}],
+                        "text": "answer",
+                        "type": "output_text",
+                    }
+                ],
+            },
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "annotations": [{"type": "file_citation"}],
+                        "text": "answer",
+                        "type": "output_text",
+                    }
+                ],
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "logprobs": [{"token": "answer"}],
+                        "text": "answer",
+                        "type": "output_text",
+                    }
+                ],
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [
+                    {
+                        "text": "answer",
+                        "type": "output_text",
+                        "unknown": 1,
+                    }
+                ],
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [{"annotations": None, "type": "output_text"}],
+            },
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [{"text": "answer", "type": "input_text"}],
+            },
+            conversation.ProviderFamily.OPENAI,
+        ),
+        (
+            {**azure_message, "content": []},
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {**azure_message, "content": ["not-an-output-part"]},
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {
+                **azure_message,
+                "content": [{"refusal": 1, "type": "refusal"}],
+            },
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {**azure_message, "role": "user"},
+            conversation.ProviderFamily.AZURE_OPENAI,
+        ),
+        (
+            {"type": "not-a-response-item"},
+            conversation.ProviderFamily.OPENAI,
+        ),
+        ({"type": 1}, conversation.ProviderFamily.OPENAI),
+    )
+    for item, provider_family in malformed:
+        with pytest.raises(conversation.ConversationValidationError):
+            _replay_item_to_input_item(
+                item,
+                provider_family=provider_family,
+            )
+
+    with pytest.raises(conversation.ConversationValidationError):
+        _replay_item_to_input_item(
+            azure_message,
+            provider_family=conversation.ProviderFamily.OPENAI_COMPATIBLE,
+        )
+
+    refusal = {
+        **azure_message,
+        "content": [{"refusal": "cannot comply", "type": "refusal"}],
+    }
+    assert _replay_item_to_input_item(
+        refusal,
+        provider_family=conversation.ProviderFamily.AZURE_OPENAI,
+    ) == {
+        "content": [{"refusal": "cannot comply", "type": "refusal"}],
+        "id": "normalize-message",
+        "role": "assistant",
+        "type": "message",
+    }
+    canonical_without_null_metadata = conversation.ProviderItem(
+        item_id=conversation.ProviderItemId("canonical-azure-message"),
+        lane_id=conversation.ProviderLaneId("lane-canonical-azure"),
+        model_call_id=conversation.ConversationModelCallId(
+            "call-canonical-azure"
+        ),
+        kind=conversation.ProviderItemKind.MESSAGE,
+        order=conversation.ProviderItemOrder(0),
+        provider_index=conversation.ProviderItemIndex(0),
+        phase=conversation.ProviderItemPhase.FINAL,
+        caller=conversation.ProviderItemCaller.PROVIDER,
+        canonical_input=cast(
+            dict[str, JsonValue],
+            {
+                "content": [
+                    {"text": "normalize answer", "type": "output_text"}
+                ],
+                "id": "canonical-azure-message",
+                "role": "assistant",
+                "status": "completed",
+                "type": "message",
+            },
+        ),
+        normalization_version=conversation.ConversationCodecVersion(1),
+    )
+    canonical_payload = cast(
+        dict[str, object],
+        conversation.thaw_json_value(
+            canonical_without_null_metadata.canonical_input
+        ),
+    )
+    assert canonical_payload["content"] == [
+        {"text": "normalize answer", "type": "output_text"}
+    ]
 
 
 @pytest.mark.parametrize("azure", [False, True], ids=["openai", "azure"])
@@ -1374,8 +1841,24 @@ async def test_parallel_branches_do_not_share_provider_state(
     child_requests = requests[1:]
     assert len(child_requests) == 2
     parent_provider_items = [
-        _reasoning("branch-reasoning-root", "branch-private-root"),
-        _message("branch-message-root", "answer root"),
+        {
+            "encrypted_content": "branch-private-root",
+            "id": "branch-reasoning-root",
+            "summary": [],
+            "type": "reasoning",
+        },
+        {
+            "content": [
+                {
+                    "annotations": [],
+                    "text": "answer root",
+                    "type": "output_text",
+                }
+            ],
+            "id": "branch-message-root",
+            "role": "assistant",
+            "type": "message",
+        },
     ]
     for branch_id in ("left", "right"):
         matching = [

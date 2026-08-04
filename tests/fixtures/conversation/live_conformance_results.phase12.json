@@ -1,0 +1,256 @@
+{
+  "schema_version": 1,
+  "evidence_id": "conversation-native-provider-live-outcomes-phase12-2026-08-04",
+  "observed_at": "2026-08-04",
+  "provider_families": [
+    "openai",
+    "azure_openai"
+  ],
+  "authority_scope": "explicit_separate_native_provider_runs",
+  "sdk_version": "2.42.0",
+  "harness": {
+    "path": "scripts/conversation_live_conformance.py",
+    "byte_sha256": "a89b80f7629b6d3d3b518aaaaaf48511c51017c50ee5fbc22f464c646f27c27e",
+    "reviewed_byte_sha256": "70918e19d7ee76b87bb9855be62a645dbb307b3e2a0494ce295eda62f0052029",
+    "prior_azure_observation_byte_sha256": "0373a200cadd3702b2a3b01d705d54ccd05b0908be793366dc928b31ca348f68",
+    "review_status": "pending_post_live_harness_delta_review",
+    "post_observation_change": "The native OpenAI quota observation used the reviewed harness bytes. The complete Azure matrix used a later tracked harness with strict SDK normalization and intrinsic zero-retry HTTP, logical-operation, and cleanup accounting; independent review of that delta has not run.",
+    "opaque_payloads_logged": false,
+    "credentials_logged": false
+  },
+  "provider_evidence": {
+    "path": "provider_evidence.phase12.json",
+    "byte_sha256": "c0eec1c17a11963d204bf3d94e57dbb60cc36c07b149ecc604810c844682c151",
+    "canonical_digest": "7076e4ee05f29d7dc759f01af8eb6f657c3ea1eb075de57d8cd4f140f41ad4ef"
+  },
+  "preflight_manifest": {
+    "path": "activation_preflight_manifest.phase12.json",
+    "byte_sha256": "46220f7aaad712502e12d8f9bed6dee28deb7fcf3f509d06eae55a2e6fec6fd4",
+    "canonical_digest": "975f79f7a30d304fe0598206fe2ba59ee65911f14bd072585f81c3f800af0d4d"
+  },
+  "execution_order": [
+    "stateless_current_turn_tool",
+    "stateless_all_turns_replay",
+    "inline_compaction",
+    "standalone_compaction_and_unpruned_replay",
+    "stored_create",
+    "stored_previous_response_chain",
+    "stored_retrieve_delete",
+    "streaming_tool"
+  ],
+  "native_openai_attempt": {
+    "provider_family": "openai",
+    "api_form": "openai_responses_v1",
+    "provider_api_revision": "openapi-2.3.0",
+    "endpoint_digest": "d9617135d6fdd0a2cde722d637a1dfcc3da37515708b3ea5d66ae607c8ac785e",
+    "model": "gpt-5.6-sol",
+    "model_revision": "gpt-5.6-sol",
+    "model_retrieve": {
+      "http_call_count": 1,
+      "present": true,
+      "returned_model_id": "gpt-5.6-sol"
+    },
+    "matrix_execution": {
+      "state": "inactive_account_credit_exhausted_before_inference",
+      "generation_attempt_count": 2,
+      "completed_generation_count": 0,
+      "completed_cases": [],
+      "failed_case": "stateless_current_turn_tool",
+      "safe_error": {
+        "class": "RateLimitError",
+        "category": "account_credit_quota_blocker",
+        "http_status": 429,
+        "code": "credit_balance_exhausted",
+        "type": "insufficient_quota",
+        "param": null
+      }
+    },
+    "request_context": {
+      "project_selector_configured": false,
+      "organization_selector_configured": false,
+      "safe_error_identified_project_or_account": false
+    },
+    "side_effects": {
+      "completed_inference": false,
+      "stored_response_created": false,
+      "compaction_item_created": false,
+      "opaque_provider_content_logged": false
+    },
+    "total_http_call_count": 3,
+    "live_capability_receipt": false
+  },
+  "azure_openai_matrix": {
+    "api_form": "azure-openai-v1-preview",
+    "provider_api_revision": "azure-openai-v1-preview",
+    "endpoint_digest": "b61454cf579aca909004499082bb6e4e0eaabb166db9ee88461e175ac30916b0",
+    "results": [
+    {
+      "deployment": "gpt-5",
+      "deployment_revision": "2025-08-07",
+      "state": "inactive_required_case_rejected",
+      "stimulus_revision": "semantic-json-v1",
+      "completed_cases": [
+        "stateless_current_turn_tool"
+      ],
+      "failed_case": "stateless_all_turns_replay",
+      "safe_error": {
+        "class": "BadRequestError",
+        "category": "provider_rejection",
+        "http_status": 400,
+        "code": "unsupported_value",
+        "type": "invalid_request_error",
+        "param": "reasoning.context"
+      }
+    },
+    {
+      "deployment": "gpt-5-mini",
+      "deployment_revision": "2025-08-07",
+      "state": "inactive_matrix_incomplete",
+      "stimulus_revision": "semantic-json-v1",
+      "completed_cases": [
+        "stateless_current_turn_tool"
+      ],
+      "failed_case": "stateless_all_turns_replay",
+      "safe_error": {
+        "class": "LiveConformanceExecutionError",
+        "category": "typed_execution_failure",
+        "http_status": null,
+        "code": null,
+        "type": null,
+        "param": null
+      }
+    },
+    {
+      "deployment": "gpt-5.4-mini",
+      "deployment_revision": "2026-03-17",
+      "state": "inactive_superseded_probe_only",
+      "stimulus_revision": "trivial-tool-superseded",
+      "completed_cases": [],
+      "failed_case": "stateless_current_turn_tool",
+      "safe_error": {
+        "class": "LiveConformanceAssertionError",
+        "category": "zero_reasoning_items_on_superseded_stimulus",
+        "http_status": null,
+        "code": null,
+        "type": null,
+        "param": null
+      }
+    },
+    {
+      "deployment": "gpt-5-nano",
+      "deployment_revision": "2025-08-07",
+      "state": "inactive_matrix_incomplete",
+      "stimulus_revision": "semantic-json-v1",
+      "completed_cases": [
+        "stateless_current_turn_tool"
+      ],
+      "failed_case": "stateless_all_turns_replay",
+      "safe_error": {
+        "class": "LiveConformanceExecutionError",
+        "category": "typed_execution_failure",
+        "http_status": null,
+        "code": null,
+        "type": null,
+        "param": null
+      }
+    },
+    {
+      "deployment": "gpt-5.6-terra",
+      "deployment_revision": "2026-07-09",
+      "state": "inactive_complete_live_matrix_pending_review",
+      "stimulus_revision": "deterministic-reasoning-v2",
+      "completed_cases": [
+        "stateless_current_turn_tool",
+        "stateless_all_turns_replay",
+        "inline_compaction",
+        "standalone_compaction_and_unpruned_replay",
+        "stored_create",
+        "stored_previous_response_chain",
+        "stored_retrieve_delete",
+        "streaming_tool"
+      ],
+      "failed_case": null,
+      "safe_error": null,
+      "tracked_cli_receipt": {
+        "accounting": {
+          "cleanup_attempted": true,
+          "cleanup_completed": true,
+          "cleanup_delete_http_request_count": 0,
+          "cleanup_delete_logical_operation_count": 0,
+          "cleanup_pending_reference_count": 0,
+          "client_close_completed": true,
+          "http_request_count": 11,
+          "http_request_counts": {
+            "compact": 1,
+            "create_or_stream": 7,
+            "delete": 2,
+            "retrieve": 1,
+            "unexpected": 0
+          },
+          "logical_operation_count": 11,
+          "logical_operation_counts": {
+            "compact": 1,
+            "create_or_stream": 7,
+            "delete": 2,
+            "retrieve": 1
+          },
+          "observed_sdk_retry_count": 0,
+          "request_path_class_mismatch_count": 0,
+          "sdk_configured_max_retries": 0,
+          "successful_matrix_expected_counts_match": true,
+          "unexpected_request_count": 0
+        },
+        "activation_manifest_digest": "975f79f7a30d304fe0598206fe2ba59ee65911f14bd072585f81c3f800af0d4d",
+        "api_form": "azure-openai-v1-preview",
+        "completed_cases": [
+          "stateless_current_turn_tool",
+          "stateless_all_turns_replay",
+          "inline_compaction",
+          "standalone_compaction_and_unpruned_replay",
+          "stored_create",
+          "stored_previous_response_chain",
+          "stored_retrieve_delete",
+          "streaming_tool"
+        ],
+        "endpoint_digest": "b61454cf579aca909004499082bb6e4e0eaabb166db9ee88461e175ac30916b0",
+        "model_identity_semantics": "requested_deployment_response_model_and_revision_pin_exact",
+        "model_or_deployment": "gpt-5.6-terra",
+        "model_or_deployment_revision": "2026-07-09",
+        "observed_at": "2026-08-04T13:16:09.894683+00:00",
+        "opaque_payloads_logged": false,
+        "production_activation_granted": false,
+        "provider_api_revision": "azure-openai-v1-preview",
+        "provider_evidence_digest": "7076e4ee05f29d7dc759f01af8eb6f657c3ea1eb075de57d8cd4f140f41ad4ef",
+        "provider_family": "azure_openai",
+        "structural_observations_digest": "f76c0c145f3775c5e445cb55efb3c9cb5b9293a01695e6850f3764ee6badc5f3"
+      }
+    },
+    {
+      "deployment": "gpt-5.6-sol",
+      "deployment_revision": "2026-07-09",
+      "state": "inactive_superseded_probe_only",
+      "stimulus_revision": "trivial-tool-superseded",
+      "completed_cases": [],
+      "failed_case": "stateless_current_turn_tool",
+      "safe_error": {
+        "class": "LiveConformanceAssertionError",
+        "category": "zero_reasoning_items_on_superseded_stimulus",
+        "http_status": null,
+        "code": null,
+        "type": null,
+        "param": null
+      }
+    }
+    ]
+  },
+  "completed_full_matrix_profile_count": 1,
+  "active_profile_count": 0,
+  "activation_decision": "remain_inactive",
+  "overclaim_guard": "The exact Azure Terra receipt proves only its named deployment and revision. Other partial, rejected, and superseded observations are not capability proof, and no row may activate before the post-live harness and traceability delta is independently reviewed and every prerequisite is met.",
+  "canonical_digest": {
+    "algorithm": "sha256",
+    "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
+    "scope": "all top-level fields except canonical_digest",
+    "value": "b76caa8cf691ca10df406abf9e4aa17da18cad30e4ca550fe36377d0ebe06013"
+  }
+}
