@@ -147,6 +147,14 @@ def test_vendors_extra_includes_bedrock_runtime_dependencies() -> None:
     assert "safetensors>=0.8.0rc0,<0.9.0" in vendors
 
 
+def test_mypy_skips_opencv_runtime_stubs() -> None:
+    """Keep vendor-installed OpenCV stubs out of project type contracts."""
+    mypy = _pyproject()["tool"]["mypy"]
+    overrides = mypy["overrides"]
+
+    assert {"module": ["cv2", "cv2.*"], "follow_imports": "skip"} in overrides
+
+
 def test_project_metadata_advertises_python_314_support() -> None:
     data = _pyproject()
     project = data["project"]

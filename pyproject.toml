@@ -329,3 +329,7 @@ ignore_missing_imports = true
 [[tool.mypy.overrides]]
 module = ["tiktoken", "tiktoken.*"]
 follow_imports = "skip"
+
+[[tool.mypy.overrides]]
+module = ["cv2", "cv2.*"]
+follow_imports = "skip"
