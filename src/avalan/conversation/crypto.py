@@ -98,7 +98,10 @@ class ConversationDataKey:
             raise ConversationValidationError()
         if not isinstance(self.status, ConversationKeyStatus):
             raise ConversationValidationError()
-        if type(self.key_bytes) is not bytes or len(self.key_bytes) != 32:
+        if (
+            type(self.key_bytes) is not bytes
+            or len(self.key_bytes) != _AES_KEY_BYTES
+        ):
             raise ConversationValidationError()
         if self.algorithm != CONVERSATION_AEAD_ALGORITHM:
             raise ConversationValidationError()

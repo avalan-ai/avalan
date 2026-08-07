@@ -974,7 +974,7 @@ def test_authorized_native_outcomes_are_redacted_and_nonactivating() -> None:
     payload, _ = live._load_json_object(LIVE_RESULTS)
     assert (
         live._validate_canonical_digest(payload)
-        == "b76caa8cf691ca10df406abf9e4aa17da18cad30e4ca550fe36377d0ebe06013"
+        == "d3aab6c4e4c83be848a304126c2d933898e499909bc65594959f74bb00c66e44"
     )
     assert payload["provider_families"] == ["openai", "azure_openai"]
     assert (
@@ -1780,6 +1780,16 @@ async def test_execution_failure_canary_is_typed_cause_free_and_redacted() -> (
     )
     assert canary not in str(captured.value)
     assert "provider.invalid" not in str(captured.value)
+
+
+async def test_sdk_transport_rejects_unsupported_live_case() -> None:
+    """Fail closed when an unrecognized case reaches the SDK transport."""
+    transport = object.__new__(live.OpenAISdkLiveConformanceTransport)
+
+    with pytest.raises(
+        live.LiveConformanceExecutionError, match="unsupported"
+    ):
+        await transport.execute(cast(live.LiveConformanceCase, "unknown"))
 
 
 async def test_runner_closes_transport_after_assertion_failure() -> None:

@@ -1114,8 +1114,13 @@ class OpenAISdkLiveConformanceTransport:
                     return await self._stored_retrieve_delete()
                 case LiveConformanceCase.STREAMING_TOOL:
                     return await self._streaming_tool()
+            raise LiveConformanceExecutionError(
+                "unsupported live conformance case"
+            )
         except CancelledError:
             raise
+        except LiveConformanceExecutionError as exc:
+            raise exc from None
         except LiveConformanceAssertionError as exc:
             raise exc from None
         except Exception:
