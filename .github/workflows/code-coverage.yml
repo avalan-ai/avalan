@@ -31,7 +31,16 @@ jobs:
       - name: Install Poetry
         run: python -m pip install poetry==2.4.1
 
+      - name: Start PostgreSQL
+        run: |
+          sudo systemctl start postgresql.service
+          sudo -u postgres psql --set=ON_ERROR_STOP=1 \
+            --command="ALTER USER postgres PASSWORD 'postgres';"
+          pg_isready --host 127.0.0.1 --port 5432
+
       - name: Run coverage
+        env:
+          AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: make test coverage
 
       - name: Upload coverage report

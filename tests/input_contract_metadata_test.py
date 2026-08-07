@@ -176,5 +176,11 @@ def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
     assert "run: make test coverage" in coverage_workflow
     assert "run: make test-conversation-current-exact" not in coverage_workflow
     assert "CONVERSATION_PHASE" not in coverage_workflow
+    assert "sudo systemctl start postgresql.service" in coverage_workflow
+    assert (
+        "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
+        "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
+        in coverage_workflow
+    )
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow

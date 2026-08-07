@@ -186,6 +186,12 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
     assert "run: make test coverage" in coverage_workflow
     assert "run: make test-conversation-current-exact" not in coverage_workflow
     assert "CONVERSATION_PHASE" not in coverage_workflow
+    assert "sudo systemctl start postgresql.service" in coverage_workflow
+    assert (
+        "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
+        "postgresql://postgres:postgres@127.0.0.1:5432/postgres"
+        in coverage_workflow
+    )
     assert "run: poetry build --format wheel --clean" in workflow
     assert "path: dist/*.whl" in workflow
 
