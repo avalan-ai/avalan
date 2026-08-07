@@ -10,7 +10,7 @@
   "sdk_version": "2.42.0",
   "harness": {
     "path": "scripts/conversation_live_conformance.py",
-    "byte_sha256": "a89b80f7629b6d3d3b518aaaaaf48511c51017c50ee5fbc22f464c646f27c27e",
+    "byte_sha256": "1d35e2897841eddb9be6c0c405da60682576045b26e1e9c72307fcd3375b0a69",
     "reviewed_byte_sha256": "70918e19d7ee76b87bb9855be62a645dbb307b3e2a0494ce295eda62f0052029",
     "prior_azure_observation_byte_sha256": "0373a200cadd3702b2a3b01d705d54ccd05b0908be793366dc928b31ca348f68",
     "review_status": "pending_post_live_harness_delta_review",
@@ -251,6 +251,6 @@
     "algorithm": "sha256",
     "encoding": "utf-8 canonical JSON with sorted keys and compact separators",
     "scope": "all top-level fields except canonical_digest",
-    "value": "b76caa8cf691ca10df406abf9e4aa17da18cad30e4ca550fe36377d0ebe06013"
+    "value": "d3aab6c4e4c83be848a304126c2d933898e499909bc65594959f74bb00c66e44"
   }
 }
