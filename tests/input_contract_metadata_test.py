@@ -111,8 +111,8 @@ def test_exact_make_target_fails_closed_on_pytest_failure(
     assert "CONTRACT_PYTHON_ENV := PYTHONSAFEPATH=1" in makefile
 
 
-def test_project_metadata_pins_complete_common_gate() -> None:
-    """Require every script in lint, Make, and continuous integration."""
+def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
+    """Require the input gate and standard coverage command in CI."""
     makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
     workflow = (_ROOT / ".github" / "workflows" / "test.yml").read_text(
         encoding="utf-8"
@@ -173,8 +173,8 @@ def test_project_metadata_pins_complete_common_gate() -> None:
     assert "run: make test no-install" in workflow
     assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
     assert "make test-pgsql" not in workflow
-    assert "run: make test-conversation-current-exact" in coverage_workflow
-    assert "run: make test coverage" not in coverage_workflow
+    assert "run: make test coverage" in coverage_workflow
+    assert "run: make test-conversation-current-exact" not in coverage_workflow
     assert "CONVERSATION_PHASE" not in coverage_workflow
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow
