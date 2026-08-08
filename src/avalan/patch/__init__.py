@@ -247,3 +247,60 @@ from avalan.patch.parser import (
 from avalan.patch.parser import (
     UpdateDeclarationSyntax as UpdateDeclarationSyntax,
 )
+from avalan.patch.planner import (
+    BoundedPlannerWorker as BoundedPlannerWorker,
+)
+from avalan.patch.planner import (
+    LogicalText as LogicalText,
+)
+from avalan.patch.planner import (
+    Match as Match,
+)
+from avalan.patch.planner import (
+    MatchKind as MatchKind,
+)
+from avalan.patch.planner import (
+    PlannerCandidate as PlannerCandidate,
+)
+from avalan.patch.planner import (
+    PlannerError as PlannerError,
+)
+from avalan.patch.planner import (
+    PlannerErrorCode as PlannerErrorCode,
+)
+from avalan.patch.planner import (
+    PlannerFacade as PlannerFacade,
+)
+from avalan.patch.planner import (
+    PlannerFile as PlannerFile,
+)
+from avalan.patch.planner import (
+    PlannerLimits as PlannerLimits,
+)
+from avalan.patch.planner import (
+    PlannerParentMount as PlannerParentMount,
+)
+from avalan.patch.planner import (
+    PlannerWorkspace as PlannerWorkspace,
+)
+from avalan.patch.planner import (
+    StructuredDiff as StructuredDiff,
+)
+from avalan.patch.planner import (
+    TextRepresentation as TextRepresentation,
+)
+from avalan.patch.planner import (
+    apply_replacements as apply_replacements,
+)
+from avalan.patch.planner import (
+    find_match as find_match,
+)
+from avalan.patch.planner import (
+    plan as plan,
+)
+from avalan.patch.planner import (
+    render_review_diff as render_review_diff,
+)
+from avalan.patch.planner import (
+    supported_text as supported_text,
+)

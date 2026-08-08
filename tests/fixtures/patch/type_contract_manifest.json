@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 2,
+  "current_phase": 3,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -209,6 +209,26 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase2_operation_negative.py:6:28: error: Incompatible types in assignment (expression has type \"RawPatchInputKind\", variable has type \"OperationType\")  [assignment]"
       ]
+    },
+    {
+      "id": "PATCH-T-020",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "path": "tests/patch_type_contracts/phase3_positive.py",
+      "source_sha256": "f4d53d89981e7aada904559379f43d2ec9cd9f79b1423847bdda1564e3924759",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-021",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 3,
+      "path": "tests/patch_type_contracts/phase3_sync_worker_negative.py",
+      "source_sha256": "be09435478837fabfb513817a2a3e28c1570a30c534d92eb0694f1f0667f0f6a",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase3_sync_worker_negative.py:25:25: error: Incompatible types in assignment (expression has type \"SynchronousWorker\", variable has type \"PlannerWorker\")  [assignment]"
+      ]
     }
   ],
   "sources": [
@@ -237,7 +257,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f5714f420573163381280e992d5635687c7ad1ea7b20aea8d42545f0ade710a7"
+      "source_sha256": "dccafe7b316bae9b0674f0bab9cc2d5858d6106b18989d90cf1f0fa3ba361c82"
     },
     {
       "id": "PATCH-TS-004",
@@ -246,7 +266,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "685bda4193a8b35f25a2f283b3ce02a7eeff3327a804ae629eebce4a3050b980"
+      "source_sha256": "6b424614b355f34801ce61ae6e086c2cb92ed84175082822301b040041463803"
     },
     {
       "id": "PATCH-TS-005",
@@ -255,7 +275,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "86a32238bc567068de9dac11b05478f6ba526e13ff770b64477a2dbdeb3264c5"
+      "source_sha256": "2fb258314f926b47a423e2cf71918b45c51660f7a1cb02241c33cc54fb39ad89"
     },
     {
       "id": "PATCH-TS-006",
@@ -282,7 +302,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "3a24d7f90eaa7e7bb46575b21bca71a109ce032f5066f24fe91fd7874f1e0e92"
+      "source_sha256": "eac70d2c90c8db2725db09721bf26bc8309b0f9f097cdba93765660fa7b08b67"
     },
     {
       "id": "PATCH-TS-009",
@@ -291,7 +311,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a2237bb71b30e9e4f806db5a1e46b7461f34da0aea7b51d5a89f622421d0e9b3"
+      "source_sha256": "b1bf20d726719a04a5d125a765a4918f41198eb2a09f46e8bf9458d526876836"
     },
     {
       "id": "PATCH-TS-010",
@@ -309,7 +329,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5ef9db8197584b8114393fc84420835cef533827681221881a1f6928e00227f7"
+      "source_sha256": "85cfb395591b55c0207e6176992bb56f6f017cefc4e71678085a2fcea564564c"
     },
     {
       "id": "PATCH-TS-012",
@@ -336,7 +356,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "040195505baf9553d184dcdebf0e9fd97e80d97c1f5f84cb75d69a16075ac93d"
+      "source_sha256": "9a0ed6338a1d29aee01567e466a9554e7b829f87a6e4faf91991672e7d602956"
     },
     {
       "id": "PATCH-TS-015",
@@ -382,7 +402,25 @@
         "module"
       ],
       "source_sha256": "bce7f877a4d4c9320bda03049ba45053c55accb41f8e58f70ce6c21d0347f56f"
+    },
+    {
+      "id": "PATCH-TS-020",
+      "path": "src/avalan/patch/planner.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
+    },
+    {
+      "id": "PATCH-TS-021",
+      "path": "tests/patch/phase_3_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "4f0ae156f7e241884fad12e6dc0ef3686620f3617ff81cdad1239843a8c3950c"
     }
   ],
-  "manifest_sha256": "c9307367e97599f57b5f11c842a241335c5e49c2cc9b655462c9c6c5dfe98a65"
+  "manifest_sha256": "65ee223d18dfee49b493b1217df0571678f8e5cb541858da05a3c169f52548a8"
 }

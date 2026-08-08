@@ -134,7 +134,28 @@
       "symbol": "RawProviderIngressAdapter",
       "artifact_class": "patch_parser",
       "source_sha256": "d987acb6f99329bc4594d67a662cbc3ffc510d207080bc049f5b48acfb127ab2"
+    },
+    {
+      "id": "PATCH-SYM-020",
+      "path": "src/avalan/patch/planner.py",
+      "symbol": "plan",
+      "artifact_class": "patch_planner",
+      "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
+    },
+    {
+      "id": "PATCH-SYM-021",
+      "path": "src/avalan/patch/planner.py",
+      "symbol": "LogicalText",
+      "artifact_class": "patch_planner",
+      "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
+    },
+    {
+      "id": "PATCH-SYM-022",
+      "path": "src/avalan/patch/planner.py",
+      "symbol": "PlannerFacade",
+      "artifact_class": "patch_planner",
+      "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
     }
   ],
-  "inventory_sha256": "8ec1bb98c968013970c2035ddd3c549b2f947c4f72c9fe8220be358546719aa0"
+  "inventory_sha256": "c907cf70780e6e904df10e9faf79b34fe397f5e4e2b7c8d253ceeb587a20b507"
 }

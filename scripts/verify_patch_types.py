@@ -37,7 +37,7 @@ from tempfile import TemporaryDirectory
 from contract_gate import StrictJsonError, canonical_sha256, strict_json_path
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 2
+_CURRENT_PHASE = 3
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
 _PROHIBITED_SOURCE_PATTERN = compile_regex(
@@ -427,9 +427,9 @@ def repository_python_ownership_environment(
     value = _encode_repository_python_paths(paths)
     return {
         PATCH_PYTHON_OWNERSHIP_ENV: value,
-        PATCH_PYTHON_OWNERSHIP_SHA256_ENV: sha256(
-            value.encode("utf-8")
-        ).hexdigest(),
+        PATCH_PYTHON_OWNERSHIP_SHA256_ENV: (
+            sha256(value.encode("utf-8")).hexdigest()
+        ),
     }
 
 

@@ -55,7 +55,7 @@ def test_phase0_dormant_public_contract_preflight(
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV, raising=False)
     monkeypatch.delenv(_GATE._LEGACY_POSTGRESQL_LEASE_ENV, raising=False)
     monkeypatch.setattr(_GATE, "_load_patch_contracts", lambda root: None)
-    assert _GATE.preflight(2, repo_root=_ROOT) is None
+    assert _GATE.preflight(3, repo_root=_ROOT) is None
 
 
 def test_phase0_fault_lifecycle_evidence_is_executable() -> None:
