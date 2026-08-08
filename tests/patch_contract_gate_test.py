@@ -7,7 +7,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from os import environ, pathsep
 from pathlib import Path, PurePosixPath
-from subprocess import run
+from subprocess import CompletedProcess, run
 from sys import executable, modules
 from sys import path as sys_path
 from types import ModuleType, SimpleNamespace
@@ -136,7 +136,7 @@ def test_patch_gate_contract_is_current() -> None:
         "test-patch-pgsql-exact:", 1
     )[0]
     assert "python -m pip install $(TASK_PGSQL_TEST_DEPS)" in patch_target
-    assert not (_ROOT / "src" / "avalan" / "patch").exists()
+    assert (_ROOT / "src" / "avalan" / "patch").is_dir()
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     baseline = loads(
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
@@ -153,7 +153,6 @@ def test_patch_gate_contract_is_current() -> None:
     advertisement = baseline["runtime_patch_advertisement"]
     assert advertisement == {
         "forbidden_paths": [
-            "src/avalan/patch",
             "src/avalan/tool/patch.py",
         ],
         "forbidden_tokens": [
@@ -177,7 +176,7 @@ def test_patch_gate_contract_is_current() -> None:
             token in contents for token in advertisement["forbidden_tokens"]
         )
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 0
+    assert _GATE._PATCH_CURRENT_PHASE == 1
 
 
 @pytest.mark.parametrize(
@@ -264,6 +263,104 @@ def test_patch_strict_source_mypy_is_hermetic_and_keeps_owned_paths(
     assert "--follow-imports=silent" in observed
     assert "--cache-dir=/dev/null" in observed
     assert observed[-len(owned) :] == owned
+
+
+def test_patch_fixture_mypy_is_hermetic_and_scopes_owned_diagnostics(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Cold-check fixtures while retaining only their own diagnostics."""
+    observed: tuple[str, ...] | None = None
+    fixture_path = "tests/owned_fixture.py"
+
+    def run_mypy(
+        command: tuple[str, ...], **kwargs: object
+    ) -> CompletedProcess[str]:
+        nonlocal observed
+        observed = command
+        assert kwargs["cwd"] == tmp_path
+        return CompletedProcess(
+            command,
+            1,
+            stdout=(
+                "tests/owned_fixture.py:4:1: error: owned failure "
+                "[assignment]\n"
+                "src/legacy.py:8:1: error: unowned failure "
+                "[explicit-any]\n"
+            ),
+            stderr="",
+        )
+
+    monkeypatch.setattr(_TYPES, "run", run_mypy)
+    cache_path = tmp_path / "cold-mypy-cache"
+    completed = _TYPES._run_fixture_mypy(
+        tmp_path,
+        fixture_path,
+        {},
+        cache_path,
+    )
+
+    assert observed is not None
+    assert "--follow-imports=silent" in observed
+    assert f"--cache-dir={cache_path}" in observed
+    assert observed[-1] == fixture_path
+    assert completed.returncode == 1
+    assert _TYPES._fixture_mypy_diagnostics(
+        completed.stdout + completed.stderr, fixture_path
+    ) == ("tests/owned_fixture.py:4:1: error: owned failure [assignment]",)
+
+
+def test_patch_fixture_mypy_cache_is_shared_and_removed_on_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Share one cache per invocation and remove it after fixture failure."""
+    fixture_root = tmp_path / "tests" / "patch_type_contracts"
+    fixture_root.mkdir(parents=True)
+    first_path = fixture_root / "first.py"
+    second_path = fixture_root / "second.py"
+    first_path.write_text("value: int = 1\n", encoding="utf-8")
+    second_path.write_text("value: int = 2\n", encoding="utf-8")
+    first = _TYPES.TypeFixture(
+        identifier="PATCH-TEST-001",
+        kind="positive",
+        lifecycle="active",
+        active_from_phase=0,
+        path="tests/patch_type_contracts/first.py",
+        source_sha256=sha256(first_path.read_bytes()).hexdigest(),
+        expected_diagnostics=(),
+    )
+    second = _TYPES.TypeFixture(
+        identifier="PATCH-TEST-002",
+        kind="positive",
+        lifecycle="active",
+        active_from_phase=0,
+        path="tests/patch_type_contracts/second.py",
+        source_sha256=sha256(second_path.read_bytes()).hexdigest(),
+        expected_diagnostics=(),
+    )
+    caches: list[Path] = []
+
+    def run_mypy(
+        root: Path,
+        fixture_path: str,
+        environment: dict[str, str],
+        cache_path: Path,
+    ) -> CompletedProcess[str]:
+        assert root == tmp_path
+        assert environment == {}
+        assert cache_path.is_dir()
+        caches.append(cache_path)
+        if fixture_path == second.path:
+            raise _TYPES.PatchTypeContractError("fixture failure")
+        return CompletedProcess((), 0, stdout="", stderr="")
+
+    monkeypatch.setattr(_TYPES, "_run_fixture_mypy", run_mypy)
+
+    with pytest.raises(_TYPES.PatchTypeContractError, match="fixture failure"):
+        _TYPES._verify_type_fixtures(tmp_path, (first, second), {})
+
+    assert len(caches) == 2
+    assert caches[0] == caches[1]
+    assert not caches[0].exists()
 
 
 def test_patch_gate_subprocess_rejects_dynamic_ignored_artifact_open(
@@ -366,7 +463,7 @@ def test_preflight_executes_no_pytest_process(
             "preflight must not execute pytest"
         ),
     )
-    _GATE.preflight(0, repo_root=_ROOT)
+    _GATE.preflight(1, repo_root=_ROOT)
 
 
 def test_preflight_rejects_caller_database_before_patch_phase8(
@@ -375,14 +472,14 @@ def test_preflight_rejects_caller_database_before_patch_phase8(
     """Reject caller database state while patch durability remains dormant."""
     monkeypatch.setenv(
         _GATE.POSTGRESQL_TEST_DSN_ENV,
-        "postgresql://test/patch_phase0",
+        "postgresql://test/patch_phase1",
     )
 
     with pytest.raises(
         _GATE.PatchContractGateError,
         match="reject caller-supplied PostgreSQL state",
     ):
-        _GATE.preflight(0, repo_root=_ROOT)
+        _GATE.preflight(1, repo_root=_ROOT)
 
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV)
     with pytest.raises(
@@ -701,7 +798,7 @@ def test_nonexistent_active_e2e_fails_at_collection_before_execution(
             executable,
             "scripts/verify_patch_acceptance.py",
             "--through-phase",
-            "0",
+            "1",
             "--manifest",
             str(manifest_path),
             "--repo-root",

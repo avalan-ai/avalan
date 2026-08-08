@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 0,
+  "current_phase": 1,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -146,6 +146,49 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase0_qualified_awaitable_negative.py:5: error: patch strict type fixture forbids sync-or-awaitable [patch-sync-or-awaitable]"
       ]
+    },
+    {
+      "id": "PATCH-T-014",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/patch_type_contracts/phase1_positive.py",
+      "source_sha256": "6740331642df6f03aa4f07f94f4019a28c3c6cee862822191596626aa338125e",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-015",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/patch_type_contracts/phase1_identity_negative.py",
+      "source_sha256": "ac9c4015ad75a432a0be42c0166961a2182c198eee2a8032738b0b94ad4f6e32",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase1_identity_negative.py:10:28: error: Incompatible types in assignment (expression has type \"PatchRequestId\", variable has type \"PatchPlanId\")  [assignment]"
+      ]
+    },
+    {
+      "id": "PATCH-T-016",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/patch_type_contracts/phase1_sync_protocol_negative.py",
+      "source_sha256": "ccb5622885906a92833943afccc23b3111f0a442d9fb6af83120eb6ee19a0b7f",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase1_sync_protocol_negative.py:23:37: error: Incompatible types in assignment (expression has type \"SyncPublisher\", variable has type \"PatchTerminalPublisher\")  [assignment]"
+      ]
+    },
+    {
+      "id": "PATCH-T-017",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "path": "tests/patch_type_contracts/phase1_mutable_collection_negative.py",
+      "source_sha256": "9d0c828f49e96e565d731f11990f4db24fda983a650300500adc31295d0a6579",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase1_mutable_collection_negative.py:15:22: error: Argument \"capabilities\" to \"MutationScope\" has incompatible type \"set[Capability]\"; expected \"frozenset[Capability]\"  [arg-type]",
+        "tests/patch_type_contracts/phase1_mutable_collection_negative.py:27:31: error: Argument \"required_capabilities\" to \"Lineage\" has incompatible type \"set[Capability]\"; expected \"frozenset[Capability]\"  [arg-type]"
+      ]
     }
   ],
   "sources": [
@@ -174,7 +217,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "74e32cff2ea1675b6652c2f6a477f0600156f951b26fa75909b77b96fdb38abc"
+      "source_sha256": "9352906cb9d26a75f525a8770f98cea86dffa4665fc567ea3e068ccd36f35285"
     },
     {
       "id": "PATCH-TS-004",
@@ -183,7 +226,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a0b0882e192bdbd7be899dc56bfe0bda15d8549f00f8478906f44f03948896d1"
+      "source_sha256": "a8bb87a177babd9d88803748856c838c7698d473115acda34bef3c6c6f0ba189"
     },
     {
       "id": "PATCH-TS-005",
@@ -192,7 +235,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "831239a05c4092ac38011a3f0d8499bb90cb7ae65bfea5a6e55ba12662c5e7b5"
+      "source_sha256": "f09dc791704f639ad0d62b2948093f8347c2cc6402d568338d0f4ff7b996c74b"
     },
     {
       "id": "PATCH-TS-006",
@@ -219,7 +262,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b920038147a8e201d2e7e4641874163edb950e5e346d5438fc965428141f6acb"
+      "source_sha256": "775e18634f9097fa28f458d36bfd7ac32485ac95c6abf212bb4bb1023cf93af5"
     },
     {
       "id": "PATCH-TS-009",
@@ -228,7 +271,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "33da4456b7b911a99d1ddb9522d7664724b2fd14c3bb505d1c04c4e68f705821"
+      "source_sha256": "1696bb2c8e4e9204fedcedd5547fd2b66aea198b0118dc256c25838a2ea56932"
     },
     {
       "id": "PATCH-TS-010",
@@ -246,7 +289,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "246d9f391491b982caa5c04e901bc580a31b708ec9d01974a7af4d0ba9d4ac11"
+      "source_sha256": "38d39aa91b7db2be2bbb9dcc531ddc09f915a6681dd796ca5481059eca42a3ed"
     },
     {
       "id": "PATCH-TS-012",
@@ -265,7 +308,43 @@
         "module"
       ],
       "source_sha256": "f54da29c95c190b3d275bb873e575c0d583a8961f6270f97883fddc389840bfa"
+    },
+    {
+      "id": "PATCH-TS-014",
+      "path": "src/avalan/patch/__init__.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "a95dbe7c8321046c90bd0bbc880d1f5f796bb740ee95dcc45f413e09414fd116"
+    },
+    {
+      "id": "PATCH-TS-015",
+      "path": "src/avalan/patch/domain.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "7b1a7849c093b5eee286b1734e971aba189395d134883f314d7e8aa187a3e111"
+    },
+    {
+      "id": "PATCH-TS-016",
+      "path": "src/avalan/patch/codec.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "4f8def285a89edb221dfc94817d521578b508db67feed59cfe108fdc553793d1"
+    },
+    {
+      "id": "PATCH-TS-017",
+      "path": "tests/patch/phase_1_domain_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ba520df44118617500dce9fdd9057d9bc9eecf3c97118d2eb8bb9a3f0dd1c11d"
     }
   ],
-  "manifest_sha256": "910d8b95d70d66045efffeb24bebed99be69948bc526ced5af2d81a604c7952f"
+  "manifest_sha256": "d0b4abe2f9b7f54af54069fc5017b8d58cb62b0fd812a22de3dab62f58bf1055"
 }

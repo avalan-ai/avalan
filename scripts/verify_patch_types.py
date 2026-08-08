@@ -22,19 +22,22 @@ from ast import (
     walk,
 )
 from ast import parse as parse_python
+from collections.abc import Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
 from os import environ, pathsep
 from pathlib import Path, PurePosixPath
 from re import compile as compile_regex
-from subprocess import run
+from subprocess import CompletedProcess, run
 from sys import executable, stderr
+from tempfile import TemporaryDirectory
 
 from contract_gate import StrictJsonError, canonical_sha256, strict_json_path
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 0
+_CURRENT_PHASE = 1
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
 _PROHIBITED_SOURCE_PATTERN = compile_regex(
@@ -45,6 +48,7 @@ _PATCH_SOURCE_SCOPES = frozenset(
         "patch_script",
         "integration_hunk",
         "changed_python",
+        "patch_domain",
     )
 )
 _UNSAFE_AUTHORITY_TOKENS = frozenset(
@@ -216,68 +220,8 @@ def verify_patch_types(
     if not selected:
         raise PatchTypeContractError("patch type phase has no active fixtures")
     _verify_strict_sources(root, manifest.sources, manifest.fixtures)
-    environment = {
-        key: value
-        for key, value in environ.items()
-        if key.upper() != "PYTHONPATH" and not key.upper().startswith("MYPY")
-    }
-    environment["MYPYPATH"] = pathsep.join(
-        (
-            str(root / "tests"),
-            str(root / "src"),
-        )
-    )
-    for fixture in selected:
-        fixture_path = _fixture_path(root, fixture.path)
-        source = _read_fixture(fixture_path, fixture)
-        static_diagnostics = _fixture_static_diagnostics(
-            source,
-            fixture.path,
-        )
-        completed = run(
-            (
-                executable,
-                "-m",
-                "mypy",
-                "--strict",
-                "--disallow-any-explicit",
-                "--show-error-codes",
-                "--no-error-summary",
-                "--no-pretty",
-                fixture.path,
-            ),
-            cwd=root,
-            capture_output=True,
-            check=False,
-            env=environment,
-            text=True,
-        )
-        output = completed.stdout + completed.stderr
-        mypy_diagnostics = tuple(
-            line.strip()
-            for line in output.splitlines()
-            if _DIAGNOSTIC_PATTERN.match(line.strip())
-        )
-        diagnostics = (*static_diagnostics, *mypy_diagnostics)
-        if fixture.kind == "positive":
-            if completed.returncode != 0 or diagnostics:
-                raise PatchTypeContractError(
-                    "positive type fixture failed:"
-                    f" {fixture.identifier}\n{output}"
-                )
-            continue
-        if completed.returncode == 0 and not static_diagnostics:
-            raise PatchTypeContractError(
-                "negative type fixture unexpectedly passed: "
-                f"{fixture.identifier}"
-            )
-        if diagnostics != fixture.expected_diagnostics:
-            raise PatchTypeContractError(
-                "negative type fixture diagnostics changed:"
-                f" {fixture.identifier},"
-                f" expected={fixture.expected_diagnostics},"
-                f" observed={diagnostics}\n{output}"
-            )
+    environment = _fixture_mypy_environment(root)
+    _verify_type_fixtures(root, selected, environment)
     return manifest
 
 
@@ -358,7 +302,7 @@ def _strict_source(raw: object) -> StrictSource:
         raise PatchTypeContractError(
             "patch strict source symbols are duplicated"
         )
-    if scope == "patch_script" and symbols != ("module",):
+    if scope in {"patch_script", "patch_domain"} and symbols != ("module",):
         raise PatchTypeContractError("patch script must inventory its module")
     if scope == "integration_hunk" and "module" in symbols:
         raise PatchTypeContractError(
@@ -591,7 +535,7 @@ def _verify_strict_ast(tree: Module, source: StrictSource) -> None:
     """Reject the closed collection of type-boundary escape hatches."""
     nodes = _strict_nodes(tree, source)
     aliases = _typing_aliases(tree)
-    if source.scope in {"patch_script", "changed_python"}:
+    if source.scope in {"patch_script", "patch_domain", "changed_python"}:
         for ignored in tree.type_ignores:
             _strict_source_error(source, ignored, "type-ignore")
     for node in nodes:
@@ -618,7 +562,7 @@ def _verify_strict_ast(tree: Module, source: StrictSource) -> None:
 
 def _strict_nodes(tree: Module, source: StrictSource) -> tuple[AST, ...]:
     """Return every patch script node or only the named integration hunks."""
-    if source.scope == "patch_script":
+    if source.scope in {"patch_script", "patch_domain"}:
         return tuple(walk(tree))
     declarations = tuple(
         node
@@ -843,6 +787,126 @@ def _run_strict_source_mypy(root: Path, paths: tuple[str, ...]) -> None:
             "patch strict source mypy failed:\n"
             f"{completed.stdout}{completed.stderr}"
         )
+
+
+def _fixture_mypy_environment(root: Path) -> dict[str, str]:
+    """Return the isolated import environment for one type fixture."""
+    environment = {
+        key: value
+        for key, value in environ.items()
+        if key.upper() != "PYTHONPATH" and not key.upper().startswith("MYPY")
+    }
+    environment["MYPYPATH"] = pathsep.join(
+        (
+            str(root / "tests"),
+            str(root / "src"),
+        )
+    )
+    return environment
+
+
+def _verify_type_fixtures(
+    root: Path,
+    fixtures: tuple[TypeFixture, ...],
+    environment: dict[str, str],
+) -> None:
+    """Run all selected fixtures against one fresh shared cache."""
+    with _fixture_mypy_cache() as cache_path:
+        for fixture in fixtures:
+            fixture_path = _fixture_path(root, fixture.path)
+            source = _read_fixture(fixture_path, fixture)
+            static_diagnostics = _fixture_static_diagnostics(
+                source,
+                fixture.path,
+            )
+            completed = _run_fixture_mypy(
+                root,
+                fixture.path,
+                environment,
+                cache_path,
+            )
+            output = completed.stdout + completed.stderr
+            all_mypy_diagnostics = _mypy_diagnostics(output)
+            mypy_diagnostics = _fixture_mypy_diagnostics(output, fixture.path)
+            diagnostics = (*static_diagnostics, *mypy_diagnostics)
+            if fixture.kind == "positive":
+                if diagnostics or (
+                    completed.returncode != 0 and not all_mypy_diagnostics
+                ):
+                    raise PatchTypeContractError(
+                        "positive type fixture failed:"
+                        f" {fixture.identifier}\n{output}"
+                    )
+                continue
+            if completed.returncode == 0 and not static_diagnostics:
+                raise PatchTypeContractError(
+                    "negative type fixture unexpectedly passed: "
+                    f"{fixture.identifier}"
+                )
+            if diagnostics != fixture.expected_diagnostics:
+                raise PatchTypeContractError(
+                    "negative type fixture diagnostics changed:"
+                    f" {fixture.identifier},"
+                    f" expected={fixture.expected_diagnostics},"
+                    f" observed={diagnostics}\n{output}"
+                )
+
+
+@contextmanager
+def _fixture_mypy_cache() -> Iterator[Path]:
+    """Yield one invocation-scoped cache removed after fixture validation."""
+    with TemporaryDirectory(prefix="avalan-patch-mypy-") as cache_directory:
+        yield Path(cache_directory)
+
+
+def _run_fixture_mypy(
+    root: Path,
+    fixture_path: str,
+    environment: dict[str, str],
+    cache_path: Path,
+) -> CompletedProcess[str]:
+    """Run one fixture with cold shared import checking and local output."""
+    return run(
+        (
+            executable,
+            "-m",
+            "mypy",
+            "--strict",
+            "--disallow-any-explicit",
+            "--follow-imports=silent",
+            f"--cache-dir={cache_path}",
+            "--show-error-codes",
+            "--no-error-summary",
+            "--no-pretty",
+            fixture_path,
+        ),
+        cwd=root,
+        capture_output=True,
+        check=False,
+        env=environment,
+        text=True,
+    )
+
+
+def _mypy_diagnostics(output: str) -> tuple[str, ...]:
+    """Return every normalized mypy diagnostic from one command output."""
+    return tuple(
+        line.strip()
+        for line in output.splitlines()
+        if _DIAGNOSTIC_PATTERN.match(line.strip())
+    )
+
+
+def _fixture_mypy_diagnostics(
+    output: str, fixture_path: str
+) -> tuple[str, ...]:
+    """Return only diagnostics emitted for the owned type fixture path."""
+    prefix = f"{fixture_path}:"
+    return tuple(
+        diagnostic
+        for diagnostic in _mypy_diagnostics(output)
+        if diagnostic.startswith(prefix)
+    )
 
 
 def _fixture_path(root: Path, value: str) -> Path:
