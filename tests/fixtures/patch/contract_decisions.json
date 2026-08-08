@@ -1,0 +1,3130 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "source_metadata": {
+    "decision_count": 31,
+    "source_sha256": "e2eeb9a788029cf9fb0d6a376448a4901008b6e008a0f31265b116e47322addc"
+  },
+  "decisions": [
+    {
+      "id": "PATCH-DEC-001",
+      "area": "ownership_lifecycle",
+      "normalized_decision": "Assign one canonical owner for request identity, lifecycle, plan, approval, idempotency, commit lease, journals, pending settlement, and terminal result.",
+      "chosen_resolution": "A PatchCoordinator owns the canonical lifecycle and delegates only typed, fenced operations.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Split ownership permits authority and terminal-result divergence.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-002",
+      "area": "ownership_lifecycle",
+      "normalized_decision": "Freeze legal transitions from receipt to one logical request-completed terminal state.",
+      "chosen_resolution": "A closed transition table permits only coordinator-validated lifecycle changes.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Unbounded transitions permit replay, duplicate completion, and inconsistent settlement.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-003",
+      "area": "ownership_lifecycle",
+      "normalized_decision": "Classify ephemeral, process-local, target-durable, and route-durable records with their atomic boundaries.",
+      "chosen_resolution": "Each record class has one storage owner and an explicit atomic handoff boundary.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Ambiguous durability lets crashes manufacture or lose authority.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-004",
+      "area": "ownership_lifecycle",
+      "normalized_decision": "Define how existing execution and stream lifecycle suspend for a pending patch without treating it as complete.",
+      "chosen_resolution": "Pending is a nonterminal typed suspension with explicit resume ownership.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Treating pending as complete can expose an uncommitted effect as final.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-005",
+      "area": "canonical_types",
+      "normalized_decision": "Freeze versions and canonical encodings for every request, model, plan, grant, journal, result, event, and target RPC value.",
+      "chosen_resolution": "Versioned closed schemas are canonicalized at each trust boundary.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Encoding ambiguity enables downgrade and confused-deputy parsing.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-006",
+      "area": "canonical_types",
+      "normalized_decision": "Freeze stable identifiers, observer identifiers, correlation rules, and content-derived versus random audience-scoped tokens.",
+      "chosen_resolution": "Identifiers have one typed derivation rule and observer tokens are audience scoped.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Unscoped identifiers permit correlation leaks and authority substitution.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-007",
+      "area": "canonical_types",
+      "normalized_decision": "Freeze every closed enum or tag and reject unknown values at every boundary.",
+      "chosen_resolution": "All discriminators are exhaustive and unknown values fail closed.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Unknown tags can silently select unintended mutation semantics.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-008",
+      "area": "canonical_types",
+      "normalized_decision": "Freeze equality, hashing, serialization, representation, and redaction behavior for content-bearing and authority-bearing values.",
+      "chosen_resolution": "Sensitive values use immutable redaction-safe wrappers with canonical serialization.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Diagnostic output or unstable equality can leak content or invalidate grants.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-009",
+      "area": "target_protocol",
+      "normalized_decision": "Select immutable local, sandbox, and container mutation workers with authenticated versioned IPC.",
+      "chosen_resolution": "Each target uses a narrow immutable worker and mutually authenticated versioned RPC.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "A general writable process or unauthenticated IPC expands mutation authority.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-010",
+      "area": "target_protocol",
+      "normalized_decision": "Prove the rooted directory-handle or namespace mechanism that keeps replaced ancestors out of scope.",
+      "chosen_resolution": "Workers address paths through rooted handles with no-follow resolution and revalidation.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "String-path resolution is vulnerable to ancestor replacement races.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-011",
+      "area": "target_protocol",
+      "normalized_decision": "Record per-platform inspection, identity, alias, mount, create, move, publication, metadata, staging, fencing, and verification primitives.",
+      "chosen_resolution": "Each target capability profile names proven platform primitives and their limits.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Assuming an unavailable primitive makes advertised safety guarantees false.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-012",
+      "area": "target_protocol",
+      "normalized_decision": "Define downgrade and advertisement behavior when a primitive or protected metadata field is unavailable.",
+      "chosen_resolution": "Unsupported primitives remove the capability or fail closed before advertisement.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Silent downgrade permits unsafe mutation under a stronger advertised contract.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-013",
+      "area": "target_protocol",
+      "normalized_decision": "Define each target foreign-writer guarantee and whether it supplies conditional replacement or an excluding lease.",
+      "chosen_resolution": "Target profiles disclose only verified conditional-replacement or lease guarantees.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Overclaiming isolation causes lost updates and false verification.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-014",
+      "area": "policy_disclosure_limits",
+      "normalized_decision": "Freeze independent capability types and the conservative pre-inspection capability upper bound.",
+      "chosen_resolution": "Policy computes typed capabilities before inspection and only narrows them afterward.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Inspection-derived expansion could turn hostile content into authority.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-015",
+      "area": "policy_disclosure_limits",
+      "normalized_decision": "Freeze path classes, hidden and sensitive denies, executable policy, approval modes, reviewer quorum, and bounded preauthorization.",
+      "chosen_resolution": "A typed policy matrix denies by default and binds approval to finite reviewed scope.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Broad path or approval rules permit privilege escalation.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-016",
+      "area": "policy_disclosure_limits",
+      "normalized_decision": "Freeze audience disclosure and coarsening for errors, timing, counts, sizes, paths, hashes, match locations, and diffs.",
+      "chosen_resolution": "Projection policies are audience-specific and redact or coarsen sensitive details.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Uncontrolled projections can exfiltrate workspace content and topology.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-017",
+      "area": "policy_disclosure_limits",
+      "normalized_decision": "Freeze finite defaults and composition rules for input, planning, read, state, diff, staging, concurrency, and duration limits.",
+      "chosen_resolution": "Limits are finite typed policy inputs with a conservative composition rule.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Unbounded work permits resource exhaustion and timing disclosure.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-018",
+      "area": "approval_interaction",
+      "normalized_decision": "Decide how action approval carries an immutable review reference and typed broker decision instead of a boolean confirmation.",
+      "chosen_resolution": "Approval stores an immutable plan review reference and closed broker decision.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Boolean confirmation can be replayed for an altered plan.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-019",
+      "area": "approval_interaction",
+      "normalized_decision": "Freeze review delivery, pagination, expiry, quorum, detached wait, resumption, and single-use grant semantics.",
+      "chosen_resolution": "Review protocol uses expiring paginated immutable material and a single-use grant.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Incomplete review delivery or reusable grants permit approval bypass.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-020",
+      "area": "approval_interaction",
+      "normalized_decision": "Define the atomic grant validation and consumption transaction that assigns the sole commit owner.",
+      "chosen_resolution": "One durable transaction consumes a bound grant while fencing the commit owner.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Separate validation and consumption enables concurrent double commit.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-021",
+      "area": "approval_interaction",
+      "normalized_decision": "Prove no filesystem lock, writable handle, worker, or mutable transaction survives human approval.",
+      "chosen_resolution": "Approval wait releases mutable resources and resumes through a fresh fenced acquisition.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Retained resources can deadlock or mutate without an active grant.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-022",
+      "area": "coordination_persistence",
+      "normalized_decision": "Freeze coordination-domain discovery across process, context, filesystem view, and lease identities.",
+      "chosen_resolution": "A canonical coordination key binds process, context, filesystem view, and lease identity.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Mismatched domains permit conflicting writers to avoid serialization.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-023",
+      "area": "coordination_persistence",
+      "normalized_decision": "Freeze workspace-wide serialization and deterministic total lock order while path-level concurrency remains optional.",
+      "chosen_resolution": "The baseline serializes each workspace and uses a deterministic total lock order.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Unproven path parallelism introduces deadlocks and overlapping writes.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-024",
+      "area": "coordination_persistence",
+      "normalized_decision": "Select durable storage and migrations for idempotency, ownership, leases, journals, outbox, pending, and terminal results.",
+      "chosen_resolution": "Durable PostgreSQL-backed records and migration gates own all settlement state.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Volatile or unmigrated state loses fencing and recovery evidence.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-025",
+      "area": "coordination_persistence",
+      "normalized_decision": "Freeze commit-step dependencies and atomicity classes, including move-with-update intermediate states.",
+      "chosen_resolution": "A closed dependency graph names every observable intermediate state and atomicity claim.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Implicit intermediate states can expose inconsistent or partial results.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-026",
+      "area": "coordination_persistence",
+      "normalized_decision": "Freeze timeout, cancellation, worker-loss, reconciliation, retention, and terminal-publication behavior.",
+      "chosen_resolution": "All interruption paths enter typed reconciliation before one terminal publication.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Ad hoc interruption handling can duplicate effects or hide incomplete work.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-027",
+      "area": "coordination_persistence",
+      "normalized_decision": "Freeze the allowed-await and resource-depth matrix; every unlisted combination is forbidden.",
+      "chosen_resolution": "An explicit matrix forbids unlisted waits while locks, transactions, handles, workers, grants, or pending state are held.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Awaiting with mutable resources held causes deadlock and lease loss.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-028",
+      "area": "public_provider_surfaces",
+      "normalized_decision": "Freeze the typed two-phase ToolManager hook and its compatibility boundary with generic confirmation, filters, transformers, streaming, and scheduling.",
+      "chosen_resolution": "ToolManager receives a typed prepare-approve-commit hook that fails closed by patch identity.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Generic confirmation can approve mutable patch authority it cannot inspect.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-029",
+      "area": "public_provider_surfaces",
+      "normalized_decision": "Freeze portable JSON schemas, provider lowering, full-stream buffering, freeform evidence, and inert replay behavior.",
+      "chosen_resolution": "Portable JSON is baseline; provider codecs require equivalent capability evidence and unactivated history stays inert.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Provider-specific replay or incomplete streams can alter a reviewed request.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-030",
+      "area": "public_provider_surfaces",
+      "normalized_decision": "Freeze authority, retransmission, suspension, result, and event mappings for SDK, CLI, server, MCP, A2A, flow, task, and multi-agent surfaces.",
+      "chosen_resolution": "Every surface has one typed authority and pending/result/event mapping before advertisement.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Surface drift can bypass pending, authorization, or replay protections.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    },
+    {
+      "id": "PATCH-DEC-031",
+      "area": "public_provider_surfaces",
+      "normalized_decision": "Freeze the rule that a surface without durable pending either waits for terminal result or does not advertise patch.",
+      "chosen_resolution": "A surface lacking durable pending support blocks for terminal settlement or remains unavailable.",
+      "alternatives": [
+        "Defer the decision to implementation-time convention.",
+        "Reuse a broad existing mechanism without a patch-specific contract."
+      ],
+      "security_consequences": "Advertising without pending semantics loses approval and settlement state.",
+      "replacement_process": "Require a versioned replacement proposal, threat review, migration plan, traceability update, and full acceptance evidence before superseding this decision.",
+      "owning_phase": 0,
+      "status": "frozen"
+    }
+  ],
+  "contract_artifacts": {
+    "lifecycle": {
+      "owner": "PatchExecutionRecord",
+      "initial": "received",
+      "terminal": "request_completed",
+      "states": [
+        "received",
+        "parsed",
+        "scope_bound",
+        "preflight_authorized",
+        "planned",
+        "approval_required",
+        "approved",
+        "commit_ready",
+        "commit_started",
+        "settlement_pending",
+        "settled",
+        "request_completed"
+      ],
+      "transitions": [
+        {
+          "from": "received",
+          "to": "parsed",
+          "cause": "complete bounded input"
+        },
+        {
+          "from": "received",
+          "to": "request_completed",
+          "cause": "parse, lexical, cancellation, or limit failure"
+        },
+        {
+          "from": "parsed",
+          "to": "request_completed",
+          "cause": "parse, lexical, cancellation, or limit failure"
+        },
+        {
+          "from": "parsed",
+          "to": "scope_bound",
+          "cause": "trusted scope bound"
+        },
+        {
+          "from": "scope_bound",
+          "to": "preflight_authorized",
+          "cause": "pre-inspection policy allows the conservative external-effect upper bound, paths, precondition observation, and read budget"
+        },
+        {
+          "from": "scope_bound",
+          "to": "request_completed",
+          "cause": "pre-inspection denial or unavailable capability"
+        },
+        {
+          "from": "preflight_authorized",
+          "to": "planned",
+          "cause": "bounded snapshot and virtual planning succeed"
+        },
+        {
+          "from": "preflight_authorized",
+          "to": "request_completed",
+          "cause": "snapshot, match, conflict, content, or limit failure"
+        },
+        {
+          "from": "planned",
+          "to": "request_completed",
+          "cause": "exact final-effect policy denies"
+        },
+        {
+          "from": "planned",
+          "to": "approval_required",
+          "cause": "policy requires review"
+        },
+        {
+          "from": "planned",
+          "to": "approved",
+          "cause": "trusted class is preauthorized"
+        },
+        {
+          "from": "approval_required",
+          "to": "approved",
+          "cause": "grant received and bound"
+        },
+        {
+          "from": "approval_required",
+          "to": "request_completed",
+          "cause": "denial, expiry, cancellation, or unavailable broker"
+        },
+        {
+          "from": "approved",
+          "to": "commit_ready",
+          "cause": "lock and final revalidation succeed"
+        },
+        {
+          "from": "approved",
+          "to": "request_completed",
+          "cause": "stale, cancellation, timeout, or policy change"
+        },
+        {
+          "from": "commit_ready",
+          "to": "commit_started",
+          "cause": "first requested effect or context-visible staging artifact may become visible"
+        },
+        {
+          "from": "commit_started",
+          "to": "settled",
+          "cause": "worker settles and journal is reconciled"
+        },
+        {
+          "from": "commit_started",
+          "to": "settlement_pending",
+          "cause": "worker is still live or not yet provably fenced"
+        },
+        {
+          "from": "settlement_pending",
+          "to": "settled",
+          "cause": "same worker settles or is fenced and reconciled"
+        },
+        {
+          "from": "settled",
+          "to": "request_completed",
+          "cause": "result projection complete"
+        }
+      ],
+      "replacement": {
+        "version": 1,
+        "requires": [
+          "versioned_replacement_proposal",
+          "threat_review",
+          "migration_plan",
+          "traceability_update",
+          "full_acceptance_evidence"
+        ]
+      }
+    },
+    "limits": [
+      {
+        "id": "max_raw_input_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_raw_input_bytes = min(provider.max_raw_input_bytes, manager.max_raw_input_bytes, policy.max_raw_input_bytes, context.max_raw_input_bytes, backend.max_raw_input_bytes); raw_input_bytes <= effective.max_raw_input_bytes"
+      },
+      {
+        "id": "max_raw_input_lines",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_raw_input_lines = min(provider.max_raw_input_lines, manager.max_raw_input_lines, policy.max_raw_input_lines, context.max_raw_input_lines, backend.max_raw_input_lines); raw_input_lines <= effective.max_raw_input_lines"
+      },
+      {
+        "id": "max_path_count",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_path_count = min(provider.max_path_count, manager.max_path_count, policy.max_path_count, context.max_path_count, backend.max_path_count); path_count <= effective.max_path_count"
+      },
+      {
+        "id": "max_path_length",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_path_length = min(provider.max_path_length, manager.max_path_length, policy.max_path_length, context.max_path_length, backend.max_path_length); path_length <= effective.max_path_length"
+      },
+      {
+        "id": "max_path_component_length",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_path_component_length = min(provider.max_path_component_length, manager.max_path_component_length, policy.max_path_component_length, context.max_path_component_length, backend.max_path_component_length); path_component_length <= effective.max_path_component_length"
+      },
+      {
+        "id": "max_path_depth",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_path_depth = min(provider.max_path_depth, manager.max_path_depth, policy.max_path_depth, context.max_path_depth, backend.max_path_depth); path_depth <= effective.max_path_depth"
+      },
+      {
+        "id": "max_file_count",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_file_count = min(provider.max_file_count, manager.max_file_count, policy.max_file_count, context.max_file_count, backend.max_file_count); file_count <= effective.max_file_count"
+      },
+      {
+        "id": "max_file_lineages",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_file_lineages = min(provider.max_file_lineages, manager.max_file_lineages, policy.max_file_lineages, context.max_file_lineages, backend.max_file_lineages); file_lineage_count <= effective.max_file_lineages"
+      },
+      {
+        "id": "max_operations",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_operations = min(provider.max_operations, manager.max_operations, policy.max_operations, context.max_operations, backend.max_operations); operation_count <= effective.max_operations"
+      },
+      {
+        "id": "max_update_declarations",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_update_declarations = min(provider.max_update_declarations, manager.max_update_declarations, policy.max_update_declarations, context.max_update_declarations, backend.max_update_declarations); update_declaration_count <= effective.max_update_declarations"
+      },
+      {
+        "id": "max_hunks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_hunks = min(provider.max_hunks, manager.max_hunks, policy.max_hunks, context.max_hunks, backend.max_hunks); hunk_count <= effective.max_hunks"
+      },
+      {
+        "id": "max_replacements",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_replacements = min(provider.max_replacements, manager.max_replacements, policy.max_replacements, context.max_replacements, backend.max_replacements); replacement_count <= effective.max_replacements"
+      },
+      {
+        "id": "max_match_candidates",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_match_candidates = min(provider.max_match_candidates, manager.max_match_candidates, policy.max_match_candidates, context.max_match_candidates, backend.max_match_candidates); match_candidate_count <= effective.max_match_candidates"
+      },
+      {
+        "id": "max_per_file_snapshot_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_per_file_snapshot_bytes = min(provider.max_per_file_snapshot_bytes, manager.max_per_file_snapshot_bytes, policy.max_per_file_snapshot_bytes, context.max_per_file_snapshot_bytes, backend.max_per_file_snapshot_bytes); per_file_snapshot_bytes <= effective.max_per_file_snapshot_bytes"
+      },
+      {
+        "id": "max_aggregate_bytes_read",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_aggregate_bytes_read = min(provider.max_aggregate_bytes_read, manager.max_aggregate_bytes_read, policy.max_aggregate_bytes_read, context.max_aggregate_bytes_read, backend.max_aggregate_bytes_read); aggregate_bytes_read <= effective.max_aggregate_bytes_read"
+      },
+      {
+        "id": "max_per_file_proposed_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_per_file_proposed_bytes = min(provider.max_per_file_proposed_bytes, manager.max_per_file_proposed_bytes, policy.max_per_file_proposed_bytes, context.max_per_file_proposed_bytes, backend.max_per_file_proposed_bytes); per_file_proposed_bytes <= effective.max_per_file_proposed_bytes"
+      },
+      {
+        "id": "max_aggregate_proposed_state_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_aggregate_proposed_state_bytes = min(provider.max_aggregate_proposed_state_bytes, manager.max_aggregate_proposed_state_bytes, policy.max_aggregate_proposed_state_bytes, context.max_aggregate_proposed_state_bytes, backend.max_aggregate_proposed_state_bytes); aggregate_proposed_state_bytes <= effective.max_aggregate_proposed_state_bytes"
+      },
+      {
+        "id": "max_added_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_added_bytes = min(provider.max_added_bytes, manager.max_added_bytes, policy.max_added_bytes, context.max_added_bytes, backend.max_added_bytes); added_bytes <= effective.max_added_bytes"
+      },
+      {
+        "id": "max_removed_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_removed_bytes = min(provider.max_removed_bytes, manager.max_removed_bytes, policy.max_removed_bytes, context.max_removed_bytes, backend.max_removed_bytes); removed_bytes <= effective.max_removed_bytes"
+      },
+      {
+        "id": "max_total_changed_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_total_changed_bytes = min(provider.max_total_changed_bytes, manager.max_total_changed_bytes, policy.max_total_changed_bytes, context.max_total_changed_bytes, backend.max_total_changed_bytes); total_changed_bytes <= effective.max_total_changed_bytes"
+      },
+      {
+        "id": "max_diff_work_units",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_diff_work_units = min(provider.max_diff_work_units, manager.max_diff_work_units, policy.max_diff_work_units, context.max_diff_work_units, backend.max_diff_work_units); diff_work_units <= effective.max_diff_work_units"
+      },
+      {
+        "id": "max_full_review_diff_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_full_review_diff_bytes = min(provider.max_full_review_diff_bytes, manager.max_full_review_diff_bytes, policy.max_full_review_diff_bytes, context.max_full_review_diff_bytes, backend.max_full_review_diff_bytes); full_review_diff_bytes <= effective.max_full_review_diff_bytes"
+      },
+      {
+        "id": "max_returned_diff_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_returned_diff_bytes = min(provider.max_returned_diff_bytes, manager.max_returned_diff_bytes, policy.max_returned_diff_bytes, context.max_returned_diff_bytes, backend.max_returned_diff_bytes); returned_diff_bytes <= effective.max_returned_diff_bytes"
+      },
+      {
+        "id": "max_planning_memory_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_planning_memory_bytes = min(provider.max_planning_memory_bytes, manager.max_planning_memory_bytes, policy.max_planning_memory_bytes, context.max_planning_memory_bytes, backend.max_planning_memory_bytes); planning_memory_bytes <= effective.max_planning_memory_bytes"
+      },
+      {
+        "id": "max_private_staging_disk_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_private_staging_disk_bytes = min(provider.max_private_staging_disk_bytes, manager.max_private_staging_disk_bytes, policy.max_private_staging_disk_bytes, context.max_private_staging_disk_bytes, backend.max_private_staging_disk_bytes); private_staging_disk_bytes <= effective.max_private_staging_disk_bytes"
+      },
+      {
+        "id": "max_journal_bytes",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_journal_bytes = min(provider.max_journal_bytes, manager.max_journal_bytes, policy.max_journal_bytes, context.max_journal_bytes, backend.max_journal_bytes); journal_bytes <= effective.max_journal_bytes"
+      },
+      {
+        "id": "max_planning_duration_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_planning_duration_ticks = min(provider.max_planning_duration_ticks, manager.max_planning_duration_ticks, policy.max_planning_duration_ticks, context.max_planning_duration_ticks, backend.max_planning_duration_ticks); planning_duration_ticks <= effective.max_planning_duration_ticks"
+      },
+      {
+        "id": "max_approval_wait_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_approval_wait_ticks = min(provider.max_approval_wait_ticks, manager.max_approval_wait_ticks, policy.max_approval_wait_ticks, context.max_approval_wait_ticks, backend.max_approval_wait_ticks); approval_wait_ticks <= effective.max_approval_wait_ticks"
+      },
+      {
+        "id": "max_lock_wait_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_lock_wait_ticks = min(provider.max_lock_wait_ticks, manager.max_lock_wait_ticks, policy.max_lock_wait_ticks, context.max_lock_wait_ticks, backend.max_lock_wait_ticks); lock_wait_ticks <= effective.max_lock_wait_ticks"
+      },
+      {
+        "id": "max_revalidation_duration_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_revalidation_duration_ticks = min(provider.max_revalidation_duration_ticks, manager.max_revalidation_duration_ticks, policy.max_revalidation_duration_ticks, context.max_revalidation_duration_ticks, backend.max_revalidation_duration_ticks); revalidation_duration_ticks <= effective.max_revalidation_duration_ticks"
+      },
+      {
+        "id": "max_commit_duration_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_commit_duration_ticks = min(provider.max_commit_duration_ticks, manager.max_commit_duration_ticks, policy.max_commit_duration_ticks, context.max_commit_duration_ticks, backend.max_commit_duration_ticks); commit_duration_ticks <= effective.max_commit_duration_ticks"
+      },
+      {
+        "id": "max_verification_duration_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_verification_duration_ticks = min(provider.max_verification_duration_ticks, manager.max_verification_duration_ticks, policy.max_verification_duration_ticks, context.max_verification_duration_ticks, backend.max_verification_duration_ticks); verification_duration_ticks <= effective.max_verification_duration_ticks"
+      },
+      {
+        "id": "max_diagnostic_duration_ticks",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_diagnostic_duration_ticks = min(provider.max_diagnostic_duration_ticks, manager.max_diagnostic_duration_ticks, policy.max_diagnostic_duration_ticks, context.max_diagnostic_duration_ticks, backend.max_diagnostic_duration_ticks); diagnostic_duration_ticks <= effective.max_diagnostic_duration_ticks"
+      },
+      {
+        "id": "max_concurrent_plans",
+        "minimum": 1,
+        "default": 1,
+        "maximum": 1,
+        "composition": "effective.max_concurrent_plans = min(provider.max_concurrent_plans, manager.max_concurrent_plans, policy.max_concurrent_plans, context.max_concurrent_plans, backend.max_concurrent_plans); concurrent_plan_count <= effective.max_concurrent_plans"
+      },
+      {
+        "id": "max_denied_attempts",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_denied_attempts = min(provider.max_denied_attempts, manager.max_denied_attempts, policy.max_denied_attempts, context.max_denied_attempts, backend.max_denied_attempts); denied_attempt_count <= effective.max_denied_attempts"
+      },
+      {
+        "id": "max_failed_attempts",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_failed_attempts = min(provider.max_failed_attempts, manager.max_failed_attempts, policy.max_failed_attempts, context.max_failed_attempts, backend.max_failed_attempts); failed_attempt_count <= effective.max_failed_attempts"
+      },
+      {
+        "id": "max_retransmission_attempts",
+        "minimum": 1,
+        "default": 100,
+        "maximum": 1000,
+        "composition": "effective.max_retransmission_attempts = min(provider.max_retransmission_attempts, manager.max_retransmission_attempts, policy.max_retransmission_attempts, context.max_retransmission_attempts, backend.max_retransmission_attempts); retransmission_attempt_count <= effective.max_retransmission_attempts"
+      }
+    ],
+    "allowed_await_matrix": [
+      {
+        "boundary": "store_connection",
+        "depths": {
+          "transaction": 1,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "fault_wait",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_negotiation",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_inspection",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_precondition",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_handle_open",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_handle_close",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_lock_acquire",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_lock_release",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 1,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_stage",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 1,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_cleanup",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 1,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 1,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_namespace_mutation",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_commit",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 1,
+          "target_handle": 1,
+          "target_worker": 1,
+          "staging_resource": 1,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_verification",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 1,
+          "target_handle": 1,
+          "target_worker": 0,
+          "staging_resource": 1,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "approval_decision",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 1
+        }
+      },
+      {
+        "boundary": "approval_consume",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 1
+        }
+      },
+      {
+        "boundary": "approval_concurrent_consume",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 1
+        }
+      },
+      {
+        "boundary": "target_factory_create",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "target_factory_negotiate",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      },
+      {
+        "boundary": "publication",
+        "depths": {
+          "transaction": 0,
+          "coordinator_lease": 0,
+          "target_handle": 0,
+          "target_worker": 0,
+          "staging_resource": 0,
+          "approval_wait": 0
+        }
+      }
+    ],
+    "closed_tags": {
+      "mutation_state": [
+        "not_committed",
+        "committed",
+        "partially_committed",
+        "indeterminate"
+      ],
+      "approval_decision": [
+        "approve",
+        "deny",
+        "unavailable"
+      ],
+      "approval_outcome": [
+        "approved",
+        "denied",
+        "unavailable",
+        "expired",
+        "binding_mismatch",
+        "replayed"
+      ],
+      "artifact_state": [
+        "absent",
+        "staged",
+        "published",
+        "cleaned",
+        "indeterminate"
+      ],
+      "operation_kind": [
+        "create",
+        "update",
+        "delete",
+        "move"
+      ],
+      "lifecycle_state": [
+        "received",
+        "parsed",
+        "scope_bound",
+        "preflight_authorized",
+        "planned",
+        "approval_required",
+        "approved",
+        "commit_ready",
+        "commit_started",
+        "settlement_pending",
+        "settled",
+        "request_completed"
+      ]
+    }
+  },
+  "inventories": {
+    "src": [
+      {
+        "path": "src/avalan/__init__.py",
+        "source_sha256": "b29ddd5626e1a5948771867701e91d44dcebeaf512f06f7c0841da17a3036edd"
+      },
+      {
+        "path": "src/avalan/agent/__init__.py",
+        "source_sha256": "4f0af9a91ca59c23e7a85638d2685a5b1a07424a6ff99cbef35580f83c860e74"
+      },
+      {
+        "path": "src/avalan/agent/continuation.py",
+        "source_sha256": "d776a3086eb27d6c4f2df88e0beaedb9c3f3d169d7f011bb3f340daf60a34afb"
+      },
+      {
+        "path": "src/avalan/agent/continuation_stager.py",
+        "source_sha256": "8b3f62e38271ca85cc11c18bb95e1e5d56fbcf0735547ba22b2a6784337fc63c"
+      },
+      {
+        "path": "src/avalan/agent/conversation_child.py",
+        "source_sha256": "a5c76caa3306c91319b44aa6677ea8baa080da444f211e822d98932e5fbddd23"
+      },
+      {
+        "path": "src/avalan/agent/conversation_trace.py",
+        "source_sha256": "03aca91852ee02cebf1aa491db9208ddac5a7c2c566daa338736e25811a12fc6"
+      },
+      {
+        "path": "src/avalan/agent/durable_runtime.py",
+        "source_sha256": "321b92e4ed64aa75c3f54c4b4845411eb7d91ca7b12a4588c2647f08811ef559"
+      },
+      {
+        "path": "src/avalan/agent/engine.py",
+        "source_sha256": "21d9cc1d8df4caa3d330a1b1ae67893ccbcc9b327033465e48978d4894897e7c"
+      },
+      {
+        "path": "src/avalan/agent/execution.py",
+        "source_sha256": "73e1b7ce7093749d6f876a765b3b19af4ba1c1dbc6762eecbf08abab9f6af6b7"
+      },
+      {
+        "path": "src/avalan/agent/loader.py",
+        "source_sha256": "e91dafed0ae12af9d1e8cec0280798fa1fdcf44073d06ed68a2a6963c42e6c3e"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/__init__.py",
+        "source_sha256": "95e8249e9f8845e0940cbeec90a34a399774f1ecbd1773af19cf02566f0f37a1"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/orchestrators/default.py",
+        "source_sha256": "38cea780a997da24b70d594328e0348efad3f9d8be2319fe7d0ef98c4c2d8499"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/orchestrators/json.py",
+        "source_sha256": "083ecd08ee16e0a1556486b5dbc8227d647709b2b0e659a660b1ae2f973f912a"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/orchestrators/reasoning/cot.py",
+        "source_sha256": "ce8845b2eda18d56f1d3829f1e5df0472656c7fa7f1ac210140670695095b1f1"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/orchestrators/reasoning/parser.py",
+        "source_sha256": "8123d6bcc1e44d887dc92766dfdd4bf9bb0efb3661298b4b4f62f111a1e7f678"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/response/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+        "source_sha256": "0c02ad374f43185e69199d1bb10a4c404cb73c16596763df2ebcc8129c0a2962"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator_contract.py",
+        "source_sha256": "836ac887b05100202f9eecddc7f5f6ec19b42741cb3c97a7f44746ad32c25c30"
+      },
+      {
+        "path": "src/avalan/agent/orchestrator_response_contract.py",
+        "source_sha256": "8d1b08b39866836f4d9268b46ff9b58b291bbcc1bac3308a987e40dd1e996b45"
+      },
+      {
+        "path": "src/avalan/agent/renderer.py",
+        "source_sha256": "cf9d01bb0e4cfbf74e1998a79d2239843c2e39bdad5cce91ae611fd6262efa7b"
+      },
+      {
+        "path": "src/avalan/backends/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/__init__.py",
+        "source_sha256": "2171d8f4e1d6061089ed3aa706584194fa6383063d7957d86f48c664b04f4fa5"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/availability.py",
+        "source_sha256": "3a115a0bd4fb5a8dc88525eb0e4cf2e59d7c589730a65393fa3284159cb28816"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/engine.py",
+        "source_sha256": "a347edf570fb017b23d75ba2b54bfc0e68139bd8fba80d5caace4da0a994d715"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/errors.py",
+        "source_sha256": "504bfaf3d75518c5ec42d37e45cbda84f23141f35d7e56c2ea1f7c1f911ba4ac"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/metadata.py",
+        "source_sha256": "b35223a214a0fd41a89696780701707f1ccdd46cebb0af0b742575a0a123fe08"
+      },
+      {
+        "path": "src/avalan/backends/ds4_native/types.py",
+        "source_sha256": "074b31e36135f96adfb729e3e74012516d5a3ec5a3e0882fc7681df1194d2144"
+      },
+      {
+        "path": "src/avalan/cli/__init__.py",
+        "source_sha256": "5ec3827b4c28d3ebe54ff5066965063896cb1467b40b3db0b0f142893ee4c429"
+      },
+      {
+        "path": "src/avalan/cli/__main__.py",
+        "source_sha256": "8c407b091ffc1ef2eccfa040cac448e5d4d8bff8967fe46203a1e90921314f43"
+      },
+      {
+        "path": "src/avalan/cli/_stream_presenter.py",
+        "source_sha256": "5f22d2a13320f69b6f7b95dd46484c15f63729ae859120fbf29c21f97549a418"
+      },
+      {
+        "path": "src/avalan/cli/commands/__init__.py",
+        "source_sha256": "fc162af218247f9825e6e12d40123b0131435707e5ab42f99814c28ea16288b6"
+      },
+      {
+        "path": "src/avalan/cli/commands/agent.py",
+        "source_sha256": "071f2f05733acfbfb47eb925ddcfc30149adc353aa640b97d27e3ac6a1db007b"
+      },
+      {
+        "path": "src/avalan/cli/commands/cache.py",
+        "source_sha256": "53dfd7d2954fea009cec0c5f112e3dd22c5508bd7a1a4ab5d511563cfa32a1c6"
+      },
+      {
+        "path": "src/avalan/cli/commands/deploy.py",
+        "source_sha256": "31df5cc9e53a770fb39ae8a9af267bc291566650341dd15ba282b9e2b2b552d3"
+      },
+      {
+        "path": "src/avalan/cli/commands/flow.py",
+        "source_sha256": "4bd7d9ed4ebd70ebfc2c1f85a1993e8af4cf5cdd50bb7e53668f6d1a62cb9ede"
+      },
+      {
+        "path": "src/avalan/cli/commands/memory.py",
+        "source_sha256": "bef012ed9ecf2a7f44e7e5f429945a34e982300ece2253703a7d735f6e426eb9"
+      },
+      {
+        "path": "src/avalan/cli/commands/model.py",
+        "source_sha256": "b017798d79ffd7ea66cfb8d79e6d4d1588694ebf602a81b9b9a87e1dc4e4a06e"
+      },
+      {
+        "path": "src/avalan/cli/commands/task.py",
+        "source_sha256": "98d1f167b73b53e6f376fc567932cb7b8a48aad5eff9acf5f7897d8280bd7e39"
+      },
+      {
+        "path": "src/avalan/cli/commands/tokenizer.py",
+        "source_sha256": "17d404adc23bfa02b9482816081b25745f8b2114b5eac30e03e9829c52ab41b4"
+      },
+      {
+        "path": "src/avalan/cli/display.py",
+        "source_sha256": "66ebd6a60746750bc1ff98416686bb8fff3d489f9b412c9b9caf0857ea2d2931"
+      },
+      {
+        "path": "src/avalan/cli/display_reducer.py",
+        "source_sha256": "a2ceb65c9fc55547809e6c537c61754bd609c32b1c7e31c945e700047d986f0e"
+      },
+      {
+        "path": "src/avalan/cli/display_safety.py",
+        "source_sha256": "13ead883536d1d0a394775276205189215180d0bf4c12ca171f195bbbcabbcf9"
+      },
+      {
+        "path": "src/avalan/cli/display_snapshot.py",
+        "source_sha256": "2cccea6feb5eb72c334aefc642a2295cecad8ab79a1e168b4fe818a3756fed38"
+      },
+      {
+        "path": "src/avalan/cli/download.py",
+        "source_sha256": "3c4874eb50c22df3d4d8960168c806b3aea2d1763774c82b0e15cc65c879d94a"
+      },
+      {
+        "path": "src/avalan/cli/interaction_channel.py",
+        "source_sha256": "d0d2f1ffc9f38c7bb4776ef192bb8767028eac5848f49efe8d9b3ed2c70f9467"
+      },
+      {
+        "path": "src/avalan/cli/interaction_renderer.py",
+        "source_sha256": "39b374259756bbbff24da8ef960618774fc4c321a12c482888867beaf19a0421"
+      },
+      {
+        "path": "src/avalan/cli/stream_coordinator.py",
+        "source_sha256": "3b5b17154ebd003b37d4f90d5a8e048224ceb3cb9b5100d4c7c2cb02683acc3e"
+      },
+      {
+        "path": "src/avalan/cli/stream_presenter.py",
+        "source_sha256": "59c5e8b7d19102fe4b9c8909bdda1ddeeba1b032d377af86779c28e4a7482488"
+      },
+      {
+        "path": "src/avalan/cli/theme/__init__.py",
+        "source_sha256": "8e3ae80a9fc00b6d102c68a400c80397a4d75c0664f7d9dd3f76e37336cde3bf"
+      },
+      {
+        "path": "src/avalan/cli/theme/basic.py",
+        "source_sha256": "f37780ebbcd83c507e52ff6f279bd598f2a5fe6783e50fff036013093739e5ce"
+      },
+      {
+        "path": "src/avalan/cli/theme/fancy.py",
+        "source_sha256": "fa8d485f982c97fabab1f810e96c433e5b914cbab9355e6d008ba0115791ebab"
+      },
+      {
+        "path": "src/avalan/cli/theme/stream_presenter.py",
+        "source_sha256": "a5bb0d11caf0a77481e274c1cc5832aa5e4c806fae5bed56ad94ba8e9f6adbbc"
+      },
+      {
+        "path": "src/avalan/cli/theme/tool_projection.py",
+        "source_sha256": "75bf41a970af0defa96f46e05e0c554fc4397ab6052eac9f644b24917ea58b1e"
+      },
+      {
+        "path": "src/avalan/cli/theme_registry.py",
+        "source_sha256": "b4ebf6e0b42fb826f72ea86eef8e87e619ae9f4b6f28b2adcdf82764e5fa0d0a"
+      },
+      {
+        "path": "src/avalan/compat.py",
+        "source_sha256": "10a1eec7f006de0ab77886f56a53aec07ff269e0c83177e6cb318aada6f8fc5b"
+      },
+      {
+        "path": "src/avalan/container/__init__.py",
+        "source_sha256": "24bcb4a69ff26bb431584e0e4ea30d9b5133cf887916b04998fce86bc7072d4b"
+      },
+      {
+        "path": "src/avalan/container/apple.py",
+        "source_sha256": "f4998de7adcf7900e0d675055d41b9be4272a7bcc5b7c221a2415348feaf5157"
+      },
+      {
+        "path": "src/avalan/container/audit.py",
+        "source_sha256": "ed87d39f338cec3a419b7d2df7ad874944a8364b6e4f990c94e3e930d6eb2df7"
+      },
+      {
+        "path": "src/avalan/container/backend.py",
+        "source_sha256": "4a328aaf91a9aa0d2355c059b41c8064ce941ca84d9cbe7760aba07b8b33cc34"
+      },
+      {
+        "path": "src/avalan/container/conformance.py",
+        "source_sha256": "0ecab6898de47c2251a4c4a86780ea214d3cf6f334a2544513fb012a265c22cb"
+      },
+      {
+        "path": "src/avalan/container/docker.py",
+        "source_sha256": "b560ad4cdbaded5b7347db00a00c308bdffce3e1d650a9f4ffa5b8d3d5caf5c2"
+      },
+      {
+        "path": "src/avalan/container/integration.py",
+        "source_sha256": "89074eb22127ccc870e7fb77480fb9bf3d3b488d9d46c26cdef8e2f1d635e9d6"
+      },
+      {
+        "path": "src/avalan/container/lifecycle.py",
+        "source_sha256": "921aeb22139dfed8920c791369a77f13815768920e02c8cb51c13d103566702f"
+      },
+      {
+        "path": "src/avalan/container/output.py",
+        "source_sha256": "13e61ad09d294ad0d96192927cdcdf3412d04779d860113b3d2d9699ca65d78d"
+      },
+      {
+        "path": "src/avalan/container/planning.py",
+        "source_sha256": "a223b867b12bd04a15d9d14bd90d12a54431c96d6c4b14e65bc1ae81547e8a5f"
+      },
+      {
+        "path": "src/avalan/container/policy.py",
+        "source_sha256": "500a936de8903c8f54a566167e362b388984cc44ffcf9c69159137d0f25f2a26"
+      },
+      {
+        "path": "src/avalan/container/profiles.py",
+        "source_sha256": "ed5ed25013c4ef23034dd09d7886fc0333192c3bb83c263da78f88ae55dc4ece"
+      },
+      {
+        "path": "src/avalan/container/runtime.py",
+        "source_sha256": "bfb70b1e602ffa26c40666606788cfff3e42379f0a936b499d9eb22eaa9cf6e0"
+      },
+      {
+        "path": "src/avalan/container/security.py",
+        "source_sha256": "f8a1654cabc9b9465d8ffa2a6920c8289f04accaadc482192625f52b35ec7fb6"
+      },
+      {
+        "path": "src/avalan/container/settings.py",
+        "source_sha256": "970623abdc97a193a33219b282c7d15cc54afce18109d4fd5513b8324a503818"
+      },
+      {
+        "path": "src/avalan/conversation/__init__.py",
+        "source_sha256": "f1cb16bbd8db2e268a76b30e2d9c4df9f7d5cae5f622ede5742f4a879083b4bc"
+      },
+      {
+        "path": "src/avalan/conversation/activation.py",
+        "source_sha256": "f34c6ae950d47bedab5f050b631859aa22b22429b464766032a8a78c0502ddad"
+      },
+      {
+        "path": "src/avalan/conversation/agent.py",
+        "source_sha256": "f918b399ae495dbf3d849af7b23f0d38ce4bdb462348a76b4d3c406040f22cd5"
+      },
+      {
+        "path": "src/avalan/conversation/binding.py",
+        "source_sha256": "d2a31bc6bf27a33cb41795eeb6dab6efffa1aaff5ccd071aaa6b9555d286c59d"
+      },
+      {
+        "path": "src/avalan/conversation/codec.py",
+        "source_sha256": "df48c8f79fc0866f1b0b235ed18b4efd03f36b8398bb3bb72ab93f25298b0893"
+      },
+      {
+        "path": "src/avalan/conversation/contract.py",
+        "source_sha256": "bb55970ae887f7c1dc4095dcdb39c753bb08b3da9f525efb70fb6b1053b16c91"
+      },
+      {
+        "path": "src/avalan/conversation/coordinator.py",
+        "source_sha256": "1349cf96bd4600ebc6fa2fd7fd14e81a578067673a924cfbd09f86a7039c8141"
+      },
+      {
+        "path": "src/avalan/conversation/crypto.py",
+        "source_sha256": "10dd0c879633bf769beac4bf087571efd91c9d32243fbe852f5969c10d283887"
+      },
+      {
+        "path": "src/avalan/conversation/durable_codec.py",
+        "source_sha256": "59079dfd5531e9e68058536af10b7aa4d287acdb2925d44406a80bb1e4e4d2e4"
+      },
+      {
+        "path": "src/avalan/conversation/envelope.py",
+        "source_sha256": "b2a11747151b75eff9e877eb370c79ffa2cc7bfce80e8d9876915981f3369f81"
+      },
+      {
+        "path": "src/avalan/conversation/errors.py",
+        "source_sha256": "768bc13a0fc5f63c133aba67a13c782eb296192dd2972d80eccd3f523f59ea56"
+      },
+      {
+        "path": "src/avalan/conversation/execution.py",
+        "source_sha256": "dc5f2dd4773df5a24b1423f314f529e4468bc551a045006128b3c1f25ff27767"
+      },
+      {
+        "path": "src/avalan/conversation/fakes.py",
+        "source_sha256": "642941f1bf429e0187242da7fbf89f4debc4c4746ec15585ad959ca742cc4b35"
+      },
+      {
+        "path": "src/avalan/conversation/items.py",
+        "source_sha256": "bda5123c0bfc417973295c00ddc946ffeda78fed5c133b078bdcbb2a4ab7097d"
+      },
+      {
+        "path": "src/avalan/conversation/lifecycle.py",
+        "source_sha256": "edea170ab18293bcb91dcef38a95e7359cc0ee099636472cf24a52b1e288e943"
+      },
+      {
+        "path": "src/avalan/conversation/observability.py",
+        "source_sha256": "90f908fdee41e7322bc6e26e4323ca81f332f5c09430aa2ee462e13437c81cca"
+      },
+      {
+        "path": "src/avalan/conversation/protocols.py",
+        "source_sha256": "a725aafb8403ce24266870b92d75d3932e4a4f40553e8993fc4b18570a2748fb"
+      },
+      {
+        "path": "src/avalan/conversation/providers/__init__.py",
+        "source_sha256": "3eb47986bc270711f9325c85f680d467b097e2e23d1476cb15cc145256bb80e0"
+      },
+      {
+        "path": "src/avalan/conversation/providers/openai.py",
+        "source_sha256": "a925fc94efb593fb29fcc3c925075fb25798ef69017fb70175ab0d91dd3a2d35"
+      },
+      {
+        "path": "src/avalan/conversation/providers/openai_stored.py",
+        "source_sha256": "bd7f7839df4b019e883ce569a3c4f478cb3ffc79ca6fab0db6ee32613aecb8f8"
+      },
+      {
+        "path": "src/avalan/conversation/runtime.py",
+        "source_sha256": "e8821a589136b7241d9381a6fa3298b441457ea913f450051431518f0acf403c"
+      },
+      {
+        "path": "src/avalan/conversation/sdk.py",
+        "source_sha256": "609b2ef3d838525c4323cbf592889c9a981a2385985aeb0ae6dffda91a0df34a"
+      },
+      {
+        "path": "src/avalan/conversation/security.py",
+        "source_sha256": "b53819988a6ededbd72e462ea0ca5d03721aea107e45667291bb99d01455d783"
+      },
+      {
+        "path": "src/avalan/conversation/settings.py",
+        "source_sha256": "f8e6fdbc44356f65aeae175d0e4c353457909ecbe98c5965ce797d874a2ebef1"
+      },
+      {
+        "path": "src/avalan/conversation/state.py",
+        "source_sha256": "415ad506ce88379d068ef9ee08fd49118d010ed91443b9668b9e1d98970053ca"
+      },
+      {
+        "path": "src/avalan/conversation/store.py",
+        "source_sha256": "3b6e24f1715e30ca9a7d9b3bbe56c2268247fc6510744ae0dfd848055be27c3b"
+      },
+      {
+        "path": "src/avalan/conversation/stores/__init__.py",
+        "source_sha256": "a99b61954be8a1c23470c9a6d988a3bc687ad66eae11063d368903fa5bed8356"
+      },
+      {
+        "path": "src/avalan/conversation/stores/pgsql.py",
+        "source_sha256": "7343ca816bac0edfbbc6d9900c70de9c820dbab28913162edb76ad7b6ed0b807"
+      },
+      {
+        "path": "src/avalan/conversation/value.py",
+        "source_sha256": "c092b5362d565ee4baf33926675e2b00610c381c6273574ef0b9e40b61edf935"
+      },
+      {
+        "path": "src/avalan/deploy/__init__.py",
+        "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+      },
+      {
+        "path": "src/avalan/deploy/aws.py",
+        "source_sha256": "653273a6270d9d1b0d9a0166917c29c26bfb7af2441e12bd72efaca6b026b4cb"
+      },
+      {
+        "path": "src/avalan/entities.py",
+        "source_sha256": "c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"
+      },
+      {
+        "path": "src/avalan/event/__init__.py",
+        "source_sha256": "6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"
+      },
+      {
+        "path": "src/avalan/event/manager.py",
+        "source_sha256": "963db33e54b930ff9c96347b048e62f45d4220c5df6c5c72c745ab1dc0f3cadf"
+      },
+      {
+        "path": "src/avalan/filesystem.py",
+        "source_sha256": "b58bb6fb5c511101972853e74ee38d7cbabc4ced9e96e6960cf26bf19f2ff6d9"
+      },
+      {
+        "path": "src/avalan/filters.py",
+        "source_sha256": "a94560e12985ffbb4f3bc5d5241911f159dc15a815eb2cc14ca25bbea507e048"
+      },
+      {
+        "path": "src/avalan/flow/__init__.py",
+        "source_sha256": "0ba08ee21b32a4d909aad743efabc3adb8245b16b9401a81a950da95e38144f8"
+      },
+      {
+        "path": "src/avalan/flow/authoring.py",
+        "source_sha256": "de8641ed02e4b2324645eceb078bfcabb67a43162e7ff1b9ffde827a8cddb0da"
+      },
+      {
+        "path": "src/avalan/flow/binding.py",
+        "source_sha256": "50d3461adff62f4d4084061f97e0278e9f75cd8b3f0bd9dbd823fc2f97e37f45"
+      },
+      {
+        "path": "src/avalan/flow/condition.py",
+        "source_sha256": "54153f8d1847425778942919fe70c3ede0c99d1a3633dfd3ad92724e9b74b76b"
+      },
+      {
+        "path": "src/avalan/flow/connection.py",
+        "source_sha256": "1d37bf591944b6dfccb8d377c9233ca74279c1b1fab0e405339763479d2894bc"
+      },
+      {
+        "path": "src/avalan/flow/definition.py",
+        "source_sha256": "0b8be1033f51bbe767978d71c3e16ecf13cbceadab055bb9da54e9cf5b11dd4d"
+      },
+      {
+        "path": "src/avalan/flow/diagnostics.py",
+        "source_sha256": "8cdf8e09075d5f02f25a05ed9025d53b95e1988b9d6ded525140311fd7e235c7"
+      },
+      {
+        "path": "src/avalan/flow/executor.py",
+        "source_sha256": "e06cddbcc9f61c57e66d0114816aeee00558e0ad0ce18f67c5d922601f9f2484"
+      },
+      {
+        "path": "src/avalan/flow/flow.py",
+        "source_sha256": "b89439956b43ac38e53381fb4ab1213f13d3354348a143ebec7902ed72592943"
+      },
+      {
+        "path": "src/avalan/flow/graph.py",
+        "source_sha256": "3f86d35a7364098e4cdb894560892ab2aa663b3b6acf232342bf630e690151bf"
+      },
+      {
+        "path": "src/avalan/flow/inspection.py",
+        "source_sha256": "67128c45307b9a58eb2040544bd89ad61ba76ff3020490298b7abba838ef83a7"
+      },
+      {
+        "path": "src/avalan/flow/loader.py",
+        "source_sha256": "3f9f89e71f48c1d816ad773cc9f28f8240bb9b23af6d2cd2680bb32fbc2e7eb2"
+      },
+      {
+        "path": "src/avalan/flow/manager.py",
+        "source_sha256": "75e5230ab59e82de533549215cc4253ea6bc76263af5d41be787d0cdb529fafd"
+      },
+      {
+        "path": "src/avalan/flow/mermaid.py",
+        "source_sha256": "62cf549d55638e51d2352abdb11d78517b2eaaa0b4219af873ca7c6478210f4d"
+      },
+      {
+        "path": "src/avalan/flow/node.py",
+        "source_sha256": "2b92480a5432a0e4b507a7326b8e192140a66093459cbcedc6a50e9d57572e3d"
+      },
+      {
+        "path": "src/avalan/flow/plan.py",
+        "source_sha256": "e1582602d7af27da172e1ba27a3c9c55914626d86746e2cd271f9f6ab596dbe9"
+      },
+      {
+        "path": "src/avalan/flow/registry.py",
+        "source_sha256": "15b6ee51c045a8d83b5975081be532c18a89e91aea95ce71348553cc7b5d2b3b"
+      },
+      {
+        "path": "src/avalan/flow/runtime.py",
+        "source_sha256": "d1500655b9c0ef35d03f4a1abb26c986aa4b3bb6cafc49b14814280ea8a7ab4e"
+      },
+      {
+        "path": "src/avalan/flow/selector.py",
+        "source_sha256": "f65218facb3801725126005be17218105bedcdb913c806d7fbb98aab9737d160"
+      },
+      {
+        "path": "src/avalan/flow/serializer.py",
+        "source_sha256": "ebe3731d0be03bd59cfe720f2f9d6c8b3f856a890cc1f8e3dfc4440596587abe"
+      },
+      {
+        "path": "src/avalan/flow/state.py",
+        "source_sha256": "6cbe0e0f46316c1bc8320be4adfa0de7b89c90b3481f074dd3deb0a14c9e4619"
+      },
+      {
+        "path": "src/avalan/flow/store.py",
+        "source_sha256": "0111e084fec49f202ad4ac0edc21c4dc2fd181a38586bf3fff9a602a06af2f80"
+      },
+      {
+        "path": "src/avalan/flow/stream.py",
+        "source_sha256": "83c05644af1d555b21377a5cef0f4effe1184b7c73d44974b3592c1c663096f4"
+      },
+      {
+        "path": "src/avalan/flow/subflow.py",
+        "source_sha256": "fb4c864bba546d7e91adfd1842c8a16f69c9a5fe67f6eb075483b38522f008ab"
+      },
+      {
+        "path": "src/avalan/flow/validator.py",
+        "source_sha256": "01b67896373e15d505b6d5cbd6cc9a1d9d6ebde25742abd945b38911cba3c890"
+      },
+      {
+        "path": "src/avalan/flow/view.py",
+        "source_sha256": "108bc79b20b622ac310f1e9bea5b7c18a31c1d67905fa5bc1e21d36242796e30"
+      },
+      {
+        "path": "src/avalan/interaction/__init__.py",
+        "source_sha256": "44e12a5b627ad8a898ee35c28e773a734c9310602d9a589b897a698844b89501"
+      },
+      {
+        "path": "src/avalan/interaction/a2a.py",
+        "source_sha256": "3ad02f12393570ceb82b4343952565162fe83da6780208b2f8fa23acd9c77123"
+      },
+      {
+        "path": "src/avalan/interaction/a2a_continuation.py",
+        "source_sha256": "8883a5a348a7a26b5c98d761d84aee4f8edd38d16500ea922ad612e91f0c4291"
+      },
+      {
+        "path": "src/avalan/interaction/broker.py",
+        "source_sha256": "2d90cd60fbf529ca4bc3e8e227c6f15172f40af8e4cc3ea8c82ad9e01b3cbe47"
+      },
+      {
+        "path": "src/avalan/interaction/codec.py",
+        "source_sha256": "bba2a3e20ebd87851b1ee176e36fa4c25ada93a763618694929d25cb16623aa4"
+      },
+      {
+        "path": "src/avalan/interaction/continuation.py",
+        "source_sha256": "31c276d5836c5ee7ab4b30046553477c955e95bbcff2cdfdf08a67519f4544fc"
+      },
+      {
+        "path": "src/avalan/interaction/durable.py",
+        "source_sha256": "f97e6e0f39a701539b91c1b295af4c25954a9d79e8092a4eaff035ac4ab1684d"
+      },
+      {
+        "path": "src/avalan/interaction/entities.py",
+        "source_sha256": "a84fd5603aa63984c06b2c9c68c62465738bd39b4256b88c5488839272b7dd1d"
+      },
+      {
+        "path": "src/avalan/interaction/error.py",
+        "source_sha256": "81a0ab39090cb190bf769eee1159b2fdbad9a065775a2c347acc5a563fdfb37b"
+      },
+      {
+        "path": "src/avalan/interaction/handler.py",
+        "source_sha256": "cb9702d2660378221292d6b9f6b92167877b81a85833ba05f390637f5f1dd47f"
+      },
+      {
+        "path": "src/avalan/interaction/headless.py",
+        "source_sha256": "2db17b279842022ffd2bdb33926eba7984a095ef3faf2a4a90f146860e697032"
+      },
+      {
+        "path": "src/avalan/interaction/policy.py",
+        "source_sha256": "8ac93f09ec146273803aa8a42c7adcb484b2c452cc6d357ef866d09fb65482fc"
+      },
+      {
+        "path": "src/avalan/interaction/security.py",
+        "source_sha256": "6f2b125bfc48301b3c43211aa52369fd6325608c3e13885d198c62346455b404"
+      },
+      {
+        "path": "src/avalan/interaction/state.py",
+        "source_sha256": "c03bead6584d5f7f0a002a98c17514bd8eaa2dd2ac8e177e75d7e811cd1d7ade"
+      },
+      {
+        "path": "src/avalan/interaction/store.py",
+        "source_sha256": "be5423a6683cd013fdab4073726608841dd846f9a34adfc673963a9b048ec78f"
+      },
+      {
+        "path": "src/avalan/interaction/stores/__init__.py",
+        "source_sha256": "f3bae509126c9bb28107d81d0a93d9b7ac2923c22b6020adb26124fbc8edda2c"
+      },
+      {
+        "path": "src/avalan/interaction/stores/memory.py",
+        "source_sha256": "0497f230149ea7164d9ec93b68cc52449f1873cdf2e2ed2095856bf846929973"
+      },
+      {
+        "path": "src/avalan/interaction/stores/pgsql.py",
+        "source_sha256": "97d6758ec1952215a42ae52f66a0d855016c8fab19eede61814ce8c7ddbd2dda"
+      },
+      {
+        "path": "src/avalan/interaction/validation.py",
+        "source_sha256": "3d930a8c3f3e855c869db86e2d05db20bf1ab5cc2c028e932b8ea872337fde9a"
+      },
+      {
+        "path": "src/avalan/isolation/__init__.py",
+        "source_sha256": "c93975d85ba8caf50dd476a3b75621640020550478452bc5ced287783b03f0b5"
+      },
+      {
+        "path": "src/avalan/isolation/diagnostics.py",
+        "source_sha256": "1ac763d2db7b380d899310bffe7c443bf127ccf3451e9969182c43bb121b6c21"
+      },
+      {
+        "path": "src/avalan/isolation/planning.py",
+        "source_sha256": "a6067d19d1217b96d37da26b0aab8d49eabbb5a847f721b58f8feea1e702fc7f"
+      },
+      {
+        "path": "src/avalan/isolation/settings.py",
+        "source_sha256": "5f7ed73a587955b03e10b423d57c5f80b08cb3d5e2ea5a58a92630890acfbf93"
+      },
+      {
+        "path": "src/avalan/memory/__init__.py",
+        "source_sha256": "c3536ab3a4880ee9e7bb74f2648e43464ba46ed30b00da0b01bb1c5e72f7da32"
+      },
+      {
+        "path": "src/avalan/memory/manager.py",
+        "source_sha256": "7192cf37ff7f479b413aeb661ed09f6d0df1f020578ebdbd437cc042419160b8"
+      },
+      {
+        "path": "src/avalan/memory/partitioner/__init__.py",
+        "source_sha256": "8e663a8a6782f6440fc685fbdb02a19e1cfaefc4acce1326c5fef43a79d82b89"
+      },
+      {
+        "path": "src/avalan/memory/partitioner/code.py",
+        "source_sha256": "b17db3193f3a74ed081e2cde617a5146e226b3daf962c16393ea3fa6d5e96429"
+      },
+      {
+        "path": "src/avalan/memory/partitioner/text.py",
+        "source_sha256": "ce4926ab058a956a96ad303e79c072294e874d5191f2912166ce016102bfed14"
+      },
+      {
+        "path": "src/avalan/memory/permanent/__init__.py",
+        "source_sha256": "eebcada92ea5a878f995c763d3cc24bd5fabc9595e49102fd5ce90b1c874b7d2"
+      },
+      {
+        "path": "src/avalan/memory/permanent/codec.py",
+        "source_sha256": "2a0daf05048ecb1214b8cc0459b7181986ec2edaf89b628f0c1bbc750ea76dc5"
+      },
+      {
+        "path": "src/avalan/memory/permanent/elasticsearch/__init__.py",
+        "source_sha256": "a4a9c43f5c12d8d7a49275d5dad0ff088aa12fa3d5fcf5146631b4d6ae089b5a"
+      },
+      {
+        "path": "src/avalan/memory/permanent/elasticsearch/message.py",
+        "source_sha256": "3edadbf91d125ca29b6a77f239ca36241f4e4cc5fd504517e759220c4798ee80"
+      },
+      {
+        "path": "src/avalan/memory/permanent/elasticsearch/raw.py",
+        "source_sha256": "b0e230926e8c0abb1aff685a84fe697bac8ecb8643b861f5d93c650f4f845329"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql/__init__.py",
+        "source_sha256": "63df7c2c397c50afc0cf2c54bd892b81be787808cab7790a9562c68a89a6beca"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql/message.py",
+        "source_sha256": "8afd810f09c25953b60b8b2d15c96f73df9d4ba305fca474c50227ea6e18305e"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql/raw.py",
+        "source_sha256": "582af350b959f41ba51b78f9c50899f37002213075d2a76bbffead519a07cf36"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql_migrations/__init__.py",
+        "source_sha256": "c36ff700dcb5503000188847c6ef93e0353a8075ff2c17523c813af4b18c2427"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql_migrations/env.py",
+        "source_sha256": "9a751d6872292d2b718fe9291f2d49c128dd3a171926f0b50c0cc5576b578b10"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql_migrations/versions/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql_migrations/versions/v20260530_0001_memory_schema.py",
+        "source_sha256": "48f2e9d168ea388ebd8d14f2462a29ae7217a0c35426a25f904de91489635d70"
+      },
+      {
+        "path": "src/avalan/memory/permanent/pgsql_migrations/versions/v20260530_0002_reasoning_graph_schema.py",
+        "source_sha256": "e6b1aee64361122b7c65345046ef3c6f102705953a156a65872a51b6c6550053"
+      },
+      {
+        "path": "src/avalan/memory/permanent/s3vectors/__init__.py",
+        "source_sha256": "fa1a2bd136d5c0e90c9d44cbae89c8342af05397aa06ae0a33e7f008c55c2f4b"
+      },
+      {
+        "path": "src/avalan/memory/permanent/s3vectors/message.py",
+        "source_sha256": "49e853ae2a99e0b8370a31568c540e7772147bff6caae6877233377940cfe3b3"
+      },
+      {
+        "path": "src/avalan/memory/permanent/s3vectors/raw.py",
+        "source_sha256": "cedeac4840281d27c00e576a951aeecf3e791a6a38d058e866f09ff49e7bc3cb"
+      },
+      {
+        "path": "src/avalan/memory/source.py",
+        "source_sha256": "e05491fe1d177775ff296b72695cfe55572c6d03dc41e93ece34a2bda5d21aae"
+      },
+      {
+        "path": "src/avalan/model/__init__.py",
+        "source_sha256": "a05c88380b36c1d6246154782b28c02967315a945d008b03a27b698dc0d5209d"
+      },
+      {
+        "path": "src/avalan/model/audio/__init__.py",
+        "source_sha256": "b80da415afd9fb267475219d82c9ad37750e3676f3a1c56ee7af9987e32031d7"
+      },
+      {
+        "path": "src/avalan/model/audio/classification.py",
+        "source_sha256": "1266c29da98775e1c1f85789845512c1aac09b9299247520866ff5be6b8dd90a"
+      },
+      {
+        "path": "src/avalan/model/audio/generation.py",
+        "source_sha256": "9731503e9ec9062d67355aa4a575685ee6257854e29ebfbddcc5dc38d8c2485a"
+      },
+      {
+        "path": "src/avalan/model/audio/speech.py",
+        "source_sha256": "42c569c17782b235ffb926a6d863a9c492ca38eb5a09c0611c2daf689d53a7f2"
+      },
+      {
+        "path": "src/avalan/model/audio/speech_recognition.py",
+        "source_sha256": "ba7bf6022e6230120194147a44fe8e702ce7528237c62d0968ddeb310a862eff"
+      },
+      {
+        "path": "src/avalan/model/call.py",
+        "source_sha256": "1192ec8cce17293da9ee2050002e155baed8723170bcc39da9d2006921bf26ee"
+      },
+      {
+        "path": "src/avalan/model/capability.py",
+        "source_sha256": "0d47407ff60c337ec48b4054065a1620f7f7b03586ed56ddb0dae92ddff3fed2"
+      },
+      {
+        "path": "src/avalan/model/criteria.py",
+        "source_sha256": "98be4a1c7e1752395e2531bc0655090202cd94a6da07278e83106702bdd19db4"
+      },
+      {
+        "path": "src/avalan/model/engine.py",
+        "source_sha256": "b6029a4eccc8e758676efadf47b1d252cfddd8ed48204957bc9ac54995a4cce6"
+      },
+      {
+        "path": "src/avalan/model/file_delivery.py",
+        "source_sha256": "845894f6505942d3bf2107d919c4343daf6c145b83844a188a5bc84159f7157e"
+      },
+      {
+        "path": "src/avalan/model/hubs/__init__.py",
+        "source_sha256": "ad82f6532f4a4e250a2b2c79d8fb4ff1d999f3e6a43e41a79386362bc3ca2986"
+      },
+      {
+        "path": "src/avalan/model/hubs/huggingface.py",
+        "source_sha256": "4f3b77972b28ecb6e2b19c6c492ffc7c971786f45a14171182f7b9a1193297ff"
+      },
+      {
+        "path": "src/avalan/model/input.py",
+        "source_sha256": "2a78450dbbbf9be2cbd36814887e8ed4d8d0945b404b727b6e9823cbbba347cf"
+      },
+      {
+        "path": "src/avalan/model/lazy.py",
+        "source_sha256": "7306dbf37357da0bfb6ccb88f3c329ccb7d258db7786611cce1d4ce8bdce06d9"
+      },
+      {
+        "path": "src/avalan/model/manager.py",
+        "source_sha256": "de89f336e721ff584c2ac06b581cc53812e861d04e7f887be2a47928c018f8b2"
+      },
+      {
+        "path": "src/avalan/model/message.py",
+        "source_sha256": "7c7895ff1fc834b04d6a4ae74d79469b5c68f1fca4b408c95014f17ba7f1547c"
+      },
+      {
+        "path": "src/avalan/model/modalities/__init__.py",
+        "source_sha256": "10ea5e22c230c85f59ed8951c9f7bf9d8d9407af1a1510b3ab7c228bd12e5c4e"
+      },
+      {
+        "path": "src/avalan/model/modalities/audio.py",
+        "source_sha256": "ae3fcf4299fdf19b0b0fa917a0250d94162e365a4b451fe0d853d7c2a4e393b0"
+      },
+      {
+        "path": "src/avalan/model/modalities/registry.py",
+        "source_sha256": "da2f8129a55add7998d4ed86be490190f7b7db42dc926c6f6bd263b33b7dec81"
+      },
+      {
+        "path": "src/avalan/model/modalities/text.py",
+        "source_sha256": "d54b3fda3217b36cd532cb5dc2cd38172a46c9b2ea31084f34b465d120bacf05"
+      },
+      {
+        "path": "src/avalan/model/modalities/vision.py",
+        "source_sha256": "4ae5a1fb9ad87e858283f27ecfdea5b69c9d9657aa1a71eaa8524f1158419a14"
+      },
+      {
+        "path": "src/avalan/model/nlp/__init__.py",
+        "source_sha256": "19e7e08869aade1a9b1fd6ce8871fc411325b6df919f38fcb8ea1b7de4c054c8"
+      },
+      {
+        "path": "src/avalan/model/nlp/question.py",
+        "source_sha256": "2d7c76d5096359441b5f1a3c13ffed96696b6dc500c33d57daf1aab44395a3c7"
+      },
+      {
+        "path": "src/avalan/model/nlp/sentence.py",
+        "source_sha256": "c7eaa1df7e63032ba2d2d029215f433ca4476a386d310325e8c3cfea1f431dda"
+      },
+      {
+        "path": "src/avalan/model/nlp/sequence.py",
+        "source_sha256": "62cedafb4ddea935521239f6f44227705a523054ad61392a0ba7aa06744af4ac"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/ds4.py",
+        "source_sha256": "0c0ad5e2b5df913fe2c97288719faacb5aed6380962730777ee30818b06d49b5"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/generation.py",
+        "source_sha256": "9855c59d18b838e61c5fde600ab442913f9287a08675236d96c688b1a14a660b"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/local_protocol.py",
+        "source_sha256": "2ef119d4d19df781b22c7fd4a96ba8a4b854a38cfc464ad3f598c05565ad6321"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/mlxlm.py",
+        "source_sha256": "c594814802c6de1886e481e2e4d9d25fe61631548976ef0209bb1e629986a3a9"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/__init__.py",
+        "source_sha256": "ec5f1a682c0a69327e840833492655a0ffbdc5ad106fd42a0279fa41f5304c5c"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/anthropic.py",
+        "source_sha256": "8bf0e806f88224d7a8e584495dcecbc7f0e471454ef0ea9ee5277b80c2374df2"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/anyscale.py",
+        "source_sha256": "0ef5816c5758bb3c432cbfebb7907fdf046bda5fc834af916d956d4e5d9d7c2d"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/bedrock.py",
+        "source_sha256": "851e0524c185ea5695ef8e6c500c6fb6d59c41ce18facd07b68d5e4f87a68575"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/deepinfra.py",
+        "source_sha256": "7f661cd3e29c376b4c42bf7f34226aaba562e92fa9593bd89c3b12e1b9cad2aa"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/deepseek.py",
+        "source_sha256": "7b3b2740940571f353f9b38c35cb42b97887341202d01c559fa334da1ee3c023"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/google.py",
+        "source_sha256": "525ca1d531a4a2ebb9175edcd9d60fffc7d04dd458ecbb94030a54cb5361e229"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/groq.py",
+        "source_sha256": "e7ef6eb920dba12315ff74681280b46cb1dbc77fa772ca0e8bdd9f75d6b7ea50"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/huggingface.py",
+        "source_sha256": "2872f00ba3b21ecec8d69df6bfd44fa1d62020e7ddfa7e870b20a53c76399030"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/hyperbolic.py",
+        "source_sha256": "fd9e3bbfb3efb8c3e0366ad7c6b61063d1f0464f5fb597c1d59c662309fd99ea"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/litellm.py",
+        "source_sha256": "a4d1adce2d7cabfc507f8053f4a7a0f535de9bd981c84915040faab2d1571d63"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/ollama.py",
+        "source_sha256": "11e816ddab693a3e73c8d432bafd058613d7cca915c3fc86aba71f81d49dbaa5"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/openai.py",
+        "source_sha256": "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/openrouter.py",
+        "source_sha256": "62fc564bdecc71eeb67f42bc9362f552ae6061cedf2a21f9d91725f0885ba7b1"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vendor/together.py",
+        "source_sha256": "943fd8b156d2fff2fe19a76627a31cd9786bfa5d6cd3d1abc3d592f2ca7f9cdb"
+      },
+      {
+        "path": "src/avalan/model/nlp/text/vllm.py",
+        "source_sha256": "128aa08ff761ca04273f8044929541d191321bdf6d43be135f4aff5487b5e12f"
+      },
+      {
+        "path": "src/avalan/model/nlp/token.py",
+        "source_sha256": "3d521943ce9fd5bf9925480337d35d0396a0584f910f218d11f9ed0a4a3b2e44"
+      },
+      {
+        "path": "src/avalan/model/provider.py",
+        "source_sha256": "3ed9ac3fa299e08ee94bd72694961a42fbdc060c4b1923716df60c598bbc1c0c"
+      },
+      {
+        "path": "src/avalan/model/provider_state.py",
+        "source_sha256": "7240e6c9389475c4690bd1c7cd20b72b2759dda94ad9d272d24a682930dbd939"
+      },
+      {
+        "path": "src/avalan/model/reasoning.py",
+        "source_sha256": "1ecbfe5c8975cf645b38fa0ee2c0bdc2acab9adeb47cc0f7433952fe15a74aaa"
+      },
+      {
+        "path": "src/avalan/model/response/__init__.py",
+        "source_sha256": "dcefc959ec677c3f5d1a6688953166e9845c162849616aed868a9f931ea2b984"
+      },
+      {
+        "path": "src/avalan/model/response/parsers/__init__.py",
+        "source_sha256": "8b1b8a180f5525d9959340673cdc1893d98532835f7854e9f0a366360a20319b"
+      },
+      {
+        "path": "src/avalan/model/response/parsers/reasoning.py",
+        "source_sha256": "cc065791e8cba502eb8bdf90283ab96ef8528c4fd1f6a9935c245cb2f98e7cb7"
+      },
+      {
+        "path": "src/avalan/model/response/parsers/tool.py",
+        "source_sha256": "0b791b39bfbb558fe249d5d6614ecec474f4fd07ef379c5768bef026c5442e02"
+      },
+      {
+        "path": "src/avalan/model/response/text.py",
+        "source_sha256": "4a89fa993e46fb84a01d594683a7d439ff4a48ca1972a891393bfaab93227165"
+      },
+      {
+        "path": "src/avalan/model/runtime.py",
+        "source_sha256": "77e135b3ef8deaf8943626d0448bb04344fc3691ffb46616d6cc9a791c06d1d9"
+      },
+      {
+        "path": "src/avalan/model/stream.py",
+        "source_sha256": "6a256f2fbf78330c80fd5ca866381a34ea17dee0dbdb465d0b4b19bec34a96af"
+      },
+      {
+        "path": "src/avalan/model/transformer.py",
+        "source_sha256": "ae407bab595aa131ac1c3a9ebca1cb04eb5094d4341d30e9135072c9110189dc"
+      },
+      {
+        "path": "src/avalan/model/vendor.py",
+        "source_sha256": "6d3e9e91d6ee93011dcf15286e65823eca9f645b7249618ec2c6d94cdcd946dd"
+      },
+      {
+        "path": "src/avalan/model/vision/__init__.py",
+        "source_sha256": "980b049f62e8cfb2a1e197195e91b89cfed83d54c4a3eec478ae817ca0200884"
+      },
+      {
+        "path": "src/avalan/model/vision/classification.py",
+        "source_sha256": "3ad125bdf35b5b06bf45d1b49c96c86475922ece403c6d33c293781252b07a66"
+      },
+      {
+        "path": "src/avalan/model/vision/decoder.py",
+        "source_sha256": "f7241efedb4d126fb70147a8663fb7a247fff73e5dadcc39f9c5c21a28dd9a86"
+      },
+      {
+        "path": "src/avalan/model/vision/detection.py",
+        "source_sha256": "94a5045ef47a9030c5d2f5f17c869c9f36ef894e69dff759bda4ba770b144cf1"
+      },
+      {
+        "path": "src/avalan/model/vision/diffusion/__init__.py",
+        "source_sha256": "8421537a883af38aaa0a2aa0682dd5ef11bb2a5159d70e9d2bd3e4ccb163740d"
+      },
+      {
+        "path": "src/avalan/model/vision/diffusion/animation.py",
+        "source_sha256": "f793284d67f77a3d458b98b773c73c4699f4f613c8e01bd776ba1428325403f0"
+      },
+      {
+        "path": "src/avalan/model/vision/diffusion/image.py",
+        "source_sha256": "786e4524d1e5b09ac371a78e1d9d849c2669852b95e40806d363a026ff559ab0"
+      },
+      {
+        "path": "src/avalan/model/vision/diffusion/video.py",
+        "source_sha256": "49c9563c1359a797e003c108fe382d387cedc56726fd904faa0e03835586f09f"
+      },
+      {
+        "path": "src/avalan/model/vision/segmentation.py",
+        "source_sha256": "758fb0f7e47fefaf2863f8ef3e94f3bdabff32e32ca368909e1d9faeb8489523"
+      },
+      {
+        "path": "src/avalan/model/vision/text.py",
+        "source_sha256": "772ace006450f274f082dba9df07a64934aa183668158536919f3e2ff7a13372"
+      },
+      {
+        "path": "src/avalan/observability.py",
+        "source_sha256": "c66f1ad106a6bf88736aa0cab90d5deec3d4b468f16f8052f0a31d69e8e77588"
+      },
+      {
+        "path": "src/avalan/pgsql.py",
+        "source_sha256": "6ebcef60d9acd3318b54b2d3c1bfc11ffc9d6ffb68ac9cde411bed7f90955b7f"
+      },
+      {
+        "path": "src/avalan/sandbox/__init__.py",
+        "source_sha256": "45e7c4d4778ef787565031ebd0f02de5f3dfb49a99ee86c00c37ce8e1ba22a08"
+      },
+      {
+        "path": "src/avalan/sandbox/backend.py",
+        "source_sha256": "914b8015112ea269af553c43fdfd3ecb38e5419e2059926c88e172a64e85c6ce"
+      },
+      {
+        "path": "src/avalan/sandbox/planning.py",
+        "source_sha256": "cb02f77d3a6af3bed2e090e5fda9c038d24c30f605bb1e51bf8ac76cb171d9ba"
+      },
+      {
+        "path": "src/avalan/sdk.py",
+        "source_sha256": "475cdbd0b3bfd54fb2d3d2184533e3f0a8accb11d99ee867d36f8e827cee075c"
+      },
+      {
+        "path": "src/avalan/secrets/__init__.py",
+        "source_sha256": "8e979ece131ca081af60a3e79422490a6168a9e92c375f2a854a30bd467d3e72"
+      },
+      {
+        "path": "src/avalan/secrets/aws.py",
+        "source_sha256": "c3ea6aa747cb67e5a18b9bd8f0eea13348675fbced74c43f7c0b1019413d16dc"
+      },
+      {
+        "path": "src/avalan/secrets/keyring.py",
+        "source_sha256": "e870858aa10bf03913758a6a714bc32ab7a820d7e2a9c3de4b3c6fb951172054"
+      },
+      {
+        "path": "src/avalan/server/__init__.py",
+        "source_sha256": "fece0ed20d3fabf00a432f3d838460bd7a4fccbaa734e4ea4445a4aca7a4601e"
+      },
+      {
+        "path": "src/avalan/server/a2a/__init__.py",
+        "source_sha256": "e08b5c4590252a47751adb159c65de3dbb94501a8bf5ebf42b2b1bafce256c94"
+      },
+      {
+        "path": "src/avalan/server/a2a/router.py",
+        "source_sha256": "60a6881996fef40112e89ca604dce6cc9527641d0a22fff9c00c4ec2b580d469"
+      },
+      {
+        "path": "src/avalan/server/authority.py",
+        "source_sha256": "47fe055ee717bc92f69d1a9cbf40c76fdaf2e9062011ba77058a815c7b9f25af"
+      },
+      {
+        "path": "src/avalan/server/container_policy.py",
+        "source_sha256": "b57586f705c309c2745aebf2c18c1373db7916c5a6641cb58d8ed23754516539"
+      },
+      {
+        "path": "src/avalan/server/entities.py",
+        "source_sha256": "18253d4130c29488d47fc2c64a2c616496030e9c01918aac0e0d79258c7dd50e"
+      },
+      {
+        "path": "src/avalan/server/interaction.py",
+        "source_sha256": "a627c5a6463a7db876a828a97d5f5aa4cddc0b237db66381917b298c3c95c252"
+      },
+      {
+        "path": "src/avalan/server/mcp_session.py",
+        "source_sha256": "9ff26a922030c475132fe40f7319c3b1f4bf7d6bc5eb36e5ad31a18da327e570"
+      },
+      {
+        "path": "src/avalan/server/mcp_tasks.py",
+        "source_sha256": "de0946ec1ddeaf9d7b433e9a7251133b9198da985fd2f135cdc1dd87edebb0c8"
+      },
+      {
+        "path": "src/avalan/server/remote_container.py",
+        "source_sha256": "68454f8e7892e852d1a7b1f76bec3ecfab743a26e237ced373804524795f6edf"
+      },
+      {
+        "path": "src/avalan/server/responses_lifecycle.py",
+        "source_sha256": "46f56180512d82259b0e21c62449451f96e779376dce1f3396f8c866f82edb9a"
+      },
+      {
+        "path": "src/avalan/server/responses_schema.py",
+        "source_sha256": "1fb0368a77e31cf13c5a7b0eddcde90747e5dfa22bac4e3eff82ddd656b55ce3"
+      },
+      {
+        "path": "src/avalan/server/routers/__init__.py",
+        "source_sha256": "a721aa2219590902a190411da56397763c28281684d5e952045179597e3573d2"
+      },
+      {
+        "path": "src/avalan/server/routers/chat.py",
+        "source_sha256": "24caa0c0f94e9cb11ea08a823839974ebc236c6e48e655d7949281e524b0ccb0"
+      },
+      {
+        "path": "src/avalan/server/routers/engine.py",
+        "source_sha256": "cd8d34e417518422c7be961814d0441d5f20ea8e4be942c4602de51c10e98433"
+      },
+      {
+        "path": "src/avalan/server/routers/flow.py",
+        "source_sha256": "52d19e148c7b24cd275cd49cf2fbd1b692962cd283879e9bd20c9b80e474fb54"
+      },
+      {
+        "path": "src/avalan/server/routers/mcp.py",
+        "source_sha256": "ed1a330d3c61a01887c5898d506f886fafed1707521e9e05bd2384ab2f001a5d"
+      },
+      {
+        "path": "src/avalan/server/routers/responses.py",
+        "source_sha256": "0d52908a529601e6af768836566a23aa77afff9b62d93c33cb1ebd1f26a8b3a7"
+      },
+      {
+        "path": "src/avalan/server/routers/streaming.py",
+        "source_sha256": "f86f8acfb160f41ca2fd5d0805d26e6f15339f2b1ae513b4ed198d1a63c95610"
+      },
+      {
+        "path": "src/avalan/server/sse.py",
+        "source_sha256": "692560ce44bacb509683dd75bbb260dd54006c83106e00c44a01bb72b451733d"
+      },
+      {
+        "path": "src/avalan/server/stateless_responses.py",
+        "source_sha256": "44ff71e797d7a3d7625a5afa8fdba945ca59a220b6a61b3ca6ded195c4ca86d2"
+      },
+      {
+        "path": "src/avalan/server_output_redaction.py",
+        "source_sha256": "9b8f28d3f409172b645c28150c9a1c6a39d2d04a35561816df70e5dabca24021"
+      },
+      {
+        "path": "src/avalan/skill/__init__.py",
+        "source_sha256": "fa2546fc2106c2a0b2881f6413b5b6084a06fb1dd1e5a5fe5a4dd028a3e77b1f"
+      },
+      {
+        "path": "src/avalan/skill/_async.py",
+        "source_sha256": "e9f7380d50a8b47189faa06dcb65cb429bffcc62ffb1a0513b2ae03a38059b66"
+      },
+      {
+        "path": "src/avalan/skill/bootstrap.py",
+        "source_sha256": "d1bf443f1ac59f98467938d6b3b61438af791d1bea851f2845ab136571e6dded"
+      },
+      {
+        "path": "src/avalan/skill/contract.py",
+        "source_sha256": "58bb93637b190395b77db045c93d2f7928c0c0f5c469a31850cdc23d5264852f"
+      },
+      {
+        "path": "src/avalan/skill/entities.py",
+        "source_sha256": "45e4b74d1e95989fbd48cbac5f324efe1a7f57232429c437415c3ce87368571d"
+      },
+      {
+        "path": "src/avalan/skill/envelope.py",
+        "source_sha256": "b358be461639b3fe038b170fee202420cb37ecdd08055a171e39751382156fbc"
+      },
+      {
+        "path": "src/avalan/skill/manifest.py",
+        "source_sha256": "62c27bbe3d64be3710283314cd7240ebdb8d3b68bbf4c5bc43feadffd2178585"
+      },
+      {
+        "path": "src/avalan/skill/matcher.py",
+        "source_sha256": "c3d8791bc8dce8fdaf4c006b377e934dddfb2273402b757ab6356b2b38641f6d"
+      },
+      {
+        "path": "src/avalan/skill/normalizer.py",
+        "source_sha256": "be8f7fc20eca31814000841b68d6257e28401a0d8a019f1659ce1c5ed9555cd6"
+      },
+      {
+        "path": "src/avalan/skill/observability.py",
+        "source_sha256": "908d52b9b29c17d290f96343ad634cdfdf0f6bcc5c25ccc21ff2c1bb6e52b8f1"
+      },
+      {
+        "path": "src/avalan/skill/path_policy.py",
+        "source_sha256": "e4ceb189be8327cb3aa87eb0cf93adc92a8434bee335ec1c44fbf602158fdb6d"
+      },
+      {
+        "path": "src/avalan/skill/reader.py",
+        "source_sha256": "85ae6314c8bfaa96e61bfc4e3b1127fe29ec4fd9a3e58cf2c0c547c623c426d5"
+      },
+      {
+        "path": "src/avalan/skill/registry.py",
+        "source_sha256": "7ce69056527485b4d37c2dd6770bd1d1ca73600842877fd3667e3d87d49f551c"
+      },
+      {
+        "path": "src/avalan/skill/resolver.py",
+        "source_sha256": "99daf01ef56ae0f009ada296aab215d80b3a83190860c11c9c83d324ddff295b"
+      },
+      {
+        "path": "src/avalan/skill/runtime.py",
+        "source_sha256": "a860828a62eb28d2de56968ac7e54b4533155d565082e38e782d108a267b6321"
+      },
+      {
+        "path": "src/avalan/skill/settings.py",
+        "source_sha256": "bf3df0c187825430dc732bddb83ce600f22fc602ef2d0dee65d5e740beb27af8"
+      },
+      {
+        "path": "src/avalan/task/__init__.py",
+        "source_sha256": "bb975c71a6512998d730710f881bd06b5f2e728dad4aa421e0f5d86085afb949"
+      },
+      {
+        "path": "src/avalan/task/artifact.py",
+        "source_sha256": "d630039612a6fbcb33085ff56265907738873cb0b7c96048b61bb792adea14bd"
+      },
+      {
+        "path": "src/avalan/task/artifacts/__init__.py",
+        "source_sha256": "98e80323776fb57468552dd4c9c0da24db666c182c38a73037e830215d4e0eac"
+      },
+      {
+        "path": "src/avalan/task/artifacts/local.py",
+        "source_sha256": "ee9074a2e90aeb7052764563971862e2ffc1f2502a181d6f0f0e8c47d3ba82cc"
+      },
+      {
+        "path": "src/avalan/task/artifacts/object_store.py",
+        "source_sha256": "7f5c6c42c7de1cc1c2ff8c6bd4649cdb3babc1e6087b4e7a6d0c4afc5244f8da"
+      },
+      {
+        "path": "src/avalan/task/artifacts/pgsql.py",
+        "source_sha256": "986a26db41f69b4d2acf83f8cd8077e67c8d84d104eff04f51a0bf9ad60e74fe"
+      },
+      {
+        "path": "src/avalan/task/attempt.py",
+        "source_sha256": "0635413c7376abde7334c2a670a57a60eb93ee955eef9a0e78a84005fa55c056"
+      },
+      {
+        "path": "src/avalan/task/canonical.py",
+        "source_sha256": "4d9b20a6fac40cbeaba94bd38f64644e34d0352678d995b41de8e51d43977a44"
+      },
+      {
+        "path": "src/avalan/task/client.py",
+        "source_sha256": "d98d41ba4ed16818ffaaa7e94d8dc392ae376b28d7e4d92f6fc555aa507f774b"
+      },
+      {
+        "path": "src/avalan/task/container.py",
+        "source_sha256": "9d34e9029d714423bc0407a2d3885a5d6cab9498891b1a4ea880df1109b13fb2"
+      },
+      {
+        "path": "src/avalan/task/context.py",
+        "source_sha256": "b5e6d8ff87d891519f900d67af271e53cdf08b7716ffe0d6db1749b7b0f529fe"
+      },
+      {
+        "path": "src/avalan/task/converters/__init__.py",
+        "source_sha256": "0724cf5083ec0174e7634d4562ad409031e02a2b23e4198841bfb7485046f942"
+      },
+      {
+        "path": "src/avalan/task/converters/markdown.py",
+        "source_sha256": "8b204e32eed685d00a0ccec77728873e7613963dc8e76ffdb0c92c2bd7dd4b26"
+      },
+      {
+        "path": "src/avalan/task/converters/pdf_image.py",
+        "source_sha256": "88c8941bd93b9f435064535a671d2a4bca35003352b64ad87bb29fce840edbab"
+      },
+      {
+        "path": "src/avalan/task/converters/registry.py",
+        "source_sha256": "ab6fabd04724d02f192936ec2879bfb5b4751686ca7d910c2b6a91377c83a3f6"
+      },
+      {
+        "path": "src/avalan/task/converters/text.py",
+        "source_sha256": "5211af06f287fad522f0a6aaa31566e636218d20a232549244967420dd9087ac"
+      },
+      {
+        "path": "src/avalan/task/definition.py",
+        "source_sha256": "96f550bb72bd8d5d577325ec1a06fa8aa7945337dec034ebdd4ea3bcf9be8e31"
+      },
+      {
+        "path": "src/avalan/task/delivery.py",
+        "source_sha256": "df04b05721b32f5bd9eed36e0c8d68baccedb6ab6c392bcdee8ff4a883501d5c"
+      },
+      {
+        "path": "src/avalan/task/durable_agent.py",
+        "source_sha256": "773ce8ed457bb6e0525bd8809c79cfa5288965299d8f68fa6e72bb98133017a9"
+      },
+      {
+        "path": "src/avalan/task/error.py",
+        "source_sha256": "df0df1d286917c82babd4172eb5a0fb3a349ead38d02958d54f004d8363f15f5"
+      },
+      {
+        "path": "src/avalan/task/event.py",
+        "source_sha256": "a32a524383b8be0c3d3acc29a0cc65a8a78626edec74486139686a2983dac079"
+      },
+      {
+        "path": "src/avalan/task/feature_gate.py",
+        "source_sha256": "493576c95be17f4d2fe8eef78c1b5913ddf88fa9c63ea8030771ab1db724da33"
+      },
+      {
+        "path": "src/avalan/task/idempotency.py",
+        "source_sha256": "159a6434ecafa9b5f6fbb54f6b0c1bf71cfa16756f272834bdc97513c3afa70d"
+      },
+      {
+        "path": "src/avalan/task/input.py",
+        "source_sha256": "b15c5f37038cb9822223ba8bb18cc8c8918fa1f81f47265551e30f908ce41541"
+      },
+      {
+        "path": "src/avalan/task/loader.py",
+        "source_sha256": "b2d12245d3391fa5196c815f3d55bcaddb9f080a39385a95c4d09a6c2c1fb286"
+      },
+      {
+        "path": "src/avalan/task/materialization.py",
+        "source_sha256": "e7172d4020bef1e74d291cde642196662e10d44074afa2933fa69286283b555b"
+      },
+      {
+        "path": "src/avalan/task/observability.py",
+        "source_sha256": "98f3797166f354d4d9bd71b6962e7bd9150fdd2ae06c2de067a83b802367b34b"
+      },
+      {
+        "path": "src/avalan/task/privacy.py",
+        "source_sha256": "df59550794121279fabd610d07a9d260e8851b6f57b0e08349bb868453b355b1"
+      },
+      {
+        "path": "src/avalan/task/queue.py",
+        "source_sha256": "b1b1d5369c6e40d2f1bfa8611a7b8894fdc566d23588963d1a70524dfeba6564"
+      },
+      {
+        "path": "src/avalan/task/queues/__init__.py",
+        "source_sha256": "17c9761f1a7ba1281fb8a11dabdd418ff212ecb78e5ed23b947be6c07c98d940"
+      },
+      {
+        "path": "src/avalan/task/queues/pgsql.py",
+        "source_sha256": "e3186a22061b7e46f40dac027803d79fe75eb44db3bd1ff56efb465ae2f1f136"
+      },
+      {
+        "path": "src/avalan/task/resume.py",
+        "source_sha256": "f5fcee83c3f89ffa32d80ffc9e6152f4d4106b3a43db7746e71f01d4c921b14e"
+      },
+      {
+        "path": "src/avalan/task/retention.py",
+        "source_sha256": "a06a5e595e0b369e9ddc259e79d73d411fa19cd3e84de759e6fd2c607ef7ca85"
+      },
+      {
+        "path": "src/avalan/task/runner.py",
+        "source_sha256": "dd9a86a9d9f11b0d120c61d5061610c4225c1cb75297550a8221a93e9f0172a0"
+      },
+      {
+        "path": "src/avalan/task/schema.py",
+        "source_sha256": "9a70ea6667e2e89536f5a751f424d5a296022c3fc009fe6b8187ff8302b9d9f7"
+      },
+      {
+        "path": "src/avalan/task/settlement.py",
+        "source_sha256": "0be952597741a1440564e3eda00877fb132d299c730717ec1f8c3ba549aa29d2"
+      },
+      {
+        "path": "src/avalan/task/sinks/__init__.py",
+        "source_sha256": "a87c8cdcccfcfbb302e4581f3ab5178b0fe23ccd83dc20305dbffe2da901ca53"
+      },
+      {
+        "path": "src/avalan/task/sinks/_shared.py",
+        "source_sha256": "08a26b607397592bf10e1ca7804c4297adc35b05f037e74117bfece5ebb2c8ed"
+      },
+      {
+        "path": "src/avalan/task/sinks/noop.py",
+        "source_sha256": "6829ae9d321d2b24e7606c7e98c228b0abd58b269c71538655e649a7f3f3e6b4"
+      },
+      {
+        "path": "src/avalan/task/sinks/otel.py",
+        "source_sha256": "0a906b8293f136d2e00da123cb6ce0022c92fd14996f72dee1fba215900cd0e0"
+      },
+      {
+        "path": "src/avalan/task/sinks/pgsql.py",
+        "source_sha256": "1df3f907ee70d7fde84c98ef8570154bf3b8084367fac6c3c70990fbcbff2575"
+      },
+      {
+        "path": "src/avalan/task/sinks/prometheus.py",
+        "source_sha256": "ac19683ad58437619843d5397b98ac506a5d18ff370df8093bc89a7e0f1f301c"
+      },
+      {
+        "path": "src/avalan/task/skills.py",
+        "source_sha256": "c2c1f91f2c7decabc5ea7d6ccebfa2c1008ef09d0faea567a6e40be96273d1c5"
+      },
+      {
+        "path": "src/avalan/task/state.py",
+        "source_sha256": "84cbe1d1f6b322f550bafbf3fac31933b7067955aa6a944b1d0abcf496db43a0"
+      },
+      {
+        "path": "src/avalan/task/store.py",
+        "source_sha256": "619fe44c6176881b76d574c3471d9f92645d03135afd4524c7a7098117e2462f"
+      },
+      {
+        "path": "src/avalan/task/stores/__init__.py",
+        "source_sha256": "8a3de70a584c7db7b66a0d0a0d8edc8a8509039bb2c1521e81367d32caf91350"
+      },
+      {
+        "path": "src/avalan/task/stores/memory.py",
+        "source_sha256": "5cac2b28ba2f35deaa77f2227ab0686ce271163e4243a896507e04732e54c556"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql.py",
+        "source_sha256": "902e26eddfb484d2229c6b7631a88425ccd4105e9e8e9b72520090ac4e87db57"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_benchmark.py",
+        "source_sha256": "41b27336bb45b241c0a3e53532b104abb8330e1bb0f2293e2386444a654a59a4"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/env.py",
+        "source_sha256": "c9537c9a72316641070c49d0aeaed263d252fd263f3ca8938b4a3bc97ae8a5b1"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/versions/__init__.py",
+        "source_sha256": "01ba4719c80b6fe911b091a7c05124b64eeece964e09c058ef8f9805daca546b"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260530_0001_task_schema.py",
+        "source_sha256": "01d42768bc20942a412ae108a1c7f759571325501ff19ab338eb4b0f2cf07580"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260723_0002_durable_interactions.py",
+        "source_sha256": "4666f38bc3613c540d5793796ca6085e016922ff065ad6d7159efb12e248d464"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260801_0003_conversation_checkpoints.py",
+        "source_sha256": "a84b6ef7e8d8671af6cbd9c5f0429d24756f9bbffee19ce6ea374e7117b6e4cf"
+      },
+      {
+        "path": "src/avalan/task/target.py",
+        "source_sha256": "5dab74505d09fd50d39eeb8be852a4707848e4c43029c40e8dd7336ea012825c"
+      },
+      {
+        "path": "src/avalan/task/targets/__init__.py",
+        "source_sha256": "9b019a8338772c332d9efaa20ce481e2e5aef643a7d6ff338242e028127936af"
+      },
+      {
+        "path": "src/avalan/task/targets/agent.py",
+        "source_sha256": "658f5ea93ca0c41c0c293251043a4b73c1e24d8da01e96f60c3271d6d0a49501"
+      },
+      {
+        "path": "src/avalan/task/targets/flow.py",
+        "source_sha256": "ee687483f6bda40a8c38d010f60d3094c489141de0c5d5b396cdf3b7c56c047a"
+      },
+      {
+        "path": "src/avalan/task/targets/flow_constants.py",
+        "source_sha256": "b16f9f8d40141f645bc4193a9a91e490a3249207570b10c6d9a94e2a51190cb1"
+      },
+      {
+        "path": "src/avalan/task/text_strategy.py",
+        "source_sha256": "ca0bdedb42c696ed7b3c8008c6998ccaeee30571fa0c715716e328dd8f16894e"
+      },
+      {
+        "path": "src/avalan/task/usage.py",
+        "source_sha256": "bf8c9d32eba9bea2ab691c71d5d84d9df524bab718fd680ac1389e2e6e0fbb73"
+      },
+      {
+        "path": "src/avalan/task/validation.py",
+        "source_sha256": "2c32c7cbd657192a045b3f85211b1cf56e160206ea844ba902e4c9d728eddc4f"
+      },
+      {
+        "path": "src/avalan/task/worker.py",
+        "source_sha256": "40eea68a307588ed0b7da403f467dace7df7e90a1f55c9268fc5963308abc07d"
+      },
+      {
+        "path": "src/avalan/tool/__init__.py",
+        "source_sha256": "26ecd4c83d912301cc3110bac9bfa15712e5583483d47ee5bf562095bcfbda19"
+      },
+      {
+        "path": "src/avalan/tool/a2a.py",
+        "source_sha256": "1a69fdf54dee0958a3d1aeb1b84f9bc1c360a44ddbf0dcfb8def2247d54f16cf"
+      },
+      {
+        "path": "src/avalan/tool/browser.py",
+        "source_sha256": "be883cdaf71f64092133227e618225619fce5041fb78b247a03995055dc3a2f4"
+      },
+      {
+        "path": "src/avalan/tool/builtin_display.py",
+        "source_sha256": "3fca4eefc604dedf4642f78d3623871619a6c4426068dc258738e5d9595e5864"
+      },
+      {
+        "path": "src/avalan/tool/code.py",
+        "source_sha256": "cd10710f887d33fa0f1887a6c0db9e105ac41c049ad74c1fcfd576c69cf117be"
+      },
+      {
+        "path": "src/avalan/tool/context.py",
+        "source_sha256": "05aca36f84498465350f3c4d4cdcc20fad143011a572f03e1d6460dafba679b0"
+      },
+      {
+        "path": "src/avalan/tool/database/__init__.py",
+        "source_sha256": "1878781cf13bd8200ecf19f2f2f7fadcb2379a16b9e44ac67fb410f99ac723b5"
+      },
+      {
+        "path": "src/avalan/tool/database/count.py",
+        "source_sha256": "967ca4b1111acfa19fce2f40e12dc742739fdbb2232f854a6d29bc5b67f13915"
+      },
+      {
+        "path": "src/avalan/tool/database/display.py",
+        "source_sha256": "265dd6c8357fcf3d0d3d447cd169f30d35e7e0e4c64b925acddbbde546fcab79"
+      },
+      {
+        "path": "src/avalan/tool/database/inspect.py",
+        "source_sha256": "7bc0627394978ecb5e9cd984f8169aa67f450c13f8f40511cf5920f99192c4d1"
+      },
+      {
+        "path": "src/avalan/tool/database/keys.py",
+        "source_sha256": "37034fb4c5724c0bc44c13b3e4428ff185906cbea43e409c0caae5ceb95caece"
+      },
+      {
+        "path": "src/avalan/tool/database/kill.py",
+        "source_sha256": "b2961851f461c7ddd94b9ce3e366b5bb9ab061df13d545d0e1211d00d2e86cc8"
+      },
+      {
+        "path": "src/avalan/tool/database/locks.py",
+        "source_sha256": "3cbca5899a7a0a53b9007cf9aff2b183f25abbac6e9363467179281a54ac6a5a"
+      },
+      {
+        "path": "src/avalan/tool/database/plan.py",
+        "source_sha256": "a22d28accf9cda13a30294e8db336def16d4e99f2f88e66446c1573b75ce95d1"
+      },
+      {
+        "path": "src/avalan/tool/database/relationships.py",
+        "source_sha256": "9d682743fcad6ae3045599159327fc077776ac62f09ee922c6a773a6a04d5068"
+      },
+      {
+        "path": "src/avalan/tool/database/run.py",
+        "source_sha256": "5e5f2a986eae1fd2ab2c462f745c1fca3f7c25e3a74d4173999a0d1f0f78192e"
+      },
+      {
+        "path": "src/avalan/tool/database/sample.py",
+        "source_sha256": "382c97f6ebd1930b3c1f05305c276a41b2fd84c2019c965f05e8442120112e79"
+      },
+      {
+        "path": "src/avalan/tool/database/settings.py",
+        "source_sha256": "94f5f33a70a03f55e80b2affe536327ea76a09611d2af7305178a0b5689e4d5b"
+      },
+      {
+        "path": "src/avalan/tool/database/size.py",
+        "source_sha256": "5e1ae03fe5475734fd38d8cfd5c78ec032afaa9c41f0323644fbbd17346ff599"
+      },
+      {
+        "path": "src/avalan/tool/database/tables.py",
+        "source_sha256": "dd65dd2438770caa3710839bb97ab22f942e23c26ac9b8922da677eb89574ac7"
+      },
+      {
+        "path": "src/avalan/tool/database/tasks.py",
+        "source_sha256": "fa3b796870c811ac4b2c1d70f0b84830ea422f2465caecd217cfc07a802d3591"
+      },
+      {
+        "path": "src/avalan/tool/database/toolset.py",
+        "source_sha256": "6ea59dbb9b6ccbc9fa6215cad83391f485c6ee0cf1887a68babbeafe91723ff2"
+      },
+      {
+        "path": "src/avalan/tool/display.py",
+        "source_sha256": "3263068278a660ebbed8dc852d6521f174327d45179f18b6956d8bd8d2321093"
+      },
+      {
+        "path": "src/avalan/tool/dsml.py",
+        "source_sha256": "88922e4aa448392b3d43c357e6c773feec3e57079a913ec28e67f771cb4608d3"
+      },
+      {
+        "path": "src/avalan/tool/graph.py",
+        "source_sha256": "a0ffa2f21df916ba3064e608f77f578e560ffcf0d3f994c98a09693d8b88a475"
+      },
+      {
+        "path": "src/avalan/tool/graph_settings.py",
+        "source_sha256": "f2223f42fc2cb5d2212ccfd1a316264a76939198029af774a84995b7a2291d8f"
+      },
+      {
+        "path": "src/avalan/tool/input_files.py",
+        "source_sha256": "577e91726d789e7a10db251a15162bfc63cd729c99f5f5dda1c46dfe22c37493"
+      },
+      {
+        "path": "src/avalan/tool/json_schema.py",
+        "source_sha256": "e58c0e47dcc7d46a39ce2cbfd97a37a7d8d751a0b014caaa1ea4c93d27e4b2f7"
+      },
+      {
+        "path": "src/avalan/tool/manager.py",
+        "source_sha256": "1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"
+      },
+      {
+        "path": "src/avalan/tool/math.py",
+        "source_sha256": "b8407202f8806bb8582b20ec5bf2d0b9ed815e98ecb57c3983902f6298832fce"
+      },
+      {
+        "path": "src/avalan/tool/mcp.py",
+        "source_sha256": "4e3141f37d8f29251d3c29773ca3d09a694f3f8548d2486c11266dde0ef92bc6"
+      },
+      {
+        "path": "src/avalan/tool/mcp_session.py",
+        "source_sha256": "54e7956e059baa8f1eab496406e03aa1b40841c77f2001b05f270956eee98db6"
+      },
+      {
+        "path": "src/avalan/tool/memory.py",
+        "source_sha256": "3a558044bba255c34a66506537a667a2f001a55a83755ce0fd8d668e9340db2a"
+      },
+      {
+        "path": "src/avalan/tool/name_policy.py",
+        "source_sha256": "943e9a77b2deefff523e758fcd0648bd38fc55bc4d6fa2a7f36c433cc2d550ae"
+      },
+      {
+        "path": "src/avalan/tool/names.py",
+        "source_sha256": "d133a01b82c931790a4d2474348bd825d322851de327082e51b34774b853fcc3"
+      },
+      {
+        "path": "src/avalan/tool/parser.py",
+        "source_sha256": "2853d59114e529867c563fe0bed482c36395a72ecb44f57335b8708abcd5ac5b"
+      },
+      {
+        "path": "src/avalan/tool/search_engine.py",
+        "source_sha256": "0509da46e10d597a83fa7bdd2786ee7765b33d566e10a7493576e3647ae64b76"
+      },
+      {
+        "path": "src/avalan/tool/shell/__init__.py",
+        "source_sha256": "f8095f276de3ecf9845b96e936ad35894b4ba4f9ce3fceb2d5748462604fac35"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/__init__.py",
+        "source_sha256": "d4d9d355ee74d99a0a23c356cf64cffc527b7e3b23beda3bf340c0c71d12ecfe"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/awk.py",
+        "source_sha256": "cb6be2ed983b068f64250767a896f3c31f861a959e36ab6c6f092bc591ffd29e"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/base.py",
+        "source_sha256": "f06ba30f749b3291ec4c14e58ba19483bf7a5980ad94ecf27cfd3cf6c1666457"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/cat.py",
+        "source_sha256": "eb155b0a4ece63465a74032aace896aee38df2415ef0ec84bc63170f33b7d441"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/date.py",
+        "source_sha256": "baf0639c4466a7875f26b79476767694d11268651d350f1d06117e6da2cafad1"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/file.py",
+        "source_sha256": "7d9971115e1af81e5d97346cf589b392321ea30851a0d6fad1f633b3a9433540"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/find.py",
+        "source_sha256": "fd2a9747d0f3097e20a5ab41f61e9eca4121a867cdfbe46c973108f4a18dbacd"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/head.py",
+        "source_sha256": "de9545bd34d64748be00c2d1a707f6d78a63c5b97be332e815200c07cabb5412"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/helpers.py",
+        "source_sha256": "fdbad49d1f714ad4d932e4f97e2818dd50289c718f46a3a983cf6ef97b0de5d9"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/jq.py",
+        "source_sha256": "9df9ad412bc3975be4da66b417de42c46c8134ce46cdb6735479187f473b3467"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/kill.py",
+        "source_sha256": "be5137b60183f6b58fcc2613b6198b6ad541c5c433351f5e19fc988acdf30389"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/ls.py",
+        "source_sha256": "eb694fa67f532549809ca7b4bcb870fce97befcc2d2db0817b28e29bc2c5ede4"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/lsof.py",
+        "source_sha256": "5f5e08c8fdcb7117c768d84b4d3453e36331b0cbe0004f03308387ffe4b07fbd"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/montage.py",
+        "source_sha256": "ed7f09a96f074cd9d2ab395bdedcfaf4d7227676ac0a002451c97eb6885290c4"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/nl.py",
+        "source_sha256": "9592d003c3c7ecff9fc1bd3d9a7950f80872e1d0db0918fa50b6cf3c265ddd19"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pdfinfo.py",
+        "source_sha256": "1b386b550e6246a2aea3bbee770fa8e7caaa102367ba34228f983bd7a1dc5072"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pdfplumber.py",
+        "source_sha256": "19eb5317f8f1850eb125243262e005358873bd36729b6f832bf06c1ad28c15a7"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pdftoppm.py",
+        "source_sha256": "937f48f606356beacfda5b31fb4ebff3b1e6fa4bd8e4604fef16f1c2bb789616"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pdftotext.py",
+        "source_sha256": "8711f0264a94d5ecf82b70ab2b528f55ec60d9c5ebe985e3697d9c8a65f71d54"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pgrep.py",
+        "source_sha256": "3461b9d654e5fc92d876f6e5ab488f5be970f84b54bea83232f777c1392c40b7"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/ps.py",
+        "source_sha256": "0988d950bef59f713e9355b8b08e46a74bc4c411495409aa1b589bf215e9772d"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/pypdf.py",
+        "source_sha256": "ea005458b503e229e5c3b913eed2a22e5f369b9c25d7528b60a3164831ea4fc4"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/python_pdf.py",
+        "source_sha256": "89ee26d19e4a710e6edd30d255dc08df3f9ee2aa8b26416313defed3ad72860e"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/reportlab.py",
+        "source_sha256": "6ada85217bed8804834302cc2afca37b67221c7a22b10f9d84cedde4838fe73a"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/rg.py",
+        "source_sha256": "3d0650b809da7ae6d76b03e8e4c23324158de2ebef50d42b2d01b34c4c5bb9f1"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/sed.py",
+        "source_sha256": "077d15f7de04862502d4a9df70afed696e95de2bbe6d26614d00a0f6fd40436a"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/shasum.py",
+        "source_sha256": "2f372186bdde867a6b33763aabd8b17cb71af74bd8062568d80b8cf685f11e6c"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/tail.py",
+        "source_sha256": "1bbf2f16a65069d9b8f3d9f08ee4ffbd7915a25c0c83770af43a071ba3e28ee5"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/tesseract.py",
+        "source_sha256": "0596ba5ee1f4b7cffe24b3b845e58a6d2e890ec10310ae76903ac484179e1a0c"
+      },
+      {
+        "path": "src/avalan/tool/shell/commands/wc.py",
+        "source_sha256": "f625083de58e928404d4ccd6a05b01f021ba3fc16970a61eaa4407cac331e561"
+      },
+      {
+        "path": "src/avalan/tool/shell/composition_executor.py",
+        "source_sha256": "96cc2ebe9ba2000ab42c3646680008de91e2db57888f4aef4213dbdfa159080d"
+      },
+      {
+        "path": "src/avalan/tool/shell/container.py",
+        "source_sha256": "7ef0141af2fe8e4a70912b08bb6afefafe332e354bc7b55416147ee2638d8932"
+      },
+      {
+        "path": "src/avalan/tool/shell/date.py",
+        "source_sha256": "56f4a23b196688609bc17c419afa4088b83468761496a719663bea690715b625"
+      },
+      {
+        "path": "src/avalan/tool/shell/display.py",
+        "source_sha256": "e44307b1986345dcf23b49e5ad2ac82c8a8f2c0dfcf085cd68fbe4d484a8ccda"
+      },
+      {
+        "path": "src/avalan/tool/shell/entities.py",
+        "source_sha256": "3ea90f837510b2dd32bef0e25c74d327c7e4261d98fc26c1db4a75fe81b72601"
+      },
+      {
+        "path": "src/avalan/tool/shell/executor.py",
+        "source_sha256": "dc958a621835e5fe350c68a80e39a678c04f1d013d2c48659c9437daaeedf1eb"
+      },
+      {
+        "path": "src/avalan/tool/shell/filesystem.py",
+        "source_sha256": "2879170c6b1b39e25ba0585405a1b246cc0981ca540683f091f144caea96c021"
+      },
+      {
+        "path": "src/avalan/tool/shell/formatting.py",
+        "source_sha256": "890c26cb072edb283fdcfccff544929c19927f04453ab10feb9e53ec2eed8002"
+      },
+      {
+        "path": "src/avalan/tool/shell/git.py",
+        "source_sha256": "2d3a97b65039d73954d184b0580b20b77cd8755576251e0833eaab6ef9fba280"
+      },
+      {
+        "path": "src/avalan/tool/shell/git_policy.py",
+        "source_sha256": "401529deac149eea79d4ef39b887a3c8c0ee24f1b931450a5262f7e11827cc24"
+      },
+      {
+        "path": "src/avalan/tool/shell/input_files.py",
+        "source_sha256": "353081f236f438ddeaf3545fa696924f197533f5957d9359d560dc21cc575df2"
+      },
+      {
+        "path": "src/avalan/tool/shell/kill.py",
+        "source_sha256": "1f8700cba84d70b6a1f52baa787a9a9bdf7df30db33b5bef0d199bd2d87d720c"
+      },
+      {
+        "path": "src/avalan/tool/shell/lsof.py",
+        "source_sha256": "a30a8ce78e08fb873dc209d49f9839d4dfe18abbb80d9af153f4178cd8922c84"
+      },
+      {
+        "path": "src/avalan/tool/shell/opt_in.py",
+        "source_sha256": "faef0bdfff3ef89fdae69ad1921ba1f7d6e93c8b3c3a4f8e2db3f944357c8d0f"
+      },
+      {
+        "path": "src/avalan/tool/shell/pgrep.py",
+        "source_sha256": "ae5e64b818be6d09484e729b4dd26a4cfb1c88112bfae4dcf047b0982b9a46a1"
+      },
+      {
+        "path": "src/avalan/tool/shell/policy.py",
+        "source_sha256": "60f23c6c179ad4c6b0a1d6a11d764424e54cf34f5511df7188eb28c19cc64055"
+      },
+      {
+        "path": "src/avalan/tool/shell/process.py",
+        "source_sha256": "e3e378411466018038bc95cc180e133bf62d7547bb5a08a1d7f04b07a6bdedd4"
+      },
+      {
+        "path": "src/avalan/tool/shell/ps.py",
+        "source_sha256": "ed24d78dcafc20ff8f70e00244d3ec624f64ebea486ed683bfe5e26416aa34ef"
+      },
+      {
+        "path": "src/avalan/tool/shell/python_pdf.py",
+        "source_sha256": "187849bea297843267401719dea0c550ad12d6774dd53fb1d8316292e5d614ce"
+      },
+      {
+        "path": "src/avalan/tool/shell/registry.py",
+        "source_sha256": "9307636831ec013e8072377b03f9ecaf33f34a1515b438d339108e482e8ba136"
+      },
+      {
+        "path": "src/avalan/tool/shell/resolver.py",
+        "source_sha256": "28035a625242e3cd8aea06b38d292234d1709bc975f81002f67e449a6b467b05"
+      },
+      {
+        "path": "src/avalan/tool/shell/sandbox.py",
+        "source_sha256": "281f7d6ccfe73679da33952ed26ba312e609881d1b6c63185f280231b3430d75"
+      },
+      {
+        "path": "src/avalan/tool/shell/settings.py",
+        "source_sha256": "fd3e3918a331a4aecd7488cedbb9972ba5aeec29ee0370fe235c1e0df1ead196"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/__init__.py",
+        "source_sha256": "72716dc6776770165bfe98d38855cd5755f38c1d0e82287d256647eb16dc9e47"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/_arguments.py",
+        "source_sha256": "6a915ff7b488ce5b29aca49d543863095c504fc5c222c2a545e97aa2d8f07ee1"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/_base.py",
+        "source_sha256": "a4bd67a1ab5d1e874f764facc8a05b31676b570616622ddd09119aaed2d0754f"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/_results.py",
+        "source_sha256": "7a18b464b245394b5fd5819cf4e10eb1bb42d8fd0906ac400a436f04e9cf5cfa"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/awk.py",
+        "source_sha256": "9683f08ef04513300fa72ec1daf129f8e7ad8c456abf156dbbfcc5da24c1ea8f"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/cat.py",
+        "source_sha256": "03741a0bcd883539ac2299b726be0b955cb60d6c0d3e1fe14df6c7ad8df302bc"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/date.py",
+        "source_sha256": "683782f13d3932be5096d0b5d183462c0bd262f07510465b9b0d15401a4cad45"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/file.py",
+        "source_sha256": "0f2aa7ae9487958597f0461cfa3ead889478e995ff2ec2ff429b33c528b495d0"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/find.py",
+        "source_sha256": "10e0ef274f3766bd4ab4e4ca7450dc1d3ec5b84b6d59e73d4f3c3c0fb568f244"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_base.py",
+        "source_sha256": "63a9a513546956a04b46b7704cd81a8c2a74a8d8ed01c649f5a12449fab171b2"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_history.py",
+        "source_sha256": "0fcfc8aae8dbc3099d4ae7bac54393f100e8e8aa72e90ce78b19a5b97f68ea5d"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_read.py",
+        "source_sha256": "0e9f4c212648fe20f52fb6643b9d936dca13fa550f69bd4a183fcc271b7e0899"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_refs.py",
+        "source_sha256": "279e53a399212fef5dc7ae2b1ca21803e9fdecd6c81b4ec30005cf996bbd0189"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_remote.py",
+        "source_sha256": "b887058ed0b178caf8c1d4907f50050f81ea71f69413cf914e75118aeb85b754"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_stash.py",
+        "source_sha256": "6e73f0611bc379be04e7be8a8f92e6790de1f9da0f015dac52676bdd9f4ef773"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/git_worktree.py",
+        "source_sha256": "f991d1f87ddf4b8424c18b8069d1c4c042418e469086f6339609d3ddb2a4b9f1"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/head.py",
+        "source_sha256": "833473e55e18ad83bdaf73a3809b858fe659fa4889fab1ffa980c2f276dfe789"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/jq.py",
+        "source_sha256": "6a5c77ef329036087f1f166a44b66cf75f2af3531ea0efd0c9daf8f845fcdee7"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/kill.py",
+        "source_sha256": "4260bd0dddc70780eefa7ca8e15afe9719ff7fe3a6c50cf6345743ced073c36c"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/ls.py",
+        "source_sha256": "e7414de7efa6c09b0136baf46c5dd59084e89fdda6313e3676979b9dbd05cb2d"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/lsof.py",
+        "source_sha256": "f5cf7260407914ba5b8c6dd9d6873f6fc03cb578638719181c3c9674605e634d"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/montage.py",
+        "source_sha256": "901610b919d18f8ce073841d20c2512f5b1877f104417f545b79052b9b85b436"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/nl.py",
+        "source_sha256": "ad2cc5e43b859811f8873918b12da3cada8f29ec51b419aad1986f670927fd58"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pdfinfo.py",
+        "source_sha256": "311eceeb7b59baaa98c4bb0f2f9519906922a747bafeb5c9e52d4c7361422bc5"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pdfplumber.py",
+        "source_sha256": "0e0272d1dc73bca17badc6979559933e8cf50df185958084ca53b116780810a6"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pdftoppm.py",
+        "source_sha256": "022a92041843334312a3d2bea24fa69bfcc5318bbf8ca18c37bda934783b8de6"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pdftotext.py",
+        "source_sha256": "c0570973801030f5254c836582882256b16228a9b2d6a99d519972167701a0d9"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pgrep.py",
+        "source_sha256": "d6afff0d60c3c4942f2b64e9329ac304b7aff8756f1de461b5c4388cba615774"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pipeline.py",
+        "source_sha256": "c7a588a2e527714bf513bce3ef0fe55d5a6cb68b0e23ba41979ce8e5d6237d25"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/ps.py",
+        "source_sha256": "a3467fde31664875b06b208e885497ca8b69e5007a40f288d87b4fcdfbf3f04c"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/pypdf.py",
+        "source_sha256": "c133909ca7ad7c00b3b6f84fecb87828c6fd7275f7931b3a386820a9f829b14a"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/reportlab.py",
+        "source_sha256": "a35a8fa7d2149dc81686d3bfdb9099568f5ae4917fc04621a68b0011eff05f4c"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/rg.py",
+        "source_sha256": "146cdca6e2fd5593505780901855beab83becec6559dbccc48d482b7c0df1940"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/sed.py",
+        "source_sha256": "a9691598ff1d7666a4690b6e9c9b58df9fcbc7dc0b8d192e8a5fd45955e14d79"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/shasum.py",
+        "source_sha256": "1185bfd4e37fc6051ca07901909ba10712b2100db0272b5241c54ce6fb3d7d57"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/tail.py",
+        "source_sha256": "755273faa9b05ac4da882aa6ea27784a4386a3e4e2cd76f1467653b35335432a"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/tesseract.py",
+        "source_sha256": "f94d914010acaa8cf1e4fa8b514a402e3a450c5d15c68c9a5f80f72b4f40beb8"
+      },
+      {
+        "path": "src/avalan/tool/shell/tools/wc.py",
+        "source_sha256": "cc08042ac5c398eae57358483db1ef85b9630e0b63fdd46852d81d88ec5f8313"
+      },
+      {
+        "path": "src/avalan/tool/shell/toolset.py",
+        "source_sha256": "5c129837e40439ed0428f7efe23f0c031da63fbc8d6b5e9a581c787cc0bacdb8"
+      },
+      {
+        "path": "src/avalan/tool/skills.py",
+        "source_sha256": "cc22fd3cf4363525a0a529e21577e453aee17da600eba39a0f9fa18d4e254913"
+      },
+      {
+        "path": "src/avalan/tool_cycles.py",
+        "source_sha256": "eec1edbe18324d2f420d9317ef486a7855b6d9365d63d18a66d8cd74283d3fa1"
+      },
+      {
+        "path": "src/avalan/types.py",
+        "source_sha256": "3c0ba170ff851ff3bec6ec520f0902576805066b49cfce47d0a9974f3b472df7"
+      },
+      {
+        "path": "src/avalan/utils.py",
+        "source_sha256": "27533f55c5a94247100a9572edae7611625660c4c9dd2693eacd6d3fdcd9c4f5"
+      }
+    ],
+    "coverage_exclusions": [
+      {
+        "path": "tests/fixtures/input/coverage_exclusions_current.json",
+        "source_sha256": "45be040ef6dafbfe730d404fc6c33f9287fcc26777f95e2b02f75f160ed65849"
+      }
+    ],
+    "public_tools": [
+      "browser",
+      "code",
+      "database",
+      "graph",
+      "math",
+      "memory",
+      "search",
+      "shell"
+    ],
+    "events": [
+      "Event",
+      "EventManager",
+      "EventType"
+    ],
+    "migrations": [
+      "src/avalan/memory/permanent/pgsql_migrations",
+      "src/avalan/task/stores/pgsql_migrations"
+    ],
+    "server_routes": [
+      "a2a",
+      "chat",
+      "engine",
+      "flow",
+      "interaction",
+      "mcp",
+      "responses"
+    ],
+    "protocols": [
+      "a2a",
+      "flow",
+      "json_function",
+      "mcp",
+      "multi_agent",
+      "openai",
+      "task"
+    ],
+    "context_capabilities": [
+      "container",
+      "local",
+      "sandbox"
+    ]
+  },
+  "inventory_sha256": "d987a2b1e0970480dd86795d2041a8567037271605d8905fc6ae0923723fb650",
+  "record_sha256": "15b1b210225e7a0830561a1156d60e73ecafa4dd6d7b964a20634bab7abc9bce"
+}

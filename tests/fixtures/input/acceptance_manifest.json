@@ -681,7 +681,7 @@
       "requirement_ids": [
         "INPUT-GATE-006"
       ],
-      "node_id": "tests/input_contract_metadata_test.py::test_project_metadata_pins_complete_common_gate"
+      "node_id": "tests/input_contract_metadata_test.py::test_project_metadata_pins_input_gate_and_standard_coverage"
     },
     {
       "id": "gate-006-test_workflow_exact_gate_detection_rejects_partial_coverage",

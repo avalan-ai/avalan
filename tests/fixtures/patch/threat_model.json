@@ -1,0 +1,91 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "threats": [
+    {
+      "id": "malicious_workspace_content",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "security",
+      "requirement_id": "PATCH-R-0015",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "setup_bytes_hex": "776f726b73706163653a23212f62696e2f7368",
+      "action_bytes_hex": "726561643a7061796c6f6164",
+      "expected_bytes_hex": "6e6f2d70726f636573732d64697370617463683a666465303261366533616363",
+      "expected_error": "workspace content is data, not executable authority",
+      "expected_containment": "contained"
+    },
+    {
+      "id": "target_replacement",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "security",
+      "requirement_id": "PATCH-R-0022",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
+      "setup_bytes_hex": "726f6f743a6265666f7265",
+      "action_bytes_hex": "7265706c6163653a616e636573746f72",
+      "expected_bytes_hex": "7461726765742d726576616c69646174696f6e2d72657175697265643a386339343234326166343861",
+      "expected_error": "replaced target invalidates the request",
+      "expected_containment": "contained"
+    },
+    {
+      "id": "protocol_replay",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "security",
+      "requirement_id": "PATCH-R-0050",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "setup_bytes_hex": "6772616e743a6f6e6365",
+      "action_bytes_hex": "7265706c61793a6772616e74",
+      "expected_bytes_hex": "73696e676c652d636f6e73756d7074696f6e3a376536333964323466353933",
+      "expected_error": "replayed grant has no second effect",
+      "expected_containment": "contained"
+    },
+    {
+      "id": "authority_swap",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "security",
+      "requirement_id": "PATCH-R-0043",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
+      "setup_bytes_hex": "62696e64696e673a7072696e636970616c2d61",
+      "action_bytes_hex": "7072696e636970616c2d62",
+      "expected_bytes_hex": "62696e64696e672d6d69736d617463683a653962616461643932623861",
+      "expected_error": "authority binding mismatch",
+      "expected_containment": "contained"
+    },
+    {
+      "id": "renderer_injection",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "privacy",
+      "requirement_id": "PATCH-R-0078",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "setup_bytes_hex": "61756469656e63653a6d6f64656c",
+      "action_bytes_hex": "3c7363726970743e",
+      "expected_bytes_hex": "266c743b7363726970742667743b",
+      "expected_error": "renderer projection escaped untrusted content",
+      "expected_containment": "contained"
+    },
+    {
+      "id": "resource_exhaustion",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "mitigation": "Frozen Phase 0 corpus requires fail-closed containment.",
+      "evidence_class": "performance",
+      "requirement_id": "PATCH-R-0013",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
+      "setup_bytes_hex": "6c696d69743a3136",
+      "action_bytes_hex": "787878787878787878787878787878787878",
+      "expected_bytes_hex": "6275646765742d65786365656465643a31383e3136",
+      "expected_error": "bounded corpus input exceeds configured limit",
+      "expected_containment": "contained"
+    }
+  ],
+  "model_sha256": "2967c576314a9d855732505aafb5e62ba216cc0115483cf84da3be0998d1dede"
+}
