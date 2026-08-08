@@ -1082,7 +1082,7 @@
       "6",
       196,
       197,
-      "Generic raw-call confirmation and “approve all future calls” are insufficient. Approval is based on the immutable resolved plan.",
+      "Generic raw-call confirmation and \u201capprove all future calls\u201d are insufficient. Approval is based on the immutable resolved plan.",
       "DECISION",
       0,
       "required",
@@ -1290,7 +1290,7 @@
       "7",
       234,
       234,
-      "A generic “approve all” response is not a plan-bound security grant.",
+      "A generic \u201capprove all\u201d response is not a plan-bound security grant.",
       "CONTRACT",
       0,
       "required",
@@ -4128,10 +4128,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0258",
@@ -4144,10 +4144,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0259",
@@ -4160,10 +4160,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0260",
@@ -4176,10 +4176,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0261",
@@ -4192,10 +4192,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0262",
@@ -4208,10 +4208,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0263",
@@ -4224,10 +4224,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0264",
@@ -4240,10 +4240,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
+      "plan",
       "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0265",
@@ -4256,10 +4256,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0266",
@@ -4272,10 +4272,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0267",
@@ -4288,10 +4288,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0268",
@@ -4304,10 +4304,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0269",
@@ -4320,10 +4320,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0270",
@@ -4336,10 +4336,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0271",
@@ -4352,10 +4352,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0272",
@@ -4368,10 +4368,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "find_match",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0273",
@@ -4384,10 +4384,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0274",
@@ -4400,10 +4400,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0275",
@@ -4416,10 +4416,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0276",
@@ -4432,10 +4432,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0277",
@@ -4448,10 +4448,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0278",
@@ -4464,10 +4464,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0279",
@@ -4480,10 +4480,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0280",
@@ -4496,10 +4496,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "apply_replacements",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0281",
@@ -4512,10 +4512,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0282",
@@ -4528,10 +4528,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0283",
@@ -4544,10 +4544,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0284",
@@ -4560,10 +4560,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0285",
@@ -4576,10 +4576,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0286",
@@ -4592,10 +4592,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0287",
@@ -4608,10 +4608,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0288",
@@ -4624,10 +4624,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0289",
@@ -4640,10 +4640,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0290",
@@ -4656,10 +4656,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0291",
@@ -4672,10 +4672,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0292",
@@ -4688,10 +4688,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0293",
@@ -4704,10 +4704,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0294",
@@ -4720,10 +4720,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0295",
@@ -4736,10 +4736,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0296",
@@ -4752,10 +4752,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0297",
@@ -4768,10 +4768,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0298",
@@ -4784,10 +4784,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0299",
@@ -4800,10 +4800,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0300",
@@ -4816,10 +4816,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0301",
@@ -4832,10 +4832,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0302",
@@ -4848,10 +4848,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0303",
@@ -4864,10 +4864,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0304",
@@ -4880,10 +4880,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0305",
@@ -4896,10 +4896,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0306",
@@ -4912,10 +4912,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0307",
@@ -4928,10 +4928,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0308",
@@ -4944,10 +4944,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0309",
@@ -4960,10 +4960,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0310",
@@ -4976,10 +4976,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0311",
@@ -4992,10 +4992,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0312",
@@ -5008,10 +5008,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0313",
@@ -5024,10 +5024,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0314",
@@ -5040,10 +5040,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0315",
@@ -5056,10 +5056,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0316",
@@ -5072,10 +5072,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0317",
@@ -5088,10 +5088,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0318",
@@ -5104,10 +5104,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0319",
@@ -5120,10 +5120,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0320",
@@ -5136,10 +5136,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "PlannerFile",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0321",
@@ -5152,10 +5152,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0322",
@@ -5168,10 +5168,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0323",
@@ -5184,10 +5184,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0324",
@@ -5200,10 +5200,10 @@
       "required",
       "contract",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0325",
@@ -5216,10 +5216,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0326",
@@ -5232,10 +5232,10 @@
       "required",
       "normative",
       "src/avalan/patch/planner.py",
-      "PatchPlanner",
-      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "plan",
+      "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
       "Phase 3 implementation record",
-      "integration"
+      "planner"
     ],
     [
       "PATCH-R-0327",
@@ -6826,7 +6826,7 @@
       "17.2",
       1161,
       1165,
-      "Generic raw-call confirmation, clarification answers, “approve all future tools,” or text such as “yes” MUST NOT act as a patch approval grant. A trusted operator MAY preauthorize a bounded policy class, but that preauthorization is configuration authority and remains constrained by every other gate.",
+      "Generic raw-call confirmation, clarification answers, \u201capprove all future tools,\u201d or text such as \u201cyes\u201d MUST NOT act as a patch approval grant. A trusted operator MAY preauthorize a bounded policy class, but that preauthorization is configuration authority and remains constrained by every other gate.",
       "MUST_NOT",
       5,
       "required",
@@ -7210,7 +7210,7 @@
       "18",
       1256,
       1262,
-      "Perform the final no-follow precondition check immediately before each requested-effect step. A mismatch before commit_started and before any workspace-visible action returns stale with zero writes. After commit_started—including after visible staging but before the first requested effect—it settles through the requested-effect and artifact journals as commit_failed, partial, or indeterminate; it is never relabeled stale.",
+      "Perform the final no-follow precondition check immediately before each requested-effect step. A mismatch before commit_started and before any workspace-visible action returns stale with zero writes. After commit_started\u2014including after visible staging but before the first requested effect\u2014it settles through the requested-effect and artifact journals as commit_failed, partial, or indeterminate; it is never relabeled stale.",
       "CONTRACT",
       6,
       "required",
@@ -8714,7 +8714,7 @@
       "21.3",
       1505,
       1508,
-      "While settlement is pending, same-identity calls only attach to or query the fenced operation. After any commit-stage terminal outcome—including commit_failed, committed, partial, or indeterminate—the same identity is non-retryable and returns its recorded result.",
+      "While settlement is pending, same-identity calls only attach to or query the fenced operation. After any commit-stage terminal outcome\u2014including commit_failed, committed, partial, or indeterminate\u2014the same identity is non-retryable and returns its recorded result.",
       "CONTRACT",
       6,
       "required",
@@ -8778,7 +8778,7 @@
       "21.3",
       1515,
       1517,
-      "Replayed provider history—including native patch-looking items, custom tool calls, tool outputs, or prior Responses continuation items—is inert history. It MUST NOT execute or re-execute a mutation merely because it is replayed.",
+      "Replayed provider history\u2014including native patch-looking items, custom tool calls, tool outputs, or prior Responses continuation items\u2014is inert history. It MUST NOT execute or re-execute a mutation merely because it is replayed.",
       "MUST_NOT",
       6,
       "required",
@@ -9162,7 +9162,7 @@
       "22.3",
       1610,
       1610,
-      "not_started — every requested component is proven not committed.",
+      "not_started \u2014 every requested component is proven not committed.",
       "CONTRACT",
       6,
       "required",
@@ -9178,7 +9178,7 @@
       "22.3",
       1611,
       1614,
-      "partially_committed — at least one requested component is definitely committed, at least one is definitely not committed, no step is unknown, and the terminal lineage is not complete. This includes an exact move-with-update intermediate state within one lineage.",
+      "partially_committed \u2014 at least one requested component is definitely committed, at least one is definitely not committed, no step is unknown, and the terminal lineage is not complete. This includes an exact move-with-update intermediate state within one lineage.",
       "CONTRACT",
       6,
       "required",
@@ -9194,7 +9194,7 @@
       "22.3",
       1615,
       1616,
-      "committed — every requested component is proven committed and the terminal lineage was established at commit time.",
+      "committed \u2014 every requested component is proven committed and the terminal lineage was established at commit time.",
       "CONTRACT",
       6,
       "required",
@@ -9210,7 +9210,7 @@
       "22.3",
       1617,
       1618,
-      "unknown — at least one step's commit occurrence cannot be proven, regardless of other known steps.",
+      "unknown \u2014 at least one step's commit occurrence cannot be proven, regardless of other known steps.",
       "CONTRACT",
       6,
       "required",
@@ -9594,7 +9594,7 @@
       "24.1",
       1733,
       1734,
-      "rejected — invalid, conflicting, unsupported, no-effect, or non-applicable request; zero writes.",
+      "rejected \u2014 invalid, conflicting, unsupported, no-effect, or non-applicable request; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9610,7 +9610,7 @@
       "24.1",
       1735,
       1735,
-      "denied — policy or capability denial; zero writes.",
+      "denied \u2014 policy or capability denial; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9626,7 +9626,7 @@
       "24.1",
       1736,
       1736,
-      "approval_denied — a trusted approver denied the plan; zero writes.",
+      "approval_denied \u2014 a trusted approver denied the plan; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9642,7 +9642,7 @@
       "24.1",
       1737,
       1738,
-      "approval_unavailable — required review could not be delivered safely; zero writes.",
+      "approval_unavailable \u2014 required review could not be delivered safely; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9658,7 +9658,7 @@
       "24.1",
       1739,
       1739,
-      "stale — revalidation failed; zero writes.",
+      "stale \u2014 revalidation failed; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9674,7 +9674,7 @@
       "24.1",
       1740,
       1740,
-      "cancelled — cancellation or timeout before commit; zero writes.",
+      "cancelled \u2014 cancellation or timeout before commit; zero writes.",
       "CONTRACT",
       9,
       "required",
@@ -9690,7 +9690,7 @@
       "24.1",
       1741,
       1742,
-      "commit_failed — commit began, every step is proven not committed, and mutation_state=not_committed.",
+      "commit_failed \u2014 commit began, every step is proven not committed, and mutation_state=not_committed.",
       "CONTRACT",
       9,
       "required",
@@ -9706,7 +9706,7 @@
       "24.1",
       1743,
       1745,
-      "committed — every step committed and every terminal lineage was established; mutation_state=committed even if a later foreign write makes the observed postcondition superseded.",
+      "committed \u2014 every step committed and every terminal lineage was established; mutation_state=committed even if a later foreign write makes the observed postcondition superseded.",
       "CONTRACT",
       9,
       "required",
@@ -9722,7 +9722,7 @@
       "24.1",
       1746,
       1748,
-      "partial — all steps are known and the exact committed set is a nonempty strict subset, including an intra-lineage intermediate; mutation_state=partially_committed.",
+      "partial \u2014 all steps are known and the exact committed set is a nonempty strict subset, including an intra-lineage intermediate; mutation_state=partially_committed.",
       "CONTRACT",
       9,
       "required",
@@ -9738,7 +9738,7 @@
       "24.1",
       1749,
       1750,
-      "indeterminate — at least one step's commit occurrence is unknown; mutation_state=indeterminate.",
+      "indeterminate \u2014 at least one step's commit occurrence is unknown; mutation_state=indeterminate.",
       "CONTRACT",
       9,
       "required",
@@ -12570,7 +12570,7 @@
       "27.2",
       2112,
       2112,
-      "Treat “approve all” as invalid for future unresolved patch plans.",
+      "Treat \u201capprove all\u201d as invalid for future unresolved patch plans.",
       "CONTRACT",
       12,
       "required",
@@ -12810,7 +12810,7 @@
       "27.3",
       2141,
       2141,
-      "Approval or “confirmed” state.",
+      "Approval or \u201cconfirmed\u201d state.",
       "CONTRACT",
       13,
       "required",
@@ -14410,7 +14410,7 @@
       "29.5",
       2374,
       2374,
-      "Generic “approve all” cannot authorize an unseen patch plan.",
+      "Generic \u201capprove all\u201d cannot authorize an unseen patch plan.",
       "ACCEPTANCE",
       15,
       "required",
@@ -15450,7 +15450,7 @@
       "30",
       2514,
       2514,
-      "Plan review, complete-diff disclosure, and why “approve all” does not apply.",
+      "Plan review, complete-diff disclosure, and why \u201capprove all\u201d does not apply.",
       "DOCUMENTATION",
       15,
       "required",
@@ -16294,5 +16294,5 @@
       "golden"
     ]
   ],
-  "catalog_sha256": "2e92fdc854e5ca46a01fab09438f851df5207a1b255ac128ecd5674de9eb6ee9"
+  "catalog_sha256": "0b845286da7e182531ee3472831074c81303d7592aa7d645e3787f19ae896bb0"
 }
