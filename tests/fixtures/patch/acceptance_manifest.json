@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 1,
+  "current_phase": 2,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -450,7 +450,7 @@
     {
       "id": "PATCH-A-102",
       "category": "positive",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 2,
       "requirement_ids": [
         "PATCH-R-0229",
@@ -460,7 +460,23 @@
         "PATCH-R-0233",
         "PATCH-R-0234",
         "PATCH-R-0235",
-        "PATCH-R-0236",
+        "PATCH-R-0236"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-002",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-0237",
         "PATCH-R-0238",
         "PATCH-R-0239",
@@ -468,7 +484,23 @@
         "PATCH-R-0241",
         "PATCH-R-0242",
         "PATCH-R-0243",
-        "PATCH-R-0244",
+        "PATCH-R-0244"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-003",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-0245",
         "PATCH-R-0246",
         "PATCH-R-0247",
@@ -476,7 +508,23 @@
         "PATCH-R-0249",
         "PATCH-R-0250",
         "PATCH-R-0251",
-        "PATCH-R-0252",
+        "PATCH-R-0252"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-004",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-0253",
         "PATCH-R-0254",
         "PATCH-R-0255",
@@ -484,7 +532,23 @@
         "PATCH-R-0985",
         "PATCH-R-0986",
         "PATCH-R-0987",
-        "PATCH-R-0988",
+        "PATCH-R-0988"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-005",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-0989",
         "PATCH-R-0990",
         "PATCH-R-0991",
@@ -492,7 +556,23 @@
         "PATCH-R-0993",
         "PATCH-R-0994",
         "PATCH-R-0995",
-        "PATCH-R-0996",
+        "PATCH-R-0996"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
+      "surface": "freeform",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-006",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-0997",
         "PATCH-R-0998",
         "PATCH-R-0999",
@@ -500,7 +580,23 @@
         "PATCH-R-1001",
         "PATCH-R-1002",
         "PATCH-R-1003",
-        "PATCH-R-1004",
+        "PATCH-R-1004"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "golden"
+    },
+    {
+      "id": "PATCH-A-P2-007",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-1005",
         "PATCH-R-1006",
         "PATCH-R-1007",
@@ -508,14 +604,30 @@
         "PATCH-R-1009",
         "PATCH-R-1010",
         "PATCH-R-1011",
-        "PATCH-R-1012",
+        "PATCH-R-1012"
+      ],
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
+      "surface": "json_function",
+      "context": "local",
+      "platform": "portable",
+      "operation": "parse",
+      "authority": "selection",
+      "commit_boundary": "preinspection",
+      "evidence_class": "fuzz"
+    },
+    {
+      "id": "PATCH-A-P2-008",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "requirement_ids": [
         "PATCH-R-1013",
         "PATCH-R-1014",
         "PATCH-R-1015",
         "PATCH-R-1016",
         "PATCH-R-1017"
       ],
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "surface": "json_function",
       "context": "local",
       "platform": "portable",
@@ -1565,5 +1677,5 @@
       "evidence_class": "conformance"
     }
   ],
-  "manifest_sha256": "9c28726b4dd443851bd5db82b61e0cae03eaddc1e2e4cc44c65bf98bb8af51f0"
+  "manifest_sha256": "30bbcac3d1aa6457a32cc785f52cb3ac1b468618a80a4287dbdf8ad11e70cb32"
 }

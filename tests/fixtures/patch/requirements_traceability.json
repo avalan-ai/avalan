@@ -3809,7 +3809,7 @@
       "normative",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3825,7 +3825,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3841,7 +3841,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3857,7 +3857,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3873,7 +3873,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3889,7 +3889,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3905,7 +3905,7 @@
       "normative",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3921,7 +3921,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3937,7 +3937,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3953,7 +3953,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3969,7 +3969,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -3985,7 +3985,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4001,7 +4001,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4017,7 +4017,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4033,7 +4033,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4049,7 +4049,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4065,7 +4065,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4081,7 +4081,7 @@
       "normative",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4097,7 +4097,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -4113,7 +4113,7 @@
       "contract",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15777,7 +15777,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15793,7 +15793,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15809,7 +15809,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15825,7 +15825,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15841,7 +15841,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15857,7 +15857,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15873,7 +15873,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15889,7 +15889,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15905,7 +15905,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15921,7 +15921,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15937,7 +15937,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15953,7 +15953,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15969,7 +15969,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -15985,7 +15985,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16001,7 +16001,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16017,7 +16017,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16033,7 +16033,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16049,7 +16049,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16065,7 +16065,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16081,7 +16081,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16097,7 +16097,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16113,7 +16113,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16129,7 +16129,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16145,7 +16145,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16161,7 +16161,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16177,7 +16177,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16193,7 +16193,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16209,7 +16209,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16225,7 +16225,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16241,7 +16241,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16257,7 +16257,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16273,7 +16273,7 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "Phase 2 implementation record",
       "golden"
     ],
@@ -16289,10 +16289,10 @@
       "appendix",
       "src/avalan/patch/parser.py",
       "PatchRequestParser",
-      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
       "Phase 2 implementation record",
       "golden"
     ]
   ],
-  "catalog_sha256": "dc98cdd944f1ba38bb2d35c1277f6eeb851a16689e5ea45571c497808ea5df0e"
+  "catalog_sha256": "2e92fdc854e5ca46a01fab09438f851df5207a1b255ac128ecd5674de9eb6ee9"
 }

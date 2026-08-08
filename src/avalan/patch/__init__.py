@@ -178,3 +178,72 @@ from avalan.patch.domain import (
 from avalan.patch.domain import (
     derive_commit_truth as derive_commit_truth,
 )
+from avalan.patch.parser import (
+    DORMANT_PARAMETER_DESCRIPTORS as DORMANT_PARAMETER_DESCRIPTORS,
+)
+from avalan.patch.parser import (
+    AddDeclarationSyntax as AddDeclarationSyntax,
+)
+from avalan.patch.parser import (
+    CanonicalPatchRequest as CanonicalPatchRequest,
+)
+from avalan.patch.parser import (
+    DeleteDeclarationSyntax as DeleteDeclarationSyntax,
+)
+from avalan.patch.parser import (
+    DormantParameterDescriptor as DormantParameterDescriptor,
+)
+from avalan.patch.parser import (
+    PatchDeclarationSyntax as PatchDeclarationSyntax,
+)
+from avalan.patch.parser import (
+    PatchDocumentSyntax as PatchDocumentSyntax,
+)
+from avalan.patch.parser import (
+    PatchHunkSyntax as PatchHunkSyntax,
+)
+from avalan.patch.parser import (
+    PatchInputAccumulator as PatchInputAccumulator,
+)
+from avalan.patch.parser import (
+    PatchInputError as PatchInputError,
+)
+from avalan.patch.parser import (
+    PatchInputErrorCode as PatchInputErrorCode,
+)
+from avalan.patch.parser import (
+    PatchInputLimits as PatchInputLimits,
+)
+from avalan.patch.parser import (
+    PatchLineSyntax as PatchLineSyntax,
+)
+from avalan.patch.parser import (
+    PatchRequestParser as PatchRequestParser,
+)
+from avalan.patch.parser import (
+    RawPatchIngress as RawPatchIngress,
+)
+from avalan.patch.parser import (
+    RawPatchInputKind as RawPatchInputKind,
+)
+from avalan.patch.parser import (
+    RawPatchInputState as RawPatchInputState,
+)
+from avalan.patch.parser import (
+    RawProviderIngressAdapter as RawProviderIngressAdapter,
+)
+from avalan.patch.parser import (
+    RawProviderProfile as RawProviderProfile,
+)
+from avalan.patch.parser import (
+    RawToolCallId as RawToolCallId,
+)
+from avalan.patch.parser import (
+    StructuredEditSyntax as StructuredEditSyntax,
+)
+from avalan.patch.parser import (
+    TextEditSyntax as TextEditSyntax,
+)
+from avalan.patch.parser import (
+    UpdateDeclarationSyntax as UpdateDeclarationSyntax,
+)
