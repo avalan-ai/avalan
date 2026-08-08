@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "phase": 0,
+  "phase": 1,
   "patch_tools": [],
   "public_tool_inventory": [
     "browser",
@@ -199,7 +199,6 @@
   ],
   "runtime_patch_advertisement": {
     "forbidden_paths": [
-      "src/avalan/patch",
       "src/avalan/tool/patch.py"
     ],
     "forbidden_tokens": [
@@ -217,6 +216,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "d987a2b1e0970480dd86795d2041a8567037271605d8905fc6ae0923723fb650",
-  "evidence_sha256": "752610574e9927523216a08624e36857bb1bcc1142d74a8a65733a1fc0364127"
+  "contract_inventory_sha256": "e9a62743a8b2a3ecbfbc87a84651b8e8c394519657b4de2a227a0de40ad4dd8a",
+  "evidence_sha256": "a5a1e33717ead9cd5fdc05075ea6197d160aec72ae14a35cefe05cbc3dd7455d"
 }

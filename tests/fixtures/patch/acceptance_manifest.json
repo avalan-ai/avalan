@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 0,
+  "current_phase": 1,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -331,9 +331,9 @@
       "evidence_class": "phase0_semantic_contract"
     },
     {
-      "id": "PATCH-A-101",
-      "category": "type",
-      "lifecycle": "planned",
+      "id": "PATCH-A-P1-001",
+      "category": "positive",
+      "lifecycle": "active",
       "active_from_phase": 1,
       "requirement_ids": [
         "PATCH-R-0088",
@@ -343,7 +343,23 @@
         "PATCH-R-0092",
         "PATCH-R-0093",
         "PATCH-R-0094",
-        "PATCH-R-0095",
+        "PATCH-R-0095"
+      ],
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
+      "surface": "domain",
+      "context": "in_memory",
+      "platform": "portable",
+      "operation": "domain_values",
+      "authority": "none",
+      "commit_boundary": "not_started",
+      "evidence_class": "domain_contract"
+    },
+    {
+      "id": "PATCH-A-P1-002",
+      "category": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
         "PATCH-R-0096",
         "PATCH-R-0097",
         "PATCH-R-0098",
@@ -351,7 +367,23 @@
         "PATCH-R-0100",
         "PATCH-R-0101",
         "PATCH-R-0102",
-        "PATCH-R-0103",
+        "PATCH-R-0103"
+      ],
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
+      "surface": "domain",
+      "context": "in_memory",
+      "platform": "portable",
+      "operation": "domain_contracts",
+      "authority": "none",
+      "commit_boundary": "not_started",
+      "evidence_class": "domain_contract"
+    },
+    {
+      "id": "PATCH-A-P1-003",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
         "PATCH-R-0104",
         "PATCH-R-0105",
         "PATCH-R-0106",
@@ -359,7 +391,23 @@
         "PATCH-R-0108",
         "PATCH-R-0109",
         "PATCH-R-0110",
-        "PATCH-R-0111",
+        "PATCH-R-0111"
+      ],
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
+      "surface": "domain",
+      "context": "in_memory",
+      "platform": "portable",
+      "operation": "authority_boundary",
+      "authority": "none",
+      "commit_boundary": "not_started",
+      "evidence_class": "domain_contract"
+    },
+    {
+      "id": "PATCH-A-P1-004",
+      "category": "privacy",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
         "PATCH-R-0112",
         "PATCH-R-0113",
         "PATCH-R-0114",
@@ -367,21 +415,37 @@
         "PATCH-R-0116",
         "PATCH-R-0117",
         "PATCH-R-0118",
-        "PATCH-R-0119",
+        "PATCH-R-0119"
+      ],
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
+      "surface": "domain",
+      "context": "in_memory",
+      "platform": "portable",
+      "operation": "projection_boundary",
+      "authority": "none",
+      "commit_boundary": "not_started",
+      "evidence_class": "domain_contract"
+    },
+    {
+      "id": "PATCH-A-P1-005",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 1,
+      "requirement_ids": [
         "PATCH-R-0120",
         "PATCH-R-0121",
         "PATCH-R-0122",
         "PATCH-R-0123",
         "PATCH-R-0124"
       ],
-      "node_id": "tests/patch/phase_1_contract_test.py::test_patch_phase_1_requirements",
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
       "surface": "domain",
-      "context": "local",
+      "context": "in_memory",
       "platform": "portable",
-      "operation": "types",
-      "authority": "domain",
-      "commit_boundary": "none",
-      "evidence_class": "type"
+      "operation": "redaction_boundary",
+      "authority": "none",
+      "commit_boundary": "not_started",
+      "evidence_class": "domain_contract"
     },
     {
       "id": "PATCH-A-102",
@@ -1501,5 +1565,5 @@
       "evidence_class": "conformance"
     }
   ],
-  "manifest_sha256": "f156703ad9bda56c559a4ba429c42d4ab623312a2288ba537d98314b3cdaaf8c"
+  "manifest_sha256": "9c28726b4dd443851bd5db82b61e0cae03eaddc1e2e4cc44c65bf98bb8af51f0"
 }

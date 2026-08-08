@@ -1,115 +1,90 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "phase": 0,
+  "phase": 1,
   "status": "complete",
-  "scope": "Phase 0 contract infrastructure only; patch remains runtime-incapable and the retained exact gate passed.",
+  "scope": "Dormant immutable domain values and pure truth derivation; no public registration or external effect.",
   "recorded_on": "2026-08-08",
   "ownership": {
     "implementation_owners": [
-      "phase0-review-fixes"
+      "phase1-implementation"
     ],
     "review_owners": [
-      "round-1-contract-review",
-      "round-2-core-review",
-      "round-3-core-review",
-      "round-4-architecture-security-review",
-      "round-4-test-traceability-review"
+      "phase1-max-review"
     ],
-    "base_sha": "8a47d2f6d856fde26ed5a48792120c1d8dfdc2db",
-    "head_sha": "8a47d2f6d856fde26ed5a48792120c1d8dfdc2db"
+    "base_sha": "2c363d42c3ab23ca212f9775039a668836ae4bdb",
+    "head_sha": "2c363d42c3ab23ca212f9775039a668836ae4bdb"
   },
   "changed_paths": [
-    ".gitignore",
-    "Makefile",
-    "scripts/contract_gate.py",
-    "scripts/contract_startup/sitecustomize.py",
-    "scripts/patch_contract_gate_plugin.py",
-    "scripts/patch_contract_support.py",
     "scripts/run_patch_contract_gate.py",
     "scripts/verify_patch_acceptance.py",
     "scripts/verify_patch_types.py",
-    "tests/conversation_contract_harness_test.py",
-    "tests/fixtures/input/acceptance_manifest.json",
+    "src/avalan/patch/__init__.py",
+    "src/avalan/patch/codec.py",
+    "src/avalan/patch/domain.py",
     "tests/fixtures/patch/acceptance_history.json",
     "tests/fixtures/patch/acceptance_manifest.json",
     "tests/fixtures/patch/baseline_evidence.json",
     "tests/fixtures/patch/contract_decisions.json",
-    "tests/fixtures/patch/failure_matrix.json",
-    "tests/fixtures/patch/goldens.json",
     "tests/fixtures/patch/phase_evidence.json",
     "tests/fixtures/patch/requirements_traceability.json",
     "tests/fixtures/patch/source_symbols.json",
-    "tests/fixtures/patch/surface_conformance.json",
-    "tests/fixtures/patch/target_conformance.json",
-    "tests/fixtures/patch/threat_model.json",
     "tests/fixtures/patch/type_contract_manifest.json",
+    "tests/patch/phase_1_domain_test.py",
     "tests/patch_acceptance_verifier_test.py",
     "tests/patch_contract_gate_test.py",
-    "tests/patch_contract_support_test.py",
     "tests/patch_phase0_contract_test.py",
-    "tests/patch_requirement_ownership_test.py",
-    "tests/patch_type_contracts/phase0_aliased_mapping_negative.py",
-    "tests/patch_type_contracts/phase0_any_negative.py",
-    "tests/patch_type_contracts/phase0_cast_negative.py",
-    "tests/patch_type_contracts/phase0_identity_negative.py",
-    "tests/patch_type_contracts/phase0_mapping_negative.py",
-    "tests/patch_type_contracts/phase0_mutable_authority_negative.py",
-    "tests/patch_type_contracts/phase0_positive.py",
-    "tests/patch_type_contracts/phase0_qualified_awaitable_negative.py",
-    "tests/patch_type_contracts/phase0_qualified_cast_negative.py",
-    "tests/patch_type_contracts/phase0_stringly_trust_negative.py",
-    "tests/patch_type_contracts/phase0_sync_awaitable_negative.py",
-    "tests/patch_type_contracts/phase0_type_ignore_negative.py",
-    "tests/patch_type_contracts/phase0_untyped_callback_negative.py"
+    "tests/patch_type_contracts/phase1_identity_negative.py",
+    "tests/patch_type_contracts/phase1_mutable_collection_negative.py",
+    "tests/patch_type_contracts/phase1_positive.py",
+    "tests/patch_type_contracts/phase1_sync_protocol_negative.py"
   ],
   "exact_gate": {
     "status": "complete",
-    "reason": "The final nonignored source snapshot passed the retained Phase 0 exact gate and copied its sealed artifacts to the source checkout."
+    "reason": "Authoritative Phase 1 exact gate passed; retained coverage and pytest facts are sealed below."
   },
   "commands": [
     {
-      "id": "PATCH-CMD-EXACT",
-      "command": "make test-patch-exact no-install PATCH_PHASE=0",
+      "id": "PATCH-CMD-P1",
+      "command": "make test-patch-exact no-install PATCH_PHASE=1",
       "status": "passed",
-      "reason": "Final retained full-suite, exact-coverage, type-contract, and acceptance gate.",
+      "reason": "Final gate summary output receipt; its digest covers the terminal gate summary line only.",
       "exit_code": 0,
-      "duration_ms": 847038,
+      "duration_ms": 926328,
       "environment": {
-        "python": "3.11.15",
-        "profile": "phase0-non-postgresql-exact",
+        "python": "Python 3.11.15",
+        "profile": "nonignored execution mirror with isolated subprocess environment",
         "configuration": {
-          "PATCH_PHASE": "0",
-          "PYTHONNOUSERSITE": "1",
-          "PYTHONSAFEPATH": "1",
+          "PATCH_PHASE": "1",
           "PYTHONDONTWRITEBYTECODE": "1",
-          "database_mode": "gate-owned-ephemeral"
+          "PYTHONNOUSERSITE": "1",
+          "PYTHONSAFEPATH": "1"
         }
       },
-      "output_sha256": "099199d523bb1bb328a22189f5b38eec25e9c15e37da5c1704a9d28c02364480"
+      "output_sha256": "98a8301004dbe71a88919f76b9bb14c58aacfbdda6a50bfc5482639bcd7ec5dc"
     }
   ],
   "artifact_digests": [
     {
-      "name": "patch-pytest-facts",
+      "name": "pytest_facts",
       "path": ".patch-contract-pytest-facts.json",
-      "sha256": "a02d2f89729d260a837df566405826f31b73e1029ebb8271d7226837c931699a"
+      "sha256": "1d614cc04de62ebb485d98c589874a133bbec048b30f18241a9ebada3c5ec2f5"
     },
     {
-      "name": "coverage-json",
+      "name": "coverage_json",
       "path": "coverage.json",
-      "sha256": "89dec6e648b10a3d65f90ab97a646c751bd04c3590d220317c6f802a736dc5c6"
+      "sha256": "0f100bd47f9baac9e6f3aa8ae142d4d37d4af1610abed82824ce31a8c5becd25"
     },
     {
-      "name": "coverage-xml",
+      "name": "coverage_xml",
       "path": "coverage.xml",
-      "sha256": "4b57573ead1bed4a64c89f8279689c44c4060fafc6444843146d52e70d2ce49a"
+      "sha256": "a1552b1bb068db534e8fcb93778292ebdb2ec6bf0069d2cc90a8675791574e14"
     }
   ],
   "suite_facts": [
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -122,7 +97,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -135,7 +110,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -148,7 +123,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -161,7 +136,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -174,7 +149,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -187,7 +162,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -200,7 +175,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -213,7 +188,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -226,7 +201,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -239,7 +214,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -252,7 +227,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -265,7 +240,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -278,7 +253,7 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -291,7 +266,72 @@
     },
     {
       "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
-      "command_id": "PATCH-CMD-EXACT",
+      "command_id": "PATCH-CMD-P1",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
+      "command_id": "PATCH-CMD-P1",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
+      "command_id": "PATCH-CMD-P1",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
+      "command_id": "PATCH-CMD-P1",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
+      "command_id": "PATCH-CMD-P1",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
+      "command_id": "PATCH-CMD-P1",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -305,90 +345,92 @@
   ],
   "coverage": {
     "tool": "coverage.py",
-    "collected_pytest_nodes": 14586,
-    "nonempty_src_files": 492,
-    "statements": 144749,
-    "covered_statements": 144749,
+    "collected_pytest_nodes": 14617,
+    "nonempty_src_files": 495,
+    "statements": 145524,
+    "covered_statements": 145524,
     "missing_statements": 0,
-    "report_sha256": "89dec6e648b10a3d65f90ab97a646c751bd04c3590d220317c6f802a736dc5c6",
-    "per_file_sha256": "6e14755f68a740812c726bb2972c7cee772c8d371e9c0cdd0a0de562559ee89c"
+    "report_sha256": "0f100bd47f9baac9e6f3aa8ae142d4d37d4af1610abed82824ce31a8c5becd25",
+    "per_file_sha256": "6fb2488c7f71c1835c75838cf8426297de964bbddfa3ef2164e75822995f4475"
   },
   "node_counts": {
-    "active_requirements": 87,
-    "planned_requirements": 930,
-    "active_acceptance_nodes": 15,
-    "planned_acceptance_nodes": 15
+    "active_requirements": 124,
+    "planned_requirements": 893,
+    "active_acceptance_nodes": 20,
+    "planned_acceptance_nodes": 14
   },
   "quality_gates": {
     "project_mypy": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "The retained gate passed the active structured-input and conversation type contracts before acceptance."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Authoritative exact gate completed the strict source type verification."
     },
     "patch_mypy": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "The cold-cache strict Patch source and fixture type contract passed inside the Git-free execution mirror."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Patch strict type fixtures and source inventory passed through Phase 1."
     },
     "positive_type_assertions": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "The active positive Patch type fixture passed its exact strict-mypy contract."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Active positive type fixtures passed."
     },
     "rejected_type_diagnostics": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "All active negative Patch type fixtures produced their pinned exact diagnostics."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Active negative fixtures matched their exact diagnostics."
     },
     "blocking_io_scan": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "Active source-guard and mutation tests rejected the frozen blocking-I/O and dynamic-execution patterns."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Patch source guard and strict AST checks passed for the dormant pure domain."
     },
     "async_heartbeat": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "Deterministic Phase 0 manual-clock, barrier, and resource-depth liveness nodes passed."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Pure synchronous domain transforms remained within the allowed strict source boundary."
     },
     "resource_leaks": {
       "status": "passed",
-      "command_id": "PATCH-CMD-EXACT",
-      "evidence": "The gate-owned pytest receipt recorded zero leak warnings and the ephemeral database teardown completed."
+      "command_id": "PATCH-CMD-P1",
+      "evidence": "Gate receipt recorded leak_warnings=0."
     }
   },
   "database_lifecycle": {
-    "migration_revision": "not_applicable_phase_0",
-    "schema_identity": "not_applicable_phase_0",
-    "crash_restart_boundary": "not_applicable_phase_0",
-    "encryption_key_fixture_version": "not_applicable_phase_0",
-    "outbox_settlement": "not_applicable_phase_0",
-    "teardown_proof": "not_applicable_phase_0"
+    "migration_revision": "not_applicable_phase_1",
+    "schema_identity": "not_applicable_phase_1",
+    "crash_restart_boundary": "not_applicable_phase_1",
+    "encryption_key_fixture_version": "not_applicable_phase_1",
+    "outbox_settlement": "not_applicable_phase_1",
+    "teardown_proof": "not_applicable_phase_1"
   },
   "profiles": [
     {
-      "id": "PATCH-PROFILE-PENDING",
-      "kind": "inactive",
+      "id": "PATCH-PROFILE-P1",
+      "kind": "scripted",
       "contexts": [
-        "local",
-        "sandbox",
-        "container"
+        "in_memory"
       ],
-      "command_id": "PATCH-CMD-EXACT",
-      "e2e_ids": [],
-      "receipt": "All production target profiles are explicitly incapable pending Phase 4 and later handshakes."
+      "command_id": "PATCH-CMD-P1",
+      "e2e_ids": [
+        "PATCH-E2E-P1-DOMAIN"
+      ],
+      "receipt": "Authoritative exact gate passed the scripted dormant domain E2E profile."
     }
   ],
-  "e2e_ids": [],
+  "e2e_ids": [
+    "PATCH-E2E-P1-DOMAIN"
+  ],
   "redaction_and_bounds": {
-    "redaction_canary": "not_applicable",
+    "redaction_canary": "passed",
     "renderer_injection": "not_applicable",
     "timing_disclosure": "not_applicable",
-    "fuzz": "passed",
-    "liveness": "passed",
+    "fuzz": "not_applicable",
+    "liveness": "not_applicable",
     "retention": "not_applicable",
     "diagnostic_separation": "passed",
-    "max_request_bytes": 1048576,
-    "max_duration_ticks": 3600
+    "max_request_bytes": 1,
+    "max_duration_ticks": 1
   },
   "review": {
     "rounds": [
@@ -396,95 +438,56 @@
         "round": 1,
         "findings": [
           {
-            "id": "PATCH-REV-001",
+            "id": "PATCH-REV-P1-001",
             "severity": "P1",
             "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Phase 0 matrix and type guards are tracked.",
-            "rationale": "Prior review fixes remain subject to the pending exact gate."
+            "owner": "phase1-implementation",
+            "evidence": "MutationScope and lineage authority collections now reject caller-owned mutable sets; the exact negative fixture and runtime boundary exercise both pass.",
+            "rationale": "Mutable authority collections could be changed after caller construction."
+          },
+          {
+            "id": "PATCH-REV-P1-002",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase1-implementation",
+            "evidence": "CommitTruth validates aggregate state, occurrence, exactness, postcondition, and workspace-change combinations; contradictory-vector negatives pass.",
+            "rationale": "A caller could previously construct impossible commit truth."
+          },
+          {
+            "id": "PATCH-REV-P1-003",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase1-implementation",
+            "evidence": "Settlement now derives request-wide truth only from journals exactly bound to the sealed plan graphs; multi-lineage and mismatch negatives pass.",
+            "rationale": "Single-lineage derivation could omit sealed request steps."
+          },
+          {
+            "id": "PATCH-REV-P1-004",
+            "severity": "P2",
+            "disposition": "fixed",
+            "owner": "phase1-implementation",
+            "evidence": "PublicPendingProjection and its codec expose only opaque pending-operation continuation identity, correlation, version, and lifecycle; privacy roundtrip passes.",
+            "rationale": "The public pending projection lacked its continuation handle and exposed request identity."
+          },
+          {
+            "id": "PATCH-REV-P1-005",
+            "severity": "P2",
+            "disposition": "fixed",
+            "owner": "phase1-implementation",
+            "evidence": "The exact 42-code stable error catalog is enumerated and exhaustively asserted, including invalid_patch, timeout, partial_commit, and stale.",
+            "rationale": "The initial error catalog was incomplete and used a noncanonical stale code."
           }
         ],
         "residual_risks": [
-          "No unresolved Phase 0 P0-P2 finding remains after the retained exact gate."
+          "All reported P1/P2 findings were fixed before final exact-gate validation."
         ]
       },
       {
         "round": 2,
-        "findings": [
-          {
-            "id": "PATCH-REV2-008",
-            "severity": "P0",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Verifier accepts only explicit pending evidence during edits and binds complete evidence to retained gate artifacts.",
-            "rationale": "Historical coverage totals and command receipts could be stale or synthetic."
-          },
-          {
-            "id": "PATCH-REV2-009",
-            "severity": "P1",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Runtime probe executes ToolManager, CLI, FastAPI/MCP, flow, and provider capability registries without a patch identity.",
-            "rationale": "A source-token scan alone cannot prove runtime incapability."
-          }
-        ],
-        "residual_risks": [
-          "Patch remains deliberately runtime-incapable after Phase 0."
-        ]
-      },
-      {
-        "round": 3,
-        "findings": [
-          {
-            "id": "PATCH-REV3-010",
-            "severity": "P2",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Acceptance history now seals every semantic node field and the exact executable source digest, with reviewed full-record replacements.",
-            "rationale": "Node identity alone could permit semantic weakening."
-          },
-          {
-            "id": "PATCH-REV3-011",
-            "severity": "P2",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Type ownership discovers all changed and untracked Python under scripts, src, and tests; manifests own current integration and patch tests.",
-            "rationale": "Scripts-only inventory allowed changed source or test bypass."
-          },
-          {
-            "id": "PATCH-REV3-012",
-            "severity": "P2",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Gate-owned startup audit hooks receive exact mirror absolute artifact paths, and plugin subprocess E2E rejects dynamically constructed opens.",
-            "rationale": "A verifier-local wrapper did not cover actual gate subprocesses."
-          },
-          {
-            "id": "PATCH-REV3-013",
-            "severity": "P2",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Runtime probe exercises default and configured ToolManager discovery, A2A/MCP/OpenAPI, task and flow registries, selectors, CLI, and provider catalog.",
-            "rationale": "An empty manager and shallow route scan did not prove runtime incapability."
-          },
-          {
-            "id": "PATCH-REV3-014",
-            "severity": "P2",
-            "disposition": "fixed",
-            "owner": "phase0-review-fixes",
-            "evidence": "Round-three dispositions and current changed-path inventory are retained while the exact gate remains explicitly pending.",
-            "rationale": "Evidence needed to distinguish focused proof from the pending full exact gate."
-          }
-        ],
-        "residual_risks": [
-          "Later-phase runtime behavior remains planned and non-evidence."
-        ]
-      },
-      {
-        "round": 4,
         "findings": [],
         "residual_risks": [
-          "Dual architecture/security and test/traceability approvals report no open P0-P2 findings; the retained exact gate passed."
+          "Closure verification approved: no open P0, P1, or P2 findings remain.",
+          "Final retained exact gate and exact coverage completed."
         ]
       }
     ]
@@ -504,7 +507,12 @@
     "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
     "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
     "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
-    "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits"
+    "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries"
   ],
   "external_effects": {
     "deployment": false,
@@ -513,5 +521,5 @@
     "workspace_mutation": false,
     "production_activation": false
   },
-  "record_sha256": "2f401008e5218dc4e99a78ad86bbce130ded51e35d95e185399862ea31dc06f2"
+  "record_sha256": "1e212d8ee6a86c4638f2107d2a39455cf9eba2d35c8421de890d8d5199d28ed8"
 }

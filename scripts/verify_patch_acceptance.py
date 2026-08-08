@@ -53,10 +53,10 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 0
+_CURRENT_PHASE = 1
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
-    "6ce51772dc60d33aec7f69129edd45ab0792ef5eea788071a3b5ad577081dcd6"
+    "b8acecfc246178945af88dd19b59add88cd5ec162ffe85d857a826cb61a64c61"
 )
 _FIXTURE_NAMES = (
     "requirements_traceability.json",
@@ -113,7 +113,7 @@ _REQUIREMENT_RECORD_LAYOUT = (
     "evidence_class",
 )
 _MAX_ACTIVE_REQUIREMENTS_PER_NODE = 8
-_ACTIVE_IMPLEMENTATION_ROOT = "scripts/"
+_ACTIVE_IMPLEMENTATION_ROOTS = ("scripts/", "src/")
 _PLANNED_IMPLEMENTATION_ROOTS = ("src/", "docs/")
 _REQUIREMENT_SOURCE_KINDS = frozenset(
     (
@@ -1447,7 +1447,7 @@ def _validate_requirements(
                 "requirement owner phase differs from acceptance evidence: "
                 f"{identifier}"
             )
-        if ownership.owning_phase == _CURRENT_PHASE:
+        if ownership.owning_phase <= _CURRENT_PHASE:
             if owner.lifecycle != "active":
                 raise PatchAcceptanceError(
                     "active requirement has planned evidence"
@@ -1484,7 +1484,7 @@ def _validate_active_requirement_artifact(
 ) -> None:
     """Require a Phase 0 requirement to bind one executable local artifact."""
     relative = ownership.implementation_artifact
-    if not relative.startswith(_ACTIVE_IMPLEMENTATION_ROOT):
+    if not relative.startswith(_ACTIVE_IMPLEMENTATION_ROOTS):
         raise PatchAcceptanceError(
             "active requirement implementation artifact is not executable"
         )
@@ -2859,14 +2859,13 @@ def _validate_runtime_patch_advertisement(value: object, root: Path) -> None:
             payload.get("forbidden_paths"), "forbidden paths"
         )
     )
-    if paths != (
-        Path("src/avalan/patch"),
-        Path("src/avalan/tool/patch.py"),
-    ):
+    if paths != (Path("src/avalan/tool/patch.py"),):
         raise PatchAcceptanceError("runtime patch path evidence is incomplete")
     for path in paths:
         if (root / path).exists():
-            raise PatchAcceptanceError("Phase 0 runtime patch path is present")
+            raise PatchAcceptanceError(
+                "runtime patch registration path is present"
+            )
     tokens = tuple(
         _string(raw, "forbidden patch advertisement token")
         for raw in object_list(
@@ -2889,7 +2888,7 @@ def _validate_runtime_patch_advertisement(value: object, root: Path) -> None:
         contents = source.read_text(encoding="utf-8")
         if any(token in contents for token in tokens):
             raise PatchAcceptanceError(
-                "Phase 0 runtime patch advertisement is present"
+                "runtime patch advertisement is present"
             )
     observed = _runtime_patch_incapability_probe()
     expected = tuple(
@@ -3555,8 +3554,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 87,
-        "planned_requirements": 930,
+        "active_requirements": 124,
+        "planned_requirements": 893,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))
@@ -3631,7 +3630,7 @@ def _validate_phase_evidence_database(value: object) -> None:
     for field in database:
         if (
             _string(database.get(field), f"phase database {field}")
-            != "not_applicable_phase_0"
+            != f"not_applicable_phase_{_CURRENT_PHASE}"
         ):
             raise PatchAcceptanceError("phase database lifecycle is invalid")
 
