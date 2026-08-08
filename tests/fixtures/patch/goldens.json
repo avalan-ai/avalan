@@ -1,0 +1,151 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "cases": [
+    {
+      "id": "PATCH-G-001",
+      "category": "grammar",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0014",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
+      "input_bytes_hex": "7b226f70223a2265646974222c226f70223a226170706c79227d",
+      "expected_bytes_hex": "",
+      "expected_outcome": "reject_closed_json",
+      "expected_error": "duplicate JSON object name: 'op'"
+    },
+    {
+      "id": "PATCH-G-002",
+      "category": "path",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0015",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "input_bytes_hex": "2f746d702f76697369626c652e747874",
+      "expected_bytes_hex": "",
+      "expected_outcome": "reject_logical_path",
+      "expected_error": "absolute or platform path is prohibited"
+    },
+    {
+      "id": "PATCH-G-003",
+      "category": "text",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0022",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
+      "input_bytes_hex": "610d0a620d0a",
+      "expected_bytes_hex": "610d0a620d0a",
+      "expected_outcome": "preserve_crlf_bytes",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-004",
+      "category": "matching",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0029",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "input_bytes_hex": "6265666f7265",
+      "expected_bytes_hex": "",
+      "expected_outcome": "reject_no_exact_match",
+      "expected_error": "matching input requires source and nonempty needle"
+    },
+    {
+      "id": "PATCH-G-005",
+      "category": "lineage",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0036",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "input_bytes_hex": "736f757263652e7478742d3e7461726765742e747874",
+      "expected_bytes_hex": "6c696e656167653a736f757263652e7478742d3e7461726765742e747874",
+      "expected_outcome": "one_terminal_lineage",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-006",
+      "category": "diff",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0043",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
+      "input_bytes_hex": "76697369626c652e7478747c617c62",
+      "expected_bytes_hex": "2d2d2d20612f76697369626c652e7478740a2b2b2b20622f76697369626c652e7478740a2d610a2b620a",
+      "expected_outcome": "complete_review_diff",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-007",
+      "category": "fingerprint",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0050",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "input_bytes_hex": "706c616e3a76697369626c652e747874",
+      "expected_bytes_hex": "62353737363339376635313837313461626337353539373939396233323063393635663861333364336432326238353461333736313538656630313136373232",
+      "expected_outcome": "stable_fingerprint",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-008",
+      "category": "result",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0057",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "input_bytes_hex": "6e6f745f636f6d6d69747465643b636f6d6d69745f737461727465643d66616c7365",
+      "expected_bytes_hex": "7b22636f6d6d69745f73746172746564223a66616c73652c22737461747573223a226e6f745f636f6d6d6974746564227d",
+      "expected_outcome": "closed_result_projection",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-009",
+      "category": "error",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0064",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
+      "input_bytes_hex": "7374616c65",
+      "expected_bytes_hex": "7b226572726f72223a227374616c655f706c616e227d",
+      "expected_outcome": "closed_error_projection",
+      "expected_error": "stale plan requires a new request"
+    },
+    {
+      "id": "PATCH-G-010",
+      "category": "event",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0071",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
+      "input_bytes_hex": "726571756573745f72656365697665643e726571756573745f636f6d706c65746564",
+      "expected_bytes_hex": "726571756573745f72656365697665642c726571756573745f636f6d706c65746564",
+      "expected_outcome": "one_terminal_sequence",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-011",
+      "category": "redaction",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0078",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "input_bytes_hex": "736563726574",
+      "expected_bytes_hex": "3c72656461637465643a3262623830643533376231643e",
+      "expected_outcome": "audience_redacts_content",
+      "expected_error": "none"
+    },
+    {
+      "id": "PATCH-G-012",
+      "category": "wire",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "requirement_id": "PATCH-R-0083",
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+      "input_bytes_hex": "7b2276223a317d",
+      "expected_bytes_hex": "7b2276223a317d",
+      "expected_outcome": "versioned_wire_round_trip",
+      "expected_error": "none"
+    }
+  ],
+  "golden_sha256": "d40fe13cb09c43e0420b69450e49eddaebd7e7ff96e897e11470ae676c871edd"
+}

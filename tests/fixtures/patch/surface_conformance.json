@@ -1,0 +1,127 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "surfaces": [
+    {
+      "id": "sdk",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "cli",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "server",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "mcp",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "a2a",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "flow",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "task",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "multi_agent",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "json_function",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    },
+    {
+      "id": "freeform",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "advertised": false,
+      "externally_retryable": false,
+      "target_profile_id": "PATCH-TARGET-LOCAL",
+      "required_capabilities": [],
+      "persistence_ordering_evidence": "inactive:patch-absent",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "pre_advertisement_negative_node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised"
+    }
+  ],
+  "manifest_sha256": "5dfb10660455b6d1e864d52a3499337b6471da39d32fecdc889d6a56e7438f80"
+}

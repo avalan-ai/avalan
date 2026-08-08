@@ -1,0 +1,271 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "current_phase": 0,
+  "fixtures": [
+    {
+      "id": "PATCH-T-001",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_positive.py",
+      "source_sha256": "0430552788c71414fcfb82069bf5971fdaafa514d4b9c8cd36b8a6a526019385",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-002",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_identity_negative.py",
+      "source_sha256": "7ca2d0cc89c0f84f48b40eb66164c2e908fd52fb8d425fb907127461aea90d6e",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_identity_negative.py:12:25: error: Incompatible types in assignment (expression has type \"PatchRequestId\", variable has type \"PatchPlanId\")  [assignment]"
+      ]
+    },
+    {
+      "id": "PATCH-T-003",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_any_negative.py",
+      "source_sha256": "fe6f5c38bfa548226317b1125595ee57985787439a0884d5d018716fdeb963b6",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_any_negative.py:6: error: patch strict type fixture forbids Any [patch-Any]",
+        "tests/patch_type_contracts/phase0_any_negative.py:6:1: error: Explicit \"Any\" is not allowed  [explicit-any]"
+      ]
+    },
+    {
+      "id": "PATCH-T-004",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_cast_negative.py",
+      "source_sha256": "8fcf39dc375052a1e26f1dedd5b9297a1654dd27f29900dd37ebda3d35b60798",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_cast_negative.py:8: error: patch strict type fixture forbids cast [patch-cast]"
+      ]
+    },
+    {
+      "id": "PATCH-T-005",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_type_ignore_negative.py",
+      "source_sha256": "1811d5f971243ed0b82c88a14a0e6f4da561f55bacccf5fe470d30d9f4995dd6",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_type_ignore_negative.py:6: error: patch strict type fixture forbids type-ignore [patch-type-ignore]"
+      ]
+    },
+    {
+      "id": "PATCH-T-006",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_mapping_negative.py",
+      "source_sha256": "769156cc971ab7c3a3cecbb0226ea5e96f06fea08b8e4107a51619e1f4d54fc9",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_mapping_negative.py:4: error: patch strict type fixture forbids free-form-mapping [patch-free-form-mapping]"
+      ]
+    },
+    {
+      "id": "PATCH-T-007",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_mutable_authority_negative.py",
+      "source_sha256": "28399c0d20317fff16e8a0b52ed85d759596344999ace2542ab808a37224b73c",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_mutable_authority_negative.py:7: error: patch strict type fixture forbids mutable-authority [patch-mutable-authority]"
+      ]
+    },
+    {
+      "id": "PATCH-T-008",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_stringly_trust_negative.py",
+      "source_sha256": "0c07c58a36ffe6e55fc97686f1932a26fb5e2df56e4c7b98187917755e85fbdc",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_stringly_trust_negative.py:10: error: patch strict type fixture forbids stringly-trust-state [patch-stringly-trust-state]"
+      ]
+    },
+    {
+      "id": "PATCH-T-009",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_untyped_callback_negative.py",
+      "source_sha256": "5c6fdda8da9925e8ad0e9afe97ba0789a8ac91d02e9211782d5ee02762a52c6d",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_untyped_callback_negative.py:4: error: patch strict type fixture forbids untyped-callback [patch-untyped-callback]",
+        "tests/patch_type_contracts/phase0_untyped_callback_negative.py:4:1: error: Function is missing a type annotation  [no-untyped-def]"
+      ]
+    },
+    {
+      "id": "PATCH-T-010",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_sync_awaitable_negative.py",
+      "source_sha256": "a68c4f105c6fd62e4dccfec2f5691f53b8996f99782202033a179ade75a7f329",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_sync_awaitable_negative.py:6: error: patch strict type fixture forbids sync-or-awaitable [patch-sync-or-awaitable]"
+      ]
+    },
+    {
+      "id": "PATCH-T-011",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_qualified_cast_negative.py",
+      "source_sha256": "3b7c1b3b42b9578b888d838b761d691f12d8fb2c2ea05264452c0df700060452",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_qualified_cast_negative.py:5: error: patch strict type fixture forbids cast [patch-cast]",
+        "tests/patch_type_contracts/phase0_qualified_cast_negative.py:5:14: error: Redundant cast to \"str\"  [redundant-cast]"
+      ]
+    },
+    {
+      "id": "PATCH-T-012",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_aliased_mapping_negative.py",
+      "source_sha256": "dc4a6170ace342687a9b8d7d86e31919c2ac3028fb10cda5818cf20ae7c3fbc8",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_aliased_mapping_negative.py:5: error: patch strict type fixture forbids free-form-mapping [patch-free-form-mapping]"
+      ]
+    },
+    {
+      "id": "PATCH-T-013",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "path": "tests/patch_type_contracts/phase0_qualified_awaitable_negative.py",
+      "source_sha256": "2df7a5ef6637b962c81b4fe2ce3651df3e090a260913198e25d218e225215aca",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase0_qualified_awaitable_negative.py:5: error: patch strict type fixture forbids sync-or-awaitable [patch-sync-or-awaitable]"
+      ]
+    }
+  ],
+  "sources": [
+    {
+      "id": "PATCH-TS-001",
+      "path": "scripts/patch_contract_gate_plugin.py",
+      "scope": "patch_script",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "7c535321c42bd93fbd71948e7e25179810b8d61a9a1c4c457c475fe6ebf374df"
+    },
+    {
+      "id": "PATCH-TS-002",
+      "path": "scripts/patch_contract_support.py",
+      "scope": "patch_script",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "6e0410b651a1caa33ea821da592cb34e2b2bcb370be178725c2214809b829332"
+    },
+    {
+      "id": "PATCH-TS-003",
+      "path": "scripts/run_patch_contract_gate.py",
+      "scope": "patch_script",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "74e32cff2ea1675b6652c2f6a477f0600156f951b26fa75909b77b96fdb38abc"
+    },
+    {
+      "id": "PATCH-TS-004",
+      "path": "scripts/verify_patch_acceptance.py",
+      "scope": "patch_script",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "a0b0882e192bdbd7be899dc56bfe0bda15d8549f00f8478906f44f03948896d1"
+    },
+    {
+      "id": "PATCH-TS-005",
+      "path": "scripts/verify_patch_types.py",
+      "scope": "patch_script",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "831239a05c4092ac38011a3f0d8499bb90cb7ae65bfea5a6e55ba12662c5e7b5"
+    },
+    {
+      "id": "PATCH-TS-006",
+      "path": "scripts/contract_gate.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_UNMEASURED_FILE_NAMES"
+      ],
+      "source_sha256": "0a5c77e6608549d91d09fe2ef196bf8af7f43779600a034fb81014effc3673c0"
+    },
+    {
+      "id": "PATCH-TS-007",
+      "path": "tests/conversation_contract_harness_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "878e80110d441a7112c1ef0aec73e06f8eeeca43fe07cef290e3514697c12645"
+    },
+    {
+      "id": "PATCH-TS-008",
+      "path": "tests/patch_acceptance_verifier_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b920038147a8e201d2e7e4641874163edb950e5e346d5438fc965428141f6acb"
+    },
+    {
+      "id": "PATCH-TS-009",
+      "path": "tests/patch_contract_gate_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "33da4456b7b911a99d1ddb9522d7664724b2fd14c3bb505d1c04c4e68f705821"
+    },
+    {
+      "id": "PATCH-TS-010",
+      "path": "tests/patch_contract_support_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "122748d0a6511d230eac00f39b25a761c4fc47384b90b627aff0c24d18a4d964"
+    },
+    {
+      "id": "PATCH-TS-011",
+      "path": "tests/patch_phase0_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "246d9f391491b982caa5c04e901bc580a31b708ec9d01974a7af4d0ba9d4ac11"
+    },
+    {
+      "id": "PATCH-TS-012",
+      "path": "tests/patch_requirement_ownership_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "6503ff12a98237ecd642898d40f92b976bed2207fd72a684f40a85bc9e84f5f7"
+    },
+    {
+      "id": "PATCH-TS-013",
+      "path": "scripts/contract_startup/sitecustomize.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f54da29c95c190b3d275bb873e575c0d583a8961f6270f97883fddc389840bfa"
+    }
+  ],
+  "manifest_sha256": "910d8b95d70d66045efffeb24bebed99be69948bc526ced5af2d81a604c7952f"
+}
