@@ -1,0 +1,14 @@
+{
+  "schema_version": 1,
+  "seed": 20260808,
+  "valid": [
+    "*** Begin Patch v1\n*** Add File: empty.txt\n*** End Patch\n",
+    "*** Begin Patch v1\n*** Add File: note.txt\n+hello\n\\ No newline at end of file\n*** End Patch\n",
+    "*** Begin Patch v1\n*** Update File: old/name.txt\n*** Move to: new/name.txt\n*** End Patch\n"
+  ],
+  "invalid": [
+    "*** Begin Patch\n*** Add File: x\n*** End Patch\n",
+    "*** Begin Patch v1\n*** Update File: x\n@@\n+x\n*** End Patch\n",
+    "*** Begin Patch v1\n*** Delete File: x\n+body\n*** End Patch\n"
+  ]
+}

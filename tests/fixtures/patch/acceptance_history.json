@@ -24,7 +24,7 @@
         "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
         "lifecycle": "active",
         "active_from_phase": 0,
-        "executable_sha256": "d5ac9e49ca728b0bbc114bd038a728acc846bb42be0693163dba8300e36deff4"
+        "executable_sha256": "c18a5c51fff0421980fe3d0d8f6b049841faea04bd64131065be24a2e28f653f"
       },
       {
         "id": "PATCH-A-P0-002",
@@ -466,10 +466,207 @@
         "lifecycle": "active",
         "active_from_phase": 1,
         "executable_sha256": "205a48c44317b6053c93653721e0210f6492085eddff7f51c8948eb47d7fb021"
+      },
+      {
+        "id": "PATCH-A-102",
+        "requirement_ids": [
+          "PATCH-R-0229",
+          "PATCH-R-0230",
+          "PATCH-R-0231",
+          "PATCH-R-0232",
+          "PATCH-R-0233",
+          "PATCH-R-0234",
+          "PATCH-R-0235",
+          "PATCH-R-0236"
+        ],
+        "category": "positive",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "2aec7b8d09b1250baadbfbae50b4fb393a1047343773b3e69a1cf10da21d2e6d"
+      },
+      {
+        "id": "PATCH-A-P2-002",
+        "requirement_ids": [
+          "PATCH-R-0237",
+          "PATCH-R-0238",
+          "PATCH-R-0239",
+          "PATCH-R-0240",
+          "PATCH-R-0241",
+          "PATCH-R-0242",
+          "PATCH-R-0243",
+          "PATCH-R-0244"
+        ],
+        "category": "positive",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "91573369c743eb0814ebdd86341d1c1db76ed99bd6d77c9f1910510d022b1c31"
+      },
+      {
+        "id": "PATCH-A-P2-003",
+        "requirement_ids": [
+          "PATCH-R-0245",
+          "PATCH-R-0246",
+          "PATCH-R-0247",
+          "PATCH-R-0248",
+          "PATCH-R-0249",
+          "PATCH-R-0250",
+          "PATCH-R-0251",
+          "PATCH-R-0252"
+        ],
+        "category": "negative",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "646152c9a368b20566e7296e590408ea3f0f082fa3bb0b49ba96510f802ac7e4"
+      },
+      {
+        "id": "PATCH-A-P2-004",
+        "requirement_ids": [
+          "PATCH-R-0253",
+          "PATCH-R-0254",
+          "PATCH-R-0255",
+          "PATCH-R-0256",
+          "PATCH-R-0985",
+          "PATCH-R-0986",
+          "PATCH-R-0987",
+          "PATCH-R-0988"
+        ],
+        "category": "positive",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "1efc4637192029a155a460e95a3e6c8f3b990ecd8fc8e0593a7b3fe898a915d7"
+      },
+      {
+        "id": "PATCH-A-P2-005",
+        "requirement_ids": [
+          "PATCH-R-0989",
+          "PATCH-R-0990",
+          "PATCH-R-0991",
+          "PATCH-R-0992",
+          "PATCH-R-0993",
+          "PATCH-R-0994",
+          "PATCH-R-0995",
+          "PATCH-R-0996"
+        ],
+        "category": "positive",
+        "surface": "freeform",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "5fb5a5dfcefabccd1610f2bea7e7255eff8558b4bcad64426a2aee49d01a7400"
+      },
+      {
+        "id": "PATCH-A-P2-006",
+        "requirement_ids": [
+          "PATCH-R-0997",
+          "PATCH-R-0998",
+          "PATCH-R-0999",
+          "PATCH-R-1000",
+          "PATCH-R-1001",
+          "PATCH-R-1002",
+          "PATCH-R-1003",
+          "PATCH-R-1004"
+        ],
+        "category": "negative",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "38d8542ad5ece46a6fafb2a8b438b3d344795a45769c1847adea59e969c8048f"
+      },
+      {
+        "id": "PATCH-A-P2-007",
+        "requirement_ids": [
+          "PATCH-R-1005",
+          "PATCH-R-1006",
+          "PATCH-R-1007",
+          "PATCH-R-1008",
+          "PATCH-R-1009",
+          "PATCH-R-1010",
+          "PATCH-R-1011",
+          "PATCH-R-1012"
+        ],
+        "category": "positive",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "fuzz",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "d0db700851d2c857d70ce7849daa7ad14efcfc75d5fa6c51c6b5d571c36a4088"
+      },
+      {
+        "id": "PATCH-A-P2-008",
+        "requirement_ids": [
+          "PATCH-R-1013",
+          "PATCH-R-1014",
+          "PATCH-R-1015",
+          "PATCH-R-1016",
+          "PATCH-R-1017"
+        ],
+        "category": "negative",
+        "surface": "json_function",
+        "context": "local",
+        "platform": "portable",
+        "operation": "parse",
+        "authority": "selection",
+        "commit_boundary": "preinspection",
+        "evidence_class": "golden",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
+        "lifecycle": "active",
+        "active_from_phase": 2,
+        "executable_sha256": "3cbe643823b1807f19ff1917e99886c585a148f833124ab04fae26e223fe7a44"
       }
     ],
-    "snapshot_sha256": "b8acecfc246178945af88dd19b59add88cd5ec162ffe85d857a826cb61a64c61"
+    "snapshot_sha256": "a90ae538e6e6457c05ed9ba310147029956007a0b7c69ab7b5f8ea650ea72aba"
   },
   "replacements": [],
-  "history_sha256": "d98378fcfe04a2e98728af780e51f4117dfe022d1e478de4f771990f37c2f332"
+  "history_sha256": "7072f62475609ba351966b2d8be86ab5e9d15961aee000e2ec962120d8088940"
 }

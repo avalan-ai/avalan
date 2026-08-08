@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 1,
+  "current_phase": 2,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -189,6 +189,26 @@
         "tests/patch_type_contracts/phase1_mutable_collection_negative.py:15:22: error: Argument \"capabilities\" to \"MutationScope\" has incompatible type \"set[Capability]\"; expected \"frozenset[Capability]\"  [arg-type]",
         "tests/patch_type_contracts/phase1_mutable_collection_negative.py:27:31: error: Argument \"required_capabilities\" to \"Lineage\" has incompatible type \"set[Capability]\"; expected \"frozenset[Capability]\"  [arg-type]"
       ]
+    },
+    {
+      "id": "PATCH-T-018",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/patch_type_contracts/phase2_positive.py",
+      "source_sha256": "7c63171b495d6b3c5e5a595597d9468b797aee0c200024c88c83adee09a282f7",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-019",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 2,
+      "path": "tests/patch_type_contracts/phase2_operation_negative.py",
+      "source_sha256": "bebbfcada8c6986450e970101e82f28f29d01e1ec56851d79ca8bfe477aea2ef",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase2_operation_negative.py:6:28: error: Incompatible types in assignment (expression has type \"RawPatchInputKind\", variable has type \"OperationType\")  [assignment]"
+      ]
     }
   ],
   "sources": [
@@ -217,7 +237,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9352906cb9d26a75f525a8770f98cea86dffa4665fc567ea3e068ccd36f35285"
+      "source_sha256": "f5714f420573163381280e992d5635687c7ad1ea7b20aea8d42545f0ade710a7"
     },
     {
       "id": "PATCH-TS-004",
@@ -226,7 +246,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a8bb87a177babd9d88803748856c838c7698d473115acda34bef3c6c6f0ba189"
+      "source_sha256": "685bda4193a8b35f25a2f283b3ce02a7eeff3327a804ae629eebce4a3050b980"
     },
     {
       "id": "PATCH-TS-005",
@@ -235,7 +255,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f09dc791704f639ad0d62b2948093f8347c2cc6402d568338d0f4ff7b996c74b"
+      "source_sha256": "86a32238bc567068de9dac11b05478f6ba526e13ff770b64477a2dbdeb3264c5"
     },
     {
       "id": "PATCH-TS-006",
@@ -262,7 +282,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "775e18634f9097fa28f458d36bfd7ac32485ac95c6abf212bb4bb1023cf93af5"
+      "source_sha256": "3a24d7f90eaa7e7bb46575b21bca71a109ce032f5066f24fe91fd7874f1e0e92"
     },
     {
       "id": "PATCH-TS-009",
@@ -271,7 +291,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1696bb2c8e4e9204fedcedd5547fd2b66aea198b0118dc256c25838a2ea56932"
+      "source_sha256": "a2237bb71b30e9e4f806db5a1e46b7461f34da0aea7b51d5a89f622421d0e9b3"
     },
     {
       "id": "PATCH-TS-010",
@@ -289,7 +309,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "38d39aa91b7db2be2bbb9dcc531ddc09f915a6681dd796ca5481059eca42a3ed"
+      "source_sha256": "5ef9db8197584b8114393fc84420835cef533827681221881a1f6928e00227f7"
     },
     {
       "id": "PATCH-TS-012",
@@ -316,7 +336,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a95dbe7c8321046c90bd0bbc880d1f5f796bb740ee95dcc45f413e09414fd116"
+      "source_sha256": "040195505baf9553d184dcdebf0e9fd97e80d97c1f5f84cb75d69a16075ac93d"
     },
     {
       "id": "PATCH-TS-015",
@@ -344,7 +364,25 @@
         "module"
       ],
       "source_sha256": "ba520df44118617500dce9fdd9057d9bc9eecf3c97118d2eb8bb9a3f0dd1c11d"
+    },
+    {
+      "id": "PATCH-TS-018",
+      "path": "src/avalan/patch/parser.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d987acb6f99329bc4594d67a662cbc3ffc510d207080bc049f5b48acfb127ab2"
+    },
+    {
+      "id": "PATCH-TS-019",
+      "path": "tests/patch/phase_2_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "bce7f877a4d4c9320bda03049ba45053c55accb41f8e58f70ce6c21d0347f56f"
     }
   ],
-  "manifest_sha256": "d0b4abe2f9b7f54af54069fc5017b8d58cb62b0fd812a22de3dab62f58bf1055"
+  "manifest_sha256": "c9307367e97599f57b5f11c842a241335c5e49c2cc9b655462c9c6c5dfe98a65"
 }

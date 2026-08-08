@@ -67,11 +67,11 @@ def _resign(payload: dict[str, object], field: str) -> None:
 
 
 def test_patch_acceptance_positive_load() -> None:
-    """Load the complete active Phase 1 patch contract bundle."""
+    """Load the complete active Phase 2 patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 1
-    assert len(manifest.active_nodes(1)) == 20
+    assert manifest.current_phase == 2
+    assert len(manifest.active_nodes(2)) == 28
 
 
 def test_patch_acceptance_validates_complete_phase_evidence() -> None:
@@ -226,7 +226,7 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
                 "test_phase0_runtime_probe_rejects_dynamic_patch_identity"
             ),
         ),
-        ("lifecycle_phase", ("planned", 2)),
+        ("lifecycle_phase", ("planned", 3)),
     ),
 )
 def test_patch_acceptance_rejects_unreviewed_history_semantic_change(
@@ -457,7 +457,7 @@ def test_patch_acceptance_rejects_premature_active_node(
     future = next(
         node
         for node in nodes
-        if isinstance(node, dict) and node["active_from_phase"] > 1
+        if isinstance(node, dict) and node["active_from_phase"] > 2
     )
     assert isinstance(future, dict)
     future["lifecycle"] = "active"
