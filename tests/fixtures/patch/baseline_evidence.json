@@ -1,0 +1,222 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "phase": 0,
+  "patch_tools": [],
+  "public_tool_inventory": [
+    "browser",
+    "code",
+    "database",
+    "graph",
+    "math",
+    "memory",
+    "search",
+    "shell"
+  ],
+  "event_inventory": [
+    "Event",
+    "EventManager",
+    "EventType"
+  ],
+  "migration_inventory": [
+    "src/avalan/memory/permanent/pgsql_migrations",
+    "src/avalan/task/stores/pgsql_migrations"
+  ],
+  "server_route_inventory": [
+    "a2a",
+    "chat",
+    "engine",
+    "flow",
+    "interaction",
+    "mcp",
+    "responses"
+  ],
+  "protocol_inventory": [
+    "a2a",
+    "flow",
+    "json_function",
+    "mcp",
+    "multi_agent",
+    "openai",
+    "task"
+  ],
+  "context_capability_inventory": [
+    "container",
+    "local",
+    "sandbox"
+  ],
+  "section2_facts": [
+    {
+      "id": "PATCH-S2-001",
+      "observation": "Tool, ToolSet, and ToolManager remain the existing schema, namespace, and prepared-call surfaces.",
+      "source_markers": [
+        {
+          "path": "src/avalan/tool/__init__.py",
+          "line": 16,
+          "text": "class Tool(ABC):",
+          "source_sha256": "26ecd4c83d912301cc3110bac9bfa15712e5583483d47ee5bf562095bcfbda19"
+        },
+        {
+          "path": "src/avalan/tool/__init__.py",
+          "line": 66,
+          "text": "class ToolSet:",
+          "source_sha256": "26ecd4c83d912301cc3110bac9bfa15712e5583483d47ee5bf562095bcfbda19"
+        },
+        {
+          "path": "src/avalan/tool/manager.py",
+          "line": 1706,
+          "text": "    async def prepare_call(",
+          "source_sha256": "1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-002",
+      "observation": "ToolCapabilities remains the current coarse capability record.",
+      "source_markers": [
+        {
+          "path": "src/avalan/entities.py",
+          "line": 956,
+          "text": "class ToolCapabilities:",
+          "source_sha256": "c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-003",
+      "observation": "Generic ToolManager confirmation still operates on a prepared ToolCall before dispatch.",
+      "source_markers": [
+        {
+          "path": "src/avalan/tool/manager.py",
+          "line": 1780,
+          "text": "        if confirm is not None:",
+          "source_sha256": "1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-004",
+      "observation": "ToolCallContext continues to carry execution and interaction hooks rather than mutation-scope authority.",
+      "source_markers": [
+        {
+          "path": "src/avalan/entities.py",
+          "line": 1396,
+          "text": "class ToolCallContext:",
+          "source_sha256": "c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-005",
+      "observation": "The interaction subsystem has a distinct ACTION_APPROVAL class.",
+      "source_markers": [
+        {
+          "path": "src/avalan/interaction/entities.py",
+          "line": 122,
+          "text": "    ACTION_APPROVAL = \"action_approval\"",
+          "source_sha256": "a84fd5603aa63984c06b2c9c68c62465738bd39b4256b88c5488839272b7dd1d"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-006",
+      "observation": "The event system currently begins with generic EventType lifecycle classifications.",
+      "source_markers": [
+        {
+          "path": "src/avalan/event/__init__.py",
+          "line": 29,
+          "text": "class EventType(StrEnum):",
+          "source_sha256": "6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-007",
+      "observation": "Shell execution already selects sandbox, container, and local execution modes.",
+      "source_markers": [
+        {
+          "path": "src/avalan/tool/shell/toolset.py",
+          "line": 242,
+          "text": "            if execution_mode == \"sandbox\":",
+          "source_sha256": "5c129837e40439ed0428f7efe23f0c031da63fbc8d6b5e9a581c787cc0bacdb8"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-008",
+      "observation": "Container workspace mounts remain constrained to read-only access.",
+      "source_markers": [
+        {
+          "path": "src/avalan/container/docker.py",
+          "line": 1322,
+          "text": "                    \"workspace mount must be read-only\",",
+          "source_sha256": "b560ad4cdbaded5b7347db00a00c308bdffce3e1d650a9f4ffa5b8d3d5caf5c2"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-009",
+      "observation": "Structured-input and conversation contract gates provide existing phase-aware acceptance patterns.",
+      "source_markers": [
+        {
+          "path": "scripts/run_input_contract_gate.py",
+          "line": 41,
+          "text": "def run_gate(through_phase: int, *, repo_root: Path | None = None) -> int:",
+          "source_sha256": "b76299ea66c10e2bb051c5b8d377ee4edf00c98ef6a54946fe66211a60b58a5e"
+        },
+        {
+          "path": "scripts/run_conversation_contract_gate.py",
+          "line": 75,
+          "text": "        with nonignored_execution_mirror(source_root) as root:",
+          "source_sha256": "c18d051a99a5e23f80e37e51dfa6810bb0d662128e1be328d203debb3bb75946"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-010",
+      "observation": "The exact source-coverage verifier remains the authoritative full src inventory check.",
+      "source_markers": [
+        {
+          "path": "scripts/verify_src_coverage.py",
+          "line": 101,
+          "text": "def verify_src_coverage(",
+          "source_sha256": "172f789fa7c49b7f2cbfc06c029c4a8a3a1e462a471aeafeb2b1eab9ab6c02b9"
+        }
+      ]
+    },
+    {
+      "id": "PATCH-S2-011",
+      "observation": "The PostgreSQL test-database harness is available for isolated exact-gate execution and teardown.",
+      "source_markers": [
+        {
+          "path": "scripts/task_pgsql_test_database.py",
+          "line": 219,
+          "text": "def postgresql_test_database(",
+          "source_sha256": "88a2547392bab2eaa9be450dd659c97520f3b8f4f134c7ae387adde40de7f13e"
+        }
+      ]
+    }
+  ],
+  "runtime_patch_advertisement": {
+    "forbidden_paths": [
+      "src/avalan/patch",
+      "src/avalan/tool/patch.py"
+    ],
+    "forbidden_tokens": [
+      "patch.edit",
+      "patch.apply",
+      "namespace=\"patch\"",
+      "namespace='patch'"
+    ],
+    "runtime_probe": [
+      "toolmanager_default_and_configured_discovery",
+      "cli_selectors_and_commands",
+      "mcp_a2a_server_openapi_routes",
+      "flow_task_orchestrator_nodes",
+      "target_handshake_profile_selectors",
+      "provider_capability_catalog"
+    ]
+  },
+  "contract_inventory_sha256": "d987a2b1e0970480dd86795d2041a8567037271605d8905fc6ae0923723fb650",
+  "evidence_sha256": "752610574e9927523216a08624e36857bb1bcc1142d74a8a65733a1fc0364127"
+}

@@ -481,7 +481,7 @@ def test_input_acceptance_command_owns_exact_current_inventory() -> None:
     assert len(node_ids) == len(frozenset(node_ids)) == 896
     assert (
         sha256("\n".join(node_ids).encode()).hexdigest()
-        == "c4937f64415d1f604419d3c4b46157fe462fbfd03b139386f2560645602c5717"
+        == "ec0865bf4aa5b1aaa43365e5ddf5aa2c7181262bedea816dfb02c49b13451584"
     )
 
 

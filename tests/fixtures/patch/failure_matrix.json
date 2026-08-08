@@ -1,0 +1,2035 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "cells": [
+    {
+      "id": "PATCH-F-001",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.received",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-002",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.scope_bound",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-003",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.preinspection_authorized",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-004",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.planned",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-005",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.awaiting_approval",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "review_requested",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_approval_denied"
+    },
+    {
+      "id": "PATCH-F-006",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.commit_owner_assigned",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-007",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.commit_started",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_commit_failed"
+    },
+    {
+      "id": "PATCH-F-008",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.reconciling",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "indeterminate"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "indeterminate"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "indeterminate",
+      "workspace_change_fact": "unknown",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling"
+      ],
+      "pending_behavior": "pending_reconciliation",
+      "retryability": "retransmit_only",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_pending"
+    },
+    {
+      "id": "PATCH-F-009",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "lifecycle.request_completed",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-010",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.negotiate_capabilities",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_incapable"
+    },
+    {
+      "id": "PATCH-F-011",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.inspect",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": false,
+      "expected_inspection_count": 1,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 1,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-012",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.observe_precondition",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": false,
+      "expected_inspection_count": 1,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 1,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-013",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.open_handle",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-014",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.close_handle",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-015",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.acquire_lock",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-016",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.release_lock",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-017",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.stage_artifact",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-018",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.namespace_mutation",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "leaked",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_commit_failed"
+    },
+    {
+      "id": "PATCH-F-019",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.commit_step",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-020",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "target.verify",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-021",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "requested_effect.step_before",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-022",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "requested_effect.step_after",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0036",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-023",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.reserve_request",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-024",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.persist_plan",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-025",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.consume_grant",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-026",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.assign_commit_owner",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-027",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.record_commit_started",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_commit_failed"
+    },
+    {
+      "id": "PATCH-F-028",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.journal_step",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "indeterminate"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "indeterminate"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "indeterminate",
+      "workspace_change_fact": "unknown",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling"
+      ],
+      "pending_behavior": "pending_reconciliation",
+      "retryability": "retransmit_only",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_pending"
+    },
+    {
+      "id": "PATCH-F-029",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "store.publish_terminal",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0057",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-030",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "approval.decide",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0050",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 1,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "review_requested",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_approval_denied"
+    },
+    {
+      "id": "PATCH-F-031",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "approval.consume",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0050",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 1,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "review_requested",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_approval_denied"
+    },
+    {
+      "id": "PATCH-F-032",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "approval.concurrent_consume",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0050",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 1,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "review_requested",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_approval_denied"
+    },
+    {
+      "id": "PATCH-F-033",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "commit.intent_fence",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-034",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "commit.target_step",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-035",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "artifact.stage",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-036",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "artifact.verify",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-037",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "cleanup.staging",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0029",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "leaked",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-038",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "cancellation.before_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_cancelled"
+    },
+    {
+      "id": "PATCH-F-039",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "cancellation.after_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "indeterminate"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "indeterminate"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "indeterminate",
+      "workspace_change_fact": "unknown",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling"
+      ],
+      "pending_behavior": "pending_reconciliation",
+      "retryability": "retransmit_only",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_pending"
+    },
+    {
+      "id": "PATCH-F-040",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "timeout.before_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_timeout"
+    },
+    {
+      "id": "PATCH-F-041",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "timeout.after_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "indeterminate"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "indeterminate"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "indeterminate",
+      "workspace_change_fact": "unknown",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling"
+      ],
+      "pending_behavior": "pending_reconciliation",
+      "retryability": "retransmit_only",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_pending"
+    },
+    {
+      "id": "PATCH-F-042",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "disconnect.before_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": false,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 0,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "not_committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "not_committed"
+        }
+      ],
+      "artifact_state": "absent",
+      "requested_effect_fact": "not_committed",
+      "workspace_change_fact": "unchanged",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "retryable_precommit",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": true,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_rejected"
+    },
+    {
+      "id": "PATCH-F-043",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "disconnect.after_commit",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0007",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 1,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "indeterminate"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "indeterminate"
+        }
+      ],
+      "artifact_state": "unknown",
+      "requested_effect_fact": "indeterminate",
+      "workspace_change_fact": "unknown",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling"
+      ],
+      "pending_behavior": "pending_reconciliation",
+      "retryability": "retransmit_only",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 1,
+      "public_projection": "patch_pending"
+    },
+    {
+      "id": "PATCH-F-044",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "publication.outbox",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0078",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-045",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "publication.result",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0078",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    },
+    {
+      "id": "PATCH-F-046",
+      "lifecycle": "active",
+      "active_from_phase": 0,
+      "boundary": "publication.event",
+      "surface": "phase0_scripted",
+      "requirement_id": "PATCH-R-0078",
+      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "commit_started": true,
+      "expected_inspection_count": 0,
+      "expected_workspace_write_count": 0,
+      "expected_dispatch_count": 0,
+      "expected_approval_count": 0,
+      "expected_commit_count": 1,
+      "per_step_states": [
+        {
+          "id": "PATCH-STEP-001",
+          "state": "committed"
+        }
+      ],
+      "per_lineage_states": [
+        {
+          "id": "PATCH-LINEAGE-001",
+          "state": "committed"
+        }
+      ],
+      "artifact_state": "cleaned",
+      "requested_effect_fact": "committed",
+      "workspace_change_fact": "changed",
+      "event_sequence": [
+        "request_received",
+        "scope_bound",
+        "preinspection_authorized",
+        "plan_frozen",
+        "commit_owner_assigned",
+        "commit_started",
+        "reconciling",
+        "request_completed"
+      ],
+      "pending_behavior": "terminal_not_pending",
+      "retryability": "not_retryable",
+      "target_inspection_count": 0,
+      "workspace_oracle_equal": false,
+      "target_workspace_mutation_count": 0,
+      "public_projection": "patch_committed"
+    }
+  ],
+  "matrix_sha256": "573fed8dee9254ba5510f1d37d7cbbcdeec427985cb469bbd92e6f53a22d39b9"
+}

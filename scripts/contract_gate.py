@@ -72,6 +72,7 @@ _UNMEASURED_DIRECTORY_NAMES = (
 )
 _UNMEASURED_FILE_NAMES = (
     ".coverage",
+    ".patch-contract-pytest-facts.json",
     "coverage.json",
     "coverage.xml",
 )

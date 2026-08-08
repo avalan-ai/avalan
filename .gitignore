@@ -3,6 +3,7 @@ build/
 .coverage.*
 coverage.json
 coverage.xml
+.patch-contract-pytest-facts.json
 specs/
 docs/examples/playground
 docs/images/*.mov

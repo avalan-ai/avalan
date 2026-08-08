@@ -1,13 +1,14 @@
-REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract version release
+REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract version release
 TEST_ARGS := $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
 INPUT_CONTRACT_SCRIPTS := scripts/input_contract_json.py scripts/run_input_contract_gate.py scripts/task_pgsql_test_database.py scripts/verify_input_acceptance.py scripts/verify_input_types.py scripts/verify_src_coverage.py
 CONVERSATION_CONTRACT_SCRIPTS := scripts/contract_gate.py scripts/contract_startup/avalan_contract_gate_plugin.py scripts/contract_startup/sitecustomize.py scripts/run_conversation_contract_gate.py scripts/verify_conversation_acceptance.py scripts/verify_conversation_types.py
+PATCH_CONTRACT_SCRIPTS := scripts/patch_contract_gate_plugin.py scripts/patch_contract_support.py scripts/run_patch_contract_gate.py scripts/verify_patch_acceptance.py scripts/verify_patch_types.py
 CONTRACT_STARTUP_DIR := $(CURDIR)/scripts/contract_startup
 CONTRACT_PYTHONPATH := $(CONTRACT_STARTUP_DIR):$(CURDIR)/src:$(CURDIR)/scripts
 CONTRACT_PYTHON_ENV := PYTHONSAFEPATH=1 PYTHONNOUSERSITE=1 PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$(CONTRACT_PYTHONPATH)" AVALAN_CONTRACT_ALLOWED_PYTHONPATH="$(CONTRACT_PYTHONPATH)"
-LINT_PATHS := src/ tests/ $(INPUT_CONTRACT_SCRIPTS)
+LINT_PATHS := src/ tests/ $(INPUT_CONTRACT_SCRIPTS) $(PATCH_CONTRACT_SCRIPTS)
 
 ifneq ($(filter coverage coverage-report,$(TEST_ARGS)),)
 PYTEST_ARGS += --cov=src/ --cov-report=xml
@@ -52,7 +53,7 @@ else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract
+.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract
 tests: test
 
 test-pgsql:
@@ -113,6 +114,30 @@ endif
 typecheck-conversation-contract:
 	@test -n "$(CONVERSATION_PHASE)" || (echo "CONVERSATION_PHASE is required" >&2; exit 2)
 	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/verify_conversation_types.py --through-phase $(CONVERSATION_PHASE)
+
+test-patch-exact:
+	@test -n "$(PATCH_PHASE)" || (echo "PATCH_PHASE is required" >&2; exit 2)
+	@test "$(PATCH_PHASE)" -lt 8 || (echo "patch phases 8 and later require test-patch-pgsql-exact" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_patch_contract_gate.py --preflight --through-phase $(PATCH_PHASE)
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_patch_contract_gate.py --through-phase $(PATCH_PHASE)
+
+test-patch-pgsql-exact:
+	@test -n "$(PATCH_PHASE)" || (echo "PATCH_PHASE is required" >&2; exit 2)
+	@test "$(PATCH_PHASE)" -ge 8 || (echo "patch phases 0 through 7 require test-patch-exact" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/run_patch_contract_gate.py --preflight --through-phase $(PATCH_PHASE)
+ifeq ($(filter no-install,$(TEST_ARGS)),)
+	poetry sync --all-extras --with test
+endif
+	poetry run python -m pip install $(TASK_PGSQL_TEST_DEPS)
+	poetry run -- env $(CONTRACT_PYTHON_ENV) python scripts/task_pgsql_test_database.py --docker --runner-script scripts/run_patch_contract_gate.py -- --through-phase $(PATCH_PHASE)
+
+typecheck-patch-contract:
+	@test -n "$(PATCH_PHASE)" || (echo "PATCH_PHASE is required" >&2; exit 2)
+	poetry run env $(CONTRACT_PYTHON_ENV) python scripts/verify_patch_types.py --through-phase $(PATCH_PHASE)
 
 test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))

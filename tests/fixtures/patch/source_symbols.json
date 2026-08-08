@@ -1,0 +1,20 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "symbols": [
+    {"id":"PATCH-SYM-001","path":"src/avalan/tool/__init__.py","symbol":"Tool","artifact_class":"tool_base","source_sha256":"26ecd4c83d912301cc3110bac9bfa15712e5583483d47ee5bf562095bcfbda19"},
+    {"id":"PATCH-SYM-002","path":"src/avalan/tool/__init__.py","symbol":"ToolSet","artifact_class":"toolset","source_sha256":"26ecd4c83d912301cc3110bac9bfa15712e5583483d47ee5bf562095bcfbda19"},
+    {"id":"PATCH-SYM-003","path":"src/avalan/tool/manager.py","symbol":"ToolManager","artifact_class":"tool_manager","source_sha256":"1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"},
+    {"id":"PATCH-SYM-004","path":"src/avalan/entities.py","symbol":"ToolCall","artifact_class":"entity","source_sha256":"c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"},
+    {"id":"PATCH-SYM-005","path":"src/avalan/agent/loader.py","symbol":"OrchestratorLoader","artifact_class":"loader","source_sha256":"e91dafed0ae12af9d1e8cec0280798fa1fdcf44073d06ed68a2a6963c42e6c3e"},
+    {"id":"PATCH-SYM-006","path":"src/avalan/agent/engine.py","symbol":"EngineAgent","artifact_class":"orchestrator","source_sha256":"21d9cc1d8df4caa3d330a1b1ae67893ccbcc9b327033465e48978d4894897e7c"},
+    {"id":"PATCH-SYM-007","path":"src/avalan/model/vendor.py","symbol":"TextGenerationVendor","artifact_class":"provider","source_sha256":"6d3e9e91d6ee93011dcf15286e65823eca9f645b7249618ec2c6d94cdcd946dd"},
+    {"id":"PATCH-SYM-008","path":"src/avalan/flow/flow.py","symbol":"Flow","artifact_class":"flow","source_sha256":"b89439956b43ac38e53381fb4ab1213f13d3354348a143ebec7902ed72592943"},
+    {"id":"PATCH-SYM-009","path":"src/avalan/server/__init__.py","symbol":"agents_server","artifact_class":"server","source_sha256":"fece0ed20d3fabf00a432f3d838460bd7a4fccbaa734e4ea4445a4aca7a4601e"},
+    {"id":"PATCH-SYM-010","path":"src/avalan/event/__init__.py","symbol":"Event","artifact_class":"event","source_sha256":"6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"},
+    {"id":"PATCH-SYM-011","path":"src/avalan/tool/context.py","symbol":"ToolSettingsContext","artifact_class":"context","source_sha256":"05aca36f84498465350f3c4d4cdcc20fad143011a572f03e1d6460dafba679b0"},
+    {"id":"PATCH-SYM-012","path":"src/avalan/tool/shell/sandbox.py","symbol":"ShellSandboxCommandExecutor","artifact_class":"sandbox","source_sha256":"281f7d6ccfe73679da33952ed26ba312e609881d1b6c63185f280231b3430d75"},
+    {"id":"PATCH-SYM-013","path":"src/avalan/tool/shell/container.py","symbol":"ShellContainerCommandExecutor","artifact_class":"container","source_sha256":"7ef0141af2fe8e4a70912b08bb6afefafe332e354bc7b55416147ee2638d8932"}
+  ],
+  "inventory_sha256": "0bb63ccf3bc13d080221ab0d239740afa1f56e6f15f13746bafa1873695bd643"
+}
