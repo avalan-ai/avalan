@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 3,
+  "current_phase": 4,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -229,6 +229,26 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase3_sync_worker_negative.py:25:25: error: Incompatible types in assignment (expression has type \"SynchronousWorker\", variable has type \"PlannerWorker\")  [assignment]"
       ]
+    },
+    {
+      "id": "PATCH-T-022",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/patch_type_contracts/phase4_positive.py",
+      "source_sha256": "f22f48e554ff1745e01522a3f754537eb3dbed489fd8bea57fb85b2334dfeb09",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-023",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "path": "tests/patch_type_contracts/phase4_sync_target_negative.py",
+      "source_sha256": "7c82e2166d099adbaa5871d71d16638496dbb5f6342dea0071a91e9f8de96767",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase4_sync_target_negative.py:29:26: error: Incompatible types in assignment (expression has type \"SynchronousTarget\", variable has type \"MutationTarget\")  [assignment]"
+      ]
     }
   ],
   "sources": [
@@ -257,7 +277,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "dccafe7b316bae9b0674f0bab9cc2d5858d6106b18989d90cf1f0fa3ba361c82"
+      "source_sha256": "d698077546effb28ee08194a260ff6b41ee537a53e34b4696d3a6b34346a15c8"
     },
     {
       "id": "PATCH-TS-004",
@@ -266,7 +286,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6b424614b355f34801ce61ae6e086c2cb92ed84175082822301b040041463803"
+      "source_sha256": "0d6d21f5c71d60d027e0d8413ec482db1fe7ebdf7c8b8aae3576eaef8a3acb9e"
     },
     {
       "id": "PATCH-TS-005",
@@ -275,7 +295,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2fb258314f926b47a423e2cf71918b45c51660f7a1cb02241c33cc54fb39ad89"
+      "source_sha256": "f8f5ac609c8e6ce1a979a4f32a2281f56ded64551f9a0e43ffadc3ae7ba544ec"
     },
     {
       "id": "PATCH-TS-006",
@@ -302,7 +322,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "eac70d2c90c8db2725db09721bf26bc8309b0f9f097cdba93765660fa7b08b67"
+      "source_sha256": "16b64d8640fdf194dcd311482f9d61e1f0cbb955c356e65d5f005fde326545e1"
     },
     {
       "id": "PATCH-TS-009",
@@ -311,7 +331,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b1bf20d726719a04a5d125a765a4918f41198eb2a09f46e8bf9458d526876836"
+      "source_sha256": "127f90192e9a475a9173670404b099e7f30593a939dba8c67b48ccf8f36b0c75"
     },
     {
       "id": "PATCH-TS-010",
@@ -329,7 +349,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "85cfb395591b55c0207e6176992bb56f6f017cefc4e71678085a2fcea564564c"
+      "source_sha256": "0a862aee1b60047af1e2350d6722ce96a65deac7a018f06b86e33d90c9a8c8c7"
     },
     {
       "id": "PATCH-TS-012",
@@ -356,7 +376,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9a0ed6338a1d29aee01567e466a9554e7b829f87a6e4faf91991672e7d602956"
+      "source_sha256": "2fa8ee48de8de6e76b9965a7482a2ec8d6e5de420b32dba246a6b6708143a21e"
     },
     {
       "id": "PATCH-TS-015",
@@ -420,7 +440,25 @@
         "module"
       ],
       "source_sha256": "4f0ae156f7e241884fad12e6dc0ef3686620f3617ff81cdad1239843a8c3950c"
+    },
+    {
+      "id": "PATCH-TS-022",
+      "path": "src/avalan/patch/target.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "157ef27b39091acf8088ca76e1c21cb551fbf6a47be889d5064da75449bc7000"
+    },
+    {
+      "id": "PATCH-TS-023",
+      "path": "tests/patch/phase_4_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "48135966f1e6830d4fe7e9ddc2e11d2ddc791ffd338bb9bbd22dce8737d081ec"
     }
   ],
-  "manifest_sha256": "65ee223d18dfee49b493b1217df0571678f8e5cb541858da05a3c169f52548a8"
+  "manifest_sha256": "83e27e4b17b980586697988d4ece7c055e65a45fb9b62eb4e5bc1e29f29d5ab5"
 }

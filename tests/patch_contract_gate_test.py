@@ -176,7 +176,7 @@ def test_patch_gate_contract_is_current() -> None:
             token in contents for token in advertisement["forbidden_tokens"]
         )
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 3
+    assert _GATE._PATCH_CURRENT_PHASE == 4
 
 
 @pytest.mark.parametrize(
@@ -466,7 +466,7 @@ def test_preflight_executes_no_pytest_process(
             "preflight must not execute pytest"
         ),
     )
-    _GATE.preflight(3, repo_root=_ROOT)
+    _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
 def test_preflight_rejects_caller_database_before_patch_phase8(
@@ -482,7 +482,7 @@ def test_preflight_rejects_caller_database_before_patch_phase8(
         _GATE.PatchContractGateError,
         match="reject caller-supplied PostgreSQL state",
     ):
-        _GATE.preflight(3, repo_root=_ROOT)
+        _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV)
     with pytest.raises(
@@ -801,7 +801,7 @@ def test_nonexistent_active_e2e_fails_at_collection_before_execution(
             executable,
             "scripts/verify_patch_acceptance.py",
             "--through-phase",
-            "3",
+            str(_GATE._PATCH_CURRENT_PHASE),
             "--manifest",
             str(manifest_path),
             "--repo-root",

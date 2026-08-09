@@ -304,3 +304,81 @@ from avalan.patch.planner import (
 from avalan.patch.planner import (
     supported_text as supported_text,
 )
+from avalan.patch.target import (
+    AliasMode as AliasMode,
+)
+from avalan.patch.target import (
+    CommitUnavailable as CommitUnavailable,
+)
+from avalan.patch.target import (
+    EphemeralWorkerWitness as EphemeralWorkerWitness,
+)
+from avalan.patch.target import (
+    FileIdentity as FileIdentity,
+)
+from avalan.patch.target import (
+    ForeignWriterGuarantee as ForeignWriterGuarantee,
+)
+from avalan.patch.target import (
+    InspectionBatch as InspectionBatch,
+)
+from avalan.patch.target import (
+    InspectionRequest as InspectionRequest,
+)
+from avalan.patch.target import (
+    LocalInspectionTarget as LocalInspectionTarget,
+)
+from avalan.patch.target import (
+    LocalPlatformProfile as LocalPlatformProfile,
+)
+from avalan.patch.target import (
+    MetadataClassification as MetadataClassification,
+)
+from avalan.patch.target import (
+    MutationTarget as MutationTarget,
+)
+from avalan.patch.target import (
+    ParentWitness as ParentWitness,
+)
+from avalan.patch.target import (
+    PrimitiveProbe as PrimitiveProbe,
+)
+from avalan.patch.target import (
+    ProbeState as ProbeState,
+)
+from avalan.patch.target import (
+    ResolvedMutationScope as ResolvedMutationScope,
+)
+from avalan.patch.target import (
+    RootWitness as RootWitness,
+)
+from avalan.patch.target import (
+    ScopeResolver as ScopeResolver,
+)
+from avalan.patch.target import (
+    ScopeSelection as ScopeSelection,
+)
+from avalan.patch.target import (
+    TargetErrorCode as TargetErrorCode,
+)
+from avalan.patch.target import (
+    TargetHandshake as TargetHandshake,
+)
+from avalan.patch.target import (
+    TargetIdentity as TargetIdentity,
+)
+from avalan.patch.target import (
+    TargetIncapableReason as TargetIncapableReason,
+)
+from avalan.patch.target import (
+    TargetInspectionError as TargetInspectionError,
+)
+from avalan.patch.target import (
+    TargetPrimitive as TargetPrimitive,
+)
+from avalan.patch.target import (
+    TargetSnapshot as TargetSnapshot,
+)
+from avalan.patch.target import (
+    WorkerIsolationPolicy as WorkerIsolationPolicy,
+)

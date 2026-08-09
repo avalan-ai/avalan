@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 3,
+  "current_phase": 4,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -637,9 +637,9 @@
       "evidence_class": "golden"
     },
     {
-      "id": "PATCH-A-104",
+      "id": "PATCH-A-P4-001",
       "category": "security",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 4,
       "requirement_ids": [
         "PATCH-R-0125",
@@ -649,7 +649,23 @@
         "PATCH-R-0129",
         "PATCH-R-0130",
         "PATCH-R-0131",
-        "PATCH-R-0132",
+        "PATCH-R-0132"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_cwd_alias_and_parent_handle_paths",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-002-R1",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0133",
         "PATCH-R-0134",
         "PATCH-R-0135",
@@ -657,7 +673,23 @@
         "PATCH-R-0137",
         "PATCH-R-0138",
         "PATCH-R-0139",
-        "PATCH-R-0140",
+        "PATCH-R-0140"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-003",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0141",
         "PATCH-R-0142",
         "PATCH-R-0143",
@@ -665,7 +697,23 @@
         "PATCH-R-0145",
         "PATCH-R-0146",
         "PATCH-R-0147",
-        "PATCH-R-0148",
+        "PATCH-R-0148"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-004",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0149",
         "PATCH-R-0150",
         "PATCH-R-0151",
@@ -673,7 +721,23 @@
         "PATCH-R-0153",
         "PATCH-R-0154",
         "PATCH-R-0155",
-        "PATCH-R-0156",
+        "PATCH-R-0156"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-005",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0157",
         "PATCH-R-0158",
         "PATCH-R-0159",
@@ -681,7 +745,23 @@
         "PATCH-R-0161",
         "PATCH-R-0162",
         "PATCH-R-0163",
-        "PATCH-R-0164",
+        "PATCH-R-0164"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-006",
+      "category": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0165",
         "PATCH-R-0327",
         "PATCH-R-0328",
@@ -689,7 +769,23 @@
         "PATCH-R-0330",
         "PATCH-R-0331",
         "PATCH-R-0332",
-        "PATCH-R-0333",
+        "PATCH-R-0333"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-007",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0334",
         "PATCH-R-0335",
         "PATCH-R-0336",
@@ -697,7 +793,23 @@
         "PATCH-R-0338",
         "PATCH-R-0339",
         "PATCH-R-0340",
-        "PATCH-R-0341",
+        "PATCH-R-0341"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-008-R1",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0342",
         "PATCH-R-0343",
         "PATCH-R-0344",
@@ -705,7 +817,23 @@
         "PATCH-R-0346",
         "PATCH-R-0347",
         "PATCH-R-0348",
-        "PATCH-R-0349",
+        "PATCH-R-0349"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-009-R1",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0350",
         "PATCH-R-0351",
         "PATCH-R-0352",
@@ -713,7 +841,23 @@
         "PATCH-R-0460",
         "PATCH-R-0461",
         "PATCH-R-0462",
-        "PATCH-R-0463",
+        "PATCH-R-0463"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-010",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0464",
         "PATCH-R-0465",
         "PATCH-R-0466",
@@ -721,7 +865,23 @@
         "PATCH-R-0468",
         "PATCH-R-0485",
         "PATCH-R-0486",
-        "PATCH-R-0487",
+        "PATCH-R-0487"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-011",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0488",
         "PATCH-R-0489",
         "PATCH-R-0490",
@@ -729,10 +889,26 @@
         "PATCH-R-0492",
         "PATCH-R-0493",
         "PATCH-R-0494",
-        "PATCH-R-0495",
+        "PATCH-R-0495"
+      ],
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
+      "surface": "target",
+      "context": "local",
+      "platform": "posix",
+      "operation": "inspect",
+      "authority": "scope",
+      "commit_boundary": "precommit",
+      "evidence_class": "security"
+    },
+    {
+      "id": "PATCH-A-P4-012",
+      "category": "performance",
+      "lifecycle": "active",
+      "active_from_phase": 4,
+      "requirement_ids": [
         "PATCH-R-0496"
       ],
-      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
       "surface": "target",
       "context": "local",
       "platform": "posix",
@@ -1805,5 +1981,5 @@
       "evidence_class": "planner"
     }
   ],
-  "manifest_sha256": "1d13ab6217438bcba40af374c6267337e933f8b38a19b3c0d22b6b53742db01d"
+  "manifest_sha256": "574253b963f631b7929cd5b6672234d4ce3aee8ba0a3177af94e7d4c84310ccc"
 }

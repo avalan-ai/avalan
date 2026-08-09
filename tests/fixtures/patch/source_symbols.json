@@ -155,7 +155,14 @@
       "symbol": "PlannerFacade",
       "artifact_class": "patch_planner",
       "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
+    },
+    {
+      "id": "PATCH-SYM-023",
+      "path": "src/avalan/patch/target.py",
+      "symbol": "LocalInspectionTarget",
+      "artifact_class": "patch_target",
+      "source_sha256": "157ef27b39091acf8088ca76e1c21cb551fbf6a47be889d5064da75449bc7000"
     }
   ],
-  "inventory_sha256": "c907cf70780e6e904df10e9faf79b34fe397f5e4e2b7c8d253ceeb587a20b507"
+  "inventory_sha256": "0ec03fbc3a04017b39d4dc5b69eead38ff61be0f0c3113b3444cf471448d90e5"
 }
