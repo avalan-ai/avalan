@@ -231,10 +231,34 @@ class PlannerFile:
     parent: LogicalPath | None
     mount_id: str
     identity: str
+    source_identity: tuple[int, int] | None = None
+    parent_identity: tuple[int, int] | None = None
+    protected_metadata: AlgorithmDigest | None = None
 
     def __post_init__(self) -> None:
         """Require stable opaque mount and identity observations."""
-        if not self.mount_id or not self.identity:
+        if (
+            not self.mount_id
+            or not self.identity
+            or self.source_identity is not None
+            and (
+                len(self.source_identity) != 2
+                or any(
+                    type(item) is not int or item < 0
+                    for item in self.source_identity
+                )
+            )
+            or self.parent_identity is not None
+            and (
+                len(self.parent_identity) != 2
+                or any(
+                    type(item) is not int or item < 0
+                    for item in self.parent_identity
+                )
+            )
+            or self.protected_metadata is not None
+            and type(self.protected_metadata) is not AlgorithmDigest
+        ):
             raise PlannerError(PlannerErrorCode.CONFLICT)
 
 
@@ -244,12 +268,24 @@ class PlannerParentMount:
 
     parent: LogicalPath | None
     mount_id: str
+    identity: tuple[int, int] | None = None
 
     def __post_init__(self) -> None:
         """Reject an untyped or absent trusted mount observation."""
         if (
-            self.parent is not None and type(self.parent) is not LogicalPath
-        ) or not self.mount_id:
+            (self.parent is not None and type(self.parent) is not LogicalPath)
+            or not self.mount_id
+            or (
+                self.identity is not None
+                and (
+                    len(self.identity) != 2
+                    or any(
+                        type(item) is not int or item < 0
+                        for item in self.identity
+                    )
+                )
+            )
+        ):
             raise PlannerError(PlannerErrorCode.MOUNT)
 
 
@@ -295,6 +331,8 @@ class PlannedFile:
     metadata: MetadataProfile | None
     digest: AlgorithmDigest | None
     size: ByteSize
+    identity: tuple[int, int] | None = None
+    protected_metadata: AlgorithmDigest | None = None
 
     def __post_init__(self) -> None:
         """Keep absent and present facts structurally consistent."""
@@ -303,8 +341,23 @@ class PlannedFile:
             self.metadata is not None
         ):
             raise PlannerError(PlannerErrorCode.CONFLICT)
-        if self.present != (self.digest is not None) or (
-            not self.present and self.size.value != 0
+        if (
+            self.present != (self.digest is not None)
+            or (not self.present and self.size.value != 0)
+            or (
+                self.identity is not None
+                and (
+                    len(self.identity) != 2
+                    or any(
+                        type(item) is not int or item < 0
+                        for item in self.identity
+                    )
+                )
+            )
+            or (
+                self.protected_metadata is not None
+                and type(self.protected_metadata) is not AlgorithmDigest
+            )
         ):
             raise PlannerError(PlannerErrorCode.CONFLICT)
 
@@ -327,6 +380,9 @@ class PlannedLineage:
     step_graph: tuple[str, ...]
     staging_class: str
     diff_contribution: bytes
+    parent_identities: tuple[
+        tuple[LogicalPath | None, tuple[int, int]], ...
+    ] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -534,7 +590,7 @@ def plan(
             limits,
             usage,
         )
-    terminal = _terminal_lineages(lineages, limits, usage)
+    terminal = _terminal_lineages(lineages, workspace, limits, usage)
     if not terminal:
         raise PlannerError(PlannerErrorCode.NO_EFFECT)
     _reserve_container(usage, len(terminal), limits)
@@ -871,6 +927,7 @@ def _hunk_match(
 
 def _terminal_lineages(
     values: dict[LogicalPath, _MutableLineage],
+    workspace: PlannerWorkspace,
     limits: PlannerLimits,
     usage: _ResourceUsage | None = None,
 ) -> tuple[PlannedLineage, ...]:
@@ -916,6 +973,17 @@ def _terminal_lineages(
         active_usage.diff_work_bytes += len(contribution)
         _limit(active_usage.diff_work_bytes, limits.max_diff_work_bytes)
         active_usage.candidate_bytes += reservation
+        move_with_update = (
+            lineage.moved
+            and initial is not None
+            and initial.bytes_value._value != lineage.current_bytes
+        )
+        move_only = lineage.moved and not move_with_update
+        step_graph = (
+            ("destination_publish", "source_remove")
+            if move_only or move_with_update
+            else ("terminal_effect",)
+        )
         result.append(
             PlannedLineage(
                 identity,
@@ -948,10 +1016,11 @@ def _terminal_lineages(
                         key=lambda path: path.value,
                     )
                 ),
-                "single_step",
-                ("terminal_effect",),
+                "dependency_ordered" if len(step_graph) > 1 else "single_step",
+                step_graph,
                 "target_private",
                 contribution,
+                _lineage_parent_identities(source, destination, workspace),
             )
         )
     _limit(
@@ -979,6 +1048,8 @@ def _planned_initial(
         item.metadata,
         item.bytes_value.digest(),
         item.bytes_value.size(),
+        item.source_identity,
+        item.protected_metadata,
     )
 
 
@@ -997,7 +1068,39 @@ def _planned_final(lineage: _MutableLineage) -> PlannedFile:
         lineage.metadata,
         value.digest(),
         value.size(),
+        protected_metadata=(
+            lineage.initial.protected_metadata
+            if lineage.initial is not None
+            else None
+        ),
     )
+
+
+def _lineage_parent_identities(
+    source: LogicalPath | None,
+    destination: LogicalPath | None,
+    workspace: PlannerWorkspace,
+) -> tuple[tuple[LogicalPath | None, tuple[int, int]], ...]:
+    """Retain each source or destination parent identity for final checks."""
+    witnesses = {
+        item.parent: item.identity for item in workspace.parent_mounts
+    }
+    parents = tuple(
+        sorted(
+            {
+                _parent(path)
+                for path in (source, destination)
+                if path is not None
+            },
+            key=lambda item: "" if item is None else item.value,
+        )
+    )
+    result: list[tuple[LogicalPath | None, tuple[int, int]]] = []
+    for parent in parents:
+        identity = witnesses.get(parent)
+        if identity is not None:
+            result.append((parent, identity))
+    return tuple(result)
 
 
 def _capabilities(

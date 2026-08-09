@@ -176,7 +176,7 @@ def test_patch_gate_contract_is_current() -> None:
             token in contents for token in advertisement["forbidden_tokens"]
         )
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 6
+    assert _GATE._PATCH_CURRENT_PHASE == 7
 
 
 @pytest.mark.parametrize(

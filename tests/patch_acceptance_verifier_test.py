@@ -108,7 +108,7 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active Phase 6 patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 6
+    assert manifest.current_phase == 7
     assert len(manifest.active_nodes(5)) == 59
 
 

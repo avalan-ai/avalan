@@ -43,9 +43,14 @@ from avalan.patch.planner import (
 from avalan.patch.target import TargetHandshake, TargetIdentity
 
 _FINGERPRINT_DOMAIN = b"avalan.patch.sealed-plan.v1\0"
-_PLAN_SCHEMA_VERSION = 1
+_PLAN_SCHEMA_VERSION = 2
 _GRAMMAR_VERSION = 1
 _SEMANTIC_MODEL_VERSION = 1
+
+
+async def _test_precommit_checkpoint(stage: str) -> None:
+    """Provide an inert local-test policy boundary before target inspection."""
+    del stage
 
 
 class PolicyErrorCode(str, Enum):
@@ -832,6 +837,7 @@ class PolicyAuthorizer:
         self, request: PreflightRequest
     ) -> PreflightAuthorization:
         """Authorize conservative observations before any target operation."""
+        await _test_precommit_checkpoint("lifecycle.preinspection_authorized")
         if request.operation not in self._policy.enabled_operations:
             raise PolicyError(PolicyErrorCode.DENIED)
         required = request.external_effects | frozenset(
@@ -1657,6 +1663,7 @@ def _lineage_bytes(value: PlannedLineage) -> bytes:
         _texts(value.step_graph),
         _text(value.staging_class),
         value.diff_contribution,
+        _parent_identities(value.parent_identities),
     )
     return b"".join(_length_prefix(item) for item in pieces)
 
@@ -1671,7 +1678,34 @@ def _planned_file_bytes(value: PlannedFile) -> bytes:
             _integer(value.size.value),
             _optional_digest(value.digest),
             _optional_metadata(value.metadata),
+            _optional_identity(value.identity),
+            _optional_digest(value.protected_metadata),
         )
+    )
+
+
+def _optional_identity(value: tuple[int, int] | None) -> bytes:
+    """Serialize a retained native identity without an ambient path."""
+    if value is None:
+        return b"\x00"
+    return b"\x01" + _integer(value[0]) + _integer(value[1])
+
+
+def _parent_identities(
+    values: tuple[tuple[LogicalPath | None, tuple[int, int]], ...],
+) -> bytes:
+    """Serialize rooted parent inode facts retained for final containment."""
+    return b"".join(
+        _length_prefix(
+            b"".join(
+                _length_prefix(item)
+                for item in (
+                    _path(path),
+                    _optional_identity(identity),
+                )
+            )
+        )
+        for path, identity in values
     )
 
 

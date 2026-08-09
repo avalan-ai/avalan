@@ -950,6 +950,7 @@ def test_patch_phase_4_platform_handshake_and_read_only_probes(
             TargetPrimitive.REPLACE_PUBLICATION,
             TargetPrimitive.NOREPLACE_CREATE_MOVE,
             TargetPrimitive.DIRECTORY_ENTRY_DELETE,
+            TargetPrimitive.METADATA_PRESERVATION,
             TargetPrimitive.SAME_FILESYSTEM_MOVE,
             TargetPrimitive.STAGING,
             TargetPrimitive.STRUCTURAL_VERIFICATION,
@@ -968,7 +969,7 @@ def test_patch_phase_4_platform_handshake_and_read_only_probes(
         assert rejected.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
         return len(handshake.probes)
 
-    assert run(execute()) == 7
+    assert run(execute()) == 8
 
 
 def test_patch_phase_4_classifies_executable_and_privileged_metadata(

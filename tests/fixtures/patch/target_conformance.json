@@ -5,18 +5,18 @@
     {
       "id": "PATCH-TARGET-LOCAL",
       "context": "local",
-      "platform": "portable",
-      "filesystem": "unproven",
+      "platform": "posix",
+      "filesystem": "rooted-test-profile",
       "lifecycle": "active",
-      "active_from_phase": 0,
-      "advertised": false,
-      "mutation_worker_protocol": "none",
-      "metadata_profile": "none",
-      "primitive": "none",
-      "lease": "none",
-      "coordinator": "none",
-      "persistence": "none",
-      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context"
+      "active_from_phase": 7,
+      "advertised": true,
+      "mutation_worker_protocol": "private-rooted-async-channel",
+      "metadata_profile": "bytes-bom-newline-posix-mode",
+      "primitive": "nofollow-stage-replace-link-unlink",
+      "lease": "phase6-owner-fence",
+      "coordinator": "attached-in-memory",
+      "persistence": "test-profile-attached",
+      "evidence_node_id": "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements"
     },
     {
       "id": "PATCH-TARGET-SANDBOX",
@@ -51,5 +51,5 @@
       "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context"
     }
   ],
-  "manifest_sha256": "c8675fe82b8e73aec014aa59ffd957cd14712ec88f6759b4276aa7175fd018a2"
+  "manifest_sha256": "a1a9b6b21527284ea2096d36748ddeae5698771062af076a042f55b948c83b7d"
 }

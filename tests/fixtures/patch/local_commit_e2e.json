@@ -1,0 +1,103 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "phase": 7,
+  "precommit": {
+    "expected_workspace_write_count": 0,
+    "failure_ids": [
+      "PATCH-F-001", "PATCH-F-002", "PATCH-F-003", "PATCH-F-004",
+      "PATCH-F-005", "PATCH-F-006", "PATCH-F-009", "PATCH-F-010",
+      "PATCH-F-011", "PATCH-F-012", "PATCH-F-013", "PATCH-F-014",
+      "PATCH-F-015", "PATCH-F-016", "PATCH-F-017", "PATCH-F-021",
+      "PATCH-F-023", "PATCH-F-024", "PATCH-F-025", "PATCH-F-026",
+      "PATCH-F-030", "PATCH-F-031", "PATCH-F-032", "PATCH-F-033",
+      "PATCH-F-035", "PATCH-F-038", "PATCH-F-040", "PATCH-F-042"
+    ],
+    "semantic_categories": [
+      "schema_grammar_parse",
+      "lexical_path",
+      "missing_match",
+      "ambiguous_match",
+      "duplicate_transition",
+      "nested_match",
+      "overlap",
+      "prohibited_touch",
+      "exact_first_no_fallback",
+      "representation_compatible_ambiguity",
+      "eof_final_newline",
+      "no_op",
+      "preinspection_policy",
+      "final_policy",
+      "approval",
+      "stale",
+      "limit",
+      "cancellation",
+      "timeout",
+      "target_capability"
+    ],
+    "scenarios": [
+      {"id":"PATCH-F-001","boundary":"lifecycle.received","executor":"lifecycle_received"},
+      {"id":"PATCH-F-002","boundary":"lifecycle.scope_bound","executor":"lifecycle_scope_bound"},
+      {"id":"PATCH-F-003","boundary":"lifecycle.preinspection_authorized","executor":"lifecycle_preinspection_authorized"},
+      {"id":"PATCH-F-004","boundary":"lifecycle.planned","executor":"lifecycle_planned"},
+      {"id":"PATCH-F-005","boundary":"lifecycle.awaiting_approval","executor":"lifecycle_awaiting_approval"},
+      {"id":"PATCH-F-006","boundary":"lifecycle.commit_owner_assigned","executor":"lifecycle_commit_owner_assigned"},
+      {"id":"PATCH-F-009","boundary":"lifecycle.request_completed","executor":"lifecycle_request_completed"},
+      {"id":"PATCH-F-010","boundary":"target.negotiate_capabilities","executor":"target_negotiate_capabilities"},
+      {"id":"PATCH-F-011","boundary":"target.inspect","executor":"target_inspect"},
+      {"id":"PATCH-F-012","boundary":"target.observe_precondition","executor":"target_observe_precondition"},
+      {"id":"PATCH-F-013","boundary":"target.open_handle","executor":"target_open_handle"},
+      {"id":"PATCH-F-014","boundary":"target.close_handle","executor":"target_close_handle"},
+      {"id":"PATCH-F-015","boundary":"target.acquire_lock","executor":"target_acquire_lock"},
+      {"id":"PATCH-F-016","boundary":"target.release_lock","executor":"target_release_lock"},
+      {"id":"PATCH-F-017","boundary":"target.stage_artifact","executor":"target_stage_artifact"},
+      {"id":"PATCH-F-021","boundary":"requested_effect.step_before","executor":"requested_effect_step_before"},
+      {"id":"PATCH-F-023","boundary":"store.reserve_request","executor":"store_reserve_request"},
+      {"id":"PATCH-F-024","boundary":"store.persist_plan","executor":"store_persist_plan"},
+      {"id":"PATCH-F-025","boundary":"store.consume_grant","executor":"store_consume_grant"},
+      {"id":"PATCH-F-026","boundary":"store.assign_commit_owner","executor":"store_assign_commit_owner"},
+      {"id":"PATCH-F-030","boundary":"approval.decide","executor":"approval_decide"},
+      {"id":"PATCH-F-031","boundary":"approval.consume","executor":"approval_consume"},
+      {"id":"PATCH-F-032","boundary":"approval.concurrent_consume","executor":"approval_concurrent_consume"},
+      {"id":"PATCH-F-033","boundary":"commit.intent_fence","executor":"commit_intent_fence"},
+      {"id":"PATCH-F-035","boundary":"artifact.stage","executor":"artifact_stage"},
+      {"id":"PATCH-F-038","boundary":"cancellation.before_commit","executor":"cancellation_before_commit"},
+      {"id":"PATCH-F-040","boundary":"timeout.before_commit","executor":"timeout_before_commit"},
+      {"id":"PATCH-F-042","boundary":"disconnect.before_commit","executor":"disconnect_before_commit"}
+    ]
+  },
+  "uncertain_outcomes": [
+    {
+      "id": "partial",
+      "steps": ["committed", "not_committed"],
+      "artifact": "cleaned",
+      "postcondition": "unknown"
+    },
+    {
+      "id": "indeterminate",
+      "steps": ["committed", "unknown"],
+      "artifact": "cleaned",
+      "postcondition": "unknown"
+    },
+    {
+      "id": "superseded",
+      "steps": ["committed"],
+      "artifact": "cleaned",
+      "postcondition": "superseded"
+    },
+    {
+      "id": "leaked",
+      "steps": ["committed"],
+      "artifact": "leaked",
+      "postcondition": "superseded"
+    },
+    {
+      "id": "unknown_artifact",
+      "steps": ["unknown"],
+      "artifact": "unknown",
+      "postcondition": "unknown"
+    }
+  ],
+  "process_races": ["rooted_containment", "no_replace"],
+  "inventory_sha256": "683f063e0b051008720e7231d401e6ffc775bae1e73811bc86c6df9f662eae77"
+}
