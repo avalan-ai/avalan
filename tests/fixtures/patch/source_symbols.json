@@ -161,8 +161,29 @@
       "path": "src/avalan/patch/target.py",
       "symbol": "LocalInspectionTarget",
       "artifact_class": "patch_target",
-      "source_sha256": "157ef27b39091acf8088ca76e1c21cb551fbf6a47be889d5064da75449bc7000"
+      "source_sha256": "4e8613d9852c37f68d00708389858561d161f6194751c9eb5eeb708b91a94e11"
+    },
+    {
+      "id": "PATCH-SYM-024",
+      "path": "src/avalan/patch/policy.py",
+      "symbol": "PolicyAuthorizer",
+      "artifact_class": "patch_policy",
+      "source_sha256": "7ec5fc0e836d4c51ab93ae069366db1125a1ac541b6f2f2e57deb9439697d7fb"
+    },
+    {
+      "id": "PATCH-SYM-025",
+      "path": "src/avalan/patch/policy.py",
+      "symbol": "seal_plan",
+      "artifact_class": "patch_policy",
+      "source_sha256": "7ec5fc0e836d4c51ab93ae069366db1125a1ac541b6f2f2e57deb9439697d7fb"
+    },
+    {
+      "id": "PATCH-SYM-026",
+      "path": "src/avalan/patch/policy.py",
+      "symbol": "ApprovalService",
+      "artifact_class": "patch_policy",
+      "source_sha256": "7ec5fc0e836d4c51ab93ae069366db1125a1ac541b6f2f2e57deb9439697d7fb"
     }
   ],
-  "inventory_sha256": "0ec03fbc3a04017b39d4dc5b69eead38ff61be0f0c3113b3444cf471448d90e5"
+  "inventory_sha256": "5e56c150570caeb055a66b61fa9e49920c19a6946ca5c30a3121d43b3e280816"
 }

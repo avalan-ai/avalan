@@ -66,12 +66,50 @@ def _resign(payload: dict[str, object], field: str) -> None:
     payload[field] = _VERIFIER.canonical_sha256(canonical)
 
 
+def _unreplaced_historical_node(
+    history: dict[str, object],
+) -> dict[str, object]:
+    """Return the first pinned active node without a reviewed replacement."""
+    replacements = history["replacements"]
+    snapshot = history["snapshot"]
+    assert isinstance(replacements, list) and isinstance(snapshot, dict)
+    nodes = snapshot["nodes"]
+    assert isinstance(nodes, list)
+    replaced_ids = {
+        old["id"]
+        for replacement in replacements
+        if isinstance(replacement, dict)
+        and isinstance(old := replacement.get("old"), dict)
+        and isinstance(old.get("id"), str)
+    }
+    return next(
+        node
+        for node in nodes
+        if isinstance(node, dict)
+        and isinstance(node.get("id"), str)
+        and node["id"] not in replaced_ids
+    )
+
+
+def _manifest_node(
+    payload: dict[str, object], identifier: str
+) -> dict[str, object]:
+    """Return the manifest entry sharing one pinned historical identifier."""
+    nodes = payload["nodes"]
+    assert isinstance(nodes, list)
+    return next(
+        node
+        for node in nodes
+        if isinstance(node, dict) and node.get("id") == identifier
+    )
+
+
 def test_patch_acceptance_positive_load() -> None:
-    """Load the complete active Phase 4 patch contract bundle."""
+    """Load the complete active Phase 5 patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 4
-    assert len(manifest.active_nodes(4)) == 49
+    assert manifest.current_phase == 5
+    assert len(manifest.active_nodes(5)) == 59
 
 
 def test_patch_acceptance_validates_complete_phase_evidence() -> None:
@@ -146,9 +184,12 @@ def test_patch_acceptance_rejects_unreviewed_history_rename(
     _copy_bundle(fixtures)
     manifest_path = fixtures / "acceptance_manifest.json"
     manifest_payload = _read(manifest_path)
-    nodes = manifest_payload["nodes"]
-    assert isinstance(nodes, list) and isinstance(nodes[0], dict)
-    nodes[0]["id"] = "PATCH-A-REPLACED"
+    historical = _unreplaced_historical_node(
+        _read(fixtures / "acceptance_history.json")
+    )
+    identifier = historical["id"]
+    assert isinstance(identifier, str)
+    _manifest_node(manifest_payload, identifier)["id"] = "PATCH-A-REPLACED"
     _resign(manifest_payload, "manifest_sha256")
     _write(manifest_path, manifest_payload)
 
@@ -171,32 +212,25 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
     _copy_bundle(fixtures)
     manifest_path = fixtures / "acceptance_manifest.json"
     manifest_payload = _read(manifest_path)
-    nodes = manifest_payload["nodes"]
-    assert isinstance(nodes, list) and isinstance(nodes[0], dict)
-    nodes[0]["id"] = "PATCH-A-REPLACED"
-    _resign(manifest_payload, "manifest_sha256")
-    _write(manifest_path, manifest_payload)
     history_path = fixtures / "acceptance_history.json"
     history = _read(history_path)
     replacements = history["replacements"]
     assert isinstance(replacements, list)
-    snapshot = history["snapshot"]
-    assert isinstance(snapshot, dict)
-    historical_nodes = snapshot["nodes"]
-    assert isinstance(historical_nodes, list) and isinstance(
-        historical_nodes[0], dict
-    )
-    replacement = deepcopy(historical_nodes[0])
+    historical = _unreplaced_historical_node(history)
+    identifier = historical["id"]
+    assert isinstance(identifier, str)
+    _manifest_node(manifest_payload, identifier)["id"] = "PATCH-A-REPLACED"
+    _resign(manifest_payload, "manifest_sha256")
+    _write(manifest_path, manifest_payload)
+    replacement = deepcopy(historical)
     replacement["id"] = "PATCH-A-REPLACED"
-    replacements.append(
-        {
-            "old": historical_nodes[0],
-            "new": replacement,
-            "review_round": 3,
-            "reviewer": "round-3-contract-review",
-            "rationale": "Reviewed replacement seals every semantic field.",
-        }
-    )
+    replacements.append({
+        "old": historical,
+        "new": replacement,
+        "review_round": 3,
+        "reviewer": "round-3-contract-review",
+        "rationale": "Reviewed replacement seals every semantic field.",
+    })
     _resign(history, "history_sha256")
     _write(history_path, history)
 
@@ -322,16 +356,20 @@ def test_patch_acceptance_rejects_unreviewed_history_semantic_change(
     _copy_bundle(fixtures)
     manifest_path = fixtures / "acceptance_manifest.json"
     manifest = _read(manifest_path)
-    nodes = manifest["nodes"]
-    assert isinstance(nodes, list) and isinstance(nodes[0], dict)
+    historical = _unreplaced_historical_node(
+        _read(fixtures / "acceptance_history.json")
+    )
+    identifier = historical["id"]
+    assert isinstance(identifier, str)
+    node = _manifest_node(manifest, identifier)
     if field == "lifecycle_phase":
         assert isinstance(value, tuple) and len(value) == 2
         lifecycle, phase = value
         assert isinstance(lifecycle, str) and type(phase) is int
-        nodes[0]["lifecycle"] = lifecycle
-        nodes[0]["active_from_phase"] = phase
+        node["lifecycle"] = lifecycle
+        node["active_from_phase"] = phase
     else:
-        nodes[0][field] = value
+        node[field] = value
     _resign(manifest, "manifest_sha256")
     _write(manifest_path, manifest)
 

@@ -432,6 +432,52 @@ _FUTURE_MUTATION_PRIMITIVES = frozenset(
 )
 
 
+def _advertised_capabilities(
+    primitives: frozenset[TargetPrimitive],
+    probes: tuple[PrimitiveProbe, ...],
+) -> frozenset[Capability]:
+    """Derive only handshake-witnessed capabilities from target evidence."""
+    available = primitives | frozenset(
+        item.primitive for item in probes if item.state is ProbeState.AVAILABLE
+    )
+    effects: set[Capability] = set()
+    if _INSPECTION_PRIMITIVES.issubset(available):
+        effects.update(
+            (
+                Capability.READ_FOR_MUTATION,
+                Capability.OBSERVE_MUTATION_PRECONDITIONS,
+            )
+        )
+    if {
+        TargetPrimitive.BOUNDED_WRITE,
+        TargetPrimitive.NOREPLACE_CREATE_MOVE,
+        TargetPrimitive.STAGING,
+        TargetPrimitive.STRUCTURAL_VERIFICATION,
+    }.issubset(available):
+        effects.add(Capability.CREATE)
+    if {
+        TargetPrimitive.BOUNDED_WRITE,
+        TargetPrimitive.REPLACE_PUBLICATION,
+        TargetPrimitive.STAGING,
+        TargetPrimitive.STRUCTURAL_VERIFICATION,
+    }.issubset(available):
+        effects.update((Capability.UPDATE, Capability.UPDATE_EXECUTABLE))
+    if {
+        TargetPrimitive.DIRECTORY_ENTRY_DELETE,
+        TargetPrimitive.STAGING,
+        TargetPrimitive.STRUCTURAL_VERIFICATION,
+    }.issubset(available):
+        effects.add(Capability.DELETE)
+    if {
+        TargetPrimitive.NOREPLACE_CREATE_MOVE,
+        TargetPrimitive.SAME_FILESYSTEM_MOVE,
+        TargetPrimitive.STAGING,
+        TargetPrimitive.STRUCTURAL_VERIFICATION,
+    }.issubset(available):
+        effects.add(Capability.MOVE)
+    return frozenset(effects)
+
+
 @dataclass(frozen=True, slots=True)
 class TargetIdentity:
     """Store stable target, filesystem, mount, and policy witnesses."""
@@ -688,8 +734,8 @@ class TargetHandshake:
         return _INSPECTION_PRIMITIVES.issubset(self.primitives)
 
     def advertised_operations(self) -> frozenset[Capability]:
-        """Return no effects while commit remains intentionally absent."""
-        return frozenset()
+        """Return only capabilities proven by this immutable handshake."""
+        return _advertised_capabilities(self.primitives, self.probes)
 
 
 @dataclass(frozen=True, slots=True)

@@ -5679,11 +5679,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0355",
@@ -5695,11 +5695,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0356",
@@ -5711,11 +5711,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0357",
@@ -5727,11 +5727,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0358",
@@ -5743,11 +5743,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0359",
@@ -5759,11 +5759,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0360",
@@ -5775,11 +5775,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0361",
@@ -5791,11 +5791,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
       "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0362",
@@ -5807,11 +5807,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0363",
@@ -5823,11 +5823,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0364",
@@ -5839,11 +5839,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0365",
@@ -5855,11 +5855,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0366",
@@ -5871,11 +5871,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0367",
@@ -5887,11 +5887,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0368",
@@ -5903,11 +5903,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0369",
@@ -5919,11 +5919,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0370",
@@ -5935,11 +5935,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0371",
@@ -5951,11 +5951,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0372",
@@ -5967,11 +5967,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0373",
@@ -5983,11 +5983,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0374",
@@ -5999,11 +5999,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0375",
@@ -6015,11 +6015,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0376",
@@ -6031,11 +6031,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0377",
@@ -6047,11 +6047,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0378",
@@ -6063,11 +6063,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0379",
@@ -6079,11 +6079,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0380",
@@ -6095,11 +6095,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0381",
@@ -6111,11 +6111,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0382",
@@ -6127,11 +6127,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0383",
@@ -6143,11 +6143,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0384",
@@ -6159,11 +6159,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0385",
@@ -6175,11 +6175,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0386",
@@ -6191,11 +6191,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0387",
@@ -6207,11 +6207,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0388",
@@ -6223,11 +6223,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0389",
@@ -6239,11 +6239,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0390",
@@ -6255,11 +6255,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0391",
@@ -6271,11 +6271,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0392",
@@ -6287,11 +6287,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0393",
@@ -6303,11 +6303,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0394",
@@ -6319,11 +6319,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0395",
@@ -6335,11 +6335,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0396",
@@ -6351,11 +6351,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0397",
@@ -6367,11 +6367,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0398",
@@ -6383,11 +6383,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0399",
@@ -6399,11 +6399,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0400",
@@ -6415,11 +6415,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0401",
@@ -6431,11 +6431,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0402",
@@ -6447,11 +6447,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0403",
@@ -6463,11 +6463,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0404",
@@ -6479,11 +6479,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0405",
@@ -6495,11 +6495,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0406",
@@ -6511,11 +6511,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0407",
@@ -6527,11 +6527,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0408",
@@ -6543,11 +6543,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0409",
@@ -6559,11 +6559,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0410",
@@ -6575,11 +6575,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0411",
@@ -6591,11 +6591,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0412",
@@ -6607,11 +6607,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0413",
@@ -6623,11 +6623,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0414",
@@ -6639,11 +6639,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0415",
@@ -6655,11 +6655,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0416",
@@ -6671,11 +6671,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0417",
@@ -6687,11 +6687,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0418",
@@ -6703,11 +6703,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0419",
@@ -6719,11 +6719,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0420",
@@ -6735,11 +6735,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0421",
@@ -6751,11 +6751,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0422",
@@ -6767,11 +6767,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0423",
@@ -6783,11 +6783,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0424",
@@ -6799,11 +6799,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0425",
@@ -6815,11 +6815,11 @@
       5,
       "required",
       "contract",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0426",
@@ -6831,11 +6831,11 @@
       5,
       "required",
       "normative",
-      "src/avalan/patch/approval.py",
-      "PatchApproval",
-      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+      "src/avalan/patch/policy.py",
+      "PolicyAuthorizer",
+      "tests/patch/phase_5_contract_test.py::test_patch_phase_5_grant_evidence",
       "Phase 5 implementation record",
-      "privacy"
+      "security"
     ],
     [
       "PATCH-R-0427",
@@ -16294,5 +16294,5 @@
       "golden"
     ]
   ],
-  "catalog_sha256": "0e8e80590d033eb0ffab9c2fb11ef7e052ef4003995da84a8c1286f657aa90c6"
+  "catalog_sha256": "b7fcaaf7b271f97a403adfd3e6b93ffbd89da66438d0f9bf7dfcfa1da326773d"
 }

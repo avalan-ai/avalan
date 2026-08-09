@@ -31,6 +31,7 @@ import avalan.patch as patch_package
 import avalan.patch.target as target_module
 from avalan.patch.domain import (
     ByteSize,
+    Capability,
     ContextKind,
     DurationTicks,
     FileMode,
@@ -222,7 +223,10 @@ def test_patch_phase_4_requirements(tmp_path: Path) -> None:
         handshake = await target.handshake(request.scope)
         batch = await target.inspect(request)
         assert handshake.supports_inspection()
-        assert handshake.advertised_operations() == frozenset()
+        assert handshake.advertised_operations() == frozenset((
+            Capability.OBSERVE_MUTATION_PRECONDITIONS,
+            Capability.READ_FOR_MUTATION,
+        ))
         assert (
             TargetIncapableReason.COMMIT_DEFERRED
             in handshake.incapable_reasons
@@ -652,15 +656,13 @@ def test_patch_phase_4_denies_obscured_paths_before_open(
             with pytest.raises(TargetInspectionError) as error:
                 await target.inspect(request)
             assert error.value.code is TargetErrorCode.PATH_DENIED
-        return len(
-            (
-                ".hidden/note.txt",
-                "space /note.txt",
-                "note\u202e.txt",
-                "name:stream",
-                "$HOME/note.txt",
-            )
-        )
+        return len((
+            ".hidden/note.txt",
+            "space /note.txt",
+            "note\u202e.txt",
+            "name:stream",
+            "$HOME/note.txt",
+        ))
 
     assert run(execute()) == 5
 
