@@ -53,10 +53,10 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 4
+_CURRENT_PHASE = 5
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
-    "b59d46d0ca492bd4021e57a55eb2cc9f83e54b850bd20c1046020caa5c61d35f"
+    "a5860565ffc180b413a37baa556b82ca1ac399e5e06f89c85a0f0e5ea377f221"
 )
 _FIXTURE_NAMES = (
     "requirements_traceability.json",
@@ -3587,8 +3587,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 344,
-        "planned_requirements": 673,
+        "active_requirements": 417,
+        "planned_requirements": 600,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))

@@ -304,6 +304,36 @@ from avalan.patch.planner import (
 from avalan.patch.planner import (
     supported_text as supported_text,
 )
+from avalan.patch.policy import (
+    ApprovalRequirements as ApprovalRequirements,
+)
+from avalan.patch.policy import (
+    ApprovalService as ApprovalService,
+)
+from avalan.patch.policy import (
+    BrokerDecision as BrokerDecision,
+)
+from avalan.patch.policy import (
+    PlanApprovalBroker as PlanApprovalBroker,
+)
+from avalan.patch.policy import (
+    PlanReviewRequest as PlanReviewRequest,
+)
+from avalan.patch.policy import (
+    PolicyAuthorizer as PolicyAuthorizer,
+)
+from avalan.patch.policy import (
+    RuntimeGrantStore as RuntimeGrantStore,
+)
+from avalan.patch.policy import (
+    RuntimePlanStore as RuntimePlanStore,
+)
+from avalan.patch.policy import (
+    TrustedPatchPolicy as TrustedPatchPolicy,
+)
+from avalan.patch.policy import (
+    seal_plan as seal_plan,
+)
 from avalan.patch.target import (
     AliasMode as AliasMode,
 )
