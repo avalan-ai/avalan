@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 5,
+  "current_phase": 6,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -269,6 +269,26 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase5_sync_broker_negative.py:18:30: error: Incompatible types in assignment (expression has type \"SynchronousBroker\", variable has type \"PlanApprovalBroker\")  [assignment]"
       ]
+    },
+    {
+      "id": "PATCH-T-026",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "path": "tests/patch_type_contracts/phase6_positive.py",
+      "source_sha256": "b4599b88690fe8f3fced07c1773a700c8529a9eac08c5df92efde2e47ba2ba77",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-027",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 6,
+      "path": "tests/patch_type_contracts/phase6_sync_registry_negative.py",
+      "source_sha256": "f4ee33423d78175d76a5ec9c2f89655bcc4c10bc78ac649388f63ef72a2db7b8",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase6_sync_registry_negative.py:21:33: error: Incompatible types in assignment (expression has type \"SynchronousRegistry\", variable has type \"CoordinatorRegistry\")  [assignment]"
+      ]
     }
   ],
   "sources": [
@@ -297,7 +317,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "37ab4379df979b067b62b1560dd53b8d1a8ecd6974eddd7a0d18ca7fa0bcc505"
+      "source_sha256": "f5f5a5457028cefa311d31fda115da672a094e14e0d75e1e2035d59cecb2e126"
     },
     {
       "id": "PATCH-TS-004",
@@ -306,7 +326,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7b8b02d3708a1f08350856a8ef8fe8cece4ef37d25bfec132ab3d8a30e5a30e9"
+      "source_sha256": "52ec53fb790118101fd0afe403cae1668d64005f2d1b2f6b3020c9749dca1ffb"
     },
     {
       "id": "PATCH-TS-005",
@@ -315,7 +335,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "3450638b4f71e74aabadf27dd0e3030c454730b0e557958784dae8d0ce2086fd"
+      "source_sha256": "3c4295d9065c184203a4fc5e933b4a9625fef263ada8a792262ff03b4f38f2d9"
     },
     {
       "id": "PATCH-TS-006",
@@ -342,7 +362,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9ac6bda479dfef3f29395c8e0565107ea73ecea89b15dd7611d80e6cca886947"
+      "source_sha256": "8ffe586d30d5b539b08dec76525fa2886de33bbdd76de5974652405f46622cef"
     },
     {
       "id": "PATCH-TS-009",
@@ -351,7 +371,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "cd5ea2cbd86b4e37cd081052c399487d006d7a242bc1653617b96c22eed446e3"
+      "source_sha256": "01cabd8be17ac7cbdeddd843870529d8f3abc92d7a7b445d642f3ac5172c7fc0"
     },
     {
       "id": "PATCH-TS-010",
@@ -369,7 +389,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d4e808480eb84602270d954d59e9b84609323095969b992c0d4e0e5963156b4f"
+      "source_sha256": "9a33476928909c219edc62fd44e3daa3770f3abc6015f24d3678a73a1f2b5694"
     },
     {
       "id": "PATCH-TS-012",
@@ -396,7 +416,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "76f2766abe9635418e1b7e7a05334a070b2601544ad4e8dcc2fa8485d7fe3f0e"
+      "source_sha256": "045830b24dc68c90b6b99291181ecead04065efa4de77c985a959e9e3295e1d3"
     },
     {
       "id": "PATCH-TS-015",
@@ -405,7 +425,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7b1a7849c093b5eee286b1734e971aba189395d134883f314d7e8aa187a3e111"
+      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
     },
     {
       "id": "PATCH-TS-016",
@@ -414,7 +434,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "4f8def285a89edb221dfc94817d521578b508db67feed59cfe108fdc553793d1"
+      "source_sha256": "59e4c9b5ef8a70d1140bc710d1213018f5435ee6b89e5dde670483669bb5be8e"
     },
     {
       "id": "PATCH-TS-017",
@@ -423,7 +443,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ba520df44118617500dce9fdd9057d9bc9eecf3c97118d2eb8bb9a3f0dd1c11d"
+      "source_sha256": "7701ad9e9094e49f221425314eb76d51cc0042f575c1d7ec938876b9c2750142"
     },
     {
       "id": "PATCH-TS-018",
@@ -477,7 +497,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "23f239a327115f6a7a18eb7d2215f223b851fb64c19a9a64bcae2ebd85ee420a"
+      "source_sha256": "b73556fa7f879b511a92b14c9eed2424e2a627ae3708169ced6edffa3477263e"
     },
     {
       "id": "PATCH-TS-024",
@@ -496,7 +516,25 @@
         "module"
       ],
       "source_sha256": "0116d28739914fa58b5e5618cfc6eb89c30ae8edca46ac49d9a666b02c0fbaf6"
+    },
+    {
+      "id": "PATCH-TS-026",
+      "path": "src/avalan/patch/coordinator.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c1f3139b1dec56d41e9cee8dbd9692712740b5d193decf6461fbc34cd0f12480"
+    },
+    {
+      "id": "PATCH-TS-027",
+      "path": "tests/patch/phase_6_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "8c082a036bdfa395397b491eccc97ec182d9f02444b9e379f53eb3d7fe96b5a3"
     }
   ],
-  "manifest_sha256": "f1e7d13ae485d4c6b0b37b7dec39b6b94077311f4cb31ec723323ac827dd347c"
+  "manifest_sha256": "0b05baec233c79780caeb2a8fd358d43c3288973b0b82e23481b559a89e73166"
 }

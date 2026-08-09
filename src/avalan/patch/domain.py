@@ -966,7 +966,7 @@ class PatchResult:
     lifecycle: LifecyclePhase
     status: PatchStatus
     truth: CommitTruth
-    diagnostic: PatchDiagnostic
+    diagnostic: PatchDiagnostic | None
 
     def __post_init__(self) -> None:
         """Require terminal lifecycle and status/truth combinations."""
@@ -976,6 +976,10 @@ class PatchResult:
         ):
             raise PatchValidationError("patch result is not terminal")
         _validate_status_truth(self.status, self.truth.mutation_state)
+        if (self.status is PatchStatus.COMMITTED) is (
+            self.diagnostic is not None
+        ):
+            raise PatchValidationError("patch result diagnostic is invalid")
 
 
 @dataclass(frozen=True, slots=True)
@@ -1289,7 +1293,7 @@ class DomainFacade:
         self,
         plan: MutationPlan,
         journals: tuple[LineageJournal, ...],
-        diagnostic: PatchDiagnostic,
+        diagnostic: PatchDiagnostic | None,
     ) -> PatchResult:
         """Derive one terminal result and its sole completion event truth."""
         truth = derive_commit_truth(plan, journals)
@@ -1308,7 +1312,7 @@ class DomainFacade:
         self,
         plan: MutationPlan,
         journals: tuple[LineageJournal, ...],
-        diagnostic: PatchDiagnostic,
+        diagnostic: PatchDiagnostic | None,
         event_id: PatchEventId,
         observer_id: PatchObserverId,
         correlation_id: PatchObserverCorrelationId,

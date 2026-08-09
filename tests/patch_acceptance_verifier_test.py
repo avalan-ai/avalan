@@ -105,10 +105,10 @@ def _manifest_node(
 
 
 def test_patch_acceptance_positive_load() -> None:
-    """Load the complete active Phase 5 patch contract bundle."""
+    """Load the complete active Phase 6 patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 5
+    assert manifest.current_phase == 6
     assert len(manifest.active_nodes(5)) == 59
 
 
@@ -224,13 +224,15 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
     _write(manifest_path, manifest_payload)
     replacement = deepcopy(historical)
     replacement["id"] = "PATCH-A-REPLACED"
-    replacements.append({
-        "old": historical,
-        "new": replacement,
-        "review_round": 3,
-        "reviewer": "round-3-contract-review",
-        "rationale": "Reviewed replacement seals every semantic field.",
-    })
+    replacements.append(
+        {
+            "old": historical,
+            "new": replacement,
+            "review_round": 3,
+            "reviewer": "round-3-contract-review",
+            "rationale": "Reviewed replacement seals every semantic field.",
+        }
+    )
     _resign(history, "history_sha256")
     _write(history_path, history)
 

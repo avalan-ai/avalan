@@ -34,6 +34,78 @@ from avalan.patch.codec import (
 from avalan.patch.codec import (
     encode_result as encode_result,
 )
+from avalan.patch.coordinator import (
+    ArtifactJournal as ArtifactJournal,
+)
+from avalan.patch.coordinator import (
+    CommitLease as CommitLease,
+)
+from avalan.patch.coordinator import (
+    CommitWorker as CommitWorker,
+)
+from avalan.patch.coordinator import (
+    CoordinatorBoundary as CoordinatorBoundary,
+)
+from avalan.patch.coordinator import (
+    CoordinatorError as CoordinatorError,
+)
+from avalan.patch.coordinator import (
+    CoordinatorErrorCode as CoordinatorErrorCode,
+)
+from avalan.patch.coordinator import (
+    CoordinatorRegistry as CoordinatorRegistry,
+)
+from avalan.patch.coordinator import (
+    InMemoryCoordinatorStore as InMemoryCoordinatorStore,
+)
+from avalan.patch.coordinator import (
+    InMemoryLeaseManager as InMemoryLeaseManager,
+)
+from avalan.patch.coordinator import (
+    InMemoryPatchCoordinator as InMemoryPatchCoordinator,
+)
+from avalan.patch.coordinator import (
+    JournalStep as JournalStep,
+)
+from avalan.patch.coordinator import (
+    LockFootprint as LockFootprint,
+)
+from avalan.patch.coordinator import (
+    RetransmissionKey as RetransmissionKey,
+)
+from avalan.patch.coordinator import (
+    RevalidationFact as RevalidationFact,
+)
+from avalan.patch.coordinator import (
+    RevalidationField as RevalidationField,
+)
+from avalan.patch.coordinator import (
+    RevalidationSnapshot as RevalidationSnapshot,
+)
+from avalan.patch.coordinator import (
+    RuntimeIdentity as RuntimeIdentity,
+)
+from avalan.patch.coordinator import (
+    ScriptedCommitWorker as ScriptedCommitWorker,
+)
+from avalan.patch.coordinator import (
+    ScriptedFaultController as ScriptedFaultController,
+)
+from avalan.patch.coordinator import (
+    ScriptedReconciler as ScriptedReconciler,
+)
+from avalan.patch.coordinator import (
+    SettlementJournal as SettlementJournal,
+)
+from avalan.patch.coordinator import (
+    WorkerReport as WorkerReport,
+)
+from avalan.patch.coordinator import (
+    WorkerState as WorkerState,
+)
+from avalan.patch.coordinator import (
+    footprint_for as footprint_for,
+)
 from avalan.patch.domain import (
     AlgorithmDigest as AlgorithmDigest,
 )

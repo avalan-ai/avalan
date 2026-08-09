@@ -28,6 +28,9 @@
       },
       {
         "id": "PATCH-A-P0-002",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0007",
           "PATCH-R-0008",
@@ -36,7 +39,7 @@
           "PATCH-R-0011",
           "PATCH-R-0012"
         ],
-        "category": "race",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -44,17 +47,17 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "be249279ded13844dce53034f502a0b7014012709f8f9eb86c7c2f36f80cbad4"
       },
       {
         "id": "PATCH-A-P0-003",
+        "category": "performance",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0013"
         ],
-        "category": "performance",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -62,17 +65,17 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "8aa33f32504038ff3b48b97c6258363c67c61951351c48c7e8127624607b104e"
       },
       {
         "id": "PATCH-A-P0-004",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0014"
         ],
-        "category": "negative",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -80,13 +83,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "2f59452680785c702ce2fe5d1656d34d54461cf5c6cd8d6b6191004243764f79"
       },
       {
         "id": "PATCH-A-P0-005",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0015",
           "PATCH-R-0016",
@@ -96,7 +99,7 @@
           "PATCH-R-0020",
           "PATCH-R-0021"
         ],
-        "category": "security",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -104,13 +107,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "e241f865f5f1c682899d2b45d30ac9f498e5ff324b5e3677cd957220afa87e97"
       },
       {
         "id": "PATCH-A-P0-006",
+        "category": "context_conformance",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0022",
           "PATCH-R-0023",
@@ -120,7 +123,7 @@
           "PATCH-R-0027",
           "PATCH-R-0028"
         ],
-        "category": "context_conformance",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -128,13 +131,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "e25be044c930c569ab2045673cdbd22c439cc5b996fa16897ef2a9de3031c54b"
       },
       {
         "id": "PATCH-A-P0-007",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0029",
           "PATCH-R-0030",
@@ -144,7 +147,7 @@
           "PATCH-R-0034",
           "PATCH-R-0035"
         ],
-        "category": "negative",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -152,13 +155,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "528def8577e7bfd008f201ab39be1d31a23b4ba68566cb12b9816d9027e91d03"
       },
       {
         "id": "PATCH-A-P0-008",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0036",
           "PATCH-R-0037",
@@ -168,7 +171,7 @@
           "PATCH-R-0041",
           "PATCH-R-0042"
         ],
-        "category": "positive",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -176,13 +179,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "b309053c09d692c9a08b907b1a634f0050a6b75ba61ccd3b4de969abc689255e"
       },
       {
         "id": "PATCH-A-P0-009",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0043",
           "PATCH-R-0044",
@@ -192,7 +195,7 @@
           "PATCH-R-0048",
           "PATCH-R-0049"
         ],
-        "category": "security",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -200,13 +203,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "ad2678fd7c7cd326e30f7de2ff986373edabcc0292715a4293da790afbb7d8c1"
       },
       {
         "id": "PATCH-A-P0-010",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0050",
           "PATCH-R-0051",
@@ -216,7 +219,7 @@
           "PATCH-R-0055",
           "PATCH-R-0056"
         ],
-        "category": "security",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -224,13 +227,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "dbf739fadac64e694449212b94fc133bb3e856a04fc8d23e3774a1b5a422c8bf"
       },
       {
         "id": "PATCH-A-P0-011",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0057",
           "PATCH-R-0058",
@@ -240,7 +243,7 @@
           "PATCH-R-0062",
           "PATCH-R-0063"
         ],
-        "category": "integration",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -248,13 +251,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "cb0753e5b4e137ff65de88eb64c4423e71a0f4af16b6c6a5ea301824d9b6ab17"
       },
       {
         "id": "PATCH-A-P0-012",
+        "category": "context_conformance",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0064",
           "PATCH-R-0065",
@@ -264,7 +267,7 @@
           "PATCH-R-0069",
           "PATCH-R-0070"
         ],
-        "category": "context_conformance",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -272,13 +275,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "fd14d01351f1ab1570d75e33e61470f1584a126a3e3ea0de515ed66de716748e"
       },
       {
         "id": "PATCH-A-P0-013",
+        "category": "context_conformance",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0071",
           "PATCH-R-0072",
@@ -288,7 +291,7 @@
           "PATCH-R-0076",
           "PATCH-R-0077"
         ],
-        "category": "context_conformance",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -296,13 +299,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "8d1a1550dcd84f0c3d391b610c4e20e54df8c5fe5a1d9bfb661790a00c36af67"
       },
       {
         "id": "PATCH-A-P0-014",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0078",
           "PATCH-R-0079",
@@ -310,7 +313,7 @@
           "PATCH-R-0081",
           "PATCH-R-0082"
         ],
-        "category": "positive",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -318,13 +321,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "dfe4e9b262bb1b5cd175dee9b91ac9701df568571b63459e0e7dea50030e7b93"
       },
       {
         "id": "PATCH-A-P0-015",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 0,
         "requirement_ids": [
           "PATCH-R-0083",
           "PATCH-R-0084",
@@ -332,7 +335,7 @@
           "PATCH-R-0086",
           "PATCH-R-0087"
         ],
-        "category": "security",
+        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
         "surface": "phase0_contract",
         "context": "scripted",
         "platform": "portable",
@@ -340,13 +343,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "phase0_semantic_contract",
-        "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
-        "lifecycle": "active",
-        "active_from_phase": 0,
         "executable_sha256": "346e0171fefe7c8fc83d0688674633dd58e6ca48c4f6059dc0384a459e1a2aea"
       },
       {
         "id": "PATCH-A-P1-001",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 1,
         "requirement_ids": [
           "PATCH-R-0088",
           "PATCH-R-0089",
@@ -357,7 +360,7 @@
           "PATCH-R-0094",
           "PATCH-R-0095"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
         "surface": "domain",
         "context": "in_memory",
         "platform": "portable",
@@ -365,13 +368,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "domain_contract",
-        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
-        "lifecycle": "active",
-        "active_from_phase": 1,
         "executable_sha256": "537fcede2da7ad1732fa443b53df0aebc0cab24e53142a4a47491f07f47cd465"
       },
       {
         "id": "PATCH-A-P1-002",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 1,
         "requirement_ids": [
           "PATCH-R-0096",
           "PATCH-R-0097",
@@ -382,7 +385,7 @@
           "PATCH-R-0102",
           "PATCH-R-0103"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
         "surface": "domain",
         "context": "in_memory",
         "platform": "portable",
@@ -390,13 +393,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "domain_contract",
-        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
-        "lifecycle": "active",
-        "active_from_phase": 1,
         "executable_sha256": "14e0b74794810e52bf5aa68d7e92bc6966fa9a25d7a754a9949d8a03cab6b5f9"
       },
       {
         "id": "PATCH-A-P1-003",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 1,
         "requirement_ids": [
           "PATCH-R-0104",
           "PATCH-R-0105",
@@ -407,7 +410,7 @@
           "PATCH-R-0110",
           "PATCH-R-0111"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
         "surface": "domain",
         "context": "in_memory",
         "platform": "portable",
@@ -415,13 +418,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "domain_contract",
-        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
-        "lifecycle": "active",
-        "active_from_phase": 1,
         "executable_sha256": "3b0ed13950175b3955ef0b2f3b929d4fa9536dde2b096ed8846eea7802aa0076"
       },
       {
         "id": "PATCH-A-P1-004",
+        "category": "privacy",
+        "lifecycle": "active",
+        "active_from_phase": 1,
         "requirement_ids": [
           "PATCH-R-0112",
           "PATCH-R-0113",
@@ -432,7 +435,7 @@
           "PATCH-R-0118",
           "PATCH-R-0119"
         ],
-        "category": "privacy",
+        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
         "surface": "domain",
         "context": "in_memory",
         "platform": "portable",
@@ -440,13 +443,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "domain_contract",
-        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
-        "lifecycle": "active",
-        "active_from_phase": 1,
         "executable_sha256": "2bb17ad660a4656f490eb21bb11fda9ffe9858ae2698d773e1a0cae4c015cd2c"
       },
       {
         "id": "PATCH-A-P1-005",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 1,
         "requirement_ids": [
           "PATCH-R-0120",
           "PATCH-R-0121",
@@ -454,7 +457,7 @@
           "PATCH-R-0123",
           "PATCH-R-0124"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
         "surface": "domain",
         "context": "in_memory",
         "platform": "portable",
@@ -462,13 +465,13 @@
         "authority": "none",
         "commit_boundary": "not_started",
         "evidence_class": "domain_contract",
-        "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
-        "lifecycle": "active",
-        "active_from_phase": 1,
         "executable_sha256": "205a48c44317b6053c93653721e0210f6492085eddff7f51c8948eb47d7fb021"
       },
       {
         "id": "PATCH-A-102",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0229",
           "PATCH-R-0230",
@@ -479,7 +482,7 @@
           "PATCH-R-0235",
           "PATCH-R-0236"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -487,13 +490,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "2aec7b8d09b1250baadbfbae50b4fb393a1047343773b3e69a1cf10da21d2e6d"
       },
       {
         "id": "PATCH-A-P2-002",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0237",
           "PATCH-R-0238",
@@ -504,7 +507,7 @@
           "PATCH-R-0243",
           "PATCH-R-0244"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -512,13 +515,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "91573369c743eb0814ebdd86341d1c1db76ed99bd6d77c9f1910510d022b1c31"
       },
       {
         "id": "PATCH-A-P2-003",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0245",
           "PATCH-R-0246",
@@ -529,7 +532,7 @@
           "PATCH-R-0251",
           "PATCH-R-0252"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -537,13 +540,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "646152c9a368b20566e7296e590408ea3f0f082fa3bb0b49ba96510f802ac7e4"
       },
       {
         "id": "PATCH-A-P2-004",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0253",
           "PATCH-R-0254",
@@ -554,7 +557,7 @@
           "PATCH-R-0987",
           "PATCH-R-0988"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -562,13 +565,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "1efc4637192029a155a460e95a3e6c8f3b990ecd8fc8e0593a7b3fe898a915d7"
       },
       {
         "id": "PATCH-A-P2-005",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0989",
           "PATCH-R-0990",
@@ -579,7 +582,7 @@
           "PATCH-R-0995",
           "PATCH-R-0996"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
         "surface": "freeform",
         "context": "local",
         "platform": "portable",
@@ -587,13 +590,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "5fb5a5dfcefabccd1610f2bea7e7255eff8558b4bcad64426a2aee49d01a7400"
       },
       {
         "id": "PATCH-A-P2-006",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-0997",
           "PATCH-R-0998",
@@ -604,7 +607,7 @@
           "PATCH-R-1003",
           "PATCH-R-1004"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -612,13 +615,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "38d8542ad5ece46a6fafb2a8b438b3d344795a45769c1847adea59e969c8048f"
       },
       {
         "id": "PATCH-A-P2-007",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-1005",
           "PATCH-R-1006",
@@ -629,7 +632,7 @@
           "PATCH-R-1011",
           "PATCH-R-1012"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -637,13 +640,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "fuzz",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "d0db700851d2c857d70ce7849daa7ad14efcfc75d5fa6c51c6b5d571c36a4088"
       },
       {
         "id": "PATCH-A-P2-008",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 2,
         "requirement_ids": [
           "PATCH-R-1013",
           "PATCH-R-1014",
@@ -651,7 +654,7 @@
           "PATCH-R-1016",
           "PATCH-R-1017"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
         "surface": "json_function",
         "context": "local",
         "platform": "portable",
@@ -659,13 +662,13 @@
         "authority": "selection",
         "commit_boundary": "preinspection",
         "evidence_class": "golden",
-        "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
-        "lifecycle": "active",
-        "active_from_phase": 2,
         "executable_sha256": "3cbe643823b1807f19ff1917e99886c585a148f833124ab04fae26e223fe7a44"
       },
       {
         "id": "PATCH-A-P4-001",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0125",
           "PATCH-R-0126",
@@ -676,32 +679,7 @@
           "PATCH-R-0131",
           "PATCH-R-0132"
         ],
-        "category": "security",
-        "surface": "target",
-        "context": "local",
-        "platform": "posix",
-        "operation": "inspect",
-        "authority": "scope",
-        "commit_boundary": "precommit",
-        "evidence_class": "security",
         "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_cwd_alias_and_parent_handle_paths",
-        "lifecycle": "active",
-        "active_from_phase": 4,
-        "executable_sha256": "2a6de9bb93e775f16bd7b3d75ba1d46c3d8683bfb5cd6a2fb2d9a2024c7a7c2b"
-      },
-      {
-        "id": "PATCH-A-P4-002",
-        "requirement_ids": [
-          "PATCH-R-0133",
-          "PATCH-R-0134",
-          "PATCH-R-0135",
-          "PATCH-R-0136",
-          "PATCH-R-0137",
-          "PATCH-R-0138",
-          "PATCH-R-0139",
-          "PATCH-R-0140"
-        ],
-        "category": "security",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -709,10 +687,7 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
-        "lifecycle": "active",
-        "active_from_phase": 4,
-        "executable_sha256": "6719180f2a17c35446741c0165aff6e1e4a2b260414c872028fa0a846e6ef415"
+        "executable_sha256": "2a6de9bb93e775f16bd7b3d75ba1d46c3d8683bfb5cd6a2fb2d9a2024c7a7c2b"
       },
       {
         "id": "PATCH-A-P4-003",
@@ -741,6 +716,9 @@
       },
       {
         "id": "PATCH-A-P4-004",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0149",
           "PATCH-R-0150",
@@ -751,7 +729,7 @@
           "PATCH-R-0155",
           "PATCH-R-0156"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -759,13 +737,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "409e7d7d30890ac76692601c24778f8cceef1b321c08332521bc0ac9dd5a2d86"
       },
       {
         "id": "PATCH-A-P4-005",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0157",
           "PATCH-R-0158",
@@ -776,7 +754,7 @@
           "PATCH-R-0163",
           "PATCH-R-0164"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -784,13 +762,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "dcd82311e0998de055525973f2b9247643bc567e2d2b4c2f2737dcdcc8be306e"
       },
       {
         "id": "PATCH-A-P4-006",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0165",
           "PATCH-R-0327",
@@ -801,7 +779,7 @@
           "PATCH-R-0332",
           "PATCH-R-0333"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -809,13 +787,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "1b3ec49102ffcae422d3edcc2d37da3036662a631129a798c123aacc3719bad5"
       },
       {
         "id": "PATCH-A-P4-007",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0334",
           "PATCH-R-0335",
@@ -826,7 +804,7 @@
           "PATCH-R-0340",
           "PATCH-R-0341"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -834,63 +812,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "0c3638b7e1bf26783ba7086af08e59fd30e85946b59133ec379681721939c450"
       },
       {
-        "id": "PATCH-A-P4-008",
-        "requirement_ids": [
-          "PATCH-R-0342",
-          "PATCH-R-0343",
-          "PATCH-R-0344",
-          "PATCH-R-0345",
-          "PATCH-R-0346",
-          "PATCH-R-0347",
-          "PATCH-R-0348",
-          "PATCH-R-0349"
-        ],
-        "category": "security",
-        "surface": "target",
-        "context": "local",
-        "platform": "posix",
-        "operation": "inspect",
-        "authority": "scope",
-        "commit_boundary": "precommit",
-        "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
-        "lifecycle": "active",
-        "active_from_phase": 4,
-        "executable_sha256": "671388e4b59f8614341e40d6cc02e32c3dc8d7891dc661d7ede0c0e82962fc67"
-      },
-      {
-        "id": "PATCH-A-P4-009",
-        "requirement_ids": [
-          "PATCH-R-0350",
-          "PATCH-R-0351",
-          "PATCH-R-0352",
-          "PATCH-R-0353",
-          "PATCH-R-0460",
-          "PATCH-R-0461",
-          "PATCH-R-0462",
-          "PATCH-R-0463"
-        ],
-        "category": "security",
-        "surface": "target",
-        "context": "local",
-        "platform": "posix",
-        "operation": "inspect",
-        "authority": "scope",
-        "commit_boundary": "precommit",
-        "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
-        "lifecycle": "active",
-        "active_from_phase": 4,
-        "executable_sha256": "3a85975d45886dc8d37d41db4320badc2f0ff8d186609a1b2ecd5f9e54f59131"
-      },
-      {
         "id": "PATCH-A-P4-010",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0464",
           "PATCH-R-0465",
@@ -901,7 +829,7 @@
           "PATCH-R-0486",
           "PATCH-R-0487"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -909,13 +837,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "b4e87af42875d5032e8deff81b6d94e7ab166a953662374a19826ac7051e3ae4"
       },
       {
         "id": "PATCH-A-P4-011",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0488",
           "PATCH-R-0489",
@@ -926,7 +854,7 @@
           "PATCH-R-0494",
           "PATCH-R-0495"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -934,17 +862,17 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "4e1a2b26231bb179ffb9cf8396788228fd8a02c6f07fbc64198ad5c6a93231ce"
       },
       {
         "id": "PATCH-A-P4-012",
+        "category": "performance",
+        "lifecycle": "active",
+        "active_from_phase": 4,
         "requirement_ids": [
           "PATCH-R-0496"
         ],
-        "category": "performance",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
         "surface": "target",
         "context": "local",
         "platform": "posix",
@@ -952,13 +880,13 @@
         "authority": "scope",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
-        "lifecycle": "active",
-        "active_from_phase": 4,
         "executable_sha256": "04474bf9c1cdad6badb3a14b9f250db595e1251d609dabb9d77ecf0aaf30314e"
       },
       {
         "id": "PATCH-A-P3-001",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0257",
           "PATCH-R-0258",
@@ -969,7 +897,7 @@
           "PATCH-R-0263",
           "PATCH-R-0264"
         ],
-        "category": "integration",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -977,13 +905,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "2095c4105430e1b548a506a7134e201a46aed3def2b348b86451fe6fd4f3fd40"
       },
       {
         "id": "PATCH-A-P3-002",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0265",
           "PATCH-R-0266",
@@ -994,7 +922,7 @@
           "PATCH-R-0271",
           "PATCH-R-0272"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1002,13 +930,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "885d038736c4b162af64848ca05f6edd83df57206053193c9d47b2d57159e626"
       },
       {
         "id": "PATCH-A-P3-003",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0273",
           "PATCH-R-0274",
@@ -1019,7 +947,7 @@
           "PATCH-R-0279",
           "PATCH-R-0280"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1027,13 +955,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "b7cf5335fb4fe9ff0a1af5d60e9b21bf6eba987fe88e68cbb1d3f2c638f678a6"
       },
       {
         "id": "PATCH-A-P3-004",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0281",
           "PATCH-R-0282",
@@ -1044,7 +972,7 @@
           "PATCH-R-0287",
           "PATCH-R-0288"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1052,13 +980,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "1f4089177964b6fe7577bf02f427bc26a0fbd9d9da34b0f67628de9110a11d6d"
       },
       {
         "id": "PATCH-A-P3-005",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0289",
           "PATCH-R-0290",
@@ -1069,7 +997,7 @@
           "PATCH-R-0295",
           "PATCH-R-0296"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1077,13 +1005,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "307f7992bc6a8e570fe857cd7eacd6fa61e41166a8d411105f6a9ccfef2e64ce"
       },
       {
         "id": "PATCH-A-P3-006",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0297",
           "PATCH-R-0298",
@@ -1094,7 +1022,7 @@
           "PATCH-R-0303",
           "PATCH-R-0304"
         ],
-        "category": "negative",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1102,13 +1030,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "b78ecf5e36fe5623c9adef95772a91cb19c68431798a65fd2e3aad5874cccc93"
       },
       {
         "id": "PATCH-A-P3-007",
+        "category": "performance",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0305",
           "PATCH-R-0306",
@@ -1119,7 +1047,7 @@
           "PATCH-R-0311",
           "PATCH-R-0312"
         ],
-        "category": "performance",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1127,13 +1055,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "5d152dbddf248135ad8d52b10da382b7d40b732e6cc917dbed222a410a302c1d"
       },
       {
         "id": "PATCH-A-P3-008",
+        "category": "type",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0313",
           "PATCH-R-0314",
@@ -1144,7 +1072,7 @@
           "PATCH-R-0319",
           "PATCH-R-0320"
         ],
-        "category": "type",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1152,13 +1080,13 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "f35ed14302f5146a6222279a8aa628cbc48f80dda427a9419637eb1f44558019"
       },
       {
         "id": "PATCH-A-P3-009",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 3,
         "requirement_ids": [
           "PATCH-R-0321",
           "PATCH-R-0322",
@@ -1167,7 +1095,7 @@
           "PATCH-R-0325",
           "PATCH-R-0326"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
         "surface": "json_function",
         "context": "scripted",
         "platform": "portable",
@@ -1175,9 +1103,6 @@
         "authority": "none",
         "commit_boundary": "preinspection",
         "evidence_class": "planner",
-        "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
-        "lifecycle": "active",
-        "active_from_phase": 3,
         "executable_sha256": "5af96c11b354dcc1d0d725bd249ac853dd813e174885c1d183491334d03a7f93"
       },
       {
@@ -1232,6 +1157,9 @@
       },
       {
         "id": "PATCH-A-P5-003",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 5,
         "requirement_ids": [
           "PATCH-R-0370",
           "PATCH-R-0371",
@@ -1242,7 +1170,7 @@
           "PATCH-R-0376",
           "PATCH-R-0377"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
         "surface": "approval",
         "context": "local",
         "platform": "portable",
@@ -1250,13 +1178,13 @@
         "authority": "approval",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
-        "lifecycle": "active",
-        "active_from_phase": 5,
         "executable_sha256": "c16992cfda0f0e1ac9a8a01c3e2fff60c88b02cd1a3b0da8c5e9914dc7a5a46f"
       },
       {
         "id": "PATCH-A-P5-004",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 5,
         "requirement_ids": [
           "PATCH-R-0378",
           "PATCH-R-0379",
@@ -1267,7 +1195,7 @@
           "PATCH-R-0384",
           "PATCH-R-0385"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
         "surface": "approval",
         "context": "local",
         "platform": "portable",
@@ -1275,9 +1203,6 @@
         "authority": "approval",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
-        "lifecycle": "active",
-        "active_from_phase": 5,
         "executable_sha256": "defcec69220e32d24b6041c441c0fd6d3ad5ed97c444568143d7898e39d71c31"
       },
       {
@@ -1307,6 +1232,9 @@
       },
       {
         "id": "PATCH-A-P5-006",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 5,
         "requirement_ids": [
           "PATCH-R-0394",
           "PATCH-R-0395",
@@ -1317,7 +1245,7 @@
           "PATCH-R-0400",
           "PATCH-R-0401"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
         "surface": "approval",
         "context": "local",
         "platform": "portable",
@@ -1325,9 +1253,6 @@
         "authority": "approval",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
-        "lifecycle": "active",
-        "active_from_phase": 5,
         "executable_sha256": "ebbeb329bba8f15378a0c3116e86a76928dd454c004772884fce95f86c8d66cf"
       },
       {
@@ -1382,6 +1307,9 @@
       },
       {
         "id": "PATCH-A-P5-009",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 5,
         "requirement_ids": [
           "PATCH-R-0418",
           "PATCH-R-0419",
@@ -1392,7 +1320,7 @@
           "PATCH-R-0424",
           "PATCH-R-0425"
         ],
-        "category": "positive",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
         "surface": "approval",
         "context": "local",
         "platform": "portable",
@@ -1400,17 +1328,17 @@
         "authority": "approval",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
-        "lifecycle": "active",
-        "active_from_phase": 5,
         "executable_sha256": "da5506e37cb6aab3d090f34636a48fbdf42e0dafc4685f17ee7e3525fae178d8"
       },
       {
         "id": "PATCH-A-P5-010",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 5,
         "requirement_ids": [
           "PATCH-R-0426"
         ],
-        "category": "security",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_grant_evidence",
         "surface": "approval",
         "context": "local",
         "platform": "portable",
@@ -1418,13 +1346,485 @@
         "authority": "approval",
         "commit_boundary": "precommit",
         "evidence_class": "security",
-        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_grant_evidence",
-        "lifecycle": "active",
-        "active_from_phase": 5,
         "executable_sha256": "a1bc1d23379e898d5f229018c9590342faa02a48ffd26755588b9946622db45f"
+      },
+      {
+        "id": "PATCH-A-P6-001",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0427",
+          "PATCH-R-0428",
+          "PATCH-R-0429",
+          "PATCH-R-0430",
+          "PATCH-R-0431",
+          "PATCH-R-0432",
+          "PATCH-R-0433",
+          "PATCH-R-0434"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_and_scripted_commit_e2e",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "38d985c680b343696132133d2dd68e06eefefb938914683449cffc9a665b13d7"
+      },
+      {
+        "id": "PATCH-A-P6-002",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0435",
+          "PATCH-R-0436",
+          "PATCH-R-0437",
+          "PATCH-R-0438",
+          "PATCH-R-0439",
+          "PATCH-R-0440",
+          "PATCH-R-0441",
+          "PATCH-R-0442"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_idempotency_and_owner_races_are_linearizable",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "f4de2de4dee7bc8903fe0ece020945608a19e79d9d2b65210fc353474c19657e"
+      },
+      {
+        "id": "PATCH-A-P6-003",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0443",
+          "PATCH-R-0444",
+          "PATCH-R-0445",
+          "PATCH-R-0446",
+          "PATCH-R-0447",
+          "PATCH-R-0448",
+          "PATCH-R-0449",
+          "PATCH-R-0450"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_revalidation_matrix_stales_before_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "5a08bff7baf1f25ac5455838a4942a96ee2b117d9c8eb7869d4a542e6696112a"
+      },
+      {
+        "id": "PATCH-A-P6-004",
+        "category": "crash",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0451",
+          "PATCH-R-0452",
+          "PATCH-R-0453",
+          "PATCH-R-0454",
+          "PATCH-R-0455",
+          "PATCH-R-0456",
+          "PATCH-R-0458",
+          "PATCH-R-0459"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_journal_truth_never_guesses_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "557c653d0dacda09ff0f5eb29a36cd17bcd5ee994b15e2a69d431d498d5db6ef"
+      },
+      {
+        "id": "PATCH-A-P6-005",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0497",
+          "PATCH-R-0498",
+          "PATCH-R-0499",
+          "PATCH-R-0500",
+          "PATCH-R-0501",
+          "PATCH-R-0502",
+          "PATCH-R-0503",
+          "PATCH-R-0504"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_retains_one_fenced_owner_until_settlement",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "029fc5d12fde780320d5f8b52e286d3e9bcd4e62b1a491cb53f06e3cd5da0d58"
+      },
+      {
+        "id": "PATCH-A-P6-006",
+        "category": "cancellation",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0505",
+          "PATCH-R-0506",
+          "PATCH-R-0507",
+          "PATCH-R-0508",
+          "PATCH-R-0509",
+          "PATCH-R-0510",
+          "PATCH-R-0511",
+          "PATCH-R-0512"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_precommit_cancellation_and_no_retry_are_closed",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "5e9533b638a18fd339b1e3a57df33c05d43ef183c80478d84737e56cb113b318"
+      },
+      {
+        "id": "PATCH-A-P6-007",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0513",
+          "PATCH-R-0514",
+          "PATCH-R-0515",
+          "PATCH-R-0516",
+          "PATCH-R-0517",
+          "PATCH-R-0518",
+          "PATCH-R-0519",
+          "PATCH-R-0520"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_domain_serialization_and_precommit_work",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "1f0e09758ef7eb7603dc80b21eb3a0e4a2fc154a2372aca8f5d3504f557fadc2"
+      },
+      {
+        "id": "PATCH-A-P6-008",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0521",
+          "PATCH-R-0522",
+          "PATCH-R-0523",
+          "PATCH-R-0524",
+          "PATCH-R-0525",
+          "PATCH-R-0526",
+          "PATCH-R-0527",
+          "PATCH-R-0528"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_rejects_non_scripted_workers_and_invalid_journals",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "bebb335a59513e3a3b1dbb47e1b9eaa0acab203212268377d698a40a249a3780"
+      },
+      {
+        "id": "PATCH-A-P6-009",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0529",
+          "PATCH-R-0530",
+          "PATCH-R-0531",
+          "PATCH-R-0532",
+          "PATCH-R-0533",
+          "PATCH-R-0534",
+          "PATCH-R-0535",
+          "PATCH-R-0536"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_move_update_and_fenced_reconciliation_e2e",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "eb7b38b493f69f15b61b1ec3cee3954243ec3c79ee305707b81e916f17d0c9bb"
+      },
+      {
+        "id": "PATCH-A-P6-010",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0537",
+          "PATCH-R-0538",
+          "PATCH-R-0539",
+          "PATCH-R-0540",
+          "PATCH-R-0541",
+          "PATCH-R-0542",
+          "PATCH-R-0543",
+          "PATCH-R-0544"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_invalid_boundaries_and_fault_paths_stay_closed",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "69e3f2f27bf5e13c9d3bc410b2cdb0cdc5f02a34d4172097d57487ae0b904d02"
+      },
+      {
+        "id": "PATCH-A-P6-011",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0545",
+          "PATCH-R-0546",
+          "PATCH-R-0547",
+          "PATCH-R-0548",
+          "PATCH-R-0549",
+          "PATCH-R-0550",
+          "PATCH-R-0551",
+          "PATCH-R-0552"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_controller_rejects_illegal_order",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "c11c4cb48cc0107323180cbd2640e65cf40acec1d52be3528b698c4cc168e3be"
+      },
+      {
+        "id": "PATCH-A-P6-012",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0553",
+          "PATCH-R-0554",
+          "PATCH-R-0555",
+          "PATCH-R-0556",
+          "PATCH-R-0557",
+          "PATCH-R-0558",
+          "PATCH-R-0559",
+          "PATCH-R-0560"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_footprint_is_workspace_first_and_total",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "05e35181826fcb38e6a5b09ed1981263d31641337703d1ed3ea593a79c3d8513"
+      },
+      {
+        "id": "PATCH-A-P6-013",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0561",
+          "PATCH-R-0562",
+          "PATCH-R-0563",
+          "PATCH-R-0564",
+          "PATCH-R-0565",
+          "PATCH-R-0566",
+          "PATCH-R-0567",
+          "PATCH-R-0568"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_waits_own_no_transaction_or_target_handle",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "5288410fb55505cb4abeb9e742f3ef909dd63243a168fb5a50e8015eff26c503"
+      },
+      {
+        "id": "PATCH-A-P6-014",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0569",
+          "PATCH-R-0570",
+          "PATCH-R-0571",
+          "PATCH-R-0572",
+          "PATCH-R-0573",
+          "PATCH-R-0574",
+          "PATCH-R-0575",
+          "PATCH-R-0576"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_grant_consumption_precedes_only_scripted_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "fed9927176edac1ed3b442844ed3624c53bdaf0a0f9b940489826db90718d1b9"
+      },
+      {
+        "id": "PATCH-A-P6-015",
+        "category": "crash",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0577",
+          "PATCH-R-0578",
+          "PATCH-R-0579",
+          "PATCH-R-0580",
+          "PATCH-R-0581",
+          "PATCH-R-0582",
+          "PATCH-R-0583",
+          "PATCH-R-0584"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_internal_pending_never_creates_a_detached_handle",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "cc0fae73b2906050084dd53b800dcbf7c7c565a5a985e7ba7bbc249ad7b9a8b1"
+      },
+      {
+        "id": "PATCH-A-P6-016",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0585",
+          "PATCH-R-0586",
+          "PATCH-R-0587",
+          "PATCH-R-0588",
+          "PATCH-R-0589",
+          "PATCH-R-0590",
+          "PATCH-R-0591",
+          "PATCH-R-0592"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_has_no_public_mutation_tool_or_local_worker",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "c63e50d971db92e04d538e0fc2f73cc6d34a71267fcb4f4076d88b1d8a58fd5d"
+      },
+      {
+        "id": "PATCH-A-P4-002",
+        "requirement_ids": [
+          "PATCH-R-0133",
+          "PATCH-R-0134",
+          "PATCH-R-0135",
+          "PATCH-R-0136",
+          "PATCH-R-0137",
+          "PATCH-R-0138",
+          "PATCH-R-0139",
+          "PATCH-R-0140"
+        ],
+        "category": "security",
+        "surface": "target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "inspect",
+        "authority": "scope",
+        "commit_boundary": "precommit",
+        "evidence_class": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
+        "lifecycle": "active",
+        "active_from_phase": 4,
+        "executable_sha256": "6719180f2a17c35446741c0165aff6e1e4a2b260414c872028fa0a846e6ef415"
+      },
+      {
+        "id": "PATCH-A-P4-008",
+        "requirement_ids": [
+          "PATCH-R-0342",
+          "PATCH-R-0343",
+          "PATCH-R-0344",
+          "PATCH-R-0345",
+          "PATCH-R-0346",
+          "PATCH-R-0347",
+          "PATCH-R-0348",
+          "PATCH-R-0349"
+        ],
+        "category": "security",
+        "surface": "target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "inspect",
+        "authority": "scope",
+        "commit_boundary": "precommit",
+        "evidence_class": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
+        "lifecycle": "active",
+        "active_from_phase": 4,
+        "executable_sha256": "671388e4b59f8614341e40d6cc02e32c3dc8d7891dc661d7ede0c0e82962fc67"
+      },
+      {
+        "id": "PATCH-A-P4-009",
+        "requirement_ids": [
+          "PATCH-R-0350",
+          "PATCH-R-0351",
+          "PATCH-R-0352",
+          "PATCH-R-0353",
+          "PATCH-R-0460",
+          "PATCH-R-0461",
+          "PATCH-R-0462",
+          "PATCH-R-0463"
+        ],
+        "category": "security",
+        "surface": "target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "inspect",
+        "authority": "scope",
+        "commit_boundary": "precommit",
+        "evidence_class": "security",
+        "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
+        "lifecycle": "active",
+        "active_from_phase": 4,
+        "executable_sha256": "3a85975d45886dc8d37d41db4320badc2f0ff8d186609a1b2ecd5f9e54f59131"
       }
     ],
-    "snapshot_sha256": "a5860565ffc180b413a37baa556b82ca1ac399e5e06f89c85a0f0e5ea377f221"
+    "snapshot_sha256": "0750e3676335a7f834784d24def44a8df245979fb0eb054b70c8d66cf7ff6e18"
   },
   "replacements": [
     {
@@ -1586,7 +1986,7 @@
         "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
         "lifecycle": "active",
         "active_from_phase": 4,
-        "executable_sha256": "5ac65e651a97f5d389b4a2d7e74ae2bd0e3160dd415a231522fbfd3f3fa15380"
+        "executable_sha256": "3a85975d45886dc8d37d41db4320badc2f0ff8d186609a1b2ecd5f9e54f59131"
       },
       "review_round": 1,
       "reviewer": "phase4-history-review",
@@ -1912,7 +2312,7 @@
         "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
         "lifecycle": "active",
         "active_from_phase": 0,
-        "executable_sha256": "211b9e80f3e9bbdfc15fb0f03978b64b5d840a021b247698ca8d8eb0e94a0e1e"
+        "executable_sha256": "a902631fac5c9ee56a65490374021e137f934fa322610a721c2acd2842f7164b"
       },
       "review_round": 4,
       "reviewer": "phase5-turn4-current-phase-review",
@@ -1967,12 +2367,727 @@
         "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
         "lifecycle": "active",
         "active_from_phase": 4,
-        "executable_sha256": "2be31092b3aa8ad5edf4398d30a8f8fcfe18dc5bbaf86c44b02decd5167f5128"
+        "executable_sha256": "e878aa3de621617329b1098816585892c209e35743d0f07caf92d594f1c3591d"
       },
       "review_round": 4,
       "reviewer": "phase5-turn4-current-phase-review",
       "rationale": "Current Phase 5 expectation refreshes the executable evidence without widening the patch boundary."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-001",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0427",
+          "PATCH-R-0428",
+          "PATCH-R-0429",
+          "PATCH-R-0430",
+          "PATCH-R-0431",
+          "PATCH-R-0432",
+          "PATCH-R-0433",
+          "PATCH-R-0434"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_and_scripted_commit_e2e",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "38d985c680b343696132133d2dd68e06eefefb938914683449cffc9a665b13d7"
+      },
+      "new": {
+        "id": "PATCH-A-P6-001",
+        "requirement_ids": [
+          "PATCH-R-0427",
+          "PATCH-R-0428",
+          "PATCH-R-0429",
+          "PATCH-R-0430",
+          "PATCH-R-0431",
+          "PATCH-R-0432",
+          "PATCH-R-0433",
+          "PATCH-R-0434"
+        ],
+        "category": "integration",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_and_scripted_commit_e2e",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "3fdd5e64d7d506fd5841c1a274621b496e383221faf2afc9d9d4d6668684ddeb"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-002",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0435",
+          "PATCH-R-0436",
+          "PATCH-R-0437",
+          "PATCH-R-0438",
+          "PATCH-R-0439",
+          "PATCH-R-0440",
+          "PATCH-R-0441",
+          "PATCH-R-0442"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_idempotency_and_owner_races_are_linearizable",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "f4de2de4dee7bc8903fe0ece020945608a19e79d9d2b65210fc353474c19657e"
+      },
+      "new": {
+        "id": "PATCH-A-P6-002",
+        "requirement_ids": [
+          "PATCH-R-0435",
+          "PATCH-R-0436",
+          "PATCH-R-0437",
+          "PATCH-R-0438",
+          "PATCH-R-0439",
+          "PATCH-R-0440",
+          "PATCH-R-0441",
+          "PATCH-R-0442"
+        ],
+        "category": "race",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_idempotency_and_owner_races_are_linearizable",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "8bd1a5e73696b792d1d1a9ff12795df097a5242db209c865c12fe197b2ad885f"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-003",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0443",
+          "PATCH-R-0444",
+          "PATCH-R-0445",
+          "PATCH-R-0446",
+          "PATCH-R-0447",
+          "PATCH-R-0448",
+          "PATCH-R-0449",
+          "PATCH-R-0450"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_revalidation_matrix_stales_before_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "5a08bff7baf1f25ac5455838a4942a96ee2b117d9c8eb7869d4a542e6696112a"
+      },
+      "new": {
+        "id": "PATCH-A-P6-003",
+        "requirement_ids": [
+          "PATCH-R-0443",
+          "PATCH-R-0444",
+          "PATCH-R-0445",
+          "PATCH-R-0446",
+          "PATCH-R-0447",
+          "PATCH-R-0448",
+          "PATCH-R-0449",
+          "PATCH-R-0450"
+        ],
+        "category": "security",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_revalidation_matrix_stales_before_effects",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "ec968d1f12cec6d21191c4e1deadeefd5a7b67c4d3c1eb853b7d72eece8c0506"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-004",
+        "category": "crash",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0451",
+          "PATCH-R-0452",
+          "PATCH-R-0453",
+          "PATCH-R-0454",
+          "PATCH-R-0455",
+          "PATCH-R-0456",
+          "PATCH-R-0458",
+          "PATCH-R-0459"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_journal_truth_never_guesses_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "557c653d0dacda09ff0f5eb29a36cd17bcd5ee994b15e2a69d431d498d5db6ef"
+      },
+      "new": {
+        "id": "PATCH-A-P6-004",
+        "requirement_ids": [
+          "PATCH-R-0451",
+          "PATCH-R-0452",
+          "PATCH-R-0453",
+          "PATCH-R-0454",
+          "PATCH-R-0455",
+          "PATCH-R-0456",
+          "PATCH-R-0458",
+          "PATCH-R-0459"
+        ],
+        "category": "crash",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_journal_truth_never_guesses_effects",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "9b86df16e9e61cdc3cd55f25a27cf037d212e52b2b1888a4db6c82bee9dab68d"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-005",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0497",
+          "PATCH-R-0498",
+          "PATCH-R-0499",
+          "PATCH-R-0500",
+          "PATCH-R-0501",
+          "PATCH-R-0502",
+          "PATCH-R-0503",
+          "PATCH-R-0504"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_retains_one_fenced_owner_until_settlement",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "029fc5d12fde780320d5f8b52e286d3e9bcd4e62b1a491cb53f06e3cd5da0d58"
+      },
+      "new": {
+        "id": "PATCH-A-P6-005",
+        "requirement_ids": [
+          "PATCH-R-0497",
+          "PATCH-R-0498",
+          "PATCH-R-0499",
+          "PATCH-R-0500",
+          "PATCH-R-0501",
+          "PATCH-R-0502",
+          "PATCH-R-0503",
+          "PATCH-R-0504"
+        ],
+        "category": "race",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_retains_one_fenced_owner_until_settlement",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "6b45c4bae1e409bb60079b8a6483ba0c810b338d582370243f16cba632bd3623"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-007",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0513",
+          "PATCH-R-0514",
+          "PATCH-R-0515",
+          "PATCH-R-0516",
+          "PATCH-R-0517",
+          "PATCH-R-0518",
+          "PATCH-R-0519",
+          "PATCH-R-0520"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_domain_serialization_and_precommit_work",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "1f0e09758ef7eb7603dc80b21eb3a0e4a2fc154a2372aca8f5d3504f557fadc2"
+      },
+      "new": {
+        "id": "PATCH-A-P6-007",
+        "requirement_ids": [
+          "PATCH-R-0513",
+          "PATCH-R-0514",
+          "PATCH-R-0515",
+          "PATCH-R-0516",
+          "PATCH-R-0517",
+          "PATCH-R-0518",
+          "PATCH-R-0519",
+          "PATCH-R-0520"
+        ],
+        "category": "positive",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_domain_serialization_and_precommit_work",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "e3164d7345281b2b320ddaa0bdad36dc1c777bed359a11abc88c719a8690c71d"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-008",
+        "category": "negative",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0521",
+          "PATCH-R-0522",
+          "PATCH-R-0523",
+          "PATCH-R-0524",
+          "PATCH-R-0525",
+          "PATCH-R-0526",
+          "PATCH-R-0527",
+          "PATCH-R-0528"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_rejects_non_scripted_workers_and_invalid_journals",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "bebb335a59513e3a3b1dbb47e1b9eaa0acab203212268377d698a40a249a3780"
+      },
+      "new": {
+        "id": "PATCH-A-P6-008",
+        "requirement_ids": [
+          "PATCH-R-0521",
+          "PATCH-R-0522",
+          "PATCH-R-0523",
+          "PATCH-R-0524",
+          "PATCH-R-0525",
+          "PATCH-R-0526",
+          "PATCH-R-0527",
+          "PATCH-R-0528"
+        ],
+        "category": "negative",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_rejects_non_scripted_workers_and_invalid_journals",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "f9e3d51cb37a6eee53fb8c1ee846f67926242ef6f007a797d5a6ba722fba950c"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-009",
+        "category": "integration",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0529",
+          "PATCH-R-0530",
+          "PATCH-R-0531",
+          "PATCH-R-0532",
+          "PATCH-R-0533",
+          "PATCH-R-0534",
+          "PATCH-R-0535",
+          "PATCH-R-0536"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_move_update_and_fenced_reconciliation_e2e",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "eb7b38b493f69f15b61b1ec3cee3954243ec3c79ee305707b81e916f17d0c9bb"
+      },
+      "new": {
+        "id": "PATCH-A-P6-009",
+        "requirement_ids": [
+          "PATCH-R-0529",
+          "PATCH-R-0530",
+          "PATCH-R-0531",
+          "PATCH-R-0532",
+          "PATCH-R-0533",
+          "PATCH-R-0534",
+          "PATCH-R-0535",
+          "PATCH-R-0536"
+        ],
+        "category": "integration",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_move_update_and_fenced_reconciliation_e2e",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "7ca0b95e0a13b963a9479561ac2a2003b6310b75887adc96ad7b885731336a02"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-010",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0537",
+          "PATCH-R-0538",
+          "PATCH-R-0539",
+          "PATCH-R-0540",
+          "PATCH-R-0541",
+          "PATCH-R-0542",
+          "PATCH-R-0543",
+          "PATCH-R-0544"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_invalid_boundaries_and_fault_paths_stay_closed",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "69e3f2f27bf5e13c9d3bc410b2cdb0cdc5f02a34d4172097d57487ae0b904d02"
+      },
+      "new": {
+        "id": "PATCH-A-P6-010",
+        "requirement_ids": [
+          "PATCH-R-0537",
+          "PATCH-R-0538",
+          "PATCH-R-0539",
+          "PATCH-R-0540",
+          "PATCH-R-0541",
+          "PATCH-R-0542",
+          "PATCH-R-0543",
+          "PATCH-R-0544"
+        ],
+        "category": "security",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_invalid_boundaries_and_fault_paths_stay_closed",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "c46384bfde3488427809cdc67ce6106a426d8946858b987508e06f82554f48f3"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-012",
+        "category": "positive",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0553",
+          "PATCH-R-0554",
+          "PATCH-R-0555",
+          "PATCH-R-0556",
+          "PATCH-R-0557",
+          "PATCH-R-0558",
+          "PATCH-R-0559",
+          "PATCH-R-0560"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_footprint_is_workspace_first_and_total",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "05e35181826fcb38e6a5b09ed1981263d31641337703d1ed3ea593a79c3d8513"
+      },
+      "new": {
+        "id": "PATCH-A-P6-012",
+        "requirement_ids": [
+          "PATCH-R-0553",
+          "PATCH-R-0554",
+          "PATCH-R-0555",
+          "PATCH-R-0556",
+          "PATCH-R-0557",
+          "PATCH-R-0558",
+          "PATCH-R-0559",
+          "PATCH-R-0560"
+        ],
+        "category": "positive",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_footprint_is_workspace_first_and_total",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "3a22fe90ab3c3482e11738f08823ee9212d8fd55d079ff3e78aee788490c43d4"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-013",
+        "category": "race",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0561",
+          "PATCH-R-0562",
+          "PATCH-R-0563",
+          "PATCH-R-0564",
+          "PATCH-R-0565",
+          "PATCH-R-0566",
+          "PATCH-R-0567",
+          "PATCH-R-0568"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_waits_own_no_transaction_or_target_handle",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "5288410fb55505cb4abeb9e742f3ef909dd63243a168fb5a50e8015eff26c503"
+      },
+      "new": {
+        "id": "PATCH-A-P6-013",
+        "requirement_ids": [
+          "PATCH-R-0561",
+          "PATCH-R-0562",
+          "PATCH-R-0563",
+          "PATCH-R-0564",
+          "PATCH-R-0565",
+          "PATCH-R-0566",
+          "PATCH-R-0567",
+          "PATCH-R-0568"
+        ],
+        "category": "race",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_waits_own_no_transaction_or_target_handle",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "5006547ea3e086971ce71cb08996255e35162cb535a955103d378a561fb578cd"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-014",
+        "category": "security",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0569",
+          "PATCH-R-0570",
+          "PATCH-R-0571",
+          "PATCH-R-0572",
+          "PATCH-R-0573",
+          "PATCH-R-0574",
+          "PATCH-R-0575",
+          "PATCH-R-0576"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_grant_consumption_precedes_only_scripted_effects",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "fed9927176edac1ed3b442844ed3624c53bdaf0a0f9b940489826db90718d1b9"
+      },
+      "new": {
+        "id": "PATCH-A-P6-014",
+        "requirement_ids": [
+          "PATCH-R-0569",
+          "PATCH-R-0570",
+          "PATCH-R-0571",
+          "PATCH-R-0572",
+          "PATCH-R-0573",
+          "PATCH-R-0574",
+          "PATCH-R-0575",
+          "PATCH-R-0576"
+        ],
+        "category": "security",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_grant_consumption_precedes_only_scripted_effects",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "4f4d42a9c8ed403620c69cdb5c555c07242e78c01ae9d8aca2572bfc0ed9f0b5"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-015",
+        "category": "crash",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "requirement_ids": [
+          "PATCH-R-0577",
+          "PATCH-R-0578",
+          "PATCH-R-0579",
+          "PATCH-R-0580",
+          "PATCH-R-0581",
+          "PATCH-R-0582",
+          "PATCH-R-0583",
+          "PATCH-R-0584"
+        ],
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_internal_pending_never_creates_a_detached_handle",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "executable_sha256": "cc0fae73b2906050084dd53b800dcbf7c7c565a5a985e7ba7bbc249ad7b9a8b1"
+      },
+      "new": {
+        "id": "PATCH-A-P6-015",
+        "requirement_ids": [
+          "PATCH-R-0577",
+          "PATCH-R-0578",
+          "PATCH-R-0579",
+          "PATCH-R-0580",
+          "PATCH-R-0581",
+          "PATCH-R-0582",
+          "PATCH-R-0583",
+          "PATCH-R-0584"
+        ],
+        "category": "crash",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_internal_pending_never_creates_a_detached_handle",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "6944ac734e5d2c34505d32360c502ed94fe72d91e89eeccf1da654ad54a4b727"
+      },
+      "review_round": 1,
+      "reviewer": "phase6-max-review",
+      "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
     }
   ],
-  "history_sha256": "83adac1e405d30a580a4efa08ff49cdc4f392ca8957098a3836bfa4770c2222c"
+  "history_sha256": "9b4b06c76281c079c162bbff780e8b7a4e3db6347c88a851d1a0e91e195c3617"
 }

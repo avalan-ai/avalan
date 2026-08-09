@@ -553,7 +553,7 @@ def test_patch_phase_1_result_pending_and_status_combinations_are_closed() -> (
         LifecyclePhase.REQUEST_COMPLETED,
         PatchStatus.COMMITTED,
         truth,
-        _diagnostic(),
+        None,
     )
     pending = PatchPending(
         1,
@@ -563,7 +563,18 @@ def test_patch_phase_1_result_pending_and_status_combinations_are_closed() -> (
         LifecyclePhase.SETTLEMENT_PENDING,
     )
     assert isinstance(result, PatchResult)
+    assert result.diagnostic is None
     assert isinstance(pending, PatchPending)
+    with pytest.raises(PatchValidationError):
+        PatchResult(
+            1,
+            _request_id(),
+            _plan_id(),
+            LifecyclePhase.REQUEST_COMPLETED,
+            PatchStatus.COMMITTED,
+            truth,
+            _diagnostic(),
+        )
     with pytest.raises(PatchValidationError):
         PatchResult(
             1,
@@ -634,7 +645,7 @@ def test_patch_phase_1_codecs_round_trip_closed_domain_values() -> None:
     result = DomainFacade().settle(
         _plan(journal),
         (journal,),
-        _diagnostic(),
+        None,
     )
     pending = PatchPending(
         1,
@@ -653,6 +664,7 @@ def test_patch_phase_1_codecs_round_trip_closed_domain_values() -> None:
         LifecyclePhase.RECEIVED,
     )
     assert decode_result(encode_result(result)) == result
+    assert result.diagnostic is None
     assert decode_pending(encode_pending(pending)) == pending
     assert decode_event(encode_event(event)) == event
     assert decode_diagnostic(encode_diagnostic(_diagnostic())) == _diagnostic()
@@ -670,13 +682,14 @@ def test_patch_phase_1_facade_e2e_returns_one_committed_terminal_result() -> (
     result, event = DomainFacade().settle_with_event(
         _plan(journal),
         (journal,),
-        _diagnostic(),
+        None,
         PatchEventId("event_0123456789abcdef"),
         PatchObserverId("observer_0123456789abcdef"),
         _correlation_id(),
         SequenceNumber(1),
     )
     assert result.status is PatchStatus.COMMITTED
+    assert result.diagnostic is None
     assert result.lifecycle is LifecyclePhase.REQUEST_COMPLETED
     assert event.lifecycle is LifecyclePhase.REQUEST_COMPLETED
 
@@ -916,7 +929,7 @@ def test_patch_phase_1_rejects_impossible_truth_and_outcome_combinations() -> (
         )
 
     journal = _journal(CommitStepState.COMMITTED)
-    result = DomainFacade().settle(_plan(journal), (journal,), _diagnostic())
+    result = DomainFacade().settle(_plan(journal), (journal,), None)
     pending = DomainFacade().pending(
         _request_id(),
         PatchPendingOperationId("pending_0123456789abcdef"),
@@ -1003,9 +1016,7 @@ def test_patch_phase_1_coarsens_only_public_error_details() -> None:
 def test_patch_phase_1_codecs_reject_noncanonical_internal_envelopes() -> None:
     """Reject malformed codec bytes while accepting canonical false values."""
     committed = _journal(CommitStepState.COMMITTED)
-    result = DomainFacade().settle(
-        _plan(committed), (committed,), _diagnostic()
-    )
+    result = DomainFacade().settle(_plan(committed), (committed,), None)
     unknown = _journal(
         CommitStepState.UNKNOWN,
         artifact=ArtifactState.UNKNOWN,
@@ -1036,6 +1047,12 @@ def test_patch_phase_1_codecs_reject_noncanonical_internal_envelopes() -> None:
             )
         )
     assert decode_result(encode_result(unknown_result)) == unknown_result
+    with pytest.raises(ValueError):
+        decode_result(
+            encode_result(result).replace(
+                b"\x1f\x1f\x1f", b"\x1f\x1fpatch.commit_failed\x1f", 1
+            )
+        )
     with pytest.raises(ValueError):
         decode_result(
             encode_result(unknown_result).replace(
