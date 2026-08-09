@@ -38,6 +38,16 @@ _DIAGNOSTIC_TAG = "patch-diagnostic-v1"
 def encode_result(value: PatchResult) -> bytes:
     """Encode one terminal result with stable field order."""
     truth = value.truth
+    diagnostic = value.diagnostic
+    stage, code, retryability = (
+        ("", "", "")
+        if diagnostic is None
+        else (
+            diagnostic.stage.value,
+            diagnostic.code.value,
+            diagnostic.retryability.value,
+        )
+    )
     return _encode(
         (
             _RESULT_TAG,
@@ -53,9 +63,9 @@ def encode_result(value: PatchResult) -> bytes:
             truth.workspace_change.value,
             _boolean(truth.commit_set_exact),
             truth.postcondition.value,
-            value.diagnostic.stage.value,
-            value.diagnostic.code.value,
-            value.diagnostic.retryability.value,
+            stage,
+            code,
+            retryability,
         )
     )
 
@@ -79,11 +89,7 @@ def decode_result(payload: bytes) -> PatchResult:
         lifecycle=LifecyclePhase(fields[4]),
         status=PatchStatus(fields[5]),
         truth=truth,
-        diagnostic=PatchDiagnostic(
-            stage=ErrorStage(fields[13]),
-            code=PatchErrorCode(fields[14]),
-            retryability=Retryability(fields[15]),
-        ),
+        diagnostic=_result_diagnostic(fields[13:]),
     )
 
 
@@ -186,6 +192,19 @@ def decode_diagnostic(payload: bytes) -> PatchDiagnostic:
         stage=ErrorStage(fields[1]),
         code=PatchErrorCode(fields[2]),
         retryability=Retryability(fields[3]),
+    )
+
+
+def _result_diagnostic(fields: tuple[str, ...]) -> PatchDiagnostic | None:
+    """Decode the canonical absent-or-complete terminal diagnostic tuple."""
+    if fields == ("", "", ""):
+        return None
+    if len(fields) != 3 or any(not field for field in fields):
+        raise ValueError("terminal diagnostic fields are invalid")
+    return PatchDiagnostic(
+        stage=ErrorStage(fields[0]),
+        code=PatchErrorCode(fields[1]),
+        retryability=Retryability(fields[2]),
     )
 
 

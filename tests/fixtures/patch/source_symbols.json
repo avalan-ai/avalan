@@ -98,21 +98,21 @@
       "path": "src/avalan/patch/domain.py",
       "symbol": "DomainFacade",
       "artifact_class": "patch_domain",
-      "source_sha256": "7b1a7849c093b5eee286b1734e971aba189395d134883f314d7e8aa187a3e111"
+      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
     },
     {
       "id": "PATCH-SYM-015",
       "path": "src/avalan/patch/domain.py",
       "symbol": "PatchResult",
       "artifact_class": "patch_domain",
-      "source_sha256": "7b1a7849c093b5eee286b1734e971aba189395d134883f314d7e8aa187a3e111"
+      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
     },
     {
       "id": "PATCH-SYM-016",
       "path": "src/avalan/patch/codec.py",
       "symbol": "encode_result",
       "artifact_class": "patch_codec",
-      "source_sha256": "4f8def285a89edb221dfc94817d521578b508db67feed59cfe108fdc553793d1"
+      "source_sha256": "59e4c9b5ef8a70d1140bc710d1213018f5435ee6b89e5dde670483669bb5be8e"
     },
     {
       "id": "PATCH-SYM-017",
@@ -183,7 +183,14 @@
       "symbol": "ApprovalService",
       "artifact_class": "patch_policy",
       "source_sha256": "7ec5fc0e836d4c51ab93ae069366db1125a1ac541b6f2f2e57deb9439697d7fb"
+    },
+    {
+      "id": "PATCH-SYM-027",
+      "path": "src/avalan/patch/coordinator.py",
+      "symbol": "InMemoryPatchCoordinator",
+      "artifact_class": "patch_coordinator",
+      "source_sha256": "c1f3139b1dec56d41e9cee8dbd9692712740b5d193decf6461fbc34cd0f12480"
     }
   ],
-  "inventory_sha256": "5e56c150570caeb055a66b61fa9e49920c19a6946ca5c30a3121d43b3e280816"
+  "inventory_sha256": "035ef96f43b7e5e15f7e6f2748f7c305e8b9a11182ff2de1c6d925668d6899f1"
 }

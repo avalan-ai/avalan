@@ -55,7 +55,7 @@ def test_phase0_dormant_public_contract_preflight(
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV, raising=False)
     monkeypatch.delenv(_GATE._LEGACY_POSTGRESQL_LEASE_ENV, raising=False)
     monkeypatch.setattr(_GATE, "_load_patch_contracts", lambda root: None)
-    assert _GATE.preflight(5, repo_root=_ROOT) is None
+    assert _GATE.preflight(6, repo_root=_ROOT) is None
 
 
 def test_phase0_fault_lifecycle_evidence_is_executable() -> None:
@@ -134,9 +134,9 @@ def test_phase0_runtime_probe_rejects_dynamic_patch_identity() -> None:
     from avalan.tool import ToolSet
 
     try:
-        _VERIFIER._assert_runtime_toolsets_incapable((
-            ToolSet(namespace="pa" + "tch", tools=()),
-        ))
+        _VERIFIER._assert_runtime_toolsets_incapable(
+            (ToolSet(namespace="pa" + "tch", tools=()),)
+        )
     except _VERIFIER.PatchAcceptanceError:
         return
     raise AssertionError("dynamic patch identity was not rejected")
