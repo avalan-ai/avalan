@@ -1822,9 +1822,31 @@
         "lifecycle": "active",
         "active_from_phase": 4,
         "executable_sha256": "3a85975d45886dc8d37d41db4320badc2f0ff8d186609a1b2ecd5f9e54f59131"
+      },
+      {
+        "id": "PATCH-A-107",
+        "requirement_ids": [
+          "PATCH-R-0469",
+          "PATCH-R-0470",
+          "PATCH-R-0471",
+          "PATCH-R-0472",
+          "PATCH-R-0473"
+        ],
+        "category": "integration",
+        "surface": "local_target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "commit",
+        "authority": "owner_fence",
+        "commit_boundary": "commit",
+        "evidence_class": "local_commit",
+        "node_id": "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 7,
+        "executable_sha256": "f1371aa265ba5040a5598546905ca34ae293b4e21d1423d1cee614a65faf18e4"
       }
     ],
-    "snapshot_sha256": "0750e3676335a7f834784d24def44a8df245979fb0eb054b70c8d66cf7ff6e18"
+    "snapshot_sha256": "24977565074eaaeba78515aa2b325fea2795355328085bfcbcf8533d5fc0361b"
   },
   "replacements": [
     {
@@ -2312,11 +2334,11 @@
         "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
         "lifecycle": "active",
         "active_from_phase": 0,
-        "executable_sha256": "a902631fac5c9ee56a65490374021e137f934fa322610a721c2acd2842f7164b"
+      "executable_sha256": "cd1413098018b885093bee1ea80622425742d797a169f8a73a2eb80fe819bf2f"
       },
-      "review_round": 4,
-      "reviewer": "phase5-turn4-current-phase-review",
-      "rationale": "Current Phase 5 expectation refreshes the executable evidence without widening the patch boundary."
+  "review_round": 5,
+  "reviewer": "phase7-turn5-current-phase-exactness-review",
+  "rationale": "The tracked current phase is asserted against the hard gate phase before the dormant preflight runs."
     },
     {
       "old": {
@@ -3087,7 +3109,56 @@
       "review_round": 1,
       "reviewer": "phase6-max-review",
       "rationale": "Review turn 1 records trusted grants, sealed journals, and serialized attached continuation coverage."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-107",
+        "requirement_ids": [
+          "PATCH-R-0469",
+          "PATCH-R-0470",
+          "PATCH-R-0471",
+          "PATCH-R-0472",
+          "PATCH-R-0473"
+        ],
+        "category": "integration",
+        "surface": "local_target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "commit",
+        "authority": "owner_fence",
+        "commit_boundary": "commit",
+        "evidence_class": "local_commit",
+        "node_id": "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 7,
+        "executable_sha256": "f1371aa265ba5040a5598546905ca34ae293b4e21d1423d1cee614a65faf18e4"
+      },
+      "new": {
+        "id": "PATCH-A-107",
+        "requirement_ids": [
+          "PATCH-R-0469",
+          "PATCH-R-0470",
+          "PATCH-R-0471",
+          "PATCH-R-0472",
+          "PATCH-R-0473"
+        ],
+        "category": "integration",
+        "surface": "local_target",
+        "context": "local",
+        "platform": "posix",
+        "operation": "commit",
+        "authority": "owner_fence",
+        "commit_boundary": "commit",
+        "evidence_class": "local_commit",
+        "node_id": "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 7,
+        "executable_sha256": "3b5cc10c3f755e7aec60a3459a7fb82515a6d95fa39ea3d764534e52e7cb23bb"
+      },
+      "review_round": 2,
+      "reviewer": "phase7-max-review-turn2",
+      "rationale": "Maximum-reasoning review required receipt-bound Darwin mutation capability evidence, coordinator-only rooted worker authority and reconciliation, production-bound precommit faults, and canonical settlement assertions."
     }
   ],
-  "history_sha256": "9b4b06c76281c079c162bbff780e8b7a4e3db6347c88a851d1a0e91e195c3617"
+  "history_sha256": "4fc277133a5d5dd2cd50005af2954582be9e1aeb1c1fa82bfd8523f0dacc904a"
 }

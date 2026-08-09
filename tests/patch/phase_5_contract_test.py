@@ -117,6 +117,13 @@ from avalan.patch.target import (
     TargetPrimitive,
 )
 
+_SUPPORTED_TEST_ATOMICITY_CLASSES = frozenset(
+    (
+        "single_step",
+        "dependency_ordered",
+    )
+)
+
 
 def _limits() -> PatchLimits:
     """Return finite equal limits for each trusted policy boundary."""
@@ -269,6 +276,7 @@ def _policy(
                     ),
                 ),
                 disclosures=disclosures,
+                atomicity_classes=_SUPPORTED_TEST_ATOMICITY_CLASSES,
             ),
         ),
         limits=_limits(),
@@ -315,6 +323,7 @@ def _policy_for(
                 selector or PolicyPathSelector(None),
                 modes + inspection,
                 disclosures,
+                atomicity_classes=_SUPPORTED_TEST_ATOMICITY_CLASSES,
             ),
         ),
         limits=_limits(),
@@ -409,6 +418,7 @@ def _handshake(
         )
     )
     future = (
+        TargetPrimitive.METADATA_PRESERVATION,
         TargetPrimitive.BOUNDED_WRITE,
         TargetPrimitive.REPLACE_PUBLICATION,
         TargetPrimitive.NOREPLACE_CREATE_MOVE,

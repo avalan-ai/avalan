@@ -1,12 +1,13 @@
-"""Inspect a trusted local workspace through an incapable patch target.
+"""Inspect and test-profile-commit a trusted local workspace through handles.
 
-This module deliberately exposes only bounded, no-follow inspection.  It does
-not register a tool and its commit entry point always returns a typed incapable
-outcome.  The synchronous POSIX syscalls are confined to ``_inspect_many``;
-the Avalan-facing boundary is asynchronous and has no write primitive.
+The default target exposes only bounded, no-follow inspection and never
+registers a tool.  The isolated local test profile can mint a private rooted
+commit worker after the full capability handshake.  Every synchronous POSIX
+operation runs outside Avalan's event loop and remains absent from SDK, CLI,
+server, and shell surfaces.
 """
 
-from asyncio import CancelledError, create_subprocess_exec, sleep
+from asyncio import CancelledError, create_subprocess_exec, sleep, to_thread
 from base64 import b64decode, b64encode
 from ctypes import (
     CDLL,
@@ -27,16 +28,28 @@ from importlib.util import find_spec
 from json import dumps, loads
 from os import (
     O_CLOEXEC,
+    O_CREAT,
     O_DIRECTORY,
+    O_EXCL,
     O_NOFOLLOW,
     O_NONBLOCK,
     O_RDONLY,
+    O_WRONLY,
     close,
     environ,
+    fchmod,
     fstat,
+    fsync,
+    getuid,
+    link,
     open,
+    unlink,
+    write,
 )
 from os import read as read_fd
+from os import (
+    replace as atomic_replace,
+)
 from os import stat as stat_at
 from pathlib import Path
 from secrets import token_bytes
@@ -46,6 +59,8 @@ from sys import executable, platform, stdin, stdout
 from typing import Never, NewType, Protocol, TypedDict, final
 from unicodedata import normalize
 
+from cffi import FFI
+from cffi import __file__ as cffi_file
 from cryptography import __file__ as cryptography_file
 from cryptography.exceptions import InvalidSignature
 from cryptography.hazmat.primitives.asymmetric.ed25519 import (
@@ -53,6 +68,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import (
 )
 
 from avalan.patch.domain import (
+    AlgorithmDigest,
     ByteSize,
     Capability,
     ContextKind,
@@ -91,6 +107,38 @@ class TargetErrorCode(str, Enum):
     WITNESS_STALE = "patch.stale"
     ISOLATION_DENIED = "patch.isolation_denied"
     METADATA_DENIED = "patch.metadata_denied"
+
+
+_METADATA_FFI = FFI()
+_METADATA_FFI.cdef("""
+    ssize_t flistxattr(int, char *, size_t, int);
+    ssize_t fgetxattr(int, const char *, void *, size_t, unsigned int, int);
+    int fsetxattr(int, const char *, const void *, size_t, unsigned int, int);
+    int fremovexattr(int, const char *, int);
+    int fchflags(int, unsigned int);
+    typedef void *acl_t;
+    typedef void *acl_entry_t;
+    typedef unsigned long long acl_permset_mask_t;
+    acl_t acl_init(int);
+    int acl_create_entry(acl_t *, acl_entry_t *);
+    acl_t acl_get_fd(int);
+    int acl_set_tag_type(acl_entry_t, int);
+    int acl_set_qualifier(acl_entry_t, const void *);
+    int acl_set_permset_mask_np(acl_entry_t, acl_permset_mask_t);
+    int acl_set_fd(int, acl_t);
+    char *acl_to_text(acl_t, ssize_t *);
+    acl_t acl_from_text(const char *);
+    int acl_free(void *);
+    """)
+_METADATA_LIBC = _METADATA_FFI.dlopen(None)
+_MAX_PROTECTED_METADATA_BYTES = 1_048_576
+_ACL_EXTENDED_ALLOW = 1
+_ACL_READ_DATA = 1 << 1
+
+
+async def _test_precommit_checkpoint(stage: str) -> None:
+    """Provide inert local-test boundaries around target observation steps."""
+    del stage
 
 
 WorkerAuthoritySignature = NewType("WorkerAuthoritySignature", str)
@@ -150,6 +198,7 @@ class LocalPlatformProfile(str, Enum):
     """Name the finite local platform profiles this target can inspect."""
 
     POSIX = "posix"
+    DARWIN = "darwin"
     UNSUPPORTED = "unsupported"
 
 
@@ -222,6 +271,7 @@ class _WorkerSnapshotPayload(TypedDict, total=False):
     link_count: int
     parent: _WorkerSnapshotParentPayload
     classification: str
+    protected_metadata: str | None
 
 
 class _WorkerResponsePayload(TypedDict, total=False):
@@ -346,10 +396,13 @@ class PrimitiveProbe:
 
     primitive: TargetPrimitive
     state: ProbeState
+    receipt: str | None = None
 
     def __post_init__(self) -> None:
         """Reject probes for primitives that are already effectful today."""
         if self.primitive in _INSPECTION_PRIMITIVES:
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+        if self.state is ProbeState.UNAVAILABLE and self.receipt is not None:
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
 
 
@@ -421,6 +474,7 @@ _INSPECTION_PRIMITIVES = frozenset(
 )
 _FUTURE_MUTATION_PRIMITIVES = frozenset(
     (
+        TargetPrimitive.METADATA_PRESERVATION,
         TargetPrimitive.BOUNDED_WRITE,
         TargetPrimitive.REPLACE_PUBLICATION,
         TargetPrimitive.NOREPLACE_CREATE_MOVE,
@@ -457,6 +511,7 @@ def _advertised_capabilities(
         effects.add(Capability.CREATE)
     if {
         TargetPrimitive.BOUNDED_WRITE,
+        TargetPrimitive.METADATA_PRESERVATION,
         TargetPrimitive.REPLACE_PUBLICATION,
         TargetPrimitive.STAGING,
         TargetPrimitive.STRUCTURAL_VERIFICATION,
@@ -470,6 +525,7 @@ def _advertised_capabilities(
         effects.add(Capability.DELETE)
     if {
         TargetPrimitive.NOREPLACE_CREATE_MOVE,
+        TargetPrimitive.METADATA_PRESERVATION,
         TargetPrimitive.SAME_FILESYSTEM_MOVE,
         TargetPrimitive.STAGING,
         TargetPrimitive.STRUCTURAL_VERIFICATION,
@@ -548,6 +604,9 @@ class LocalTargetProfile:
     unicode_normalization: str = "NFC"
     hidden_paths_allowed: bool = False
     platform: LocalPlatformProfile = LocalPlatformProfile.POSIX
+    mutation_test_profile: bool = False
+    commit_namespace: Path | None = None
+    creation_mode: FileMode = FileMode(0o644)
     worker_policy: WorkerIsolationPolicy = field(
         default_factory=WorkerIsolationPolicy
     )
@@ -569,6 +628,15 @@ class LocalTargetProfile:
             or self.unicode_normalization not in {"NFC", "NFD"}
             or self.max_snapshot_bytes.value == 0
             or not isinstance(self.platform, LocalPlatformProfile)
+            or type(self.mutation_test_profile) is not bool
+            or self.commit_namespace is not None
+            and (
+                not self.commit_namespace.is_absolute()
+                or self.commit_namespace.parent != self.root._path.parent
+                or self.commit_namespace == self.root._path
+            )
+            or type(self.creation_mode) is not FileMode
+            or self.creation_mode != FileMode(0o644)
         ):
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
 
@@ -596,6 +664,7 @@ class ResolvedMutationScope:
     root_witness: RootWitness | None = None
     worker: EphemeralWorkerWitness | None = None
     _worker_authorization: _WorkerAuthorization | None = None
+    probes: tuple[PrimitiveProbe, ...] = ()
 
     def __post_init__(self) -> None:
         """Require immutable inspection authority and primitive witnesses."""
@@ -615,6 +684,8 @@ class ResolvedMutationScope:
             and not isinstance(
                 self._worker_authorization, _WorkerAuthorization
             )
+            or type(self.probes) is not tuple
+            or any(type(item) is not PrimitiveProbe for item in self.probes)
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
 
@@ -655,9 +726,24 @@ class LocalScopeResolver:
             or witness.mount_id != self.profile.identity.mount_id
         ):
             raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+        probes = await _mutation_primitive_receipts(self.profile, witness)
+        available = frozenset(
+            item.primitive
+            for item in probes
+            if item.state is ProbeState.AVAILABLE
+        )
         primitives = (
             _INSPECTION_PRIMITIVES
-            if self.profile.platform is LocalPlatformProfile.POSIX
+            | (
+                available
+                if (
+                    self.profile.mutation_test_profile
+                    and self.profile.platform is LocalPlatformProfile.DARWIN
+                )
+                else frozenset()
+            )
+            if self.profile.platform
+            in {LocalPlatformProfile.POSIX, LocalPlatformProfile.DARWIN}
             else frozenset()
         )
         worker = EphemeralWorkerWitness(
@@ -665,21 +751,27 @@ class LocalScopeResolver:
             self.profile.worker_policy.worker_instance_id,
             _fence_id(self.profile.identity, witness),
         )
+        await _test_precommit_checkpoint("lifecycle.scope_bound")
         return ResolvedMutationScope(
             ContextKind.LOCAL,
             self.profile.identity,
             self.profile.cwd,
             self.profile.limits,
-            frozenset(
-                (
-                    Capability.READ_FOR_MUTATION,
-                    Capability.OBSERVE_MUTATION_PRECONDITIONS,
+            (
+                _advertised_capabilities(primitives, ())
+                if primitives
+                else frozenset(
+                    (
+                        Capability.READ_FOR_MUTATION,
+                        Capability.OBSERVE_MUTATION_PRECONDITIONS,
+                    )
                 )
             ),
             primitives,
             witness,
             worker,
             self.profile._worker_authorization,
+            probes,
         )
 
     async def rebind_ephemeral(
@@ -765,6 +857,46 @@ class ParentWitness:
 
 
 @dataclass(frozen=True, slots=True)
+class _ProtectedMetadata:
+    """Store exact native metadata retained only across local commit."""
+
+    xattrs: tuple[tuple[bytes, bytes], ...]
+    flags: int
+    acl: bytes | None
+
+    def __post_init__(self) -> None:
+        """Reject mutable, unbounded, or noncanonical native metadata."""
+        if (
+            type(self.xattrs) is not tuple
+            or any(
+                type(name) is not bytes
+                or not name
+                or b"\x00" in name
+                or type(value) is not bytes
+                for name, value in self.xattrs
+            )
+            or tuple(sorted(self.xattrs)) != self.xattrs
+            or len({name for name, _ in self.xattrs}) != len(self.xattrs)
+            or type(self.flags) is not int
+            or self.flags < 0
+            or self.acl is not None
+            and type(self.acl) is not bytes
+        ):
+            raise TargetInspectionError(TargetErrorCode.METADATA_DENIED)
+
+    def digest(self) -> AlgorithmDigest:
+        """Return a deterministic digest for sealed metadata revalidation."""
+        parts = [b"patch.protected_metadata.v1", _metadata_integer(self.flags)]
+        parts.append(_metadata_optional(self.acl))
+        parts.append(_metadata_integer(len(self.xattrs)))
+        for name, value in self.xattrs:
+            parts.extend((_metadata_bytes(name), _metadata_bytes(value)))
+        return AlgorithmDigest.from_bytes(
+            b"".join(_metadata_bytes(item) for item in parts)
+        )
+
+
+@dataclass(frozen=True, slots=True)
 class TargetSnapshot:
     """Store one bounded target-native source observation."""
 
@@ -776,6 +908,7 @@ class TargetSnapshot:
     link_count: int
     parent: ParentWitness
     security_metadata: MetadataClassification = MetadataClassification.ORDINARY
+    protected_metadata: AlgorithmDigest | None = None
 
     def __post_init__(self) -> None:
         """Keep absent and present snapshot facts structurally disjoint."""
@@ -797,6 +930,11 @@ class TargetSnapshot:
         ):
             raise TargetInspectionError(TargetErrorCode.SPECIAL_FILE_DENIED)
         if self.security_metadata is MetadataClassification.PRIVILEGED:
+            raise TargetInspectionError(TargetErrorCode.METADATA_DENIED)
+        if (
+            self.protected_metadata is not None
+            and type(self.protected_metadata) is not AlgorithmDigest
+        ):
             raise TargetInspectionError(TargetErrorCode.METADATA_DENIED)
 
 
@@ -846,6 +984,9 @@ class InspectionBatch:
                 item.parent.path,
                 item.parent.mount_id,
                 item.identity.opaque(),
+                (item.identity.device, item.identity.inode),
+                (item.parent.identity.device, item.parent.identity.inode),
+                item.protected_metadata,
             )
             for item in self.snapshots
             if item.present
@@ -859,11 +1000,15 @@ class InspectionBatch:
             if item.parent.path is not None
         )
         mounts = {
-            item.parent.path: item.parent.mount_id for item in self.snapshots
+            item.parent.path: (
+                item.parent.mount_id,
+                (item.parent.identity.device, item.parent.identity.inode),
+            )
+            for item in self.snapshots
         }
         parent_mounts = tuple(
-            PlannerParentMount(path, mount_id)
-            for path, mount_id in sorted(
+            PlannerParentMount(path, mount_id, identity)
+            for path, (mount_id, identity) in sorted(
                 mounts.items(),
                 key=lambda item: "" if item[0] is None else item[0].value,
             )
@@ -920,7 +1065,7 @@ class LocalInspectionTarget:
                 TargetIncapableReason.MISSING_APPROVAL,
                 TargetIncapableReason.MISSING_FENCING,
             ),
-            _future_primitive_probes(),
+            scope.probes,
             self.profile.platform,
             ForeignWriterGuarantee.REVALIDATE_BEFORE_COMMIT,
             scope.worker,
@@ -931,16 +1076,19 @@ class LocalInspectionTarget:
         await sleep(0)
         self._require_scope(request.scope)
         if (
-            self.profile.platform is not LocalPlatformProfile.POSIX
+            self.profile.platform
+            not in {LocalPlatformProfile.POSIX, LocalPlatformProfile.DARWIN}
             or request.scope.root_witness is None
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
         _validate_aliases(request.paths, self.profile)
+        await _test_precommit_checkpoint("target.inspect")
         snapshots = await _worker_inspect(
             self.profile,
             request.paths,
             request.scope.root_witness,
         )
+        await _test_precommit_checkpoint("target.observe_precondition")
         return InspectionBatch(snapshots)
 
     async def commit(self, request: InspectionRequest) -> CommitUnavailable:
@@ -1102,10 +1250,11 @@ async def _worker_request(
         "-I",
         "-S",
         "-c",
-        _WORKER_BOOTSTRAP,
+        "import sys\nsys.path.append(sys.argv[4])\n" + _WORKER_BOOTSTRAP,
         str(Path(__file__).resolve().parents[2]),
         str(Path(cryptography_file).resolve().parent),
         str(_cffi_backend_runtime_path()),
+        str(Path(cffi_file).resolve().parents[1]),
     )
     try:
         process = await create_subprocess_exec(
@@ -1187,6 +1336,7 @@ def _worker_seatbelt_profile(
     if cryptography_file is None:
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
     cryptography_root = Path(cryptography_file).resolve().parent
+    cffi_root = Path(cffi_file).resolve().parents[1]
     del token, worker_argv
     read_paths = (
         *_SEATBELT_SYSTEM_READ_DATA_PATHS,
@@ -1196,6 +1346,7 @@ def _worker_seatbelt_profile(
         str(profile.root._path),
         str(target_source_root),
         str(cryptography_root),
+        str(cffi_root),
         str(_cffi_backend_runtime_path()),
     )
     lines = [
@@ -1250,6 +1401,7 @@ def _snapshot_from_worker(value: object) -> TargetSnapshot:
     identity = value.get("identity")
     link_count = value.get("link_count")
     classification = value.get("classification")
+    protected_metadata = value.get("protected_metadata")
     if (
         not isinstance(raw_bytes, str)
         or not isinstance(metadata, dict)
@@ -1258,6 +1410,8 @@ def _snapshot_from_worker(value: object) -> TargetSnapshot:
         or not all(type(item) is int for item in identity)
         or type(link_count) is not int
         or not isinstance(classification, str)
+        or protected_metadata is not None
+        and not isinstance(protected_metadata, str)
     ):
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
     mode = metadata.get("mode")
@@ -1272,6 +1426,11 @@ def _snapshot_from_worker(value: object) -> TargetSnapshot:
     try:
         bytes_value = b64decode(raw_bytes, validate=True)
         security_metadata = MetadataClassification(classification)
+        protected_digest = (
+            AlgorithmDigest("sha256", protected_metadata)
+            if protected_metadata is not None
+            else None
+        )
     except (ValueError, UnicodeError) as exc:
         raise TargetInspectionError(
             TargetErrorCode.WORKER_UNAVAILABLE
@@ -1285,6 +1444,7 @@ def _snapshot_from_worker(value: object) -> TargetSnapshot:
         link_count,
         parent_witness,
         security_metadata,
+        protected_digest,
     )
 
 
@@ -1319,6 +1479,214 @@ def _future_primitive_probes() -> tuple[PrimitiveProbe, ...]:
             _FUTURE_MUTATION_PRIMITIVES, key=lambda item: item.value
         )
     )
+
+
+async def _mutation_primitive_receipts(
+    profile: LocalTargetProfile, witness: RootWitness
+) -> tuple[PrimitiveProbe, ...]:
+    """Probe Darwin mutation primitives in a private same-mount namespace."""
+    if (
+        not profile.mutation_test_profile
+        or profile.platform is not LocalPlatformProfile.DARWIN
+        or platform != "darwin"
+    ):
+        return _future_primitive_probes()
+    try:
+        receipt = await to_thread(_probe_mutation_primitives, profile, witness)
+    except OSError:
+        return _future_primitive_probes()
+    return tuple(
+        PrimitiveProbe(primitive, ProbeState.AVAILABLE, receipt)
+        for primitive in sorted(
+            _FUTURE_MUTATION_PRIMITIVES, key=lambda item: item.value
+        )
+    )
+
+
+def _probe_mutation_primitives(
+    profile: LocalTargetProfile, witness: RootWitness
+) -> str:
+    """Exercise each mutation primitive without writing the workspace root."""
+    namespace = profile.commit_namespace
+    if namespace is None:
+        raise OSError("private commit namespace is unavailable")
+    root_descriptor = open(
+        profile.root._path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    )
+    namespace_descriptor = open(
+        namespace, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW
+    )
+    created: list[str] = []
+    try:
+        status = fstat(root_descriptor)
+        namespace_status = fstat(namespace_descriptor)
+        if (
+            status.st_dev != witness.identity.device
+            or status.st_ino != witness.identity.inode
+            or _filesystem_id(root_descriptor) != witness.filesystem_id
+            or _root_mount_id(root_descriptor, status) != witness.mount_id
+            or namespace_status.st_dev != status.st_dev
+            or _filesystem_id(namespace_descriptor) != witness.filesystem_id
+            or _root_mount_id(namespace_descriptor, namespace_status)
+            != witness.mount_id
+            or namespace_status.st_mode & 0o077
+            or namespace_status.st_uid != getuid()
+        ):
+            raise OSError("private commit namespace is not rooted")
+        prefix = (
+            ".avalan-patch-probe-" + sha256(token_bytes(32)).hexdigest()[:24]
+        )
+        staged = prefix + "-stage"
+        published = prefix + "-published"
+        replacement = prefix + "-replacement"
+        created.extend((staged, published, replacement))
+        descriptor = open(
+            staged,
+            O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+            0o600,
+            dir_fd=namespace_descriptor,
+        )
+        try:
+            if write(descriptor, b"probe-stage\n") != len(b"probe-stage\n"):
+                raise OSError("bounded probe write stalled")
+            fchmod(descriptor, 0o600)
+            fsync(descriptor)
+            _probe_metadata_round_trip(descriptor)
+        finally:
+            close(descriptor)
+        link(
+            staged,
+            published,
+            src_dir_fd=namespace_descriptor,
+            dst_dir_fd=namespace_descriptor,
+            follow_symlinks=False,
+        )
+        replacement_descriptor = open(
+            replacement,
+            O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+            0o600,
+            dir_fd=namespace_descriptor,
+        )
+        try:
+            if write(replacement_descriptor, b"probe-replacement\n") != len(
+                b"probe-replacement\n"
+            ):
+                raise OSError("replacement probe write stalled")
+            fsync(replacement_descriptor)
+        finally:
+            close(replacement_descriptor)
+        atomic_replace(
+            replacement,
+            published,
+            src_dir_fd=namespace_descriptor,
+            dst_dir_fd=namespace_descriptor,
+        )
+        verified = open(
+            published,
+            O_RDONLY | O_NOFOLLOW | O_CLOEXEC,
+            dir_fd=namespace_descriptor,
+        )
+        try:
+            if (
+                _read_bounded(verified, len(b"probe-replacement\n"))
+                != b"probe-replacement\n"
+            ):
+                raise OSError("replacement probe verification failed")
+        finally:
+            close(verified)
+        unlink(published, dir_fd=namespace_descriptor)
+        unlink(staged, dir_fd=namespace_descriptor)
+        created.clear()
+        return sha256(
+            (
+                "darwin-local-commit-live-probe-v2:"
+                + profile.identity.context_id.value
+                + ":"
+                + profile.identity.target_id.value
+                + ":"
+                + witness.filesystem_id
+                + ":"
+                + witness.mount_id
+                + ":"
+                + str(status.st_dev)
+                + ":"
+                + str(status.st_ino)
+                + ":"
+                + str(namespace_status.st_ino)
+            ).encode()
+        ).hexdigest()
+    finally:
+        for name in created:
+            try:
+                unlink(name, dir_fd=namespace_descriptor)
+            except FileNotFoundError:
+                pass
+        close(namespace_descriptor)
+        close(root_descriptor)
+
+
+def _probe_metadata_round_trip(descriptor: int) -> None:
+    """Exercise xattr, ACL, flags, and exact cleanup on a probe file."""
+    baseline = _capture_protected_metadata(descriptor)
+    attribute = b"user.avalan.patch.probe"
+    value = b"probe"
+    buffer = _METADATA_FFI.new("char[]", value)
+    if (
+        _METADATA_LIBC.fsetxattr(
+            descriptor, attribute, buffer, len(value), 0, 0
+        )
+        != 0
+    ):
+        raise OSError("probe xattr set failed")
+    if _METADATA_LIBC.fremovexattr(descriptor, attribute, 0) != 0:
+        raise OSError("probe xattr cleanup failed")
+    _probe_acl_round_trip(descriptor, baseline.acl)
+    toggled = baseline.flags ^ 1
+    if _METADATA_LIBC.fchflags(descriptor, toggled) != 0:
+        raise OSError("probe flags set failed")
+    if _METADATA_LIBC.fchflags(descriptor, baseline.flags) != 0:
+        raise OSError("probe flags cleanup failed")
+    _restore_protected_metadata(descriptor, baseline)
+
+
+def _probe_acl_round_trip(descriptor: int, baseline: bytes | None) -> None:
+    """Set a live ACL, then clear or restore the exact baseline ACL."""
+    probe_acl = _probe_acl()
+    try:
+        _set_acl(descriptor, probe_acl)
+    finally:
+        _METADATA_LIBC.acl_free(probe_acl)
+    try:
+        if _capture_acl(descriptor) is None:
+            raise OSError("probe ACL set did not persist")
+    finally:
+        _restore_acl(descriptor, baseline)
+    if _capture_acl(descriptor) != baseline:
+        raise OSError("probe ACL restore did not round trip")
+
+
+def _probe_acl() -> object:
+    """Create one harmless non-empty extended ACL for a live round trip."""
+    acl = _METADATA_LIBC.acl_init(1)
+    if acl == _METADATA_FFI.NULL:
+        raise OSError("probe ACL initialization is unavailable")
+    pointer = _METADATA_FFI.new("acl_t *", acl)
+    entry = _METADATA_FFI.new("acl_entry_t *")
+    qualifier = _METADATA_FFI.new("unsigned char[]", bytes(16))
+    try:
+        if (
+            _METADATA_LIBC.acl_create_entry(pointer, entry) != 0
+            or _METADATA_LIBC.acl_set_tag_type(entry[0], _ACL_EXTENDED_ALLOW)
+            != 0
+            or _METADATA_LIBC.acl_set_qualifier(entry[0], qualifier) != 0
+            or _METADATA_LIBC.acl_set_permset_mask_np(entry[0], _ACL_READ_DATA)
+            != 0
+        ):
+            raise OSError("probe ACL construction is unavailable")
+    except BaseException:
+        _METADATA_LIBC.acl_free(pointer[0])
+        raise
+    return pointer[0]
 
 
 def _capture_root_witness(root: TrustedLocalRoot) -> RootWitness:
@@ -1734,6 +2102,9 @@ def _snapshot_leaf(
                 ),
             ),
         )
+        protected_metadata = _capture_protected_metadata(descriptor)
+    except OSError as exc:
+        raise TargetInspectionError(TargetErrorCode.METADATA_DENIED) from exc
     finally:
         close(descriptor)
     has_bom, representation = _snapshot_representation(value)
@@ -1754,7 +2125,154 @@ def _snapshot_leaf(
         opened.st_nlink,
         parent,
         security_metadata,
+        protected_metadata.digest(),
     )
+
+
+def _capture_protected_metadata(descriptor: int) -> _ProtectedMetadata:
+    """Capture native metadata from one retained regular-file descriptor."""
+    status = fstat(descriptor)
+    flags = getattr(status, "st_flags", None)
+    if type(flags) is not int:
+        raise OSError("native flags are unavailable")
+    return _ProtectedMetadata(
+        _capture_xattrs(descriptor), flags, _capture_acl(descriptor)
+    )
+
+
+def _capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
+    """Read every native extended attribute through one retained descriptor."""
+    _METADATA_FFI.errno = 0
+    length = _METADATA_LIBC.flistxattr(descriptor, _METADATA_FFI.NULL, 0, 0)
+    if length < 0 or length > _MAX_PROTECTED_METADATA_BYTES:
+        raise OSError("extended attribute list is unavailable")
+    if length == 0:
+        return ()
+    names_buffer = _METADATA_FFI.new("char[]", length)
+    observed = _METADATA_LIBC.flistxattr(descriptor, names_buffer, length, 0)
+    if observed != length:
+        raise OSError("extended attribute list changed")
+    raw_names = bytes(_METADATA_FFI.buffer(names_buffer, length))
+    if not raw_names.endswith(b"\x00"):
+        raise OSError("extended attribute list is malformed")
+    names = raw_names[:-1].split(b"\x00")
+    if any(not name for name in names):
+        raise OSError("extended attribute list is malformed")
+    values: list[tuple[bytes, bytes]] = []
+    total = length
+    for name in names:
+        value_size = _METADATA_LIBC.fgetxattr(
+            descriptor, name, _METADATA_FFI.NULL, 0, 0, 0
+        )
+        if (
+            value_size < 0
+            or total + value_size > _MAX_PROTECTED_METADATA_BYTES
+        ):
+            raise OSError("extended attribute value is unavailable")
+        value_buffer = _METADATA_FFI.new("char[]", value_size)
+        observed_size = _METADATA_LIBC.fgetxattr(
+            descriptor, name, value_buffer, value_size, 0, 0
+        )
+        if observed_size != value_size:
+            raise OSError("extended attribute value changed")
+        values.append(
+            (
+                name,
+                bytes(_METADATA_FFI.buffer(value_buffer, value_size)),
+            )
+        )
+        total += value_size
+    return tuple(sorted(values))
+
+
+def _capture_acl(descriptor: int) -> bytes | None:
+    """Read a native ACL text form or an explicit empty-ACL witness."""
+    _METADATA_FFI.errno = 0
+    acl = _METADATA_LIBC.acl_get_fd(descriptor)
+    if acl == _METADATA_FFI.NULL:
+        if _METADATA_FFI.errno == 2:
+            return None
+        raise OSError("ACL capture is unavailable")
+    try:
+        length = _METADATA_FFI.new("ssize_t *")
+        text = _METADATA_LIBC.acl_to_text(acl, length)
+        if (
+            text == _METADATA_FFI.NULL
+            or length[0] < 0
+            or length[0] > _MAX_PROTECTED_METADATA_BYTES
+        ):
+            raise OSError("ACL text is unavailable")
+        try:
+            return bytes(_METADATA_FFI.buffer(text, length[0]))
+        finally:
+            _METADATA_LIBC.acl_free(text)
+    finally:
+        _METADATA_LIBC.acl_free(acl)
+
+
+def _set_acl(descriptor: int, acl: object) -> None:
+    """Apply one initialized native ACL through the retained descriptor."""
+    if _METADATA_LIBC.acl_set_fd(descriptor, acl) != 0:
+        raise OSError("ACL set failed")
+
+
+def _restore_acl(descriptor: int, baseline: bytes | None) -> None:
+    """Clear or restore the exact native ACL captured before mutation."""
+    if baseline is None:
+        acl = _METADATA_LIBC.acl_init(0)
+        if acl == _METADATA_FFI.NULL:
+            raise OSError("ACL clear is unavailable")
+    else:
+        acl = _METADATA_LIBC.acl_from_text(baseline)
+        if acl == _METADATA_FFI.NULL:
+            raise OSError("ACL restore is unavailable")
+    try:
+        _set_acl(descriptor, acl)
+    finally:
+        _METADATA_LIBC.acl_free(acl)
+
+
+def _restore_protected_metadata(
+    descriptor: int, metadata: _ProtectedMetadata
+) -> None:
+    """Restore exact xattrs, ACL, and flags before staged publication."""
+    current = _capture_protected_metadata(descriptor)
+    for name, _ in current.xattrs:
+        _METADATA_FFI.errno = 0
+        if _METADATA_LIBC.fremovexattr(descriptor, name, 0) != 0:
+            raise OSError("extended attribute removal failed")
+    for name, value in metadata.xattrs:
+        buffer = _METADATA_FFI.new("char[]", value)
+        if (
+            _METADATA_LIBC.fsetxattr(
+                descriptor, name, buffer, len(value), 0, 0
+            )
+            != 0
+        ):
+            raise OSError("extended attribute restore failed")
+    _restore_acl(descriptor, metadata.acl)
+    if _METADATA_LIBC.fchflags(descriptor, metadata.flags) != 0:
+        raise OSError("flags restore failed")
+    if _capture_protected_metadata(descriptor) != metadata:
+        raise OSError("metadata restore did not round trip")
+
+
+def _metadata_bytes(value: bytes) -> bytes:
+    """Length-prefix one native metadata component for deterministic hashing.
+
+    Return the compact deterministic representation.
+    """
+    return len(value).to_bytes(8, "big") + value
+
+
+def _metadata_integer(value: int) -> bytes:
+    """Encode one native metadata integer without sign ambiguity."""
+    return value.to_bytes(8, "big", signed=False)
+
+
+def _metadata_optional(value: bytes | None) -> bytes:
+    """Encode an absent or present ACL without text normalization."""
+    return b"\x00" if value is None else b"\x01" + _metadata_bytes(value)
 
 
 def _snapshot_representation(value: bytes) -> tuple[bool, str]:
@@ -2050,6 +2568,11 @@ def _snapshot_to_worker(snapshot: TargetSnapshot) -> _WorkerSnapshotPayload:
         "link_count": snapshot.link_count,
         "parent": parent,
         "classification": snapshot.security_metadata.value,
+        "protected_metadata": (
+            snapshot.protected_metadata.value
+            if snapshot.protected_metadata is not None
+            else None
+        ),
     }
 
 

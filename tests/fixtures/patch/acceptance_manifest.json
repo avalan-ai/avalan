@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 6,
+  "current_phase": 7,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -919,8 +919,8 @@
     },
     {
       "id": "PATCH-A-107",
-      "category": "cancellation",
-      "lifecycle": "planned",
+      "category": "integration",
+      "lifecycle": "active",
       "active_from_phase": 7,
       "requirement_ids": [
         "PATCH-R-0469",
@@ -930,13 +930,13 @@
         "PATCH-R-0473"
       ],
       "node_id": "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
-      "surface": "target",
+      "surface": "local_target",
       "context": "local",
       "platform": "posix",
       "operation": "commit",
-      "authority": "target",
+      "authority": "owner_fence",
       "commit_boundary": "commit",
-      "evidence_class": "runtime"
+      "evidence_class": "local_commit"
     },
     {
       "id": "PATCH-A-108",
@@ -2365,5 +2365,5 @@
       "evidence_class": "race"
     }
   ],
-  "manifest_sha256": "e401642f548aa2081366564accb7b4af4a777c55c783fb690ecb815b354b87af"
+  "manifest_sha256": "faadc6c3b7065461088a9f10a01b4485618ac2e88263c6ae8863c667072514ec"
 }

@@ -233,6 +233,7 @@ def _handshake(target: TargetIdentity) -> TargetHandshake:
         TargetPrimitive.BOUNDED_READ,
     )
     future = (
+        TargetPrimitive.METADATA_PRESERVATION,
         TargetPrimitive.BOUNDED_WRITE,
         TargetPrimitive.REPLACE_PUBLICATION,
         TargetPrimitive.NOREPLACE_CREATE_MOVE,
@@ -2798,6 +2799,7 @@ def test_patch_phase_6_private_pending_defenses_fail_closed() -> None:
                 record,
                 reservation,
                 "controller-a",
+                ScriptedCommitWorker(WorkerReport(WorkerState.LIVE, None)),
             )
         record.plan = plan
         valid = _journal(plan, CommitStepState.COMMITTED)

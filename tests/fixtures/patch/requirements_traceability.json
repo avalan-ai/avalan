@@ -7519,8 +7519,8 @@
       7,
       "required",
       "contract",
-      "src/avalan/patch/local_target.py",
-      "LocalPatchTarget",
+      "src/avalan/patch/local_commit.py",
+      "LocalCommitTarget",
       "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
       "Phase 7 implementation record",
       "runtime"
@@ -7535,8 +7535,8 @@
       7,
       "required",
       "contract",
-      "src/avalan/patch/local_target.py",
-      "LocalPatchTarget",
+      "src/avalan/patch/local_commit.py",
+      "LocalCommitTarget",
       "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
       "Phase 7 implementation record",
       "runtime"
@@ -7551,8 +7551,8 @@
       7,
       "required",
       "contract",
-      "src/avalan/patch/local_target.py",
-      "LocalPatchTarget",
+      "src/avalan/patch/local_commit.py",
+      "LocalCommitTarget",
       "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
       "Phase 7 implementation record",
       "runtime"
@@ -7567,8 +7567,8 @@
       7,
       "required",
       "contract",
-      "src/avalan/patch/local_target.py",
-      "LocalPatchTarget",
+      "src/avalan/patch/local_commit.py",
+      "LocalCommitTarget",
       "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
       "Phase 7 implementation record",
       "runtime"
@@ -7583,8 +7583,8 @@
       7,
       "required",
       "contract",
-      "src/avalan/patch/local_target.py",
-      "LocalPatchTarget",
+      "src/avalan/patch/local_commit.py",
+      "LocalCommitTarget",
       "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
       "Phase 7 implementation record",
       "runtime"
@@ -16294,5 +16294,5 @@
       "golden"
     ]
   ],
-  "catalog_sha256": "7c842cb09ec085d278eb673d82a2fa0e61a29cfc66c70fb376f8bb316978cac2"
+  "catalog_sha256": "1cb7600107321670296104f4d1393f98a474c9d7f598ddc41f860e3bd28b1921"
 }

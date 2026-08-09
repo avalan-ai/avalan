@@ -4,7 +4,7 @@ from collections.abc import AsyncIterable
 from dataclasses import dataclass, field
 from enum import Enum
 from re import fullmatch
-from typing import NoReturn
+from typing import Callable, NoReturn
 from unicodedata import category
 
 from avalan.model.stream import (
@@ -59,6 +59,14 @@ _RESERVED_DEVICES = frozenset(
         "lpt9",
     )
 )
+
+
+def _noop_precommit_checkpoint(stage: str) -> None:
+    """Keep the test-only precommit checkpoint hook inert."""
+    del stage
+
+
+_test_precommit_checkpoint: Callable[[str], None] = _noop_precommit_checkpoint
 _BEGIN = "*** Begin Patch v1"
 _END = "*** End Patch"
 _ADD = "*** Add File: "
@@ -406,9 +414,7 @@ class DormantParameterDescriptor:
 DORMANT_PARAMETER_DESCRIPTORS = (
     DormantParameterDescriptor(
         operation=OperationType.EDIT,
-        schema_bytes=(
-            b'{"additionalProperties":false,"properties":{"edits":{"items":{"additionalProperties":false,"properties":{"new_text":{"type":"string"},"old_text":{"minLength":1,"type":"string"}},"required":["old_text","new_text"],"type":"object"},"minItems":1,"type":"array"},"path":{"type":"string"}},"required":["path","edits"],"type":"object"}'
-        ),
+        schema_bytes=b'{"additionalProperties":false,"properties":{"edits":{"items":{"additionalProperties":false,"properties":{"new_text":{"type":"string"},"old_text":{"minLength":1,"type":"string"}},"required":["old_text","new_text"],"type":"object"},"minItems":1,"type":"array"},"path":{"type":"string"}},"required":["path","edits"],"type":"object"}',
     ),
     DormantParameterDescriptor(
         operation=OperationType.APPLY,
@@ -457,6 +463,7 @@ class PatchRequestParser:
 
     def parse(self, ingress: RawPatchIngress) -> CanonicalPatchRequest:
         """Parse complete raw input before ordinary mapping construction."""
+        _test_precommit_checkpoint("lifecycle.received")
         if len(ingress.raw_bytes) > self._limits.max_raw_bytes:
             raise PatchInputError(PatchInputErrorCode.OVERSIZED)
         if ingress.kind is RawPatchInputKind.VERIFIED_FREEFORM:

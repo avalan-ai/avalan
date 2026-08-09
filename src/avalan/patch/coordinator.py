@@ -11,7 +11,8 @@ from asyncio import CancelledError, Event, Lock
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
-from typing import Protocol
+from typing import Protocol, TypeGuard, final
+from weakref import WeakKeyDictionary
 
 from avalan.patch.domain import (
     AlgorithmDigest,
@@ -90,6 +91,32 @@ class CoordinatorBoundary(str, Enum):
     TERMINAL_PUBLICATION = "terminal_publication"
 
 
+class _PrecommitBoundary(str, Enum):
+    """Name dormant test-profile checkpoints before commit ownership."""
+
+    RESERVE_REQUEST = "store.reserve_request"
+    PERSIST_PLAN = "store.persist_plan"
+    LIFECYCLE_PLANNED = "lifecycle.planned"
+    LIFECYCLE_AWAITING_APPROVAL = "lifecycle.awaiting_approval"
+    CONSUME_GRANT = "store.consume_grant"
+    ASSIGN_COMMIT_OWNER = "store.assign_commit_owner"
+    LIFECYCLE_COMMIT_OWNER = "lifecycle.commit_owner_assigned"
+    INTENT_FENCE = "commit.intent_fence"
+    LIFECYCLE_COMPLETED = "lifecycle.request_completed"
+    ACQUIRE_LOCK = "target.acquire_lock"
+    RELEASE_LOCK = "target.release_lock"
+    CANCELLATION = "cancellation.before_commit"
+    TIMEOUT = "timeout.before_commit"
+    DISCONNECT = "disconnect.before_commit"
+
+
+class _PrecommitCheckpoint(Protocol):
+    """Inject a typed local-test failure before a workspace effect."""
+
+    async def checkpoint(self, boundary: _PrecommitBoundary) -> None:
+        """Observe one fixed precommit boundary or fail there."""
+
+
 @dataclass(frozen=True, slots=True)
 class RetransmissionKey:
     """Identify authenticated retransmission metadata outside model input."""
@@ -106,8 +133,8 @@ class RetransmissionKey:
 class RuntimeIdentity:
     """Bind one external retry tuple to a canonical request digest."""
 
-    subject: ExecutionSubject
-    route: PolicyRouteId
+    subject: "ExecutionSubject"
+    route: "PolicyRouteId"
     retransmission_key: RetransmissionKey
 
 
@@ -311,11 +338,11 @@ class WorkerReport:
             raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
 class SealedCommitCommand:
     """Carry only a trusted sealed plan and owner/fence witness to a worker."""
 
-    plan: SealedPlan
+    plan: "SealedPlan"
     lease: CommitLease
     footprint: LockFootprint
 
@@ -428,8 +455,8 @@ class IdempotencyStore(Protocol):
     async def begin_commit(
         self,
         reservation: Reservation,
-        plan: SealedPlan,
-        grant: PlanBoundGrant,
+        plan: "SealedPlan",
+        grant: "PlanBoundGrant",
         lease: CommitLease,
     ) -> None:
         """Persist sole commit ownership before a possible visible effect."""
@@ -449,6 +476,109 @@ class CommitWorker(Protocol):
 
     async def commit(self, command: SealedCommitCommand) -> WorkerReport:
         """Return a scripted worker state without filesystem handles."""
+
+
+class RootedCommitChannel(Protocol):
+    """Execute a command in an already-authenticated rooted worker."""
+
+    async def commit_local(self, command: SealedCommitCommand) -> WorkerReport:
+        """Return a journal-derived report from the rooted target."""
+
+    async def reconcile_local(
+        self, request_id: PatchRequestId
+    ) -> WorkerReport:
+        """Return retained local settlement truth without another commit."""
+
+
+@dataclass(frozen=True, slots=True, eq=False)
+class _RootedWorkerAuthorization:
+    """Keep local mutation-worker construction inside target runtime code."""
+
+    token: object = field(default_factory=object)
+
+
+@final
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+class RootedLocalCommitWorker:
+    """Forward a sealed command only to a target-minted local channel."""
+
+    _channel: RootedCommitChannel
+    _authorization: _RootedWorkerAuthorization
+
+    async def commit(self, command: SealedCommitCommand) -> WorkerReport:
+        """Execute one sealed command without exposing target handles."""
+        if not await _consume_rooted_command_authority(command):
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        return await self._channel.commit_local(command)
+
+    async def _reconcile_for_owner(
+        self, request_id: PatchRequestId
+    ) -> WorkerReport:
+        """Read a retained local report without replaying its command."""
+        return await self._channel.reconcile_local(request_id)
+
+
+@dataclass(frozen=True, slots=True)
+class _RootedCommandAuthority:
+    """Bind a one-shot rooted command to a live store and private nonce."""
+
+    store: "InMemoryCoordinatorStore"
+    lease: CommitLease
+    nonce: object = field(default_factory=object)
+
+
+_ROOTED_LOCAL_WORKERS: WeakKeyDictionary[
+    RootedLocalCommitWorker, _RootedWorkerAuthorization
+] = WeakKeyDictionary()
+_ROOTED_COMMAND_AUTHORITIES: WeakKeyDictionary[
+    SealedCommitCommand, _RootedCommandAuthority
+] = WeakKeyDictionary()
+
+
+def _rooted_local_worker(
+    channel: RootedCommitChannel,
+) -> RootedLocalCommitWorker:
+    """Construct the sole non-scripted commit worker accepted in this phase."""
+    worker = RootedLocalCommitWorker(channel, _RootedWorkerAuthorization())
+    _ROOTED_LOCAL_WORKERS[worker] = worker._authorization
+    return worker
+
+
+def _is_rooted_local_worker(
+    worker: CommitWorker,
+) -> TypeGuard[RootedLocalCommitWorker]:
+    """Accept only a worker minted by the private rooted-worker factory."""
+    return (
+        type(worker) is RootedLocalCommitWorker
+        and _ROOTED_LOCAL_WORKERS.get(worker) is worker._authorization
+    )
+
+
+async def _issue_rooted_command_authority(
+    command: SealedCommitCommand, store: "InMemoryCoordinatorStore"
+) -> None:
+    """Bind one command identity to a coordinator-owned current-fence check."""
+    if command in _ROOTED_COMMAND_AUTHORITIES or not await store.authorize(
+        command
+    ):
+        raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
+    _ROOTED_COMMAND_AUTHORITIES[command] = _RootedCommandAuthority(
+        store, command.lease
+    )
+
+
+async def _consume_rooted_command_authority(
+    command: SealedCommitCommand,
+) -> bool:
+    """Consume authority only while its owner/fence remains current."""
+    authority = _ROOTED_COMMAND_AUTHORITIES.pop(command, None)
+    if authority is None:
+        return False
+    return (
+        authority.lease == command.lease
+        and authority.nonce is not None
+        and await authority.store.is_current(authority.lease)
+    )
 
 
 class Reconciler(Protocol):
@@ -502,6 +632,7 @@ class _RuntimeRecord:
     result: PatchResult | None = None
     pending: _AttachedPending | None = None
     pending_owner: str | None = None
+    commit_worker: RootedLocalCommitWorker | None = None
     cancellation_requested: bool = False
     sequence: int = 0
     events: list[CoordinatorEvent] = field(default_factory=list)
@@ -515,7 +646,10 @@ class InMemoryCoordinatorStore:
     """Provide deterministic attached records with no durable handle."""
 
     def __init__(
-        self, grant_validator: TrustedGrantValidator | None = None
+        self,
+        grant_validator: TrustedGrantValidator | None = None,
+        *,
+        _precommit_checkpoint: _PrecommitCheckpoint | None = None,
     ) -> None:
         """Initialize empty private records and the short in-memory lock."""
         self._lock = Lock()
@@ -524,11 +658,19 @@ class InMemoryCoordinatorStore:
         self._fences: dict[PatchDomainId, int] = {}
         self._consumed_grants: set[str] = set()
         self._grant_validator = grant_validator
+        self._precommit_checkpoint = _precommit_checkpoint
+
+    async def _checkpoint(self, boundary: _PrecommitBoundary) -> None:
+        """Run an unavailable-by-default local test-profile checkpoint."""
+        checkpoint = self._precommit_checkpoint
+        if checkpoint is not None:
+            await checkpoint.checkpoint(boundary)
 
     async def reserve(
         self, identity: RuntimeIdentity, digest: AlgorithmDigest
     ) -> Reservation:
         """Reserve a request identity or attach only to the same digest."""
+        await self._checkpoint(_PrecommitBoundary.RESERVE_REQUEST)
         async with self._lock:
             current = self._records.get(identity)
             if current is not None:
@@ -571,6 +713,7 @@ class InMemoryCoordinatorStore:
             record = await self._record_locked(reservation)
             if record.lease is not None:
                 return record.lease
+            await self._checkpoint(_PrecommitBoundary.INTENT_FENCE)
             fence = self._fences.get(domain_id, 0) + 1
             self._fences[domain_id] = fence
             lease = CommitLease(domain_id, reservation.request_id, fence)
@@ -605,9 +748,11 @@ class InMemoryCoordinatorStore:
                 )
             except PolicyError as exc:
                 raise CoordinatorError(CoordinatorErrorCode.STALE) from exc
+            await self._checkpoint(_PrecommitBoundary.CONSUME_GRANT)
             if grant.grant_id.value in self._consumed_grants:
                 raise CoordinatorError(CoordinatorErrorCode.GRANT_CONSUMED)
             self._consumed_grants.add(grant.grant_id.value)
+            await self._checkpoint(_PrecommitBoundary.ASSIGN_COMMIT_OWNER)
             record.plan = plan
             record.grant = grant
             record.lifecycle = LifecyclePhase.COMMIT_STARTED
@@ -636,6 +781,19 @@ class InMemoryCoordinatorStore:
                 record is not None
                 and record.lease == lease
                 and self._fences.get(lease.domain_id) == lease.fence
+            )
+
+    async def authorize(self, command: SealedCommitCommand) -> bool:
+        """Return whether a command exactly names a persisted commit owner."""
+        async with self._lock:
+            record = self._by_request.get(command.lease.request_id)
+            return (
+                record is not None
+                and record.plan is command.plan
+                and record.lease == command.lease
+                and record.lifecycle is LifecyclePhase.COMMIT_STARTED
+                and self._fences.get(command.lease.domain_id)
+                == command.lease.fence
             )
 
     async def terminal(self, request_id: PatchRequestId) -> PatchResult | None:
@@ -670,6 +828,7 @@ class InMemoryLeaseManager:
         """Acquire the workspace-wide domain lock before a commit attempt."""
         lock = self._locks.setdefault(footprint.domain_id, Lock())
         await lock.acquire()
+        await self._store._checkpoint(_PrecommitBoundary.ACQUIRE_LOCK)
         self._leases[reservation.request_id] = lock
         return await self._store.assign_lease(reservation, footprint.domain_id)
 
@@ -678,6 +837,7 @@ class InMemoryLeaseManager:
         lock = self._leases.pop(lease.request_id, None)
         if lock is None or not lock.locked():
             raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        await self._store._checkpoint(_PrecommitBoundary.RELEASE_LOCK)
         lock.release()
 
     async def is_current(self, lease: CommitLease) -> bool:
@@ -845,6 +1005,7 @@ class InMemoryPatchCoordinator:
         if reservation.digest != plan.binding.request_digest:
             raise CoordinatorError(CoordinatorErrorCode.STALE)
         if record.plan is None:
+            await self._store._checkpoint(_PrecommitBoundary.PERSIST_PLAN)
             record.plan = plan
         elif record.plan is not plan:
             raise CoordinatorError(CoordinatorErrorCode.STALE)
@@ -863,7 +1024,15 @@ class InMemoryPatchCoordinator:
                 LifecyclePhase.PREFLIGHT_AUTHORIZED: LifecyclePhase.PLANNED,
             }[record.lifecycle]
             await self.advance(reservation, transition)
+            if transition is LifecyclePhase.PLANNED:
+                await self._store._checkpoint(
+                    _PrecommitBoundary.LIFECYCLE_PLANNED
+                )
         if record.lifecycle is LifecyclePhase.PLANNED:
+            if approval_required:
+                await self._store._checkpoint(
+                    _PrecommitBoundary.LIFECYCLE_AWAITING_APPROVAL
+                )
             await self.advance(
                 reservation,
                 (
@@ -880,11 +1049,13 @@ class InMemoryPatchCoordinator:
         plan: SealedPlan,
         grant: PlanBoundGrant,
         expected: RevalidationSnapshot,
-        worker: ScriptedCommitWorker,
+        worker: CommitWorker,
         controller: str,
     ) -> PatchResult | _AttachedPending:
         """Commit a sealed plan once or return attached pending state."""
-        if type(worker) is not ScriptedCommitWorker:
+        if type(
+            worker
+        ) is not ScriptedCommitWorker and not _is_rooted_local_worker(worker):
             raise CoordinatorError(CoordinatorErrorCode.SCRIPTED_TARGET_ONLY)
         record = await self._store.record(reservation)
         if reservation.digest != plan.binding.request_digest:
@@ -897,7 +1068,7 @@ class InMemoryPatchCoordinator:
             return record.result
         if record.pending is not None:
             return await self._continue_pending(
-                record, reservation, controller
+                record, reservation, controller, worker
             )
         if record.lifecycle is LifecyclePhase.COMMIT_STARTED:
             await record.state_changed.wait()
@@ -906,7 +1077,7 @@ class InMemoryPatchCoordinator:
                 return record.result
             if record.pending is not None:
                 return await self._continue_pending(
-                    record, reservation, controller
+                    record, reservation, controller, worker
                 )
             raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
         if record.lifecycle is LifecyclePhase.RECEIVED:
@@ -938,8 +1109,14 @@ class InMemoryPatchCoordinator:
                 return await self._complete_precommit(
                     record, plan, PatchStatus.STALE, PatchErrorCode.STALE
                 )
+            await self._store._checkpoint(
+                _PrecommitBoundary.LIFECYCLE_COMMIT_OWNER
+            )
             await self._store.begin_commit(reservation, plan, grant, lease)
             record = await self._store.record(reservation)
+            record.commit_worker = (
+                worker if _is_rooted_local_worker(worker) else None
+            )
             await self._emit(record, LifecyclePhase.COMMIT_STARTED)
             try:
                 if await self._faulted(CoordinatorBoundary.OWNER) or (
@@ -953,6 +1130,8 @@ class InMemoryPatchCoordinator:
                     raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
                 if not await self._leases.is_current(lease):
                     raise CoordinatorError(CoordinatorErrorCode.FENCED)
+                if _is_rooted_local_worker(worker):
+                    await _issue_rooted_command_authority(command, self._store)
                 self._resource = RuntimeResources(0, 1, 1, 0, 1, 0)
                 report = await worker.commit(command)
                 self._resource = RuntimeResources(0, 1, 0, 0, 0, 0)
@@ -992,6 +1171,7 @@ class InMemoryPatchCoordinator:
         ):
             if record.plan is None:
                 raise CoordinatorError(CoordinatorErrorCode.RETRY_BLOCKED)
+            await self._store._checkpoint(_PrecommitBoundary.CANCELLATION)
             return await self._complete_precommit(
                 record,
                 record.plan,
@@ -1003,15 +1183,35 @@ class InMemoryPatchCoordinator:
             return record.pending
         raise CoordinatorError(CoordinatorErrorCode.RETRY_BLOCKED)
 
+    async def _timeout_before_commit(
+        self, reservation: Reservation
+    ) -> PatchResult | _AttachedPending:
+        """Run the timeout cancellation path through its owned checkpoint."""
+        await self._store._checkpoint(_PrecommitBoundary.TIMEOUT)
+        return await self.cancel(reservation, before_commit=True)
+
+    async def _disconnect_before_commit(
+        self, reservation: Reservation
+    ) -> PatchResult | _AttachedPending:
+        """Run disconnect cancellation through its owned checkpoint."""
+        await self._store._checkpoint(_PrecommitBoundary.DISCONNECT)
+        return await self.cancel(reservation, before_commit=True)
+
     async def _continue_pending(
         self,
         record: _RuntimeRecord,
         reservation: Reservation,
         controller: str,
+        worker: CommitWorker,
     ) -> PatchResult | _AttachedPending:
         """Reconcile one attached pending owner without a public handle."""
         if record.pending is None or record.pending_owner != controller:
             raise CoordinatorError(CoordinatorErrorCode.PENDING_OWNER)
+        if (
+            record.commit_worker is not None
+            and record.commit_worker is not worker
+        ):
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
         async with record.settlement_lock:
             if record.result is not None:
                 return record.result
@@ -1021,8 +1221,15 @@ class InMemoryPatchCoordinator:
                 raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
             self._resource = RuntimeResources(0, 1, 0, 0, 0, 0)
             try:
-                report = await self._reconciler.reconcile(
-                    reservation.request_id
+                original_worker = record.commit_worker
+                report = (
+                    await original_worker._reconcile_for_owner(
+                        reservation.request_id
+                    )
+                    if original_worker is not None
+                    else await self._reconciler.reconcile(
+                        reservation.request_id
+                    )
                 )
                 if report.state is WorkerState.LIVE:
                     return pending
@@ -1096,6 +1303,7 @@ class InMemoryPatchCoordinator:
         )
         record.lifecycle = LifecyclePhase.REQUEST_COMPLETED
         record.result = result
+        await self._store._checkpoint(_PrecommitBoundary.LIFECYCLE_COMPLETED)
         await self._emit(record, LifecyclePhase.REQUEST_COMPLETED)
         record.completed.set()
         record.state_changed.set()
@@ -1135,6 +1343,7 @@ class InMemoryPatchCoordinator:
         )
         record.lifecycle = LifecyclePhase.REQUEST_COMPLETED
         record.pending = None
+        record.commit_worker = None
         record.result = result
         await self._emit(record, LifecyclePhase.REQUEST_COMPLETED)
         record.completed.set()

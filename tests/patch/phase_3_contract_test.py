@@ -639,11 +639,16 @@ def test_patch_phase_3_covers_terminal_ledger_and_eof_failure_branches() -> (
             initial.metadata,
         )
     }
-    assert planner_module._terminal_lineages(lineages, PlannerLimits()) == ()
+    assert (
+        planner_module._terminal_lineages(
+            lineages, _workspace(), PlannerLimits()
+        )
+        == ()
+    )
     absent = planner_module._MutableLineage(None, None, None, None)
     assert (
         planner_module._terminal_lineages(
-            {LogicalPath("void.txt"): absent}, PlannerLimits()
+            {LogicalPath("void.txt"): absent}, _workspace(), PlannerLimits()
         )
         == ()
     )
@@ -669,7 +674,7 @@ def test_patch_phase_3_rejects_collapsed_and_tombstoned_no_effects(
     request = _edit("a", "b")
     workspace = _workspace(_file("note.txt", b"a\n"))
     monkeypatch.setattr(
-        planner_module, "_terminal_lineages", lambda _a, _b, _c: ()
+        planner_module, "_terminal_lineages", lambda _a, _b, _c, _d: ()
     )
     with pytest.raises(PlannerError) as error:
         plan(request, workspace)

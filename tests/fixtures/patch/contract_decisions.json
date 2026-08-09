@@ -2109,27 +2109,31 @@
       },
       {
         "path": "src/avalan/patch/coordinator.py",
-        "source_sha256": "c1f3139b1dec56d41e9cee8dbd9692712740b5d193decf6461fbc34cd0f12480"
+        "source_sha256": "8e02a20ef78372b7195a947561e84f0d8b80e2aa70aadad63004c4b16e8a33b4"
       },
       {
         "path": "src/avalan/patch/domain.py",
         "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
       },
       {
+        "path": "src/avalan/patch/local_commit.py",
+        "source_sha256": "805962125528b3d15ffe8ef09c20d956191a4c269312ece7e4f4db9dbc3c9310"
+      },
+      {
         "path": "src/avalan/patch/parser.py",
-        "source_sha256": "d987acb6f99329bc4594d67a662cbc3ffc510d207080bc049f5b48acfb127ab2"
+        "source_sha256": "1a3dcdca31e35d6ab495f785012d482759a5d5fbff1d1734933f9730bb49b653"
       },
       {
         "path": "src/avalan/patch/planner.py",
-        "source_sha256": "5a5816a55895c943b63e34a376de49e016d1efba4be69f31d04a00c6fa61ff67"
+        "source_sha256": "8c175c69f6a511c1858572f5aa49c83189b617077a319f2afe026bdb105af16f"
       },
       {
         "path": "src/avalan/patch/policy.py",
-        "source_sha256": "7ec5fc0e836d4c51ab93ae069366db1125a1ac541b6f2f2e57deb9439697d7fb"
+        "source_sha256": "4a45d27527b5961553fda8dd51a1a69476071f55789b481b4ac207d111d68f80"
       },
       {
         "path": "src/avalan/patch/target.py",
-        "source_sha256": "4e8613d9852c37f68d00708389858561d161f6194751c9eb5eeb708b91a94e11"
+        "source_sha256": "d7ce9327a33fc1abf8cd4dbfa4780e659607447ab128002547e381eb46f475cc"
       },
       {
         "path": "src/avalan/pgsql.py",
@@ -3157,6 +3161,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "5b065fac9c66f2c863f1f3ec365709155d2a75c3a3a6ae28b35f149424d7449e",
-  "record_sha256": "23fe9a9eeea407886fa1ec517b757193b7e8ef3cfc5b2f6d475d3f587102bf8e"
+  "inventory_sha256": "33cec6d0a846c87c19243648c8854044ab1319e571b5a13268d4060e79aaed56",
+  "record_sha256": "65051771ac8e288797cac80540b5f49e096bb8679292ca5218f86e0798ad156e"
 }
