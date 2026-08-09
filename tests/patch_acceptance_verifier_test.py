@@ -67,11 +67,11 @@ def _resign(payload: dict[str, object], field: str) -> None:
 
 
 def test_patch_acceptance_positive_load() -> None:
-    """Load the complete active Phase 3 patch contract bundle."""
+    """Load the complete active Phase 4 patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 3
-    assert len(manifest.active_nodes(3)) == 37
+    assert manifest.current_phase == 4
+    assert len(manifest.active_nodes(4)) == 49
 
 
 def test_patch_acceptance_validates_complete_phase_evidence() -> None:
@@ -207,6 +207,91 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
     )
 
 
+def test_patch_acceptance_requires_reviewed_executable_replacement(
+    tmp_path: Path,
+) -> None:
+    """Reject a changed executable when its reviewed replacement is absent."""
+    fixtures = tmp_path / "fixtures"
+    _copy_bundle(fixtures)
+    history_path = fixtures / "acceptance_history.json"
+    history = _read(history_path)
+    replacements = history["replacements"]
+    assert isinstance(replacements, list)
+
+    _VERIFIER._validate_acceptance_history(
+        history_path,
+        _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json"),
+        _ROOT,
+    )
+
+    replacements[:] = [
+        replacement
+        for replacement in replacements
+        if isinstance(replacement, dict)
+        and isinstance(replacement.get("old"), dict)
+        and replacement["old"].get("id") != "PATCH-A-P4-002"
+    ]
+    _resign(history, "history_sha256")
+    _write(history_path, history)
+
+    with pytest.raises(
+        _VERIFIER.PatchAcceptanceError,
+        match="semantic change is unreviewed",
+    ):
+        _VERIFIER._validate_acceptance_history(
+            history_path,
+            _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json"),
+            _ROOT,
+        )
+
+
+@pytest.mark.parametrize(
+    ("side", "field", "value", "message"),
+    (
+        ("old", "category", "negative", "replacement source drifted"),
+        (
+            "new",
+            "executable_sha256",
+            "0" * 64,
+            "replacement executable digest drifted",
+        ),
+    ),
+)
+def test_patch_acceptance_rejects_tampered_executable_replacement(
+    tmp_path: Path,
+    side: str,
+    field: str,
+    value: str,
+    message: str,
+) -> None:
+    """Reject a reviewed replacement whose proof drifts."""
+    fixtures = tmp_path / "fixtures"
+    _copy_bundle(fixtures)
+    history_path = fixtures / "acceptance_history.json"
+    history = _read(history_path)
+    replacements = history["replacements"]
+    assert isinstance(replacements, list)
+    replacement = next(
+        item
+        for item in replacements
+        if isinstance(item, dict)
+        and isinstance(item.get("old"), dict)
+        and item["old"].get("id") == "PATCH-A-P4-002"
+    )
+    proof = replacement[side]
+    assert isinstance(proof, dict)
+    proof[field] = value
+    _resign(history, "history_sha256")
+    _write(history_path, history)
+
+    with pytest.raises(_VERIFIER.PatchAcceptanceError, match=message):
+        _VERIFIER._validate_acceptance_history(
+            history_path,
+            _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json"),
+            _ROOT,
+        )
+
+
 @pytest.mark.parametrize(
     ("field", "value"),
     (
@@ -226,7 +311,7 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
                 "test_phase0_runtime_probe_rejects_dynamic_patch_identity"
             ),
         ),
-        ("lifecycle_phase", ("planned", 4)),
+        ("lifecycle_phase", ("active", 3)),
     ),
 )
 def test_patch_acceptance_rejects_unreviewed_history_semantic_change(
@@ -457,7 +542,8 @@ def test_patch_acceptance_rejects_premature_active_node(
     future = next(
         node
         for node in nodes
-        if isinstance(node, dict) and node["active_from_phase"] > 2
+        if isinstance(node, dict)
+        and node["active_from_phase"] > _VERIFIER._CURRENT_PHASE
     )
     assert isinstance(future, dict)
     future["lifecycle"] = "active"

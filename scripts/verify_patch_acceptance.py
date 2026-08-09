@@ -53,10 +53,10 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 3
+_CURRENT_PHASE = 4
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
-    "91b72ee2f728b902676f9af85fdab171662aaa9df80920f5e2cc093566100a28"
+    "b59d46d0ca492bd4021e57a55eb2cc9f83e54b850bd20c1046020caa5c61d35f"
 )
 _FIXTURE_NAMES = (
     "requirements_traceability.json",
@@ -916,7 +916,7 @@ def _validate_acceptance_history(
     nodes = object_list(snapshot.get("nodes"), "acceptance history nodes")
     historical: dict[str, Mapping[str, object]] = {}
     for raw in nodes:
-        snapshot_node = _history_snapshot_node(raw, root)
+        snapshot_node = _history_snapshot_node(raw)
         identifier = _identifier(
             snapshot_node.get("id"), "acceptance history node ID"
         )
@@ -950,7 +950,7 @@ def _validate_acceptance_history(
             },
             "acceptance history replacement",
         )
-        old = _history_snapshot_node(replacement_entry.get("old"), root)
+        old = _history_snapshot_node(replacement_entry.get("old"))
         old_id = _identifier(old.get("id"), "replacement old ID")
         if old_id in replacements or old_id not in historical:
             raise PatchAcceptanceError(
@@ -960,7 +960,9 @@ def _validate_acceptance_history(
             raise PatchAcceptanceError(
                 "acceptance history replacement source drifted"
             )
-        new = _history_snapshot_node(replacement_entry.get("new"), root)
+        new = _current_history_snapshot_node(
+            replacement_entry.get("new"), root
+        )
         if _phase(
             new.get("active_from_phase"), "replacement new phase"
         ) < _phase(old.get("active_from_phase"), "replacement old phase"):
@@ -1197,8 +1199,8 @@ def _acceptance_node(raw: object, current_phase: int) -> AcceptanceNode:
     )
 
 
-def _history_snapshot_node(value: object, root: Path) -> Mapping[str, object]:
-    """Return one complete, current executable acceptance snapshot node."""
+def _history_snapshot_node(value: object) -> Mapping[str, object]:
+    """Return one validated structural acceptance history snapshot node."""
     raw = mapping(value, "acceptance history node")
     _exact_keys(
         raw,
@@ -1231,12 +1233,43 @@ def _history_snapshot_node(value: object, root: Path) -> Mapping[str, object]:
         raise PatchAcceptanceError(
             "acceptance history node must retain active lifecycle"
         )
-    snapshot = _acceptance_node_snapshot(node, root)
-    if snapshot["executable_sha256"] != executable_digest:
+    return {
+        "id": node.identifier,
+        "requirement_ids": list(node.requirement_ids),
+        "category": node.category,
+        "surface": node.surface,
+        "context": node.context,
+        "platform": node.platform,
+        "operation": node.operation,
+        "authority": node.permission_label,
+        "commit_boundary": node.commit_boundary,
+        "evidence_class": node.evidence_class,
+        "node_id": node.node_id,
+        "lifecycle": node.lifecycle,
+        "active_from_phase": node.active_from_phase,
+        "executable_sha256": executable_digest,
+    }
+
+
+def _current_history_snapshot_node(
+    value: object, root: Path
+) -> Mapping[str, object]:
+    """Return one structural history node after its executable is verified."""
+    snapshot = _history_snapshot_node(value)
+    node = _acceptance_node(
+        {
+            key: item
+            for key, item in snapshot.items()
+            if key != "executable_sha256"
+        },
+        _CURRENT_PHASE,
+    )
+    current = _acceptance_node_snapshot(node, root)
+    if current["executable_sha256"] != snapshot["executable_sha256"]:
         raise PatchAcceptanceError(
-            "acceptance history executable digest drifted"
+            "acceptance history replacement executable digest drifted"
         )
-    return snapshot
+    return current
 
 
 def _acceptance_node_snapshot(
@@ -3554,8 +3587,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 255,
-        "planned_requirements": 762,
+        "active_requirements": 344,
+        "planned_requirements": 673,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))

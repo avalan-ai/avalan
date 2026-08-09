@@ -1,26 +1,25 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "phase": 3,
+  "phase": 4,
   "status": "complete",
-  "scope": "Dormant text planning over abstract snapshots; no policy, approval, target, commit, or registration authority.",
+  "scope": "Rooted local inspection only; commit, staging, registration, and external mutation remain unavailable.",
   "recorded_on": "2026-08-08",
   "ownership": {
     "implementation_owners": [
-      "phase3-implementation"
+      "phase4-implementation"
     ],
     "review_owners": [
-      "phase3-max-review"
+      "phase4-max-review"
     ],
-    "base_sha": "8ae4f7c8d901f0e0b9ae28a3a7bb3a7a9449205a",
-    "head_sha": "8ae4f7c8d901f0e0b9ae28a3a7bb3a7a9449205a"
+    "base_sha": "3cbb64f11dc02c05361719a2ddf7ed343cfc7c5e",
+    "head_sha": "3cbb64f11dc02c05361719a2ddf7ed343cfc7c5e"
   },
   "changed_paths": [
-    "scripts/run_patch_contract_gate.py",
     "scripts/verify_patch_acceptance.py",
     "scripts/verify_patch_types.py",
     "src/avalan/patch/__init__.py",
-    "src/avalan/patch/planner.py",
+    "src/avalan/patch/target.py",
     "tests/fixtures/patch/acceptance_history.json",
     "tests/fixtures/patch/acceptance_manifest.json",
     "tests/fixtures/patch/baseline_evidence.json",
@@ -29,240 +28,55 @@
     "tests/fixtures/patch/requirements_traceability.json",
     "tests/fixtures/patch/source_symbols.json",
     "tests/fixtures/patch/type_contract_manifest.json",
-    "tests/patch/phase_3_contract_test.py",
+    "tests/patch/phase_4_contract_test.py",
     "tests/patch_acceptance_verifier_test.py",
-    "tests/patch_contract_gate_test.py",
-    "tests/patch_type_contracts/phase3_positive.py",
-    "tests/patch_type_contracts/phase3_sync_worker_negative.py"
+    "tests/patch_type_contracts/phase4_positive.py",
+    "tests/patch_type_contracts/phase4_sync_target_negative.py"
   ],
   "exact_gate": {
     "status": "complete",
-    "reason": "Authoritative Phase 3 exact gate passed; retained coverage and pytest facts are sealed below."
+    "reason": "Exact gate passed with retained terminal receipt."
   },
   "commands": [
     {
-      "id": "PATCH-CMD-P3",
-      "command": "make test-patch-exact no-install PATCH_PHASE=3",
+      "id": "PATCH-CMD-P4",
+      "command": "make test-patch-exact no-install PATCH_PHASE=4",
       "status": "passed",
-      "reason": "Final gate summary output receipt; its digest covers the terminal gate summary line only.",
+      "reason": "Exact all-source Phase 4 gate passed.",
       "exit_code": 0,
-      "duration_ms": 679870,
+      "duration_ms": 704110,
       "environment": {
         "python": "Python 3.11.15",
-        "profile": "nonignored execution mirror with isolated subprocess environment",
+        "profile": "exact-isolated",
         "configuration": {
-          "PATCH_PHASE": "3",
-          "PYTHONDONTWRITEBYTECODE": "1",
-          "PYTHONNOUSERSITE": "1",
-          "PYTHONSAFEPATH": "1"
+          "coverage": "branch",
+          "through_phase": "4"
         }
       },
-      "output_sha256": "ebf43f013776e7dce3ec38d96919480562187f745c4b91a831c29bcc75879676"
+      "output_sha256": "39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     }
   ],
   "artifact_digests": [
     {
       "name": "pytest_facts",
       "path": ".patch-contract-pytest-facts.json",
-      "sha256": "9da7fd60b80e1b3201566053741b0d84958b3f8087769d052dec49108d7ea7e0"
+      "sha256": "78025c1dda711a0248797ba41264ce4c50b7b6046c0945325cb4761ca7c0ac4d"
     },
     {
       "name": "coverage_json",
       "path": "coverage.json",
-      "sha256": "e410beb04f085e9eb76db3279666c750ddb990f3e1c1d634e4112020d0f8c3b6"
+      "sha256": "d73be77debec7a223d01bfad902c93f744c83359fc8b6296b1cb746d62393c9e"
     },
     {
       "name": "coverage_xml",
       "path": "coverage.xml",
-      "sha256": "510dda2b7123dee5da65b91d275ef1d4d4eacce36f606c6b83ac6f59a0ec28c8"
+      "sha256": "5c640a20b52b5082aa83d37842da3f0cf6b4a6ad51bab52839f1325d48d1ee89"
     }
   ],
   "suite_facts": [
     {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -275,46 +89,7 @@
     },
     {
       "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -327,7 +102,7 @@
     },
     {
       "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -339,8 +114,8 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -352,21 +127,8 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -379,33 +141,7 @@
     },
     {
       "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -418,7 +154,7 @@
     },
     {
       "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -431,7 +167,7 @@
     },
     {
       "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -443,8 +179,8 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -456,8 +192,8 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -469,8 +205,8 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -482,8 +218,21 @@
       "ignored_active_nodes": 0
     },
     {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
-      "command_id": "PATCH-CMD-P3",
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -496,33 +245,7 @@
     },
     {
       "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
-      "command_id": "PATCH-CMD-P3",
-      "outcome": "passed",
-      "collected_nodes": 1,
-      "passed_nodes": 1,
-      "skipped_nodes": 0,
-      "xfail_nodes": 0,
-      "xpass_nodes": 0,
-      "deselected_nodes": 0,
-      "placeholder_nodes": 0,
-      "ignored_active_nodes": 0
-    },
-    {
-      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -535,7 +258,72 @@
     },
     {
       "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -548,7 +336,371 @@
     },
     {
       "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_cwd_alias_and_parent_handle_paths",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+      "command_id": "PATCH-CMD-P4",
+      "outcome": "passed",
+      "collected_nodes": 1,
+      "passed_nodes": 1,
+      "skipped_nodes": 0,
+      "xfail_nodes": 0,
+      "xpass_nodes": 0,
+      "deselected_nodes": 0,
+      "placeholder_nodes": 0,
+      "ignored_active_nodes": 0
+    },
+    {
+      "node_id": "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
+      "command_id": "PATCH-CMD-P4",
       "outcome": "passed",
       "collected_nodes": 1,
       "passed_nodes": 1,
@@ -562,91 +714,91 @@
   ],
   "coverage": {
     "tool": "coverage.py",
-    "collected_pytest_nodes": 14684,
-    "nonempty_src_files": 497,
-    "statements": 146780,
-    "covered_statements": 146780,
+    "collected_pytest_nodes": 14722,
+    "nonempty_src_files": 498,
+    "statements": 147688,
+    "covered_statements": 147688,
     "missing_statements": 0,
-    "report_sha256": "e410beb04f085e9eb76db3279666c750ddb990f3e1c1d634e4112020d0f8c3b6",
-    "per_file_sha256": "585a96f7ccf29dbc928151a1c4a73067b9be5fe3db9a65e94662d2d892efcb0d"
+    "report_sha256": "d73be77debec7a223d01bfad902c93f744c83359fc8b6296b1cb746d62393c9e",
+    "per_file_sha256": "cef9e58e2daca2d3d8efb1e77fb9aa82cbfb058b36574cd102a2f6b42ffd4ae7"
   },
   "node_counts": {
-    "active_requirements": 255,
-    "planned_requirements": 762,
-    "active_acceptance_nodes": 37,
-    "planned_acceptance_nodes": 12
+    "active_requirements": 344,
+    "planned_requirements": 673,
+    "active_acceptance_nodes": 49,
+    "planned_acceptance_nodes": 11
   },
   "quality_gates": {
     "project_mypy": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Authoritative exact gate completed the strict source type verification."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "patch_mypy": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Patch strict type fixtures and source inventory passed through Phase 3."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "positive_type_assertions": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Active positive type fixtures passed."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "rejected_type_diagnostics": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Active negative fixtures matched their exact diagnostics."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "blocking_io_scan": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Patch source guard and strict AST checks passed for the dormant planner boundary."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "async_heartbeat": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "The async planner facade delegates only to a pure synchronous planner and performs no I/O."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     },
     "resource_leaks": {
       "status": "passed",
-      "command_id": "PATCH-CMD-P3",
-      "evidence": "Gate receipt recorded leak_warnings=0."
+      "command_id": "PATCH-CMD-P4",
+      "evidence": "Exact gate receipt: 39a68b31e2681701cee17e9adf915ccdb2f8fe1ee09b2997ef58f63916606b4f"
     }
   },
   "database_lifecycle": {
-    "migration_revision": "not_applicable_phase_3",
-    "schema_identity": "not_applicable_phase_3",
-    "crash_restart_boundary": "not_applicable_phase_3",
-    "encryption_key_fixture_version": "not_applicable_phase_3",
-    "outbox_settlement": "not_applicable_phase_3",
-    "teardown_proof": "not_applicable_phase_3"
+    "migration_revision": "not_applicable_phase_4",
+    "schema_identity": "not_applicable_phase_4",
+    "crash_restart_boundary": "not_applicable_phase_4",
+    "encryption_key_fixture_version": "not_applicable_phase_4",
+    "outbox_settlement": "not_applicable_phase_4",
+    "teardown_proof": "not_applicable_phase_4"
   },
   "profiles": [
     {
-      "id": "PATCH-PROFILE-P3",
-      "kind": "scripted",
+      "id": "PATCH-PROFILE-P4",
+      "kind": "real",
       "contexts": [
-        "abstract_snapshots"
+        "local"
       ],
-      "command_id": "PATCH-CMD-P3",
+      "command_id": "PATCH-CMD-P4",
       "e2e_ids": [
-        "PATCH-E2E-P3-PLANNER"
+        "PATCH-E2E-P4-INSPECTION"
       ],
-      "receipt": "Authoritative exact gate passed the scripted dormant text planner E2E profile."
+      "receipt": "Exact gate passed; rooted local inspection remains incapable of commit."
     }
   ],
   "e2e_ids": [
-    "PATCH-E2E-P3-PLANNER"
+    "PATCH-E2E-P4-INSPECTION"
   ],
   "redaction_and_bounds": {
-    "redaction_canary": "passed",
+    "redaction_canary": "not_applicable",
     "renderer_injection": "not_applicable",
     "timing_disclosure": "not_applicable",
-    "fuzz": "passed",
+    "fuzz": "not_applicable",
     "liveness": "passed",
     "retention": "not_applicable",
     "diagnostic_separation": "passed",
-    "max_request_bytes": 1048576,
+    "max_request_bytes": 10000,
     "max_duration_ticks": 1
   },
   "review": {
@@ -655,97 +807,182 @@
         "round": 1,
         "findings": [
           {
-            "id": "PATCH-REV-P3-001",
-            "severity": "P4",
-            "disposition": "accepted",
-            "owner": "phase3-implementation",
-            "evidence": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade exercises the bounded facade without registering or touching a target.",
-            "rationale": "The planner remains a typed pre-target candidate boundary."
+            "id": "PATCH-REV-P4-001",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Authority boundary finding was corrected and retested.",
+            "rationale": "Trusted scope must remain policy-owned."
+          },
+          {
+            "id": "PATCH-REV-P4-002",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Worker isolation finding was corrected and retested.",
+            "rationale": "Workspace inputs cannot control the worker."
+          },
+          {
+            "id": "PATCH-REV-P4-003",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Mount identity finding was corrected and retested.",
+            "rationale": "Rooted inspection requires stable mount evidence."
+          },
+          {
+            "id": "PATCH-REV-P4-004",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "FIFO rejection finding was corrected and retested.",
+            "rationale": "Special files must fail before inspection."
+          },
+          {
+            "id": "PATCH-REV-P4-005",
+            "severity": "P2",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Metadata and aggregate handling was corrected and retested.",
+            "rationale": "Snapshots require complete security metadata."
           }
         ],
-        "residual_risks": []
+        "residual_risks": [
+          "Commit and staging remain unavailable by design."
+        ]
       },
       {
         "round": 2,
         "findings": [
           {
-            "id": "PATCH-REV-P3-002",
+            "id": "PATCH-REV-P4-006",
             "severity": "P1",
             "disposition": "fixed",
-            "owner": "phase3-implementation",
-            "evidence": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_move_requires_authoritative_parent_mount rejects absent and mismatched destination-parent mount facts.",
-            "rationale": "Moves now require one exact authoritative parent mount observation and never default to the source mount."
+            "owner": "phase4-max-review",
+            "evidence": "Residual authority handling was corrected and retested.",
+            "rationale": "Scope selection remains fail-closed."
           },
           {
-            "id": "PATCH-REV-P3-003",
+            "id": "PATCH-REV-P4-007",
             "severity": "P1",
             "disposition": "fixed",
-            "owner": "phase3-implementation",
-            "evidence": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_diff_is_complete_content_not_digest_summary covers unified content, absent, move, BOM, and final-newline markers.",
-            "rationale": "The complete review artifact now renders initial-to-final content rather than digest-only summaries."
+            "owner": "phase4-max-review",
+            "evidence": "Residual mount handling was corrected and retested.",
+            "rationale": "Mount changes invalidate the inspection witness."
           },
           {
-            "id": "PATCH-REV-P3-004",
-            "severity": "P1",
+            "id": "PATCH-REV-P4-008",
+            "severity": "P2",
             "disposition": "fixed",
-            "owner": "phase3-implementation",
-            "evidence": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_aggregates_changed_candidate_and_diff_resources proves equal-length aggregate changes and candidate/diff limits reject at N plus one.",
-            "rationale": "Changed bytes, retained candidates, diff work, and planner memory are now accumulated conservatively over the full candidate."
-          },
-          {
-            "id": "PATCH-REV-P3-005",
-            "severity": "P1",
-            "disposition": "fixed",
-            "owner": "phase3-implementation",
-            "evidence": "tests/patch/phase_3_contract_test.py::test_patch_phase_3_memory_reserves_before_logical_allocations rejects the 1000-byte equal-length edit at 60000 bytes and proves deterministic N and N minus one planner-memory boundaries.",
-            "rationale": "Every planner-owned logical view and container reserves a conservative bound before allocation, so max_memory_bytes fails closed before oversized decoding, offsets, candidates, or diff buffers are created."
+            "owner": "phase4-max-review",
+            "evidence": "Residual aggregate handling was corrected and retested.",
+            "rationale": "Aggregate outcomes remain bounded and typed."
           }
         ],
         "residual_risks": [
-          "Closure approved: all P1 findings are fixed; no P0-P2 finding remains open.",
-          "Final retained exact gate and exact coverage completed."
+          "Commit and staging remain unavailable by design."
+        ]
+      },
+      {
+        "round": 3,
+        "findings": [
+          {
+            "id": "PATCH-REV-P4-009",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Object.__new__ bypass was corrected and retested.",
+            "rationale": "Protocol construction must not bypass authority checks."
+          }
+        ],
+        "residual_risks": [
+          "Commit and staging remain unavailable by design."
+        ]
+      },
+      {
+        "round": 4,
+        "findings": [
+          {
+            "id": "PATCH-REV-P4-010",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Worker verifier boundary was corrected and retested.",
+            "rationale": "Worker verification must not reintroduce ambient authority."
+          },
+          {
+            "id": "PATCH-REV-P4-011",
+            "severity": "P1",
+            "disposition": "fixed",
+            "owner": "phase4-max-review",
+            "evidence": "Seatbelt-read boundary was corrected and retested.",
+            "rationale": "Local reads remain rooted and policy bounded."
+          }
+        ],
+        "residual_risks": [
+          "Commit and staging remain unavailable by design."
+        ]
+      },
+      {
+        "round": 5,
+        "findings": [],
+        "residual_risks": [
+          "Maximum-reasoning review approved; no P0-P2 findings remain.",
+          "Commit and staging remain unavailable by design."
         ]
       }
     ]
   },
   "active_node_ids": [
-    "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
-    "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
-    "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
-    "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
-    "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
-    "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
-    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
-    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
-    "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
-    "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
-    "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
-    "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
-    "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
-    "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
-    "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
     "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
     "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
     "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
-    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
-    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
-    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
-    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
-    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
     "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
-    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
-    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
     "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
     "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
     "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
     "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
-    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts"
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_cwd_alias_and_parent_handle_paths",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
+    "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
+    "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+    "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
+    "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+    "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
+    "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
+    "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+    "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+    "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+    "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+    "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+    "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata"
   ],
   "external_effects": {
     "deployment": false,
@@ -754,5 +991,5 @@
     "workspace_mutation": false,
     "production_activation": false
   },
-  "record_sha256": "21ae0623ee351e049e6a8f80e7f09d74d98c9ef2d9d0af3105f65571d7a08e4e"
+  "record_sha256": "339e9a803abb80441c3997443c5a6501514cfcd97c716bc37f191bb94309a453"
 }
