@@ -61,10 +61,11 @@ from avalan.task.converters import (
     TaskFileConverterCapability,
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
-from avalan.task.stores import InMemoryTaskStore
+from avalan.task.stores import TASK_PGSQL_HEAD_REVISION, InMemoryTaskStore
 from avalan.task.targets import AgentTaskTargetRunner
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
+TASK_PGSQL_TEST_HEAD_REVISION = TASK_PGSQL_HEAD_REVISION
 TASK_HMAC_ENV = {
     "AVALAN_TASK_HMAC_KEY_ID": "cli-test-v1",
     "AVALAN_TASK_HMAC_KEY_B64": "dGFzay1obWFjLXRlc3Qta2V5",
@@ -5244,7 +5245,7 @@ class CliTaskPgsqlTestCase(TestCase):
         self.assertTrue(result)
         self.assertIn("configured", output)
         self.assertIn("tenant_tasks", output)
-        self.assertIn("20260801_0003", output)
+        self.assertIn(TASK_PGSQL_TEST_HEAD_REVISION, output)
         self.assertNotIn("secret", output)
         self.assertNotIn("db.example.com", output)
 

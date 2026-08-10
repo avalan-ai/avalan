@@ -4,7 +4,7 @@
   "phase": 12,
   "kind": "reviewed_provider_source_transition",
   "reviewed_by": "phase12-activation-review",
-  "reason": "Install exact reviewed native-provider activation boundaries while preserving inactive production defaults and historical lifecycle cleanup.",
+  "reason": "Install exact reviewed native-provider activation boundaries, retain the shared PostgreSQL migration-head compatibility update, and preserve inactive production defaults and historical lifecycle cleanup.",
   "transitions": [
     {
       "path": "src/avalan/conversation/__init__.py",
@@ -26,6 +26,20 @@
       "from_sha256": "8d5d2e2342513f688aa8d7478dec666a86d857ca21d23d79b734fba8062594e8",
       "to_size": 71209,
       "to_sha256": "bda5123c0bfc417973295c00ddc946ffeda78fed5c133b078bdcbb2a4ab7097d"
+    },
+    {
+      "path": "src/avalan/conversation/stores/pgsql.py",
+      "from_size": 200963,
+      "from_sha256": "7343ca816bac0edfbbc6d9900c70de9c820dbab28913162edb76ad7b6ed0b807",
+      "to_size": 201002,
+      "to_sha256": "c694a9c8ac0c66e635e734092ccd28cf79cbff52bfa0fa1659b02b88dceabe26"
+    },
+    {
+      "path": "tests/conversation/pgsql_store_test.py",
+      "from_size": 74488,
+      "from_sha256": "5cb9773d5e958ce5fdec15dfb1bd24e00324afec79371b9cce6753ab2b887f6d",
+      "to_size": 74702,
+      "to_sha256": "44267142eadebb61a2ea943fd4de97c2e23ea0ee16b765d8e64b8194b993618d"
     },
     {
       "path": "src/avalan/conversation/providers/openai.py",
@@ -103,5 +117,5 @@
     "tests/conversation/activation_test.py::test_stored_dispatch_and_lifecycle_use_registry_boundaries",
     "tests/conversation/full_matrix_e2e_test.py::test_required_matrix_cross_product"
   ],
-    "canonical_sha256": "cb706818138b5eba79f54e40d5237de26b75b28d3a8c8e74f3439ca3d33f2424"
+    "canonical_sha256": "a1fe168b70e6266baf2ec7498ea98de096b980e5528e047ce598e899ffe57136"
 }

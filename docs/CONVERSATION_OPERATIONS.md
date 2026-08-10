@@ -29,7 +29,7 @@ and read-only health checks where the deployment platform supports them.
 The PostgreSQL implementation is currently guarded as test-only. Do not expose
 production stored continuation until a release deliberately removes that guard
 and completes this runbook. The tracked head revision is
-`20260801_0003`; the application compatibility version is `2` and the current
+`20260809_0001_patch_durable`; the application compatibility version is `2` and the current
 schema read/write window is version `1`.
 
 Before a deployment:

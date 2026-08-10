@@ -40,6 +40,7 @@ from sys import addaudithook, stderr
 from tempfile import TemporaryDirectory
 
 from contract_gate import (
+    POSTGRESQL_TEST_DSN_ENV,
     ContractGateError,
     StrictJsonError,
     canonical_sha256,
@@ -53,10 +54,10 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 7
+_CURRENT_PHASE = 8
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
-    "24977565074eaaeba78515aa2b325fea2795355328085bfcbcf8533d5fc0361b"
+    "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
 )
 _FIXTURE_NAMES = (
     "requirements_traceability.json",
@@ -72,6 +73,8 @@ _FIXTURE_NAMES = (
     "threat_model.json",
     "baseline_evidence.json",
     "phase_evidence.json",
+    "phase7_evidence.json",
+    "phase_evidence_index.json",
 )
 _PHASE_EVIDENCE_ARTIFACT_ENVS = (
     "AVALAN_PATCH_PHASE_EVIDENCE_COVERAGE_JSON",
@@ -1060,6 +1063,11 @@ def load_phase0_contracts(
         root,
     )
     _validate_phase_evidence(fixtures / "phase_evidence.json", manifest, root)
+    _validate_phase_evidence_history(
+        fixtures / "phase_evidence_index.json",
+        fixtures / "phase7_evidence.json",
+        fixtures / "phase_evidence.json",
+    )
     verify_source_artifact_reads(root)
     return manifest
 
@@ -1091,6 +1099,7 @@ def verify_acceptance(
                 root,
                 tuple(node.node_id for node in nodes),
                 junit_path=Path(temporary) / "pytest.xml",
+                inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
             )
     except ContractGateError as exc:
         raise PatchAcceptanceError(str(exc)) from exc
@@ -3208,6 +3217,80 @@ def _validate_phase_evidence(
     }
     if payload.get("record_sha256") != canonical_sha256(canonical):
         raise PatchAcceptanceError("phase evidence digest is invalid")
+
+
+def _validate_phase_evidence_history(
+    index_path: Path,
+    phase_seven_path: Path,
+    phase_eight_path: Path,
+) -> None:
+    """Validate the immutable Phase 7 record and linked Phase 8 evidence."""
+    index = _load_mapping(index_path, "phase evidence index")
+    _exact_keys(
+        index,
+        {"schema_version", "feature", "records", "index_sha256"},
+        "phase evidence index",
+    )
+    _header(index, "phase evidence index")
+    records = object_list(index.get("records"), "phase evidence index records")
+    if len(records) != 2:
+        raise PatchAcceptanceError(
+            "phase evidence index record count is invalid"
+        )
+    expected = (
+        (7, "phase7_evidence.json", phase_seven_path, None),
+        (8, "phase_evidence.json", phase_eight_path, None),
+    )
+    previous_digest: str | None = None
+    for record, (phase, name, evidence_path, _) in zip(
+        records, expected, strict=True
+    ):
+        entry = mapping(record, "phase evidence index record")
+        _exact_keys(
+            entry,
+            {
+                "phase",
+                "path",
+                "previous_record_sha256",
+                "record_sha256",
+                "file_sha256",
+            },
+            "phase evidence index record",
+        )
+        if entry.get("phase") != phase or entry.get("path") != name:
+            raise PatchAcceptanceError("phase evidence index order is invalid")
+        if entry.get("previous_record_sha256") != previous_digest:
+            raise PatchAcceptanceError("phase evidence index chain is invalid")
+        evidence = _load_mapping(evidence_path, "historical phase evidence")
+        _header(evidence, "historical phase evidence")
+        if evidence.get("phase") != phase:
+            raise PatchAcceptanceError(
+                "historical phase evidence phase is invalid"
+            )
+        if phase == 7 and evidence.get("status") != "complete":
+            raise PatchAcceptanceError("Phase 7 evidence is not immutable")
+        canonical = {
+            key: value
+            for key, value in evidence.items()
+            if key != "record_sha256"
+        }
+        digest_value = evidence.get("record_sha256")
+        if (
+            type(digest_value) is not str
+            or digest_value != canonical_sha256(canonical)
+            or entry.get("record_sha256") != digest_value
+            or entry.get("file_sha256")
+            != sha256(evidence_path.read_bytes()).hexdigest()
+        ):
+            raise PatchAcceptanceError(
+                "phase evidence index digest is invalid"
+            )
+        previous_digest = digest_value
+    canonical_index = {
+        key: value for key, value in index.items() if key != "index_sha256"
+    }
+    if index.get("index_sha256") != canonical_sha256(canonical_index):
+        raise PatchAcceptanceError("phase evidence index seal is invalid")
 
 
 def _validate_phase_evidence_exact_gate(value: object, status: str) -> bool:

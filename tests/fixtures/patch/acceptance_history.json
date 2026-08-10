@@ -1844,9 +1844,27 @@
         "lifecycle": "active",
         "active_from_phase": 7,
         "executable_sha256": "f1371aa265ba5040a5598546905ca34ae293b4e21d1423d1cee614a65faf18e4"
+      },
+      {
+        "id": "PATCH-A-108",
+        "requirement_ids": [
+          "PATCH-R-0457"
+        ],
+        "category": "crash",
+        "surface": "store",
+        "context": "local",
+        "platform": "postgresql",
+        "operation": "recover",
+        "authority": "fence",
+        "commit_boundary": "settlement",
+        "evidence_class": "database",
+        "node_id": "tests/patch/phase_8_contract_test.py::test_patch_phase_8_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 8,
+        "executable_sha256": "3f249b82c06eb6a644ef3fbf2dd34d24f424d9700903002e0c7d7fb23a8777c8"
       }
     ],
-    "snapshot_sha256": "24977565074eaaeba78515aa2b325fea2795355328085bfcbcf8533d5fc0361b"
+    "snapshot_sha256": "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
   },
   "replacements": [
     {
@@ -2334,11 +2352,11 @@
         "node_id": "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
         "lifecycle": "active",
         "active_from_phase": 0,
-      "executable_sha256": "cd1413098018b885093bee1ea80622425742d797a169f8a73a2eb80fe819bf2f"
+        "executable_sha256": "cd1413098018b885093bee1ea80622425742d797a169f8a73a2eb80fe819bf2f"
       },
-  "review_round": 5,
-  "reviewer": "phase7-turn5-current-phase-exactness-review",
-  "rationale": "The tracked current phase is asserted against the hard gate phase before the dormant preflight runs."
+      "review_round": 5,
+      "reviewer": "phase7-turn5-current-phase-exactness-review",
+      "rationale": "The tracked current phase is asserted against the hard gate phase before the dormant preflight runs."
     },
     {
       "old": {
@@ -3158,7 +3176,48 @@
       "review_round": 2,
       "reviewer": "phase7-max-review-turn2",
       "rationale": "Maximum-reasoning review required receipt-bound Darwin mutation capability evidence, coordinator-only rooted worker authority and reconciliation, production-bound precommit faults, and canonical settlement assertions."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-108",
+        "requirement_ids": [
+          "PATCH-R-0457"
+        ],
+        "category": "crash",
+        "surface": "store",
+        "context": "local",
+        "platform": "postgresql",
+        "operation": "recover",
+        "authority": "fence",
+        "commit_boundary": "settlement",
+        "evidence_class": "database",
+        "node_id": "tests/patch/phase_8_contract_test.py::test_patch_phase_8_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 8,
+        "executable_sha256": "3f249b82c06eb6a644ef3fbf2dd34d24f424d9700903002e0c7d7fb23a8777c8"
+      },
+      "new": {
+        "id": "PATCH-A-108",
+        "requirement_ids": [
+          "PATCH-R-0457"
+        ],
+        "category": "crash",
+        "surface": "store",
+        "context": "local",
+        "platform": "postgresql",
+        "operation": "recover",
+        "authority": "fence",
+        "commit_boundary": "settlement",
+        "evidence_class": "database",
+        "node_id": "tests/patch/phase_8_pgsql_process_fault_test.py::test_pgsql_pending_restart_authenticates_original_branch",
+        "lifecycle": "active",
+        "active_from_phase": 8,
+        "executable_sha256": "0c763cbe30f2800575efc5750c7617fabd33fbe404432aeb242b7b641a6f07be"
+      },
+      "review_round": 4,
+      "reviewer": "phase8-max-review-turn4",
+      "rationale": "Turn 4 replaces the mislabeled in-memory witness with the isolated PostgreSQL pending, restart, authenticated inspect, await, and replay acceptance node."
     }
   ],
-  "history_sha256": "4fc277133a5d5dd2cd50005af2954582be9e1aeb1c1fa82bfd8523f0dacc904a"
+  "history_sha256": "72670c22ea16e460cf1cd3527bf0a045365a455599af302a4a47091b246c7b7b"
 }

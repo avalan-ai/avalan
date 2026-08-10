@@ -1,4 +1,7 @@
 from ...pgsql import (
+    TASK_PGSQL_HEAD_REVISION as _TASK_PGSQL_HEAD_REVISION,
+)
+from ...pgsql import (
     PgsqlDatabase,
     PgsqlFailureCategory,
     PgsqlOperationError,
@@ -133,11 +136,11 @@ from json import dumps, loads
 from pathlib import Path
 from re import fullmatch
 from threading import Lock
-from typing import Any, Protocol, cast
+from typing import Protocol, cast
 from uuid import uuid4
 
 TASK_PGSQL_ALEMBIC_VERSION_TABLE = "avalan_task_alembic_version"
-TASK_PGSQL_HEAD_REVISION = "20260801_0003"
+TASK_PGSQL_HEAD_REVISION = _TASK_PGSQL_HEAD_REVISION
 TASK_PGSQL_ADVISORY_LOCK_ID = 8_172_673_911_930_301_927
 _TASK_PGSQL_REVISION_MODULES = (
     "avalan.task.stores.pgsql_migrations.versions.v20260530_0001_task_schema",
@@ -148,6 +151,10 @@ _TASK_PGSQL_REVISION_MODULES = (
     (
         "avalan.task.stores.pgsql_migrations.versions."
         "v20260801_0003_conversation_checkpoints"
+    ),
+    (
+        "avalan.task.stores.pgsql_migrations.versions."
+        "v20260809_0001_patch_durable_store"
     ),
 )
 _TASK_PGSQL_ALEMBIC_LOCK = Lock()
@@ -164,6 +171,43 @@ class _AlembicConfig(Protocol):
     attributes: dict[str, object]
 
     def set_main_option(self, name: str, value: str) -> None: ...
+
+
+class _AlembicConfigModule(Protocol):
+    """Describe the dynamic Alembic configuration module boundary."""
+
+    def Config(self) -> _AlembicConfig: ...
+
+
+class _AlembicCommandModule(Protocol):
+    """Describe the Alembic command entry points used by task migrations."""
+
+    def current(
+        self,
+        config: _AlembicConfig,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+    def stamp(
+        self,
+        config: _AlembicConfig,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+    def upgrade(
+        self,
+        config: _AlembicConfig,
+        *args: object,
+        **kwargs: object,
+    ) -> object: ...
+
+
+class _TaskPgsqlRevisionModule(Protocol):
+    """Describe one statically inventoried task schema revision module."""
+
+    TASK_SCHEMA_STATEMENTS: tuple[str, ...]
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -3700,10 +3744,8 @@ def task_pgsql_script_location() -> str:
 def task_pgsql_schema_statements() -> tuple[str, ...]:
     statements: list[str] = []
     for module_name in _TASK_PGSQL_REVISION_MODULES:
-        revision = cast(Any, import_module(module_name))
-        revision_statements = revision.TASK_SCHEMA_STATEMENTS
-        assert isinstance(revision_statements, tuple)
-        for statement in revision_statements:
+        revision = cast(_TaskPgsqlRevisionModule, import_module(module_name))
+        for statement in revision.TASK_SCHEMA_STATEMENTS:
             _assert_non_empty_string(statement, "statement")
             statements.append(statement)
     return tuple(statements)
@@ -3792,8 +3834,11 @@ def task_pgsql_alembic_config(
             f"{diagnostic.code}: {diagnostic.message}"
         )
 
-    config_module = cast(Any, settings.module_importer("alembic.config"))
-    config = cast(_AlembicConfig, config_module.Config())
+    config_module = cast(
+        _AlembicConfigModule,
+        settings.module_importer("alembic.config"),
+    )
+    config = config_module.Config()
     config.set_main_option("script_location", task_pgsql_script_location())
     config.set_main_option(
         "sqlalchemy.url",
@@ -3818,10 +3863,20 @@ def _run_alembic_command(
     **kwargs: object,
 ) -> None:
     config = task_pgsql_alembic_config(settings)
-    command_module = cast(Any, settings.module_importer("alembic.command"))
-    command = getattr(command_module, command_name)
+    command_module = cast(
+        _AlembicCommandModule,
+        settings.module_importer("alembic.command"),
+    )
     with _TASK_PGSQL_ALEMBIC_LOCK:
-        command(config, *args, **kwargs)
+        match command_name:
+            case "current":
+                command_module.current(config, *args, **kwargs)
+            case "stamp":
+                command_module.stamp(config, *args, **kwargs)
+            case "upgrade":
+                command_module.upgrade(config, *args, **kwargs)
+            case _:
+                raise AssertionError("unsupported Alembic command")
 
 
 def _assert_revision(value: str) -> None:

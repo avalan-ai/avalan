@@ -37,7 +37,7 @@ from tempfile import TemporaryDirectory
 from contract_gate import StrictJsonError, canonical_sha256, strict_json_path
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 7
+_CURRENT_PHASE = 8
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
 _PROHIBITED_SOURCE_PATTERN = compile_regex(
@@ -342,7 +342,6 @@ def _verify_strict_sources(
             "changed or untracked Python path is not owned: "
             + ",".join(path.as_posix() for path in unowned)
         )
-    paths: list[str] = []
     for source in sources:
         path = _source_path(root, source.path)
         if not path.is_file() or path.is_symlink():
@@ -362,8 +361,14 @@ def _verify_strict_sources(
             ) from exc
         _verify_symbols(tree, source)
         _verify_strict_ast(tree, source)
-        paths.append(source.path)
-    _run_strict_source_mypy(root, tuple(paths))
+    _run_strict_source_mypy(root, _strict_mypy_paths(sources))
+
+
+def _strict_mypy_paths(sources: tuple[StrictSource, ...]) -> tuple[str, ...]:
+    """Return complete modules eligible for whole-module strict mypy."""
+    return tuple(
+        source.path for source in sources if source.scope != "integration_hunk"
+    )
 
 
 def discover_repository_python_paths(
@@ -750,6 +755,8 @@ def _node_line(node: AST) -> int:
 
 def _run_strict_source_mypy(root: Path, paths: tuple[str, ...]) -> None:
     """Run strict mypy over the complete frozen source inventory."""
+    if not paths:
+        return
     environment = {
         key: value
         for key, value in environ.items()

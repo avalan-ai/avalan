@@ -1497,7 +1497,7 @@
       },
       {
         "path": "src/avalan/conversation/stores/pgsql.py",
-        "source_sha256": "7343ca816bac0edfbbc6d9900c70de9c820dbab28913162edb76ad7b6ed0b807"
+        "source_sha256": "c694a9c8ac0c66e635e734092ccd28cf79cbff52bfa0fa1659b02b88dceabe26"
       },
       {
         "path": "src/avalan/conversation/value.py",
@@ -1705,7 +1705,7 @@
       },
       {
         "path": "src/avalan/interaction/stores/pgsql.py",
-        "source_sha256": "97d6758ec1952215a42ae52f66a0d855016c8fab19eede61814ce8c7ddbd2dda"
+        "source_sha256": "c8924543360a49f1fa99aa3e9fae3a135edb6fb5b7ac95186c8620c3e96200b5"
       },
       {
         "path": "src/avalan/interaction/validation.py",
@@ -2113,7 +2113,27 @@
       },
       {
         "path": "src/avalan/patch/domain.py",
-        "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
+        "source_sha256": "8524c2d3c4f728e1eac650ea1ecc081ad03eb401cd6257127922e0d4536c15f7"
+      },
+      {
+        "path": "src/avalan/patch/durable_approval.py",
+        "source_sha256": "fd1f661421730e5b41a560e9efbe64436e795a13a11c987f11d8309b1a3f4f0e"
+      },
+      {
+        "path": "src/avalan/patch/durable_coordinator.py",
+        "source_sha256": "700553868876640da16b296e99683ca83719000bdf40a60195432f378ecb3463"
+      },
+      {
+        "path": "src/avalan/patch/durable_outbox.py",
+        "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
+      },
+      {
+        "path": "src/avalan/patch/durable_retention.py",
+        "source_sha256": "b4f1a5f350fc92aecc4916614461a0683c49b3dfa660773109f1d09eacf14eaa"
+      },
+      {
+        "path": "src/avalan/patch/durable_store.py",
+        "source_sha256": "c8af7d47f4bfde4ce7548201a7aa8ee030e28a5bc4490aefef83bfc92bd0b830"
       },
       {
         "path": "src/avalan/patch/local_commit.py",
@@ -2122,6 +2142,10 @@
       {
         "path": "src/avalan/patch/parser.py",
         "source_sha256": "1a3dcdca31e35d6ab495f785012d482759a5d5fbff1d1734933f9730bb49b653"
+      },
+      {
+        "path": "src/avalan/patch/pgsql_store.py",
+        "source_sha256": "bf21a322283fea5e5e0818f9bf9e823b972be54d13dca3632cde587bb0dcf9aa"
       },
       {
         "path": "src/avalan/patch/planner.py",
@@ -2137,7 +2161,7 @@
       },
       {
         "path": "src/avalan/pgsql.py",
-        "source_sha256": "6ebcef60d9acd3318b54b2d3c1bfc11ffc9d6ffb68ac9cde411bed7f90955b7f"
+        "source_sha256": "134aba0b2513253bba2618851c1e199b12cc7e9a73b6a8ccb6350da1588f57c9"
       },
       {
         "path": "src/avalan/sandbox/__init__.py",
@@ -2509,7 +2533,7 @@
       },
       {
         "path": "src/avalan/task/stores/pgsql.py",
-        "source_sha256": "902e26eddfb484d2229c6b7631a88425ccd4105e9e8e9b72520090ac4e87db57"
+        "source_sha256": "b27a8eb84a9dc63e4bf635fe21a9c1f9b94e0b3b4c15e70736e49eddc345ae54"
       },
       {
         "path": "src/avalan/task/stores/pgsql_benchmark.py",
@@ -2538,6 +2562,10 @@
       {
         "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260801_0003_conversation_checkpoints.py",
         "source_sha256": "a84b6ef7e8d8671af6cbd9c5f0429d24756f9bbffee19ce6ea374e7117b6e4cf"
+      },
+      {
+        "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260809_0001_patch_durable_store.py",
+        "source_sha256": "4bb67e48dba5b020c659f4f110671f14f5f4e58e8cab301a393ccddfe68d10d0"
       },
       {
         "path": "src/avalan/task/target.py",
@@ -3115,7 +3143,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "45be040ef6dafbfe730d404fc6c33f9287fcc26777f95e2b02f75f160ed65849"
+        "source_sha256": "ed24ced9156fd10a1ce3f7884b5992d80da8baf73e48557f1ea288cd61a185fb"
       }
     ],
     "public_tools": [
@@ -3161,6 +3189,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "33cec6d0a846c87c19243648c8854044ab1319e571b5a13268d4060e79aaed56",
-  "record_sha256": "65051771ac8e288797cac80540b5f49e096bb8679292ca5218f86e0798ad156e"
+  "inventory_sha256": "068bc45efad0fd7f0cd2f427ca2522bd4a93cc94f4c731f4253d427850be3403",
+  "record_sha256": "36278df7a6113f6dbf2d4b0ac5b739438fcfa65e15775d6c4d4b2d557f1d26af"
 }

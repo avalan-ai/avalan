@@ -105,10 +105,10 @@ def _manifest_node(
 
 
 def test_patch_acceptance_positive_load() -> None:
-    """Load the complete active Phase 6 patch contract bundle."""
+    """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 7
+    assert manifest.current_phase == 8
     assert len(manifest.active_nodes(5)) == 59
 
 
@@ -119,6 +119,36 @@ def test_patch_acceptance_validates_complete_phase_evidence() -> None:
     _VERIFIER._validate_phase_evidence(
         _FIXTURES / "phase_evidence.json", manifest, _ROOT
     )
+
+
+def test_patch_acceptance_inherits_only_postgresql_test_dsn(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pass only the owned PostgreSQL test capability to Phase 8 nodes."""
+    observed: list[tuple[str, ...]] = []
+
+    def execute_nodes(
+        root: Path,
+        node_ids: tuple[str, ...],
+        *,
+        junit_path: Path,
+        inherited_names: tuple[str, ...],
+    ) -> None:
+        """Record exact inherited environment names for acceptance tests."""
+        assert root == _ROOT
+        assert junit_path.name == "pytest.xml"
+        assert (
+            "tests/patch/phase_8_pgsql_process_fault_test.py::"
+            "test_pgsql_pending_restart_authenticates_original_branch"
+            in node_ids
+        )
+        observed.append(inherited_names)
+
+    monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
+
+    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=8)
+
+    assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
 
 def test_patch_acceptance_history_snapshot_is_pinned() -> None:
@@ -224,15 +254,13 @@ def test_patch_acceptance_accepts_reviewed_history_replacement(
     _write(manifest_path, manifest_payload)
     replacement = deepcopy(historical)
     replacement["id"] = "PATCH-A-REPLACED"
-    replacements.append(
-        {
-            "old": historical,
-            "new": replacement,
-            "review_round": 3,
-            "reviewer": "round-3-contract-review",
-            "rationale": "Reviewed replacement seals every semantic field.",
-        }
-    )
+    replacements.append({
+        "old": historical,
+        "new": replacement,
+        "review_round": 3,
+        "reviewer": "round-3-contract-review",
+        "rationale": "Reviewed replacement seals every semantic field.",
+    })
     _resign(history, "history_sha256")
     _write(history_path, history)
 
