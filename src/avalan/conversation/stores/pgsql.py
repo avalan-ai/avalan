@@ -1,6 +1,7 @@
 """Persist authenticated encrypted conversation checkpoints in PostgreSQL."""
 
 from ...pgsql import (
+    TASK_PGSQL_HEAD_REVISION,
     PgsqlCursor,
     PgsqlDatabase,
     PgsqlFailureCategory,
@@ -155,7 +156,7 @@ from itertools import count
 from typing import Protocol, TypeVar, final
 from uuid import uuid4
 
-CONVERSATION_PGSQL_HEAD_REVISION = "20260801_0003"
+CONVERSATION_PGSQL_HEAD_REVISION = TASK_PGSQL_HEAD_REVISION
 CONVERSATION_PGSQL_APPLICATION_VERSION = 2
 CONVERSATION_PGSQL_INSTALL_COMMAND = (
     'python3 -m pip install -U "avalan[task-pgsql,server]"'

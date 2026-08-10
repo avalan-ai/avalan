@@ -1,6 +1,7 @@
 """Persist interactions and portable continuations in PostgreSQL."""
 
 from ...pgsql import (
+    TASK_PGSQL_HEAD_REVISION,
     PgsqlAtomicSuspensionParticipant,
     PgsqlDatabase,
     PgsqlOperationError,
@@ -190,7 +191,7 @@ from re import fullmatch
 from typing import Any, NoReturn, Protocol, TypeVar, cast, final
 from uuid import uuid4
 
-INTERACTION_PGSQL_HEAD_REVISION = "20260801_0003"
+INTERACTION_PGSQL_HEAD_REVISION = TASK_PGSQL_HEAD_REVISION
 INTERACTION_PGSQL_INSTALL_COMMAND = (
     'python3 -m pip install -U "avalan[task-pgsql]"'
 )

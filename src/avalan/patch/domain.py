@@ -200,6 +200,46 @@ class PatchPendingOperationId(_PatchIdentifier):
 
 
 @dataclass(frozen=True, slots=True)
+class PatchCommitOwnerId(_PatchIdentifier):
+    """Identify one fenced durable commit worker."""
+
+    @classmethod
+    def _identifier_prefix(cls) -> str:
+        """Return the durable commit-owner identity prefix."""
+        return "owner_"
+
+
+@dataclass(frozen=True, slots=True)
+class PatchRetentionKeyId(_PatchIdentifier):
+    """Identify one versioned key for retained private patch material."""
+
+    @classmethod
+    def _identifier_prefix(cls) -> str:
+        """Return the private-retention key identity prefix."""
+        return "retention_"
+
+
+@dataclass(frozen=True, slots=True)
+class PatchRetentionRecordId(_PatchIdentifier):
+    """Identify one retained encrypted patch record."""
+
+    @classmethod
+    def _identifier_prefix(cls) -> str:
+        """Return the encrypted retention-record identity prefix."""
+        return "retained_"
+
+
+@dataclass(frozen=True, slots=True)
+class PatchArtifactId(_PatchIdentifier):
+    """Identify one target-owned context-visible staging artifact."""
+
+    @classmethod
+    def _identifier_prefix(cls) -> str:
+        """Return the staging-artifact identity prefix."""
+        return "artifact_"
+
+
+@dataclass(frozen=True, slots=True)
 class PatchObserverId(_PatchIdentifier):
     """Identify one random observer correlation."""
 

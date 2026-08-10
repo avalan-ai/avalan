@@ -176,7 +176,7 @@ def test_patch_gate_contract_is_current() -> None:
             token in contents for token in advertisement["forbidden_tokens"]
         )
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 7
+    assert _GATE._PATCH_CURRENT_PHASE == 8
 
 
 @pytest.mark.parametrize(
@@ -266,6 +266,94 @@ def test_patch_strict_source_mypy_is_hermetic_and_keeps_owned_paths(
     assert "--follow-imports=silent" in observed
     assert "--cache-dir=/dev/null" in observed
     assert observed[-len(owned) :] == owned
+
+
+def test_patch_type_gate_limits_whole_module_mypy_to_complete_sources() -> (
+    None
+):
+    """Keep integration hunks under exact structural ownership only."""
+    sources = (
+        _TYPES.StrictSource(
+            identifier="PATCH-TS-TEST-001",
+            path="src/owned.py",
+            scope="patch_domain",
+            symbols=("module",),
+            source_sha256="0" * 64,
+        ),
+        _TYPES.StrictSource(
+            identifier="PATCH-TS-TEST-002",
+            path="tests/legacy_test.py",
+            scope="integration_hunk",
+            symbols=("COMPATIBILITY_HEAD",),
+            source_sha256="1" * 64,
+        ),
+    )
+
+    assert _TYPES._strict_mypy_paths(sources) == ("src/owned.py",)
+
+
+def test_patch_type_gate_keeps_integration_hunks_under_exact_structural(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Require digest, symbol, and AST checks for every integration hunk."""
+    source_path = tmp_path / "src" / "compatibility.py"
+    source_path.parent.mkdir()
+    payload = b'COMPATIBILITY_HEAD = "current"\n'
+    source_path.write_bytes(payload)
+    source = _TYPES.StrictSource(
+        identifier="PATCH-TS-TEST-003",
+        path="src/compatibility.py",
+        scope="integration_hunk",
+        symbols=("COMPATIBILITY_HEAD",),
+        source_sha256=sha256(payload).hexdigest(),
+    )
+    observed: tuple[str, ...] | None = None
+
+    def run_mypy(root: Path, paths: tuple[str, ...]) -> None:
+        nonlocal observed
+        assert root == tmp_path
+        observed = paths
+
+    monkeypatch.setattr(_TYPES, "_repository_python_paths", lambda root: ())
+    monkeypatch.setattr(_TYPES, "_run_strict_source_mypy", run_mypy)
+
+    _TYPES._verify_strict_sources(tmp_path, (source,), ())
+
+    assert observed == ()
+    source_path.write_text(
+        'COMPATIBILITY_HEAD = "changed"\n', encoding="utf-8"
+    )
+    with pytest.raises(
+        _TYPES.PatchTypeContractError,
+        match="patch strict source digest changed",
+    ):
+        _TYPES._verify_strict_sources(tmp_path, (source,), ())
+
+    cast_payload = b'COMPATIBILITY_HEAD = cast(str, "current")\n'
+    source_path.write_bytes(cast_payload)
+    cast_source = _TYPES.StrictSource(
+        identifier="PATCH-TS-TEST-004",
+        path="src/compatibility.py",
+        scope="integration_hunk",
+        symbols=("COMPATIBILITY_HEAD",),
+        source_sha256=sha256(cast_payload).hexdigest(),
+    )
+    with pytest.raises(_TYPES.PatchTypeContractError, match="cast"):
+        _TYPES._verify_strict_sources(tmp_path, (cast_source,), ())
+
+    source_path.write_text('OTHER = "current"\n', encoding="utf-8")
+    missing_source = _TYPES.StrictSource(
+        identifier="PATCH-TS-TEST-005",
+        path="src/compatibility.py",
+        scope="integration_hunk",
+        symbols=("COMPATIBILITY_HEAD",),
+        source_sha256=sha256(source_path.read_bytes()).hexdigest(),
+    )
+    with pytest.raises(
+        _TYPES.PatchTypeContractError,
+        match="patch strict source symbol is missing",
+    ):
+        _TYPES._verify_strict_sources(tmp_path, (missing_source,), ())
 
 
 def test_patch_fixture_mypy_is_hermetic_and_scopes_owned_diagnostics(
@@ -469,7 +557,7 @@ def test_preflight_executes_no_pytest_process(
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
-def test_preflight_rejects_caller_database_before_patch_phase8(
+def test_preflight_rejects_caller_database_before_patch_phase_8(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reject caller database state while patch durability remains dormant."""
@@ -482,14 +570,16 @@ def test_preflight_rejects_caller_database_before_patch_phase8(
         _GATE.PatchContractGateError,
         match="reject caller-supplied PostgreSQL state",
     ):
-        _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
+        _GATE._reject_invalid_database_context(7)
+
+    _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV)
     with pytest.raises(
         _GATE.PatchContractGateError,
         match="patch acceptance phase is not implemented",
     ):
-        _GATE.preflight(8, repo_root=_ROOT)
+        _GATE.preflight(9, repo_root=_ROOT)
 
 
 def test_baseline_section2_evidence_rejects_source_drift(
@@ -795,6 +885,24 @@ def test_nonexistent_active_e2e_fails_at_collection_before_execution(
         assert isinstance(mutated, dict)
         _resign(mutated, digest_field)
         _write(path, mutated)
+
+    index_path = fixtures / "phase_evidence_index.json"
+    index = loads(index_path.read_text(encoding="utf-8"))
+    assert isinstance(index, dict)
+    records = index["records"]
+    assert isinstance(records, list)
+    current = records[-1]
+    assert isinstance(current, dict)
+    evidence = loads(
+        (fixtures / "phase_evidence.json").read_text(encoding="utf-8")
+    )
+    assert isinstance(evidence, dict)
+    current["record_sha256"] = evidence["record_sha256"]
+    current["file_sha256"] = sha256(
+        (fixtures / "phase_evidence.json").read_bytes()
+    ).hexdigest()
+    _resign(index, "index_sha256")
+    _write(index_path, index)
 
     completed = run(
         (

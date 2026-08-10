@@ -22,6 +22,9 @@ from avalan.conversation.stores import pgsql as pgsql_module
 from avalan.pgsql import PgsqlConnection, PgsqlCursor, PgsqlFailure, PgsqlRow
 
 pytestmark = pytest.mark.anyio
+CONVERSATION_PGSQL_TEST_HEAD_REVISION = (
+    pgsql_module.CONVERSATION_PGSQL_HEAD_REVISION
+)
 
 
 @pytest.fixture
@@ -31,7 +34,11 @@ def anyio_backend() -> str:
 
 
 class _Cursor:
-    def __init__(self, *, revision: str = "20260801_0003") -> None:
+    def __init__(
+        self,
+        *,
+        revision: str = CONVERSATION_PGSQL_TEST_HEAD_REVISION,
+    ) -> None:
         self.revision = revision
         self.query = ""
 
@@ -105,7 +112,11 @@ class _Connection:
 
 
 class _Database:
-    def __init__(self, *, revision: str = "20260801_0003") -> None:
+    def __init__(
+        self,
+        *,
+        revision: str = CONVERSATION_PGSQL_TEST_HEAD_REVISION,
+    ) -> None:
         self.revision = revision
         self.open_calls = 0
         self.close_calls = 0
@@ -206,7 +217,7 @@ class _NoCloseDatabase:
     def connection(self) -> AbstractAsyncContextManager[PgsqlConnection]:
         return cast(
             AbstractAsyncContextManager[PgsqlConnection],
-            _Connection(revision="20260801_0003"),
+            _Connection(revision=CONVERSATION_PGSQL_TEST_HEAD_REVISION),
         )
 
     def open(self) -> None:
@@ -1915,7 +1926,7 @@ async def test_scripted_key_rotation_and_schema_window_fail_closed(
                     at=datetime(2026, 8, 1, 12, tzinfo=UTC),
                 )
 
-    revision = {"version_num": pgsql_module.CONVERSATION_PGSQL_HEAD_REVISION}
+    revision = {"version_num": CONVERSATION_PGSQL_TEST_HEAD_REVISION}
     incompatible = {
         "schema_version": 2,
         "minimum_reader_version": 1,

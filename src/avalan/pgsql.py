@@ -23,6 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 PgsqlParameters = tuple[object, ...] | Mapping[str, object] | None
 PgsqlRow = Mapping[str, object]
 ModuleImporter = Callable[[str], object]
+TASK_PGSQL_HEAD_REVISION = "20260809_0001_patch_durable"
 
 
 class PgsqlTransaction(Protocol):

@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 7,
+  "current_phase": 8,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -941,12 +941,12 @@
     {
       "id": "PATCH-A-108",
       "category": "crash",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 8,
       "requirement_ids": [
         "PATCH-R-0457"
       ],
-      "node_id": "tests/patch/phase_8_contract_test.py::test_patch_phase_8_requirements",
+      "node_id": "tests/patch/phase_8_pgsql_process_fault_test.py::test_pgsql_pending_restart_authenticates_original_branch",
       "surface": "store",
       "context": "local",
       "platform": "postgresql",
@@ -2365,5 +2365,5 @@
       "evidence_class": "race"
     }
   ],
-  "manifest_sha256": "faadc6c3b7065461088a9f10a01b4485618ac2e88263c6ae8863c667072514ec"
+  "manifest_sha256": "979db3e68b6d001440ed8635d236a07ac59b0a3a267b63f3810e072f121382be"
 }

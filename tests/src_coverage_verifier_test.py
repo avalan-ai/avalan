@@ -14,6 +14,8 @@ import pytest
 
 _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests" / "fixtures" / "input"
+CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES = (206, 207, 208)
+COVERAGE_EXCLUSION_REPORT_LINE_COUNT = 2260
 
 
 def _load_verifier() -> ModuleType:
@@ -580,10 +582,9 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     )
     store_path = "src/avalan/conversation/store.py"
     assert current.report_lines[store_path] == (160, 161, 162)
-    assert current.report_lines["src/avalan/conversation/stores/pgsql.py"] == (
-        205,
-        206,
-        207,
+    assert (
+        current.report_lines["src/avalan/conversation/stores/pgsql.py"]
+        == CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES
     )
     assert current.report_lines[
         "src/avalan/server/responses_lifecycle.py"
@@ -615,7 +616,10 @@ def test_repository_exclusion_evidence_matches_current_source() -> None:
     )
     assert len(baseline.directives) == 55
     assert len(current.directives) == 67
-    assert sum(map(len, current.report_lines.values())) == 2234
+    assert (
+        sum(map(len, current.report_lines.values()))
+        == COVERAGE_EXCLUSION_REPORT_LINE_COUNT
+    )
 
     incomplete_report = dict(current.report_lines)
     incomplete_report[protocol_path] = protocol_lines[:-1]

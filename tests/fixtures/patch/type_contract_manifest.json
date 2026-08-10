@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 7,
+  "current_phase": 8,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -309,6 +309,15 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase7_sync_channel_negative.py:18:32: error: Incompatible types in assignment (expression has type \"SynchronousChannel\", variable has type \"RootedCommitChannel\")  [assignment]"
       ]
+    },
+    {
+      "id": "PATCH-T-030",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 8,
+      "path": "tests/patch_type_contracts/phase8_positive.py",
+      "source_sha256": "34841ea79c4f1103078cf7a88a2c53b196e6138dc20344ef5db98ff3bf4f7bc6",
+      "expected_diagnostics": []
     }
   ],
   "sources": [
@@ -337,7 +346,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a735aa1aee333756d545872131f79181dbdffff733b02cf45147db87f03ed6f8"
+      "source_sha256": "5614cd5decd7cb5fbe64a96281445f22dd8b9d04d991423137764a0f62f4e259"
     },
     {
       "id": "PATCH-TS-004",
@@ -346,7 +355,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "53cd8cbd1f5a49b853493b4e1d1eb40334d754f3570643858db4e4e236fc7ef4"
+      "source_sha256": "a6e264d20d0ab2bec7b0b16bb0b3a322a98975b87eedce68d14c500b62ac5b5c"
     },
     {
       "id": "PATCH-TS-005",
@@ -355,7 +364,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9255e13cad2771b12974a5ad7e38ce6e7832e7f7a97decf9d1b8b12f198dd203"
+      "source_sha256": "8ab35e39085b1ec61342a44d7758c1df7656680b32d18189765cdc5485f19d20"
     },
     {
       "id": "PATCH-TS-006",
@@ -382,7 +391,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "df534af3f6883be6a20699af57b8e8867b8cc9f4f60584ddfdaf4c746a1bd9cd"
+      "source_sha256": "ead3ad63a7cafe34f6fdb415964ce4ce6beac97792296536fde144dde9e20c95"
     },
     {
       "id": "PATCH-TS-009",
@@ -391,7 +400,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "45a303965f72d4940c83a1d9c6a9ea36b4851a009dd6e04d40e7a28962f182cd"
+      "source_sha256": "56b1c9ba84fc79706179fd159f345f18b492ff3fb3955ad92fa4e23a018fb785"
     },
     {
       "id": "PATCH-TS-010",
@@ -445,7 +454,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
+      "source_sha256": "8524c2d3c4f728e1eac650ea1ecc081ad03eb401cd6257127922e0d4536c15f7"
     },
     {
       "id": "PATCH-TS-016",
@@ -572,7 +581,217 @@
         "module"
       ],
       "source_sha256": "d79728f1d2d3f82c6bde8b82f7583e43e4f7a3450fae06c8f43cb7f786dc036e"
+    },
+    {
+      "id": "PATCH-TS-030",
+      "path": "src/avalan/patch/durable_coordinator.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "700553868876640da16b296e99683ca83719000bdf40a60195432f378ecb3463"
+    },
+    {
+      "id": "PATCH-TS-031",
+      "path": "src/avalan/patch/durable_store.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c8af7d47f4bfde4ce7548201a7aa8ee030e28a5bc4490aefef83bfc92bd0b830"
+    },
+    {
+      "id": "PATCH-TS-032",
+      "path": "src/avalan/patch/pgsql_store.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "bf21a322283fea5e5e0818f9bf9e823b972be54d13dca3632cde587bb0dcf9aa"
+    },
+    {
+      "id": "PATCH-TS-033",
+      "path": "src/avalan/task/stores/pgsql.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "TASK_PGSQL_HEAD_REVISION",
+        "_TASK_PGSQL_REVISION_MODULES"
+      ],
+      "source_sha256": "b27a8eb84a9dc63e4bf635fe21a9c1f9b94e0b3b4c15e70736e49eddc345ae54"
+    },
+    {
+      "id": "PATCH-TS-034",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260809_0001_patch_durable_store.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "TASK_SCHEMA_STATEMENTS"
+      ],
+      "source_sha256": "4bb67e48dba5b020c659f4f110671f14f5f4e58e8cab301a393ccddfe68d10d0"
+    },
+    {
+      "id": "PATCH-TS-035",
+      "path": "tests/patch/phase_8_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ad79cc0e6938e833ff2ef1fc7a96175508795c417e16193da9f2bb19aa099caf"
+    },
+    {
+      "id": "PATCH-TS-036",
+      "path": "tests/patch/phase_8_durable_continuation_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9f29a95cba6efb3f224049d99e38c697aeb0fa4d7ef52397fb0ab3361c7b62f7"
+    },
+    {
+      "id": "PATCH-TS-037",
+      "path": "tests/patch/phase_8_pgsql_migration_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "48679a7b80c4901791ed8dc0bbde18070553bc171de83d196d0bf7f7dd67c7e2"
+    },
+    {
+      "id": "PATCH-TS-038",
+      "path": "tests/patch/phase_8_pgsql_store_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "2437f252800e3cc5ad5bfc13396194d8aa1538d0c87d8406cf7f40b53fbc12bf"
+    },
+    {
+      "id": "PATCH-TS-039",
+      "path": "tests/patch/phase_8_store_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "762e89bf0d3dd197a8795b2b7966d5a35f49056e320e5e449f47114b0886222b"
+    },
+    {
+      "id": "PATCH-TS-040",
+      "path": "tests/patch_type_contracts/phase8_positive.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "34841ea79c4f1103078cf7a88a2c53b196e6138dc20344ef5db98ff3bf4f7bc6"
+    },
+    {
+      "id": "PATCH-TS-041",
+      "path": "src/avalan/patch/durable_outbox.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
+    },
+    {
+      "id": "PATCH-TS-042",
+      "path": "src/avalan/patch/durable_retention.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b4f1a5f350fc92aecc4916614461a0683c49b3dfa660773109f1d09eacf14eaa"
+    },
+    {
+      "id": "PATCH-TS-043",
+      "path": "tests/patch/phase_8_fault_isolation_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "84d94736ee6a77354cd3c056e313b8eabe922fcec6a22ddad03431d927cd9e45"
+    },
+    {
+      "id": "PATCH-TS-044",
+      "path": "tests/patch/phase_8_pgsql_process_fault_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "a8cf38ffba85f239c2469fd0f0c27c5fe0165e858f63837abf03b8a1ccc90587"
+    },
+    {
+      "id": "PATCH-TS-045",
+      "path": "src/avalan/patch/durable_approval.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "fd1f661421730e5b41a560e9efbe64436e795a13a11c987f11d8309b1a3f4f0e"
+    },
+    {
+      "id": "PATCH-TS-046",
+      "path": "src/avalan/pgsql.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "TASK_PGSQL_HEAD_REVISION"
+      ],
+      "source_sha256": "134aba0b2513253bba2618851c1e199b12cc7e9a73b6a8ccb6350da1588f57c9"
+    },
+    {
+      "id": "PATCH-TS-047",
+      "path": "src/avalan/conversation/stores/pgsql.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "CONVERSATION_PGSQL_HEAD_REVISION"
+      ],
+      "source_sha256": "c694a9c8ac0c66e635e734092ccd28cf79cbff52bfa0fa1659b02b88dceabe26"
+    },
+    {
+      "id": "PATCH-TS-048",
+      "path": "src/avalan/interaction/stores/pgsql.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "INTERACTION_PGSQL_HEAD_REVISION"
+      ],
+      "source_sha256": "c8924543360a49f1fa99aa3e9fae3a135edb6fb5b7ac95186c8620c3e96200b5"
+    },
+    {
+      "id": "PATCH-TS-049",
+      "path": "tests/cli/task_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "TASK_PGSQL_TEST_HEAD_REVISION"
+      ],
+      "source_sha256": "b213472568c2e4699cb4e3f18100fb3a8773c6c2ebc4a352daed46cb7e8d9eda"
+    },
+    {
+      "id": "PATCH-TS-050",
+      "path": "tests/conversation/pgsql_store_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "CONVERSATION_PGSQL_TEST_HEAD_REVISION"
+      ],
+      "source_sha256": "44267142eadebb61a2ea943fd4de97c2e23ea0ee16b765d8e64b8194b993618d"
+    },
+    {
+      "id": "PATCH-TS-051",
+      "path": "tests/src_coverage_verifier_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
+        "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
+      ],
+      "source_sha256": "0c6ebd840cb2afcee40b44765687796faeed301cf87928a4cef222048f2eee2c"
+    },
+    {
+      "id": "PATCH-TS-052",
+      "path": "scripts/verify_conversation_acceptance.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        "_phase12_provider_transitions"
+      ],
+      "source_sha256": "e3d75b40ab82800601e3614344b133e908bf5395784cd929a1a0fd687ff14fe9"
     }
   ],
-  "manifest_sha256": "6ce8554f9d5c27c5f1faf6add552555a66c4507e519a3d7f6fc44db1f1fc9f85"
+  "manifest_sha256": "c23f557275b9050269b52f845ac3989b00ae6dd7d91dcd66dddcb0a6cddc90f5"
 }

@@ -462,7 +462,7 @@ _PHASE12_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase12.json"
 )
 _PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "cb706818138b5eba79f54e40d5237de26b75b28d3a8c8e74f3439ca3d33f2424"
+    "a1fe168b70e6266baf2ec7498ea98de096b980e5528e047ce598e899ffe57136"
 )
 _PHASE12_TRACEABILITY_CANDIDATE_PATH = (
     "tests/fixtures/conversation/acceptance_candidate.phase12.json"
@@ -3947,7 +3947,7 @@ def _phase11_provider_transitions(
 def _phase12_provider_transitions(
     root: Path,
 ) -> dict[str, tuple[int, str, int, str]]:
-    """Validate exact native-provider activation source transitions."""
+    """Validate activation and PostgreSQL compatibility source transitions."""
     path = root / _PHASE12_PROVIDER_TRANSITION_PATH
     if not path.is_file():
         path = repository_root() / _PHASE12_PROVIDER_TRANSITION_PATH
@@ -4054,7 +4054,7 @@ def _phase12_provider_transitions(
             to_size,
             to_sha256,
         )
-    if len(transitions) != 13:
+    if len(transitions) != 15:
         raise ConversationAcceptanceError(
             "Phase 12 provider transition inventory is invalid"
         )

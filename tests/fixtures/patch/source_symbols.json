@@ -98,14 +98,14 @@
       "path": "src/avalan/patch/domain.py",
       "symbol": "DomainFacade",
       "artifact_class": "patch_domain",
-      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
+      "source_sha256": "8524c2d3c4f728e1eac650ea1ecc081ad03eb401cd6257127922e0d4536c15f7"
     },
     {
       "id": "PATCH-SYM-015",
       "path": "src/avalan/patch/domain.py",
       "symbol": "PatchResult",
       "artifact_class": "patch_domain",
-      "source_sha256": "41a83324a814f9a476e6129baf4acf98a49ac8093cce9a069417e8699a707700"
+      "source_sha256": "8524c2d3c4f728e1eac650ea1ecc081ad03eb401cd6257127922e0d4536c15f7"
     },
     {
       "id": "PATCH-SYM-016",
@@ -197,7 +197,63 @@
       "symbol": "LocalCommitTarget",
       "artifact_class": "patch_local_commit",
       "source_sha256": "805962125528b3d15ffe8ef09c20d956191a4c269312ece7e4f4db9dbc3c9310"
+    },
+    {
+      "id": "PATCH-SYM-029",
+      "path": "src/avalan/patch/durable_store.py",
+      "symbol": "DurablePatchStore",
+      "artifact_class": "patch_durable_store",
+      "source_sha256": "c8af7d47f4bfde4ce7548201a7aa8ee030e28a5bc4490aefef83bfc92bd0b830"
+    },
+    {
+      "id": "PATCH-SYM-030",
+      "path": "src/avalan/patch/durable_coordinator.py",
+      "symbol": "DurablePatchTestHost",
+      "artifact_class": "patch_durable_host",
+      "source_sha256": "700553868876640da16b296e99683ca83719000bdf40a60195432f378ecb3463"
+    },
+    {
+      "id": "PATCH-SYM-031",
+      "path": "src/avalan/patch/pgsql_store.py",
+      "symbol": "PgsqlDurablePatchStore",
+      "artifact_class": "patch_durable_pgsql",
+      "source_sha256": "bf21a322283fea5e5e0818f9bf9e823b972be54d13dca3632cde587bb0dcf9aa"
+    },
+    {
+      "id": "PATCH-SYM-032",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260809_0001_patch_durable_store.py",
+      "symbol": "upgrade",
+      "artifact_class": "patch_durable_migration",
+      "source_sha256": "4bb67e48dba5b020c659f4f110671f14f5f4e58e8cab301a393ccddfe68d10d0"
+    },
+    {
+      "id": "PATCH-SYM-033",
+      "path": "src/avalan/patch/durable_outbox.py",
+      "symbol": "DurableOutboxProjector",
+      "artifact_class": "patch_durable_outbox",
+      "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
+    },
+    {
+      "id": "PATCH-SYM-034",
+      "path": "src/avalan/patch/durable_retention.py",
+      "symbol": "AesGcmDurableRetentionCipher",
+      "artifact_class": "patch_durable_retention",
+      "source_sha256": "b4f1a5f350fc92aecc4916614461a0683c49b3dfa660773109f1d09eacf14eaa"
+    },
+    {
+      "id": "PATCH-SYM-035",
+      "path": "src/avalan/patch/durable_approval.py",
+      "symbol": "PhaseFiveDurableApprovalIssuer",
+      "artifact_class": "patch_durable_approval",
+      "source_sha256": "fd1f661421730e5b41a560e9efbe64436e795a13a11c987f11d8309b1a3f4f0e"
+    },
+    {
+      "id": "PATCH-SYM-036",
+      "path": "src/avalan/patch/durable_outbox.py",
+      "symbol": "EventManagerDurableOutboxProjection",
+      "artifact_class": "patch_durable_outbox_projection",
+      "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
     }
   ],
-  "inventory_sha256": "3d596e17d3b89e9cf55b9efb8c5053bed1ba5f18033b7819ab719aa0983cd09a"
+  "inventory_sha256": "957afdeec7545caa3a23cfe61bf70e474cdadcf00974f81ef39479fdbaf14291"
 }
