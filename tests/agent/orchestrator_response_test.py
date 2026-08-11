@@ -113,6 +113,11 @@ from avalan.tool.shell.input_files import shell_input_file_filter
 from avalan.tool.shell.settings import ShellToolSettings
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
+PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE: tuple[str, ...] = (
+    "raw-patch-lifecycle",
+    "staged-patch-projection",
+)
+
 
 def _parser_catalog(
     canonical_name: str,
@@ -4275,6 +4280,18 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
                 (),
                 ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,
             ),
+            (
+                "patch-missing-raw-arguments",
+                {"name": "patch.edit"},
+                (),
+                ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,
+            ),
+            (
+                "patch-invalid-utf8",
+                {"name": "patch.edit"},
+                ("\ud800",),
+                ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,
+            ),
         )
 
         for call_id, ready_data, argument_deltas, expected_code in cases:
@@ -4324,6 +4341,80 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(call.id, "call-no-arguments")
         self.assertEqual(call.name, "calc")
         self.assertIsNone(call.arguments)
+
+        response = make_response()
+        state = response._canonical_tool_call_lifecycle("patch-raw")
+        state.ready_item = _canonical_item(
+            StreamItemKind.TOOL_CALL_READY,
+            1,
+            data={"name": "patch.edit"},
+            correlation=StreamItemCorrelation(tool_call_id="patch-raw"),
+        )
+        state.argument_deltas.append('{"path":"note.txt","edits":[]}')
+
+        patch_call = response._tool_call_from_canonical_lifecycle(
+            "patch-raw",
+            state,
+        )
+
+        self.assertIsNotNone(patch_call)
+        assert patch_call is not None
+        self.assertEqual(patch_call.name, "patch.edit")
+        self.assertEqual(
+            patch_call.raw_arguments,
+            b'{"path":"note.txt","edits":[]}',
+        )
+
+    async def test_staged_patch_calls_republish_only_closed_ready_metadata(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_text_response(),
+            agent,
+            _dummy_operation(),
+            {},
+            enable_tool_parsing=False,
+        )
+        correlation = StreamItemCorrelation(tool_call_id="patch-staged")
+        response._canonical_tool_call_lifecycle("patch-staged")
+        response._staged_tool_call_items = [
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_ARGUMENT_DELTA,
+                1,
+                text_delta='{"path":"secret.txt"}',
+                correlation=correlation,
+            ),
+            _canonical_item(
+                StreamItemKind.TOOL_CALL_READY,
+                2,
+                data={"name": "untrusted", "arguments": {}},
+                correlation=correlation,
+            ),
+        ]
+
+        response._publish_staged_domain_tool_calls(
+            [
+                ToolCall(
+                    id="patch-staged",
+                    name="patch.edit",
+                    raw_arguments=b"{}",
+                )
+            ]
+        )
+
+        published = [
+            item
+            for item in response.canonical_items
+            if item.correlation.tool_call_id == "patch-staged"
+        ]
+        self.assertEqual(
+            [item.kind for item in published], [StreamItemKind.TOOL_CALL_READY]
+        )
+        self.assertEqual(published[0].data, {"name": "patch.edit"})
 
     async def test_iteration_waits_until_tool_call_done_before_execution(
         self,

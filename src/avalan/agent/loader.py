@@ -54,6 +54,7 @@ from ..memory.manager import MemoryManager
 from ..model.file_delivery import LocalFileDeliveryProfile
 from ..model.hubs.huggingface import HuggingfaceHub
 from ..model.manager import ModelManager
+from ..patch.toolset import PatchToolLoader
 from ..skill import (
     CANONICAL_SKILLS_TOOL_NAMES,
     BundledSkillSourceAuthority,
@@ -125,6 +126,7 @@ else:
     Partitioner = Any
 
 _SHELL_EXECUTION_MODE_FIELDS = frozenset({"backend", "execution_mode"})
+_PATCH_TOOL_LOADER_INTEGRATION = "trusted_async_binding"
 
 SentenceTransformerModel: type[Any] | None = None
 TextPartitioner: type[Any] | None = None
@@ -1527,8 +1529,10 @@ class OrchestratorLoader:
             )
             container_runtime = tool_settings.container or container_runtime
             isolation_runtime = tool_settings.isolation or isolation_runtime
+            patch_settings = tool_settings.patch
             extra = tool_settings.extra
         else:
+            patch_settings = None
             extra = None
 
         if skills_config is not None:
@@ -1570,6 +1574,7 @@ class OrchestratorLoader:
             ),
             container=container_runtime,
             isolation=isolation_runtime,
+            patch=patch_settings,
             extra=extra,
         )
 
@@ -2050,6 +2055,7 @@ class OrchestratorLoader:
         shell_settings = tool_settings.shell if tool_settings else None
         container_runtime = tool_settings.container if tool_settings else None
         isolation_runtime = tool_settings.isolation if tool_settings else None
+        patch_settings = tool_settings.patch if tool_settings else None
         enabled_tools = normalize_shell_enabled_tools(settings.tools)
         if _skills_tools_requested(enabled_tools):
             assert (
@@ -2155,22 +2161,32 @@ class OrchestratorLoader:
             ):
                 active_shell_settings = candidate_shell_settings
 
-        tool = ToolManager.create_instance(
-            available_toolsets=available_toolsets,
-            enable_tools=effective_enabled_tools,
-            settings=ToolManagerSettings(
-                tool_format=tool_format,
-                tool_name_policy=(
-                    tool_name_policy or ToolNamePolicySettings()
-                ),
-                filters=(
-                    [shell_input_file_filter(active_shell_settings)]
-                    if active_shell_settings is not None
-                    else None
-                ),
-                recovery_formats=tool_recovery_formats or [],
+        manager_settings = ToolManagerSettings(
+            tool_format=tool_format,
+            tool_name_policy=(tool_name_policy or ToolNamePolicySettings()),
+            filters=(
+                [shell_input_file_filter(active_shell_settings)]
+                if active_shell_settings is not None
+                else None
             ),
+            recovery_formats=tool_recovery_formats or [],
         )
+        if patch_settings is None:
+            tool = ToolManager.create_instance(
+                available_toolsets=available_toolsets,
+                enable_tools=effective_enabled_tools,
+                settings=manager_settings,
+            )
+        else:
+            patch_bundle = await PatchToolLoader(
+                patch_settings.binder,
+                patch_settings.profile,
+            ).load(
+                enable_tools=effective_enabled_tools,
+                ordinary_toolsets=available_toolsets,
+                settings=manager_settings,
+            )
+            tool = patch_bundle.manager
         tool = await self._stack.enter_async_context(tool)
 
         _l(

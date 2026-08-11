@@ -1,3 +1,4 @@
+from .._patch_authority import _PatchAuthorityValidator
 from ..entities import (
     TOOL_DISPLAY_PROJECTOR_METADATA_KEY,
     PreparedToolCall,
@@ -13,6 +14,7 @@ from ..entities import (
     ToolDescriptor,
     ToolDescriptorMetadataValue,
     ToolDisplayProjector,
+    ToolDomainExecutionContract,
     ToolFilter,
     ToolFilterResult,
     ToolFilterResultStatus,
@@ -41,8 +43,13 @@ from contextlib import AsyncExitStack
 from dataclasses import dataclass, field, replace
 from inspect import Parameter, signature
 from types import TracebackType
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from uuid import uuid4
+
+_PATCH_TOOL_NAMES = frozenset({"patch.edit", "patch.apply"})
+
+if TYPE_CHECKING:
+    from ..patch.toolset import PatchInvocationCapability
 
 
 @dataclass(frozen=True, slots=True)
@@ -67,6 +74,7 @@ class _ToolSemanticIdentity:
     return_schema_semantics: object = field(repr=False)
     provider_safe_schema_semantics: object = field(repr=False)
     capabilities: ToolCapabilities
+    domain_execution: ToolDomainExecutionContract | None
     policy_semantics: object = field(repr=False)
     metadata_semantics: object = field(repr=False)
     display_projector_owner: object | None = field(repr=False)
@@ -147,6 +155,8 @@ class ToolManager:
     _skills_bootstrap_prompt_settings: SkillBootstrapPromptSettings | None
     _tools: dict[str, Callable[..., Any]] | None = None
     _toolsets: list[ToolSet] | None = None
+    _patch_context_capability: "PatchInvocationCapability | None" = None
+    _patch_registration: object | None = None
 
     @classmethod
     def create_instance(
@@ -200,9 +210,23 @@ class ToolManager:
         """Return the configured parallel tool execution limit."""
         return self._settings.maximum_parallel_tool_calls
 
+    def bind_patch_context_capability(
+        self, capability: "PatchInvocationCapability"
+    ) -> None:
+        """Bind the one already-authenticated patch context capability."""
+        if (
+            capability is None
+            or self._patch_context_capability is None
+            or capability is not self._patch_context_capability
+        ):
+            raise ValueError("patch context capability is invalid")
+
     def list_tools(self) -> list[ToolDescriptor]:
         """Return descriptors for enabled tools."""
-        return list(self._descriptors.values())
+        return [
+            self._public_tool_descriptor(descriptor)
+            for descriptor in self._descriptors.values()
+        ]
 
     def export_model_capability_seed(self) -> dict[str, Any]:
         """Return an isolated callable-free model capability seed."""
@@ -296,7 +320,12 @@ class ToolManager:
         resolution = self.resolve_tool_name(name)
         if resolution.canonical_name is None:
             return None
-        return self._descriptors.get(resolution.canonical_name)
+        descriptor = self._descriptors.get(resolution.canonical_name)
+        return (
+            None
+            if descriptor is None
+            else self._public_tool_descriptor(descriptor)
+        )
 
     def describe_tool_call(self, call: ToolCall) -> ToolDescriptor | None:
         """Return the descriptor for an executable tool call."""
@@ -304,7 +333,12 @@ class ToolManager:
         resolution = self._resolve_call_name(call)
         if resolution.canonical_name is None:
             return None
-        return self._descriptors.get(resolution.canonical_name)
+        descriptor = self._descriptors.get(resolution.canonical_name)
+        return (
+            None
+            if descriptor is None
+            else self._public_tool_descriptor(descriptor)
+        )
 
     def is_tool_call_parallel_safe(self, call: ToolCall) -> bool:
         """Return whether ``call`` may execute in a parallel fanout."""
@@ -390,6 +424,29 @@ class ToolManager:
         if provider_diagnostic is not None:
             return provider_diagnostic
 
+        descriptor = self._descriptors[resolution.canonical_name]
+        tool = descriptor.callable
+        assert tool is not None
+        if self._is_patch_descriptor(
+            resolution.canonical_name,
+            tool,
+        ):
+            if (
+                descriptor.domain_execution is None
+                or call.raw_arguments is None
+                or not callable(getattr(tool, "invoke_raw", None))
+            ):
+                return self._diagnostic(
+                    call=call,
+                    canonical_name=resolution.canonical_name,
+                    code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                    stage=ToolCallDiagnosticStage.VALIDATE,
+                    message=(
+                        "Patch tool calls require complete raw JSON arguments."
+                    ),
+                )
+            return None
+
         arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
             return ToolCallDiagnostic(
@@ -437,6 +494,7 @@ class ToolManager:
         stack = AsyncExitStack()
         snapshots = self._snapshot_toolset_tools(toolsets)
         try:
+            self._validate_patch_tool_ownership(toolsets)
             advertised_inventories = [
                 self._toolset_inventory_snapshot(
                     toolset,
@@ -484,6 +542,7 @@ class ToolManager:
                     selected, ToolSet
                 ), "with_enabled_tools must return a ToolSet"
                 selected_toolsets.append(selected)
+            self._validate_patch_tool_ownership(selected_toolsets)
             plans = [
                 self._registration_plan(
                     toolset,
@@ -503,6 +562,7 @@ class ToolManager:
                     strict=True,
                 )
             ]
+            self._validate_final_patch_registrations(plans)
             state = self._registry_state(plans, resolved_settings)
         except BaseException:
             self._restore_toolset_tools(snapshots)
@@ -513,6 +573,122 @@ class ToolManager:
         self._stack = stack
         self._registration_plans = plans
         self._commit_registry_state(state)
+        self._bind_patch_registration(selected_toolsets)
+
+    @classmethod
+    def _validate_patch_tool_ownership(
+        cls, toolsets: Sequence[ToolSet]
+    ) -> None:
+        """Reject reserved patch names unless one sealed toolset owns them."""
+        for toolset in toolsets:
+            registration_getter = getattr(toolset, "_patch_registration", None)
+            registration = (
+                registration_getter()
+                if callable(registration_getter)
+                else None
+            )
+            if not _PatchAuthorityValidator.registration_is_issued(
+                registration, toolset
+            ):
+                registration = None
+            for candidate in cls._tool_candidates(toolset):
+                reserved_names = (
+                    candidate.canonical_name,
+                    *candidate.aliases,
+                )
+                if not any(
+                    name in _PATCH_TOOL_NAMES for name in reserved_names
+                ):
+                    continue
+                if (
+                    registration is None
+                    or candidate.canonical_name not in _PATCH_TOOL_NAMES
+                    or candidate.aliases
+                    or not _PatchAuthorityValidator.registration_owns(
+                        registration,
+                        candidate.canonical_name,
+                        candidate.tool,
+                    )
+                ):
+                    raise ValueError(
+                        "reserved patch tools require the sealed patch "
+                        "toolset registration"
+                    )
+
+    @classmethod
+    def _validate_final_patch_registrations(
+        cls,
+        plans: Sequence[_ToolsetRegistrationPlan],
+    ) -> None:
+        """Validate reserved ownership at the final registration boundary."""
+        for plan in plans:
+            cls._validate_patch_tool_ownership((plan.toolset,))
+            registration_getter = getattr(
+                plan.toolset,
+                "_patch_registration",
+                None,
+            )
+            registration = (
+                registration_getter()
+                if callable(registration_getter)
+                else None
+            )
+            for entry in plan.registrations:
+                if entry.canonical_name not in _PATCH_TOOL_NAMES:
+                    continue
+                if (
+                    registration is None
+                    or not _PatchAuthorityValidator.registration_is_issued(
+                        registration, plan.toolset
+                    )
+                    or not _PatchAuthorityValidator.registration_owns(
+                        registration,
+                        entry.canonical_name,
+                        entry.tool,
+                    )
+                ):
+                    raise ValueError(
+                        "reserved patch tools require the sealed patch "
+                        "toolset registration"
+                    )
+
+    def _bind_patch_registration(self, toolsets: Sequence[ToolSet]) -> None:
+        """Bind one exact registered patch capability after selection."""
+        registrations: list[object] = []
+        for toolset in toolsets:
+            registration_getter = getattr(toolset, "_patch_registration", None)
+            if not callable(registration_getter):
+                continue
+            registration = registration_getter()
+            if _PatchAuthorityValidator.registration_is_issued(
+                registration, toolset
+            ):
+                registrations.append(registration)
+        tools = self._tools
+        assert tools is not None
+        matching = [
+            registration
+            for registration in registrations
+            if any(
+                _PatchAuthorityValidator.registration_owns(
+                    registration,
+                    name,
+                    callable_tool,
+                )
+                for name, callable_tool in tools.items()
+                if name in _PATCH_TOOL_NAMES
+            )
+        ]
+        if not matching:
+            return
+        if len(matching) != 1:
+            raise ValueError("patch tool ownership is ambiguous")
+        registration = matching[0]
+        self._patch_registration = registration
+        self._patch_context_capability = cast(
+            "PatchInvocationCapability",
+            getattr(registration, "capability"),
+        )
 
     def set_eos_token(self, eos_token: str) -> None:
         self._parser.set_eos_token(eos_token)
@@ -795,6 +971,7 @@ class ToolManager:
                 descriptor.provider_safe_schema
             ),
             capabilities=descriptor.capabilities,
+            domain_execution=descriptor.domain_execution,
             policy_semantics=cls._freeze_semantic_json(descriptor.policy),
             metadata_semantics=cls._freeze_semantic_json(metadata),
             display_projector_owner=projector_owner,
@@ -866,6 +1043,7 @@ class ToolManager:
             and left.provider_safe_schema_semantics
             == right.provider_safe_schema_semantics
             and left.capabilities == right.capabilities
+            and left.domain_execution == right.domain_execution
             and left.policy_semantics == right.policy_semantics
             and left.metadata_semantics == right.metadata_semantics
             and left.display_projector_owner is right.display_projector_owner
@@ -1504,6 +1682,7 @@ class ToolManager:
                 assert previous is not None
                 self._validate_reregistration_semantics(previous, plan)
                 plans[registered_index] = plan
+            self._validate_final_patch_registrations(plans)
             state = self._registry_state(plans, self._settings)
         except BaseException:
             self._restore_toolset_tools(snapshots)
@@ -1627,8 +1806,58 @@ class ToolManager:
             ),
             namespace=namespace,
             capabilities=cls._tool_capabilities(tool),
+            domain_execution=cls._tool_domain_execution_contract(tool),
             metadata=cls._tool_metadata(tool) if include_metadata else {},
         )
+
+    @staticmethod
+    def _copy_tool_descriptor(descriptor: ToolDescriptor) -> ToolDescriptor:
+        """Return one defensive descriptor copy for manager-visible state."""
+
+        def copy_schema(
+            value: dict[str, Any] | None,
+            label: str,
+        ) -> dict[str, Any] | None:
+            if value is None:
+                return None
+            return cast(
+                dict[str, Any],
+                _copy_model_capability_json(value, label),
+            )
+
+        return ToolDescriptor(
+            name=descriptor.name,
+            callable=descriptor.callable,
+            aliases=list(descriptor.aliases),
+            schema=copy_schema(descriptor.schema, "tool descriptor schema"),
+            parameter_schema=copy_schema(
+                descriptor.parameter_schema,
+                "tool descriptor parameter schema",
+            ),
+            return_schema=copy_schema(
+                descriptor.return_schema,
+                "tool descriptor return schema",
+            ),
+            provider_safe_schema=copy_schema(
+                descriptor.provider_safe_schema,
+                "tool descriptor provider-safe schema",
+            ),
+            namespace=descriptor.namespace,
+            capabilities=descriptor.capabilities,
+            domain_execution=descriptor.domain_execution,
+            policy=dict(descriptor.policy),
+            metadata=dict(descriptor.metadata),
+        )
+
+    @classmethod
+    def _public_tool_descriptor(
+        cls,
+        descriptor: ToolDescriptor,
+    ) -> ToolDescriptor:
+        """Return the safe public descriptor for one registered tool."""
+        if descriptor.domain_execution is None:
+            return descriptor
+        return cls._copy_tool_descriptor(descriptor)
 
     @classmethod
     def _tool_metadata(
@@ -1675,6 +1904,19 @@ class ToolManager:
         )
 
     @staticmethod
+    def _tool_domain_execution_contract(
+        tool: Callable[..., Any] | Tool,
+    ) -> ToolDomainExecutionContract | None:
+        """Return one typed privileged-domain execution contract, if any."""
+        configured = getattr(tool, "domain_execution_contract", None)
+        if configured is None:
+            return None
+        assert isinstance(
+            configured, ToolDomainExecutionContract
+        ), "domain_execution_contract must be typed"
+        return configured
+
+    @staticmethod
     def _coerce_tool_capabilities(value: object) -> ToolCapabilities:
         if isinstance(value, ToolCapabilities):
             return value
@@ -1709,10 +1951,6 @@ class ToolManager:
         """Return a prepared execution plan or a diagnostic."""
         assert call
 
-        diagnostic = self._guard_diagnostic(call, context)
-        if diagnostic is not None:
-            return diagnostic
-
         await _check_cancelled(context)
 
         prepared = self._prepare_resolved_call(
@@ -1722,9 +1960,18 @@ class ToolManager:
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
 
+        sealed_patch = self._is_patch_prepared_call(prepared)
+        if not sealed_patch:
+            diagnostic = self._guard_diagnostic(
+                prepared.call, prepared.context
+            )
+            if diagnostic is not None:
+                return diagnostic
+
         filtered = await self._apply_filters(
             prepared.call,
             prepared.context,
+            sealed_patch=sealed_patch,
         )
         if isinstance(filtered, ToolCallDiagnostic):
             return filtered
@@ -1738,9 +1985,22 @@ class ToolManager:
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
 
-        diagnostic = self._guard_diagnostic(prepared.call, prepared.context)
-        if diagnostic is not None:
-            return diagnostic
+        if sealed_patch != self._is_patch_prepared_call(prepared):
+            return self._diagnostic(
+                call=call,
+                canonical_name=prepared.call.name,
+                code=ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+                stage=ToolCallDiagnosticStage.FILTER,
+                message="Tool filters cannot cross the sealed patch boundary.",
+            )
+
+        if not sealed_patch:
+            diagnostic = self._guard_diagnostic(
+                prepared.call,
+                prepared.context,
+            )
+            if diagnostic is not None:
+                return diagnostic
 
         validation = self._validate_prepared_call(prepared)
         if validation is not None:
@@ -1752,8 +2012,14 @@ class ToolManager:
     ) -> ToolCallResult | ToolCallError:
         """Execute a prepared call without rerunning preparation."""
         assert isinstance(prepared, PreparedToolCall)
-        await _check_cancelled(prepared.context)
-        return await self._execute_prepared_call(prepared)
+        authenticated = self._authenticate_prepared_call(prepared)
+        if authenticated is None:
+            return self._rejected_prepared_call(prepared.call)
+        await _check_cancelled(authenticated.context)
+        validation = self._validate_prepared_call(authenticated)
+        if validation is not None:
+            return self._rejected_prepared_call(authenticated.call)
+        return await self._execute_prepared_call(authenticated)
 
     async def execute_call(
         self,
@@ -1777,7 +2043,7 @@ class ToolManager:
         if isinstance(prepared, ToolCallDiagnostic):
             return prepared
 
-        if confirm is not None:
+        if confirm is not None and not self._is_patch_call(prepared.call):
             action = confirm(prepared.call)
             if isinstance(action, Awaitable):
                 action = await action
@@ -1793,6 +2059,8 @@ class ToolManager:
         try:
             return await self.execute_prepared_call(prepared)
         except CancelledError:
+            if self._is_patch_prepared_call(prepared):
+                raise
             return self._cancelled_diagnostic(
                 prepared.call,
                 canonical_name=prepared.call.name,
@@ -1835,6 +2103,14 @@ class ToolManager:
         if self._settings.execution_mode is ToolManagerExecutionMode.OUTCOMES:
             return await self.execute_call(call, context)
 
+        if self._is_patch_call(call):
+            outcome = await self.execute_call(call, context)
+            return (
+                outcome
+                if isinstance(outcome, (ToolCallResult, ToolCallError))
+                else None
+            )
+
         if self._guard_diagnostic(call, context) is not None:
             return None
 
@@ -1843,17 +2119,18 @@ class ToolManager:
 
         await _check_cancelled(context)
 
-        filtered = await self._apply_filters(call, context)
+        filtered = await self._apply_filters(
+            call,
+            context,
+            sealed_patch=False,
+        )
         if isinstance(filtered, ToolCallDiagnostic):
             return None
         call, context = filtered
 
         await _check_cancelled(context)
 
-        prepared = self._prepare_resolved_call(
-            call,
-            context,
-        )
+        prepared = self._prepare_resolved_call(call, context)
         if isinstance(prepared, ToolCallDiagnostic):
             return None
         if self._guard_diagnostic(prepared.call, prepared.context) is not None:
@@ -1885,6 +2162,53 @@ class ToolManager:
         if provider_diagnostic is not None:
             return provider_diagnostic
 
+        descriptor = self._descriptors[resolution.canonical_name]
+        tool = descriptor.callable
+        assert tool is not None
+        if self._is_patch_descriptor(
+            resolution.canonical_name,
+            tool,
+        ):
+            if (
+                descriptor.domain_execution is None
+                or (
+                    context.patch_capability is not None
+                    and context.patch_capability
+                    is not self._patch_context_capability
+                )
+                or call.raw_arguments is None
+                or not callable(getattr(tool, "invoke_raw", None))
+            ):
+                return self._diagnostic(
+                    call=call,
+                    canonical_name=resolution.canonical_name,
+                    code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+                    stage=ToolCallDiagnosticStage.VALIDATE,
+                    message=(
+                        "Patch tool calls require the active trusted "
+                        "capability and complete raw JSON arguments."
+                    ),
+                )
+            prepared_call = ToolCall(
+                id=call.id,
+                name=resolution.canonical_name,
+                raw_arguments=call.raw_arguments,
+                provider_name=call.provider_name,
+                provider_name_encoded=call.provider_name_encoded,
+                provider_arguments_malformed=call.provider_arguments_malformed,
+            )
+            return PreparedToolCall(
+                call=prepared_call,
+                callable=tool,
+                descriptor=descriptor,
+                arguments={},
+                context=replace(
+                    context,
+                    patch_capability=self._patch_context_capability,
+                ),
+            )
+
+        context = replace(context, patch_capability=None)
         arguments = call.arguments if call.arguments is not None else {}
         if not isinstance(arguments, dict):
             return self._diagnostic(
@@ -1895,9 +2219,6 @@ class ToolManager:
                 message="Tool call arguments must be an object.",
             )
 
-        descriptor = self._descriptors[resolution.canonical_name]
-        tool = descriptor.callable
-        assert tool is not None
         arguments = self._normalize_single_input_argument(tool, arguments)
 
         diagnostic = self._validate_argument_limits(
@@ -1912,6 +2233,7 @@ class ToolManager:
             id=call.id,
             name=resolution.canonical_name,
             arguments=arguments,
+            raw_arguments=call.raw_arguments,
             provider_name=call.provider_name,
             provider_name_encoded=call.provider_name_encoded,
             provider_arguments_malformed=call.provider_arguments_malformed,
@@ -1965,6 +2287,8 @@ class ToolManager:
     def _guard_diagnostic(
         self, call: ToolCall, context: ToolCallContext
     ) -> ToolCallDiagnostic | None:
+        if self._is_patch_call(call):
+            return None
         history = context.calls or []
 
         if self._settings.avoid_repetition and history:
@@ -1992,12 +2316,52 @@ class ToolManager:
     def _validate_prepared_call(
         self, prepared: PreparedToolCall
     ) -> ToolCallDiagnostic | None:
+        if self._is_patch_prepared_call(prepared):
+            return None
         return self._validate_tool_arguments(
             call=prepared.call,
             canonical_name=prepared.call.name,
             tool=prepared.callable,
             arguments=prepared.arguments,
             context=prepared.context,
+        )
+
+    def _authenticate_prepared_call(
+        self,
+        prepared: PreparedToolCall,
+    ) -> PreparedToolCall | None:
+        """Re-resolve one public prepared call against the live registry."""
+        resolved = self._prepare_resolved_call(
+            prepared.call,
+            prepared.context,
+        )
+        if isinstance(resolved, ToolCallDiagnostic):
+            return None
+        if (
+            prepared.call != resolved.call
+            or prepared.callable is not resolved.callable
+            or prepared.descriptor is not resolved.descriptor
+            or prepared.arguments != resolved.arguments
+        ):
+            return None
+        return resolved
+
+    def _rejected_prepared_call(self, call: ToolCall) -> ToolCallError:
+        """Return one content-free outcome for forged prepared execution."""
+        outcome_call = self._outcome_call(call)
+        return ToolCallError(
+            id=uuid4(),
+            call=outcome_call,
+            name=outcome_call.name,
+            arguments=outcome_call.arguments,
+            raw_arguments=outcome_call.raw_arguments,
+            provider_name=outcome_call.provider_name,
+            provider_name_encoded=outcome_call.provider_name_encoded,
+            provider_arguments_malformed=(
+                outcome_call.provider_arguments_malformed
+            ),
+            error={"type": "PreparedToolCallRejected"},
+            message="Prepared tool call was rejected.",
         )
 
     def _resolution_diagnostic(
@@ -2069,10 +2433,12 @@ class ToolManager:
         call: ToolCall,
         canonical_name: str,
     ) -> ToolCallDiagnostic | None:
+        if not call.provider_arguments_malformed:
+            return None
         if (
-            self._settings.provider_arguments_mode
+            canonical_name not in {"patch.edit", "patch.apply"}
+            and self._settings.provider_arguments_mode
             is not ToolProviderArgumentsMode.DIAGNOSTIC_ON_MALFORMED
-            or not call.provider_arguments_malformed
         ):
             return None
         return self._diagnostic(
@@ -2367,11 +2733,18 @@ class ToolManager:
         return expected_type
 
     async def _apply_filters(
-        self, call: ToolCall, context: ToolCallContext
+        self,
+        call: ToolCall,
+        context: ToolCallContext,
+        *,
+        sealed_patch: bool,
     ) -> tuple[ToolCall, ToolCallContext] | ToolCallDiagnostic:
+        if sealed_patch:
+            return call, context
         if not self._settings.filters:
             return call, context
 
+        context = replace(context, patch_capability=None)
         flow_tool_node = context.flow_tool_node
         for f in self._settings.filters:
             filter_namespace: str | None = None
@@ -2432,6 +2805,16 @@ class ToolManager:
                     details={"filtered_name": filtered_name},
                 )
             call, context = next_call, next_context
+            if self._is_patch_call(call):
+                return self._diagnostic(
+                    call=call,
+                    canonical_name=self._diagnostic_canonical_name(call),
+                    code=ToolCallDiagnosticCode.FILTER_SUPPRESSED,
+                    stage=ToolCallDiagnosticStage.FILTER,
+                    message=(
+                        "Tool filters cannot enter the sealed patch boundary."
+                    ),
+                )
         return call, context
 
     def _filtered_tool_name(self, call: ToolCall) -> str:
@@ -2478,36 +2861,60 @@ class ToolManager:
         call = prepared.call
         context = prepared.context
         tool = prepared.callable
+        outcome_call = self._outcome_call(call)
         try:
             result = await self._dispatch_tool(tool, call, context)
             result = self._apply_transformers(call, context, result)
 
             return ToolCallResult(
                 id=uuid4(),
-                call=call,
-                name=call.name,
-                arguments=call.arguments,
-                provider_name=call.provider_name,
-                provider_name_encoded=call.provider_name_encoded,
+                call=outcome_call,
+                name=outcome_call.name,
+                arguments=outcome_call.arguments,
+                raw_arguments=outcome_call.raw_arguments,
+                provider_name=outcome_call.provider_name,
+                provider_name_encoded=outcome_call.provider_name_encoded,
                 provider_arguments_malformed=(
-                    call.provider_arguments_malformed
+                    outcome_call.provider_arguments_malformed
                 ),
                 result=result,
             )
         except Exception as exc:
+            error: dict[str, object] | BaseException = (
+                {"type": "PatchInvocationError"}
+                if self._is_patch_call(call)
+                else self._project_error(exc)
+            )
             return ToolCallError(
                 id=uuid4(),
-                call=call,
-                name=call.name,
-                arguments=call.arguments,
-                provider_name=call.provider_name,
-                provider_name_encoded=call.provider_name_encoded,
+                call=outcome_call,
+                name=outcome_call.name,
+                arguments=outcome_call.arguments,
+                raw_arguments=outcome_call.raw_arguments,
+                provider_name=outcome_call.provider_name,
+                provider_name_encoded=outcome_call.provider_name_encoded,
                 provider_arguments_malformed=(
-                    call.provider_arguments_malformed
+                    outcome_call.provider_arguments_malformed
                 ),
-                error=self._project_error(exc),
-                message=str(exc),
+                error=error,
+                message=(
+                    "Patch invocation failed."
+                    if self._is_patch_call(call)
+                    else str(exc)
+                ),
             )
+
+    def _outcome_call(self, call: ToolCall) -> ToolCall:
+        """Return the retention-safe call record for a terminal outcome."""
+        if not self._is_patch_call(call):
+            return call
+        return ToolCall(
+            id=call.id,
+            name=call.name,
+            provider_name=call.provider_name,
+            provider_name_encoded=call.provider_name_encoded,
+            provider_arguments_malformed=call.provider_arguments_malformed,
+        )
 
     async def _dispatch_tool(
         self,
@@ -2516,6 +2923,13 @@ class ToolManager:
         context: ToolCallContext,
     ) -> Any:
         is_native_tool = isinstance(tool, Tool)
+        raw_dispatch = getattr(tool, "invoke_raw", None)
+        if (
+            self._is_patch_call(call)
+            and type(call.raw_arguments) is bytes
+            and callable(raw_dispatch)
+        ):
+            return await raw_dispatch(call.raw_arguments, context)
         arguments = call.arguments or {}
         if is_native_tool and arguments:
             return await tool(**arguments, context=context)
@@ -2550,7 +2964,7 @@ class ToolManager:
         context: ToolCallContext,
         result: Any,
     ) -> Any:
-        if not self._settings.transformers:
+        if self._is_patch_call(call) or not self._settings.transformers:
             return result
         for t in self._settings.transformers:
             transformer_namespace: str | None = None
@@ -2570,6 +2984,53 @@ class ToolManager:
             elif transformed is not None:
                 result = transformed
         return result
+
+    def _is_patch_prepared_call(self, prepared: PreparedToolCall) -> bool:
+        """Return whether one prepared call has sealed patch ownership."""
+        return self._is_patch_descriptor(
+            prepared.call.name,
+            prepared.callable,
+        )
+
+    def _is_patch_call(self, call: ToolCall) -> bool:
+        """Return whether one call resolves to a sealed patch descriptor."""
+        try:
+            resolved = self.resolve_tool_name(call.name)
+        except AssertionError:
+            return False
+        canonical_name = resolved.canonical_name
+        if canonical_name is None:
+            return False
+        tool = self._tools.get(canonical_name) if self._tools else None
+        return tool is not None and self._is_patch_descriptor(
+            canonical_name,
+            tool,
+        )
+
+    def is_sealed_patch_call(self, call: ToolCall) -> bool:
+        """Return whether a call resolves to the sealed patch boundary."""
+        return self._is_patch_call(call)
+
+    def _is_patch_descriptor(
+        self,
+        canonical_name: str | None,
+        tool: Callable[..., Any],
+    ) -> bool:
+        """Return whether the exact branded registration owns this tool."""
+        return (
+            canonical_name in _PATCH_TOOL_NAMES
+            and self._patch_registration is not None
+            and _PatchAuthorityValidator.registration_owns(
+                self._patch_registration,
+                canonical_name,
+                tool,
+            )
+        )
+
+    @staticmethod
+    def _is_patch_name(name: str | None) -> bool:
+        """Return whether a canonical name belongs to the patch boundary."""
+        return name in _PATCH_TOOL_NAMES
 
     @staticmethod
     def _project_error(exc: Exception) -> dict[str, object]:

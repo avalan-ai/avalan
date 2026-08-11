@@ -222,9 +222,7 @@ def _report(
     )
 
 
-async def _claimed(
-    token: str, step_count: int = 1
-) -> tuple[
+async def _claimed(token: str, step_count: int = 1) -> tuple[
     InMemoryDurablePatchBackend,
     InMemoryDurablePatchStore,
     DurableRequestIdentity,

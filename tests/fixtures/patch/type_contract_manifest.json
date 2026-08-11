@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 8,
+  "current_phase": 9,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -318,6 +318,15 @@
       "path": "tests/patch_type_contracts/phase8_positive.py",
       "source_sha256": "34841ea79c4f1103078cf7a88a2c53b196e6138dc20344ef5db98ff3bf4f7bc6",
       "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-031",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 9,
+      "path": "tests/patch_type_contracts/phase9_positive.py",
+      "source_sha256": "d5dc8686365aedf46e3f332cc6db16527e1032e0cb051a000c00cb6fd54eb7d4",
+      "expected_diagnostics": []
     }
   ],
   "sources": [
@@ -346,7 +355,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5614cd5decd7cb5fbe64a96281445f22dd8b9d04d991423137764a0f62f4e259"
+      "source_sha256": "aa93374d5a57367f2a17c5a55b23b8f6c0ca7ee79004eaed8cde52f160c2fb5d"
     },
     {
       "id": "PATCH-TS-004",
@@ -355,7 +364,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a6e264d20d0ab2bec7b0b16bb0b3a322a98975b87eedce68d14c500b62ac5b5c"
+      "source_sha256": "1f8a9c394df0793a8379cf4d0ebc9f175f8ed37047bf5fae181526ea40f8eed5"
     },
     {
       "id": "PATCH-TS-005",
@@ -364,7 +373,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8ab35e39085b1ec61342a44d7758c1df7656680b32d18189765cdc5485f19d20"
+      "source_sha256": "54f731efdd19971e5d292ec9662b03fbdc4f1afac61d62e37b9f4123f27da9ea"
     },
     {
       "id": "PATCH-TS-006",
@@ -391,7 +400,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ead3ad63a7cafe34f6fdb415964ce4ce6beac97792296536fde144dde9e20c95"
+      "source_sha256": "bcf88ced1d1fde2064bb991b358ccee12c8adc266af88a0b8ea138f19c7d78b1"
     },
     {
       "id": "PATCH-TS-009",
@@ -400,7 +409,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "56b1c9ba84fc79706179fd159f345f18b492ff3fb3955ad92fa4e23a018fb785"
+      "source_sha256": "36dfe0e6c5025d1b7757402a590c1a86f555eece29c7d34f7b52a5c5786dc99e"
     },
     {
       "id": "PATCH-TS-010",
@@ -427,7 +436,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6503ff12a98237ecd642898d40f92b976bed2207fd72a684f40a85bc9e84f5f7"
+      "source_sha256": "002fbf13d99ba7cf0b76f73c071779aedd204790dec0e7ad7e4261aa5fdfa4fe"
     },
     {
       "id": "PATCH-TS-013",
@@ -445,7 +454,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "045830b24dc68c90b6b99291181ecead04065efa4de77c985a959e9e3295e1d3"
+      "source_sha256": "c97d4c2a508ed9fc9e7a5f1bd6cc5d17906b206a25b98cd3bb300b10f8c31c9e"
     },
     {
       "id": "PATCH-TS-015",
@@ -562,7 +571,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "c137c7f5e6f1fca889a924bd04af9d3f7b031517ede924d10112781ae294f3a0"
+      "source_sha256": "f8b0fa459a08ddd5f30684be2725c56aac34fce622bdd4e86110c7746211c93d"
     },
     {
       "id": "PATCH-TS-028",
@@ -644,7 +653,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9f29a95cba6efb3f224049d99e38c697aeb0fa4d7ef52397fb0ab3361c7b62f7"
+      "source_sha256": "4e60999249cb863e3770e9f487be74f3bf6bd9555fdb6c49706df3387d27224a"
     },
     {
       "id": "PATCH-TS-037",
@@ -662,7 +671,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2437f252800e3cc5ad5bfc13396194d8aa1538d0c87d8406cf7f40b53fbc12bf"
+      "source_sha256": "4b1456dc5711512004412c4ad7a44f72fd9eaf7dee12cefee800c0d9851f5283"
     },
     {
       "id": "PATCH-TS-039",
@@ -780,7 +789,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "0c6ebd840cb2afcee40b44765687796faeed301cf87928a4cef222048f2eee2c"
+      "source_sha256": "4cb6722db1db9301a02b6be74db9a5335e262d73d4f50b4c82fb491dfa2a4952"
     },
     {
       "id": "PATCH-TS-052",
@@ -790,8 +799,127 @@
         "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_phase12_provider_transitions"
       ],
-      "source_sha256": "e3d75b40ab82800601e3614344b133e908bf5395784cd929a1a0fd687ff14fe9"
+      "source_sha256": "180aaed6a9df0e71538830f8954f6ea67328e41cd8181a06f5d0a816ea8d3a4b"
+    },
+    {
+      "id": "PATCH-TS-053",
+      "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_TOOL_CALL_LIFECYCLE_KINDS"
+      ],
+      "source_sha256": "f500838d5770c0ee83a7be8eb372e48c78512ade2147994c4ef8a4951e2b03f0"
+    },
+    {
+      "id": "PATCH-TS-054",
+      "path": "src/avalan/entities.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "ToolDomainExecutionContract"
+      ],
+      "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
+    },
+    {
+      "id": "PATCH-TS-055",
+      "path": "src/avalan/model/capability.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_MAX_ARGUMENT_UTF8_BYTES"
+      ],
+      "source_sha256": "c498174acf6c155578cac4c05f3d288bcc536dd24cc93206cab22464878e7a28"
+    },
+    {
+      "id": "PATCH-TS-056",
+      "path": "src/avalan/tool/manager.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PATCH_TOOL_NAMES"
+      ],
+      "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
+    },
+    {
+      "id": "PATCH-TS-057",
+      "path": "src/avalan/patch/toolset.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PATCH_DOMAIN_EXECUTION_CONTRACT"
+      ],
+      "source_sha256": "9289c6ef6838a71aa2359bb6b39a267ed0435e7e355c0df97b424d53779da86e"
+    },
+    {
+      "id": "PATCH-TS-058",
+      "path": "tests/patch/phase_9_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_result"
+      ],
+      "source_sha256": "f71bf758d8460e1bc1d36ce63dfad371c5ba8c3bcf62c25d1d1a52cf67744e4e"
+    },
+    {
+      "id": "PATCH-TS-059",
+      "path": "tests/tool/tool_call_outcome_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "TOOL_CALL_RAW_ARGUMENTS_SUPPORTED"
+      ],
+      "source_sha256": "8119982cf29cc15d4f6c3ac39a8ae843a1596686e1bb085e6d1bf63623557b58"
+    },
+    {
+      "id": "PATCH-TS-060",
+      "path": "src/avalan/tool/display.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PATCH_TOOL_NAMES",
+        "patch_tool_call_display_projection",
+        "patch_tool_outcome_display_projection"
+      ],
+      "source_sha256": "3662fefd904010cfff7139b84f1e6c0aef7ebee6ddc2d9b52dafa7c3f8872b14"
+    },
+    {
+      "id": "PATCH-TS-061",
+      "path": "src/avalan/agent/loader.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PATCH_TOOL_LOADER_INTEGRATION"
+      ],
+      "source_sha256": "ff62787046ee0a15334522f478a45890800794002d83eaaebf29c0359e4bb39e"
+    },
+    {
+      "id": "PATCH-TS-062",
+      "path": "src/avalan/tool/context.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_PATCH_TOOL_SETTINGS_INTEGRATION"
+      ],
+      "source_sha256": "cac62d75190c74e613ce2c84b6ad9e9e2ac0b41fff80186b3c36887d16174841"
+    },
+    {
+      "id": "PATCH-TS-063",
+      "path": "src/avalan/_patch_authority.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "084fca0f51a3b3e9aac86fd2bccb0651ad5dbc1837940a8d471e083ab33a58fb"
+    },
+    {
+      "id": "PATCH-TS-064",
+      "path": "tests/agent/orchestrator_response_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE"
+      ],
+      "source_sha256": "6232be3c1a22a482a8892f2391f161661e07da2dd95575b0623ab4f85283ce10"
+    },
+    {
+      "id": "PATCH-TS-065",
+      "path": "tests/tool/display_projection_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_outcome_projection_covers_error_and_diagnostic"
+      ],
+      "source_sha256": "93bc9222caf7532fc037287ec52d9b678d6006c038cdad81f7e73a02eccd3610"
     }
   ],
-  "manifest_sha256": "c23f557275b9050269b52f845ac3989b00ae6dd7d91dcd66dddcb0a6cddc90f5"
+  "manifest_sha256": "587612ab1d01d1f8fa6176ab61c505ab19870e42ee92aee419518dea934e0aa0"
 }

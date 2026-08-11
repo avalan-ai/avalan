@@ -1253,6 +1253,26 @@ class ModelCapabilityCatalog:
             for descriptor in self.descriptors
             if descriptor.canonical_name == canonical_name
         )
+        if canonical_name in {"patch.edit", "patch.apply"}:
+            if type(call.arguments) is not str:
+                raise ModelCapabilityValidationError(
+                    "capability.patch_raw_arguments",
+                    "patch capability calls require complete raw JSON",
+                )
+            try:
+                raw_arguments = call.arguments.encode("utf-8")
+            except UnicodeError as exc:
+                raise ModelCapabilityValidationError(
+                    "capability.patch_raw_arguments",
+                    "patch capability arguments are invalid UTF-8",
+                ) from exc
+            return ToolCall(
+                id=call.call_id,
+                name=canonical_name,
+                raw_arguments=raw_arguments,
+                provider_name=call.provider_name,
+                provider_name_encoded=(call.provider_name != canonical_name),
+            )
         maximum_bytes = (
             _MAX_INPUT_ARGUMENT_UTF8_BYTES
             if canonical_name == RESERVED_INPUT_CAPABILITY_NAME
@@ -1451,6 +1471,7 @@ class ModelCapabilityCatalog:
                 id=call.id,
                 name="",
                 arguments=call.arguments,
+                raw_arguments=call.raw_arguments,
                 provider_name=provider_name,
                 provider_name_encoded=call.provider_name_encoded,
                 provider_arguments_malformed=(
@@ -1463,6 +1484,7 @@ class ModelCapabilityCatalog:
             id=call.id,
             name=canonical_name,
             arguments=call.arguments,
+            raw_arguments=call.raw_arguments,
             provider_name=provider_name,
             provider_name_encoded=(provider_name != canonical_name),
             provider_arguments_malformed=call.provider_arguments_malformed,

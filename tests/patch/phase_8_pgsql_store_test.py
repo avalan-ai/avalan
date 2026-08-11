@@ -1477,10 +1477,12 @@ def test_pgsql_durable_helpers_reject_malformed_persistence_values() -> None:
         pgsql_durable._retention_from_row({"ciphertext": None})
     assert raised.value.code is DurableStoreErrorCode.RETENTION_CONFLICT
     with pytest.raises(DurableStoreError) as raised:
-        pgsql_durable._retention_from_row({
-            "ciphertext": b"opaque",
-            "ciphertext_digest": "forged",
-        })
+        pgsql_durable._retention_from_row(
+            {
+                "ciphertext": b"opaque",
+                "ciphertext_digest": "forged",
+            }
+        )
     assert raised.value.code is DurableStoreErrorCode.RETENTION_CONFLICT
     lease = DurableCommitLease(
         PatchRequestId("request_" + "a" * 16),
@@ -2197,12 +2199,16 @@ def test_pgsql_durable_retention_boundaries_fail_closed(
             await store.put_retention(reservation, record)
         assert raised.value.code is DurableStoreErrorCode.RETENTION_LIMIT
 
-        cursor = Cursor((
-            {"record_count": 0},
-            {"byte_count": 0},
-            None,
-            retention_row(record, kind=DurableRetentionKind.REVIEW_ARTIFACT),
-        ))
+        cursor = Cursor(
+            (
+                {"record_count": 0},
+                {"byte_count": 0},
+                None,
+                retention_row(
+                    record, kind=DurableRetentionKind.REVIEW_ARTIFACT
+                ),
+            )
+        )
         with pytest.raises(DurableStoreError) as raised:
             await store.put_retention(reservation, record)
         assert raised.value.code is DurableStoreErrorCode.RETENTION_CONFLICT

@@ -210,3 +210,27 @@ def test_phase0_requirement_rejects_node_cap_bypass(tmp_path: Path) -> None:
         _VERIFIER._validate_requirements(
             requirements_path, _VERIFIER.load_manifest(manifest_path), _ROOT
         )
+
+
+def test_phase9_requirement_rejects_same_symbol_from_wrong_artifact() -> None:
+    """Bind a Phase 9 runtime reference to its exact imported source path."""
+    node_id = (
+        "tests/patch/phase_9_contract_test.py::"
+        "test_patch_phase_9_malformed_provider_arguments_cannot_fall_back"
+    )
+    function = _VERIFIER._test_node_function(_ROOT, node_id)
+    bindings = _VERIFIER._test_node_import_bindings(_ROOT, node_id)
+
+    assert bindings["ToolCall"] == ("src/avalan/entities.py", "ToolCall")
+    assert _VERIFIER._function_uses_bound_symbol(
+        function,
+        bindings,
+        "src/avalan/entities.py",
+        "ToolCall",
+    )
+    assert not _VERIFIER._function_uses_bound_symbol(
+        function,
+        bindings,
+        "src/avalan/model/response/parsers/tool.py",
+        "ToolCall",
+    )

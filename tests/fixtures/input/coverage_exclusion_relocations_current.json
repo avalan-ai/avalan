@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "02171d710d96b54322d8aa8e7f354a64299e78577720afdce18cb3c913f8ce9b",
+  "current_snapshot_sha256": "f0797ed4f594de9d54c8d0aec12bf73b9e10323f1061abc983c65ce8198217c6",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "f302fb63a65e9b13718e9eb98d6a4d72cdae66901e95334144079f7d10d56085"
   },
   "report_lines": {
-    "added": 1324,
+    "added": 1327,
     "removed": 289,
-    "sha256": "c3657ab0cd2c9bdd24a72246bc92d9b7f00998700ac412b59e7a8442d51b4979"
+    "sha256": "11778cda22491af3b436178ed5b99897da74fa26cc2cc6901b3cbc6919346215"
   },
   "review": {
     "reviewed_by": "durable migration coverage audit",
     "rationale": "The current snapshot preserves the reviewed directive inventory, records parser-generated Protocol exclusions introduced by durable migration interfaces, and relocates parser exclusions after shared migration-head imports."
   },
-  "ledger_sha256": "d582c45a3696cef820030ada21ae14a4eeec1179fe7d9ce28cb4d554af20dea5"
+  "ledger_sha256": "e4e8c369c51b6df0a6ec5310dabfb8a63bb296eeabd4ea53d62fe8d52793046a"
 }

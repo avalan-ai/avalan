@@ -484,3 +484,57 @@ from avalan.patch.target import (
 from avalan.patch.target import (
     WorkerIsolationPolicy as WorkerIsolationPolicy,
 )
+from avalan.patch.toolset import (
+    PATCH_APPLY_SCHEMA as PATCH_APPLY_SCHEMA,
+)
+from avalan.patch.toolset import (
+    PATCH_EDIT_SCHEMA as PATCH_EDIT_SCHEMA,
+)
+from avalan.patch.toolset import (
+    InMemoryPatchLifecycleService as InMemoryPatchLifecycleService,
+)
+from avalan.patch.toolset import (
+    PatchAdmissionDecision as PatchAdmissionDecision,
+)
+from avalan.patch.toolset import (
+    PatchAdmissionFilter as PatchAdmissionFilter,
+)
+from avalan.patch.toolset import (
+    PatchAdmissionView as PatchAdmissionView,
+)
+from avalan.patch.toolset import (
+    PatchCapabilitySnapshot as PatchCapabilitySnapshot,
+)
+from avalan.patch.toolset import (
+    PatchInvocationCapability as PatchInvocationCapability,
+)
+from avalan.patch.toolset import (
+    PatchRuntimeBinder as PatchRuntimeBinder,
+)
+from avalan.patch.toolset import (
+    PatchRuntimeBinding as PatchRuntimeBinding,
+)
+from avalan.patch.toolset import (
+    PatchSdkHost as PatchSdkHost,
+)
+from avalan.patch.toolset import (
+    PatchSdkService as PatchSdkService,
+)
+from avalan.patch.toolset import (
+    PatchTestHostProfile as PatchTestHostProfile,
+)
+from avalan.patch.toolset import (
+    PatchToolError as PatchToolError,
+)
+from avalan.patch.toolset import (
+    PatchToolLoader as PatchToolLoader,
+)
+from avalan.patch.toolset import (
+    PatchToolManagerBundle as PatchToolManagerBundle,
+)
+from avalan.patch.toolset import (
+    PatchToolSet as PatchToolSet,
+)
+from avalan.patch.toolset import (
+    project_model_result as project_model_result,
+)

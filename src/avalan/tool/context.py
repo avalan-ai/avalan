@@ -1,5 +1,6 @@
 from ..container import ContainerToolRuntimeSettings
 from ..isolation import IsolationToolRuntimeSettings
+from ..patch.toolset import PatchToolSettings
 from ..skill.settings import TrustedSkillSettings
 from .browser import BrowserToolSettings
 from .database import DatabaseToolSettings
@@ -9,6 +10,8 @@ from .shell import ShellToolSettings
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from typing import final
+
+_PATCH_TOOL_SETTINGS_INTEGRATION = "trusted_runtime_settings"
 
 
 @final
@@ -38,4 +41,5 @@ class ToolSettingsContext:
     shell_explicit_fields: frozenset[str] | None = None
     container: ContainerToolRuntimeSettings | None = None
     isolation: IsolationToolRuntimeSettings | None = None
+    patch: PatchToolSettings | None = None
     extra: dict[str, object] | None = None

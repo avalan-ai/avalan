@@ -20,6 +20,7 @@ from ast import (
     ImportFrom,
     JoinedStr,
     List,
+    Load,
     Name,
     Tuple,
     alias,
@@ -54,7 +55,7 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 8
+_CURRENT_PHASE = 9
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
     "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
@@ -72,6 +73,7 @@ _FIXTURE_NAMES = (
     "goldens.json",
     "threat_model.json",
     "baseline_evidence.json",
+    "phase8_evidence.json",
     "phase_evidence.json",
     "phase7_evidence.json",
     "phase_evidence_index.json",
@@ -905,6 +907,7 @@ def _validate_acceptance_history(
             "feature",
             "snapshot",
             "replacements",
+            "introductions",
             "history_sha256",
         },
         "acceptance history",
@@ -937,7 +940,7 @@ def _validate_acceptance_history(
         )
     if snapshot_digest != _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256:
         raise PatchAcceptanceError("acceptance history snapshot is not pinned")
-    replacements: dict[str, Mapping[str, object]] = {}
+    replacements: dict[str, tuple[Mapping[str, object], ...]] = {}
     for raw in object_list(
         payload.get("replacements"), "acceptance history replacements"
     ):
@@ -963,12 +966,26 @@ def _validate_acceptance_history(
             raise PatchAcceptanceError(
                 "acceptance history replacement source drifted"
             )
-        new = _current_history_snapshot_node(
-            replacement_entry.get("new"), root
+        raw_new = replacement_entry.get("new")
+        raw_nodes = (
+            object_list(raw_new, "acceptance history replacement new nodes")
+            if isinstance(raw_new, list)
+            else [raw_new]
         )
-        if _phase(
-            new.get("active_from_phase"), "replacement new phase"
-        ) < _phase(old.get("active_from_phase"), "replacement old phase"):
+        new_nodes = tuple(
+            _current_history_snapshot_node(item, root) for item in raw_nodes
+        )
+        if not new_nodes or len({item["id"] for item in new_nodes}) != len(
+            new_nodes
+        ):
+            raise PatchAcceptanceError(
+                "acceptance history replacement new nodes are invalid"
+            )
+        if any(
+            _phase(item.get("active_from_phase"), "replacement new phase")
+            < _phase(old.get("active_from_phase"), "replacement old phase")
+            for item in new_nodes
+        ):
             raise PatchAcceptanceError("acceptance history phase regressed")
         round_number = replacement_entry.get("review_round")
         if type(round_number) is not int or not 1 <= round_number <= 5:
@@ -983,7 +1000,31 @@ def _validate_acceptance_history(
             replacement_entry.get("rationale"),
             "acceptance history rationale",
         )
-        replacements[old_id] = new
+        replacements[old_id] = new_nodes
+    introductions: dict[str, Mapping[str, object]] = {}
+    for raw in object_list(
+        payload.get("introductions"), "acceptance history introductions"
+    ):
+        introduction = mapping(raw, "acceptance history introduction")
+        _exact_keys(
+            introduction,
+            {"new", "review_round", "reviewer", "rationale"},
+            "acceptance history introduction",
+        )
+        new = _current_history_snapshot_node(introduction.get("new"), root)
+        new_id = _identifier(new.get("id"), "introduction new ID")
+        if new_id in historical or new_id in introductions:
+            raise PatchAcceptanceError(
+                "acceptance history introduction is invalid"
+            )
+        round_number = introduction.get("review_round")
+        if type(round_number) is not int or not 1 <= round_number <= 5:
+            raise PatchAcceptanceError(
+                "acceptance history introduction review is invalid"
+            )
+        _string(introduction.get("reviewer"), "acceptance history reviewer")
+        _string(introduction.get("rationale"), "acceptance history rationale")
+        introductions[new_id] = new
     current = {
         node.identifier: _acceptance_node_snapshot(node, root)
         for node in manifest.active_nodes(manifest.current_phase)
@@ -1001,15 +1042,21 @@ def _validate_acceptance_history(
             raise PatchAcceptanceError(
                 "acceptance history semantic change is unreviewed"
             )
-        new_id = _identifier(replacement.get("id"), "replacement new ID")
-        if current.get(new_id) != replacement:
-            raise PatchAcceptanceError(
-                "acceptance history replacement is not active"
-            )
-    expected_current_ids = (set(historical) - set(replacements)) | {
-        _identifier(replacement.get("id"), "replacement new ID")
-        for replacement in replacements.values()
-    }
+        for new in replacement:
+            new_id = _identifier(new.get("id"), "replacement new ID")
+            if current.get(new_id) != new:
+                raise PatchAcceptanceError(
+                    "acceptance history replacement is not active"
+                )
+    expected_current_ids = (
+        (set(historical) - set(replacements))
+        | {
+            _identifier(new.get("id"), "replacement new ID")
+            for replacement in replacements.values()
+            for new in replacement
+        }
+        | set(introductions)
+    )
     if set(current) != expected_current_ids:
         raise PatchAcceptanceError(
             "acceptance history semantic change is unreviewed"
@@ -1066,6 +1113,7 @@ def load_phase0_contracts(
     _validate_phase_evidence_history(
         fixtures / "phase_evidence_index.json",
         fixtures / "phase7_evidence.json",
+        fixtures / "phase8_evidence.json",
         fixtures / "phase_evidence.json",
     )
     verify_source_artifact_reads(root)
@@ -1563,6 +1611,9 @@ def _validate_active_node_semantic_evidence(
         raise PatchAcceptanceError(
             "active requirement evidence cannot be a generic bundle load"
         )
+    if any(item.owning_phase == 9 for item in ownership):
+        _validate_phase9_artifact_bindings(root, node_id, function, ownership)
+        return
     names = {
         value.id for value in walk(function) if isinstance(value, Name)
     } | {
@@ -1578,6 +1629,76 @@ def _validate_active_node_semantic_evidence(
             "active requirement evidence does not execute its implementation "
             f"symbol: {', '.join(missing)}"
         )
+
+
+def _validate_phase9_artifact_bindings(
+    root: Path,
+    node_id: str,
+    function: FunctionDef | AsyncFunctionDef,
+    ownership: list[RequirementOwnership],
+) -> None:
+    """Bind Phase 9 evidence to the imported concrete production artifact."""
+    bindings = _test_node_import_bindings(root, node_id)
+    missing = sorted(
+        f"{item.implementation_artifact}:{item.implementation_symbol}"
+        for item in ownership
+        if not _function_uses_bound_symbol(
+            function,
+            bindings,
+            item.implementation_artifact,
+            item.implementation_symbol,
+        )
+    )
+    if missing:
+        raise PatchAcceptanceError(
+            "active requirement evidence does not execute its bound "
+            f"implementation artifact: {', '.join(missing)}"
+        )
+
+
+def _test_node_import_bindings(
+    root: Path,
+    node_id: str,
+) -> dict[str, tuple[str, str]]:
+    """Return direct production imports bound by one test module."""
+    path = root / node_id.split("::", maxsplit=1)[0]
+    try:
+        tree = parse_python(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeError) as exc:
+        raise PatchAcceptanceError(
+            "cannot inspect active requirement import bindings"
+        ) from exc
+    bindings: dict[str, tuple[str, str]] = {}
+    for statement in tree.body:
+        if not isinstance(statement, ImportFrom) or statement.level:
+            continue
+        if statement.module is None or not statement.module.startswith(
+            "avalan."
+        ):
+            continue
+        relative = "src/" + statement.module.replace(".", "/") + ".py"
+        if not (root / relative).is_file():
+            continue
+        for imported in statement.names:
+            if imported.name == "*":
+                continue
+            local_name = imported.asname or imported.name
+            bindings[local_name] = (relative, imported.name)
+    return bindings
+
+
+def _function_uses_bound_symbol(
+    function: FunctionDef | AsyncFunctionDef,
+    bindings: Mapping[str, tuple[str, str]],
+    artifact: str,
+    symbol: str,
+) -> bool:
+    """Return whether one test executes a symbol from its exact import path."""
+    for value in walk(function):
+        if isinstance(value, Name) and isinstance(value.ctx, Load):
+            if bindings.get(value.id) == (artifact, symbol):
+                return True
+    return False
 
 
 def _test_node_function(
@@ -2888,50 +3009,23 @@ def _safe_section2_source_path(value: object) -> Path:
 
 
 def _validate_runtime_patch_advertisement(value: object, root: Path) -> None:
-    """Prove Phase 0 has no runtime patch package or public selector."""
+    """Prove patch tools remain opt-in outside the trusted loader."""
     payload = mapping(value, "runtime patch advertisement evidence")
     _exact_keys(
         payload,
-        {"forbidden_paths", "forbidden_tokens", "runtime_probe"},
+        {"patch_toolset_path", "runtime_probe"},
         "runtime patch advertisement evidence",
     )
-    paths = tuple(
-        _safe_artifact_path(raw, "forbidden patch path")
-        for raw in object_list(
-            payload.get("forbidden_paths"), "forbidden paths"
-        )
+    path = _safe_artifact_path(
+        payload.get("patch_toolset_path"), "patch toolset path", suffix=".py"
     )
-    if paths != (Path("src/avalan/tool/patch.py"),):
-        raise PatchAcceptanceError("runtime patch path evidence is incomplete")
-    for path in paths:
-        if (root / path).exists():
-            raise PatchAcceptanceError(
-                "runtime patch registration path is present"
-            )
-    tokens = tuple(
-        _string(raw, "forbidden patch advertisement token")
-        for raw in object_list(
-            payload.get("forbidden_tokens"), "forbidden patch tokens"
-        )
-    )
-    expected_tokens = (
-        "patch.edit",
-        "patch.apply",
-        'namespace="patch"',
-        "namespace='patch'",
-    )
-    if tokens != expected_tokens:
+    if (
+        path != Path("src/avalan/patch/toolset.py")
+        or not (root / path).is_file()
+    ):
         raise PatchAcceptanceError(
-            "runtime patch token evidence is incomplete"
+            "runtime patch toolset evidence is incomplete"
         )
-    for source in (root / "src").rglob("*.py"):
-        if source.is_symlink() or not source.is_file():
-            raise PatchAcceptanceError("runtime source inventory is invalid")
-        contents = source.read_text(encoding="utf-8")
-        if any(token in contents for token in tokens):
-            raise PatchAcceptanceError(
-                "runtime patch advertisement is present"
-            )
     observed = _runtime_patch_incapability_probe()
     expected = tuple(
         _string(item, "runtime patch probe surface")
@@ -3223,8 +3317,9 @@ def _validate_phase_evidence_history(
     index_path: Path,
     phase_seven_path: Path,
     phase_eight_path: Path,
+    phase_nine_path: Path,
 ) -> None:
-    """Validate the immutable Phase 7 record and linked Phase 8 evidence."""
+    """Validate the immutable evidence chain through the previous phase."""
     index = _load_mapping(index_path, "phase evidence index")
     _exact_keys(
         index,
@@ -3233,13 +3328,14 @@ def _validate_phase_evidence_history(
     )
     _header(index, "phase evidence index")
     records = object_list(index.get("records"), "phase evidence index records")
-    if len(records) != 2:
+    if len(records) != 3:
         raise PatchAcceptanceError(
             "phase evidence index record count is invalid"
         )
     expected = (
         (7, "phase7_evidence.json", phase_seven_path, None),
-        (8, "phase_evidence.json", phase_eight_path, None),
+        (8, "phase8_evidence.json", phase_eight_path, None),
+        (9, "phase_evidence.json", phase_nine_path, None),
     )
     previous_digest: str | None = None
     for record, (phase, name, evidence_path, _) in zip(
@@ -3670,8 +3766,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 550,
-        "planned_requirements": 467,
+        "active_requirements": 796,
+        "planned_requirements": 221,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))
