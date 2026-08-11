@@ -413,8 +413,8 @@
       1246
     ],
     "src/avalan/agent/loader.py": [
-      122,
-      123
+      123,
+      124
     ],
     "src/avalan/agent/orchestrator/__init__.py": [
       168,
@@ -893,8 +893,9 @@
       25,
       26,
       27,
-      29,
-      30
+      28,
+      30,
+      31
     ],
     "src/avalan/flow/executor.py": [
       54,
@@ -2791,6 +2792,10 @@
       31,
       32
     ],
+    "src/avalan/tool/manager.py": [
+      51,
+      52
+    ],
     "src/avalan/tool/shell/commands/awk.py": [
       22,
       23
@@ -2825,5 +2830,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "02171d710d96b54322d8aa8e7f354a64299e78577720afdce18cb3c913f8ce9b"
+  "snapshot_sha256": "f0797ed4f594de9d54c8d0aec12bf73b9e10323f1061abc983c65ce8198217c6"
 }

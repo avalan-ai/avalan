@@ -32,6 +32,7 @@ from avalan.tool.display import (
     fallback_tool_outcome_display_projection,
     is_json_safe_display_value,
     is_sensitive_display_value,
+    patch_tool_outcome_display_projection,
     sanitize_display_label,
     sanitize_display_value,
     tool_call_display_projection_from_metadata,
@@ -634,6 +635,34 @@ def test_outcome_fallbacks_cover_result_error_and_diagnostic() -> None:
     assert tuple(error_projection.details)[0].value == "RemoteError"
     assert diagnostic_projection.action == "skip"
     assert diagnostic_projection.outcome == "tool.unknown"
+
+
+def test_patch_outcome_projection_covers_error_and_diagnostic() -> None:
+    """Project every non-result patch outcome without content disclosure."""
+    call = ToolCall(id="patch-call", name="patch.edit", raw_arguments=b"{}")
+    error = ToolCallError(
+        id="patch-error",
+        name=call.name,
+        arguments=None,
+        call=call,
+        error={"type": "PatchError"},
+        message="Patch failed.",
+    )
+    diagnostic = ToolCallDiagnostic(
+        id="patch-diagnostic",
+        requested_name=call.name,
+        code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS,
+        stage=ToolCallDiagnosticStage.VALIDATE,
+        message="Patch arguments are malformed.",
+    )
+
+    error_projection = patch_tool_outcome_display_projection(error)
+    diagnostic_projection = patch_tool_outcome_display_projection(diagnostic)
+
+    assert error_projection.outcome == "error"
+    assert error_projection.redacted
+    assert diagnostic_projection.outcome == "diagnostic"
+    assert diagnostic_projection.redacted
 
 
 def test_outcome_result_without_value_omits_preview() -> None:

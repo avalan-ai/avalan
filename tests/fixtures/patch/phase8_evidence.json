@@ -1,0 +1,269 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "phase": 8,
+  "status": "in_progress",
+  "scope": "Durable local test-profile storage, authenticated pending continuation, and PostgreSQL parity harness are in progress; no public mutation surface is active.",
+  "recorded_on": "2026-08-08",
+  "ownership": {
+    "implementation_owners": [
+      "phase7-implementation"
+    ],
+    "review_owners": [
+      "phase7-max-review-turn2"
+    ],
+    "base_sha": "093a69720c63a7312d42d734ff19c6e287fb7a3a",
+    "head_sha": "093a69720c63a7312d42d734ff19c6e287fb7a3a"
+  },
+  "changed_paths": [
+    "scripts/run_patch_contract_gate.py",
+    "scripts/verify_patch_acceptance.py",
+    "scripts/verify_patch_types.py",
+    "src/avalan/patch/domain.py",
+    "src/avalan/patch/durable_approval.py",
+    "src/avalan/patch/durable_coordinator.py",
+    "src/avalan/patch/durable_outbox.py",
+    "src/avalan/patch/durable_retention.py",
+    "src/avalan/patch/durable_store.py",
+    "src/avalan/patch/pgsql_store.py",
+    "src/avalan/task/stores/pgsql.py",
+    "src/avalan/task/stores/pgsql_migrations/versions/v20260809_0001_patch_durable_store.py",
+    "tests/fixtures/patch/acceptance_history.json",
+    "tests/fixtures/patch/acceptance_manifest.json",
+    "tests/fixtures/patch/baseline_evidence.json",
+    "tests/fixtures/patch/contract_decisions.json",
+    "tests/fixtures/patch/phase7_evidence.json",
+    "tests/fixtures/patch/phase_evidence.json",
+    "tests/fixtures/patch/phase_evidence_index.json",
+    "tests/fixtures/patch/requirements_traceability.json",
+    "tests/fixtures/patch/source_symbols.json",
+    "tests/fixtures/patch/type_contract_manifest.json",
+    "tests/patch/phase_8_contract_test.py",
+    "tests/patch/phase_8_durable_continuation_test.py",
+    "tests/patch/phase_8_fault_isolation_test.py",
+    "tests/patch/phase_8_pgsql_migration_test.py",
+    "tests/patch/phase_8_pgsql_process_fault_test.py",
+    "tests/patch/phase_8_pgsql_store_test.py",
+    "tests/patch/phase_8_store_test.py",
+    "tests/patch_contract_gate_test.py",
+    "tests/patch_type_contracts/phase8_positive.py"
+  ],
+  "exact_gate": {
+    "status": "pending",
+    "reason": "The isolated PostgreSQL exact gate remains required before Phase 8 completion."
+  },
+  "commands": [
+    {
+      "id": "PATCH-CMD-P8",
+      "command": "make test-patch-pgsql-exact no-install PATCH_PHASE=8",
+      "status": "pending",
+      "reason": "Awaiting isolated PostgreSQL exact-gate execution."
+    }
+  ],
+  "artifact_digests": [],
+  "suite_facts": [],
+  "coverage": {
+    "status": "pending",
+    "reason": "Coverage is retained only by the Phase 8 exact PostgreSQL gate."
+  },
+  "node_counts": {
+    "active_requirements": 550,
+    "planned_requirements": 467,
+    "active_acceptance_nodes": 77,
+    "planned_acceptance_nodes": 7
+  },
+  "quality_gates": {
+    "project_mypy": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "patch_mypy": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "positive_type_assertions": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "rejected_type_diagnostics": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "blocking_io_scan": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "async_heartbeat": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    },
+    "resource_leaks": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P8",
+      "evidence": "Pending the exact Phase 8 PostgreSQL gate."
+    }
+  },
+  "database_lifecycle": {
+    "migration_revision": "not_applicable_phase_8",
+    "schema_identity": "not_applicable_phase_8",
+    "crash_restart_boundary": "not_applicable_phase_8",
+    "encryption_key_fixture_version": "not_applicable_phase_8",
+    "outbox_settlement": "not_applicable_phase_8",
+    "teardown_proof": "not_applicable_phase_8"
+  },
+  "profiles": [
+    {
+      "id": "PATCH-PROFILE-P8-PGSQL-EXACT",
+      "kind": "real",
+      "contexts": [
+        "local",
+        "postgresql"
+      ],
+      "command_id": "PATCH-CMD-P8",
+      "e2e_ids": [
+        "PATCH-E2E-006",
+        "PATCH-E2E-007",
+        "PATCH-E2E-008",
+        "PATCH-E2E-009"
+      ],
+      "receipt": "The pending/restart acceptance node runs only in the isolated PostgreSQL exact profile, which supplies its owned DSN and rejects skipped outcomes."
+    }
+  ],
+  "e2e_ids": [
+    "PATCH-E2E-006",
+    "PATCH-E2E-007",
+    "PATCH-E2E-008",
+    "PATCH-E2E-009"
+  ],
+  "redaction_and_bounds": {
+    "redaction_canary": "not_run",
+    "renderer_injection": "not_run",
+    "timing_disclosure": "not_run",
+    "fuzz": "not_run",
+    "liveness": "not_run",
+    "retention": "not_run",
+    "diagnostic_separation": "not_run",
+    "max_request_bytes": 1,
+    "max_duration_ticks": 1
+  },
+  "review": {
+    "rounds": [
+      {
+        "round": 1,
+        "findings": [
+          {
+            "id": "PATCH-REVIEW-P7-001",
+            "severity": "P3",
+            "disposition": "fixed",
+            "owner": "phase7-implementation",
+            "evidence": "Focused rooted local mutation tests exercise staged publication and final barriers.",
+            "rationale": "The initial implementation defect was corrected before the exact gate."
+          }
+        ],
+        "residual_risks": [
+          "Maximum-reasoning follow-up review must recheck local rooted settlement evidence before closure."
+        ]
+      },
+      {
+        "round": 2,
+        "findings": [],
+        "residual_risks": [
+          "Final maximum-reasoning review approved with no open P0, P1, or P2 finding; retained exact-gate evidence is complete."
+        ]
+      }
+    ]
+  },
+  "active_node_ids": [
+    "tests/patch_phase0_contract_test.py::test_phase0_dormant_public_contract_preflight",
+    "tests/patch_phase0_contract_test.py::test_phase0_fault_lifecycle_evidence_is_executable",
+    "tests/patch_phase0_contract_test.py::test_phase0_manual_clock_remains_deterministic",
+    "tests/patch_phase0_contract_test.py::test_phase0_strict_json_rejects_duplicate_members",
+    "tests/patch_phase0_contract_test.py::test_phase0_no_process_or_tool_surface_is_advertised",
+    "tests/patch_phase0_contract_test.py::test_phase0_workspace_oracle_keeps_recursive_metadata",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_remains_nonmutating_by_default",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_trace_actions_are_closed",
+    "tests/patch_phase0_contract_test.py::test_phase0_approval_binding_is_immutable",
+    "tests/patch_phase0_contract_test.py::test_phase0_approval_broker_denial_is_closed",
+    "tests/patch_phase0_contract_test.py::test_phase0_store_conformance_inventory_is_complete",
+    "tests/patch_phase0_contract_test.py::test_phase0_incapable_target_profile_has_no_capabilities",
+    "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context",
+    "tests/patch_phase0_contract_test.py::test_phase0_phase_evidence_codec_seals_deterministically",
+    "tests/patch_phase0_contract_test.py::test_phase0_resource_depth_sentinel_rejects_unowned_awaits",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_identifiers_are_distinct_and_bounded",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_request_scope_plan_contracts",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_validation_errors_and_grants_remain_immutable",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_event_projection",
+    "tests/patch/phase_1_domain_test.py::test_patch_phase_1_redacted_values_never_render_canaries",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_requirements",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_structured_json_is_closed_and_canonical",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_unsafe_lexical_paths",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_enforces_path_and_content_boundaries",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_streaming_freeform_and_json_are_byte_identical",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_rejects_transport_and_json_edge_cases",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_fixed_seed_malformed_fuzz_never_calls_a_target",
+    "tests/patch/phase_2_contract_test.py::test_patch_phase_2_parser_boundary_failure_paths_remain_closed",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_cwd_alias_and_parent_handle_paths",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_constructor_and_protocol_boundaries",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_requirements",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_releases_intermediate_parent_handles",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_worker_race_and_mount_failures",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_sensitive_paths_before_open",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_closes_failed_root_and_cwd_handles",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_helper_failures_close_descriptors",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_denies_obscured_paths_before_open",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
+    "tests/patch/phase_4_contract_test.py::test_patch_phase_4_scope_witness_and_async_heartbeat",
+    "tests/patch/phase_7_contract_test.py::test_patch_phase_7_requirements",
+    "tests/patch/phase_8_pgsql_process_fault_test.py::test_pgsql_pending_restart_authenticates_original_branch",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_requirements",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_lossless_text_and_exact_first_matching",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_simultaneous_replacements",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_edit_failure_modes",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_apply_hunk_semantics",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_virtual_workspace_transitions",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_limits_and_async_facade",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_constructor_boundaries",
+    "tests/patch/phase_3_contract_test.py::test_patch_phase_3_transition_conflicts",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_requirements",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_default_denial_and_preinspection_are_closed",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_disclosure_and_wrong_grant_remain_private",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_preauthorization_still_requires_every_gate",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_capability_table_evidence",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_final_effect_evidence",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_review_artifact_evidence",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_broker_evidence",
+    "tests/patch/phase_5_contract_test.py::test_patch_phase_5_grant_evidence",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_and_scripted_commit_e2e",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_idempotency_and_owner_races_are_linearizable",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_revalidation_matrix_stales_before_effects",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_journal_truth_never_guesses_effects",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_retains_one_fenced_owner_until_settlement",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_precommit_cancellation_and_no_retry_are_closed",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_domain_serialization_and_precommit_work",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_rejects_non_scripted_workers_and_invalid_journals",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_move_update_and_fenced_reconciliation_e2e",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_invalid_boundaries_and_fault_paths_stay_closed",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_lifecycle_controller_rejects_illegal_order",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_footprint_is_workspace_first_and_total",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_pending_waits_own_no_transaction_or_target_handle",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_grant_consumption_precedes_only_scripted_effects",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_internal_pending_never_creates_a_detached_handle",
+    "tests/patch/phase_6_contract_test.py::test_patch_phase_6_has_no_public_mutation_tool_or_local_worker"
+  ],
+  "external_effects": {
+    "deployment": false,
+    "publication": false,
+    "live_call": false,
+    "workspace_mutation": false,
+    "production_activation": false
+  },
+  "record_sha256": "28e41940aea4be8058ab26ec5184b7696cb9314ea827cb5fffc09519a4616378"
+}

@@ -1112,6 +1112,10 @@
         "source_sha256": "b29ddd5626e1a5948771867701e91d44dcebeaf512f06f7c0841da17a3036edd"
       },
       {
+        "path": "src/avalan/_patch_authority.py",
+        "source_sha256": "084fca0f51a3b3e9aac86fd2bccb0651ad5dbc1837940a8d471e083ab33a58fb"
+      },
+      {
         "path": "src/avalan/agent/__init__.py",
         "source_sha256": "4f0af9a91ca59c23e7a85638d2685a5b1a07424a6ff99cbef35580f83c860e74"
       },
@@ -1145,7 +1149,7 @@
       },
       {
         "path": "src/avalan/agent/loader.py",
-        "source_sha256": "e91dafed0ae12af9d1e8cec0280798fa1fdcf44073d06ed68a2a6963c42e6c3e"
+        "source_sha256": "ff62787046ee0a15334522f478a45890800794002d83eaaebf29c0359e4bb39e"
       },
       {
         "path": "src/avalan/agent/orchestrator/__init__.py",
@@ -1173,7 +1177,7 @@
       },
       {
         "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-        "source_sha256": "0c02ad374f43185e69199d1bb10a4c404cb73c16596763df2ebcc8129c0a2962"
+        "source_sha256": "f500838d5770c0ee83a7be8eb372e48c78512ade2147994c4ef8a4951e2b03f0"
       },
       {
         "path": "src/avalan/agent/orchestrator_contract.py",
@@ -1513,7 +1517,7 @@
       },
       {
         "path": "src/avalan/entities.py",
-        "source_sha256": "c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"
+        "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
       },
       {
         "path": "src/avalan/event/__init__.py",
@@ -1845,7 +1849,7 @@
       },
       {
         "path": "src/avalan/model/capability.py",
-        "source_sha256": "0d47407ff60c337ec48b4054065a1620f7f7b03586ed56ddb0dae92ddff3fed2"
+        "source_sha256": "c498174acf6c155578cac4c05f3d288bcc536dd24cc93206cab22464878e7a28"
       },
       {
         "path": "src/avalan/model/criteria.py",
@@ -2101,7 +2105,7 @@
       },
       {
         "path": "src/avalan/patch/__init__.py",
-        "source_sha256": "045830b24dc68c90b6b99291181ecead04065efa4de77c985a959e9e3295e1d3"
+        "source_sha256": "c97d4c2a508ed9fc9e7a5f1bd6cc5d17906b206a25b98cd3bb300b10f8c31c9e"
       },
       {
         "path": "src/avalan/patch/codec.py",
@@ -2158,6 +2162,10 @@
       {
         "path": "src/avalan/patch/target.py",
         "source_sha256": "d7ce9327a33fc1abf8cd4dbfa4780e659607447ab128002547e381eb46f475cc"
+      },
+      {
+        "path": "src/avalan/patch/toolset.py",
+        "source_sha256": "9289c6ef6838a71aa2359bb6b39a267ed0435e7e355c0df97b424d53779da86e"
       },
       {
         "path": "src/avalan/pgsql.py",
@@ -2625,7 +2633,7 @@
       },
       {
         "path": "src/avalan/tool/context.py",
-        "source_sha256": "05aca36f84498465350f3c4d4cdcc20fad143011a572f03e1d6460dafba679b0"
+        "source_sha256": "cac62d75190c74e613ce2c84b6ad9e9e2ac0b41fff80186b3c36887d16174841"
       },
       {
         "path": "src/avalan/tool/database/__init__.py",
@@ -2693,7 +2701,7 @@
       },
       {
         "path": "src/avalan/tool/display.py",
-        "source_sha256": "3263068278a660ebbed8dc852d6521f174327d45179f18b6956d8bd8d2321093"
+        "source_sha256": "3662fefd904010cfff7139b84f1e6c0aef7ebee6ddc2d9b52dafa7c3f8872b14"
       },
       {
         "path": "src/avalan/tool/dsml.py",
@@ -2717,7 +2725,7 @@
       },
       {
         "path": "src/avalan/tool/manager.py",
-        "source_sha256": "1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"
+        "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
       },
       {
         "path": "src/avalan/tool/math.py",
@@ -3143,7 +3151,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "ed24ced9156fd10a1ce3f7884b5992d80da8baf73e48557f1ea288cd61a185fb"
+        "source_sha256": "da78bafc81a322091e3684ba402fc0a1360e5e7596ff8ec97c7844c2d9f4725f"
       }
     ],
     "public_tools": [
@@ -3189,6 +3197,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "068bc45efad0fd7f0cd2f427ca2522bd4a93cc94f4c731f4253d427850be3403",
-  "record_sha256": "36278df7a6113f6dbf2d4b0ac5b739438fcfa65e15775d6c4d4b2d557f1d26af"
+  "inventory_sha256": "c9f3d93809109fdb3c619f9624809b7ada9e2d21e827ef7d9aee8647bbd12be2",
+  "record_sha256": "45e782ac7b84ec2a182adcf58cbb77de3d6d02c4c1b58896d15d03f053a3b3ca"
 }

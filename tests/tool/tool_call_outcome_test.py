@@ -33,6 +33,8 @@ from avalan.entities import (
     WebshareProxyConfig,
 )
 
+TOOL_CALL_RAW_ARGUMENTS_SUPPORTED = True
+
 
 class ToolCallDiagnosticTestCase(TestCase):
     def test_fields_are_stable(self):
@@ -219,6 +221,7 @@ class ToolCallDiagnosticTestCase(TestCase):
 
 class ToolCallTestCase(TestCase):
     def test_create_with_provider_provenance(self):
+        self.assertTrue(TOOL_CALL_RAW_ARGUMENTS_SUPPORTED)
         call = ToolCall(
             id="call-1",
             name="pkg.tool",
@@ -231,6 +234,7 @@ class ToolCallTestCase(TestCase):
         self.assertEqual(call.id, "call-1")
         self.assertEqual(call.name, "pkg.tool")
         self.assertEqual(call.arguments, {"a": 1})
+        self.assertIsNone(call.raw_arguments)
         self.assertEqual(call.provider_name, "avl_cGtnLnRvb2w")
         self.assertTrue(call.provider_name_encoded)
         self.assertTrue(call.provider_arguments_malformed)
@@ -585,6 +589,7 @@ class ToolDescriptorTestCase(TestCase):
                 "provider_safe_schema",
                 "namespace",
                 "capabilities",
+                "domain_execution",
                 "policy",
                 "metadata",
             ],

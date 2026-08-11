@@ -15,7 +15,7 @@ import pytest
 _ROOT = Path(__file__).resolve().parents[1]
 _FIXTURES = _ROOT / "tests" / "fixtures" / "input"
 CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES = (206, 207, 208)
-COVERAGE_EXCLUSION_REPORT_LINE_COUNT = 2260
+COVERAGE_EXCLUSION_REPORT_LINE_COUNT = 2263
 
 
 def _load_verifier() -> ModuleType:

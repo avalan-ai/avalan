@@ -11,11 +11,18 @@
     },
     {
       "phase": 8,
-      "path": "phase_evidence.json",
+      "path": "phase8_evidence.json",
       "previous_record_sha256": "7725160f779f1fb3f5961de031c652e0e0e28cf5819dd181ce3318a0b1335659",
       "record_sha256": "28e41940aea4be8058ab26ec5184b7696cb9314ea827cb5fffc09519a4616378",
       "file_sha256": "c9397de8f417cefb66041db01727972369a060c03a2ac81c768820dcba16bdb2"
+    },
+    {
+      "phase": 9,
+      "path": "phase_evidence.json",
+      "previous_record_sha256": "28e41940aea4be8058ab26ec5184b7696cb9314ea827cb5fffc09519a4616378",
+      "record_sha256": "709034cc797df6a18e04355fcc95962fc04991cf67675585fe62592599cfde47",
+      "file_sha256": "4ba6c1e7f70bc2bc83274a6a006464dab1e9c93d13fde5307a94a089415a8364"
     }
   ],
-  "index_sha256": "6af9c82c6c77067cd09e13cbbb449ca411b34de3c4bda8feee3ce96faae74a9b"
+  "index_sha256": "4a0904ae60713b85f7731889b833e5cbc84d8771c68944eedd3d8d9774609b97"
 }

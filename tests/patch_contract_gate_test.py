@@ -125,7 +125,7 @@ def _facts() -> str:
 
 
 def test_patch_gate_contract_is_current() -> None:
-    """Require phase selection, dormant registration, and gate wiring."""
+    """Require the current selection, registration, and gate wiring."""
     makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
     assert "PATCH_PHASE is required" in makefile
     assert "test-patch-exact:" in makefile
@@ -142,6 +142,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
+    assert baseline["phase"] == 9
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -152,15 +153,7 @@ def test_patch_gate_contract_is_current() -> None:
     assert fact_ids == [f"PATCH-S2-{index:03d}" for index in range(1, 12)]
     advertisement = baseline["runtime_patch_advertisement"]
     assert advertisement == {
-        "forbidden_paths": [
-            "src/avalan/tool/patch.py",
-        ],
-        "forbidden_tokens": [
-            "patch.edit",
-            "patch.apply",
-            'namespace="patch"',
-            "namespace='patch'",
-        ],
+        "patch_toolset_path": "src/avalan/patch/toolset.py",
         "runtime_probe": [
             "toolmanager_default_and_configured_discovery",
             "cli_selectors_and_commands",
@@ -170,13 +163,9 @@ def test_patch_gate_contract_is_current() -> None:
             "provider_capability_catalog",
         ],
     }
-    for source in (_ROOT / "src").rglob("*.py"):
-        contents = source.read_text(encoding="utf-8")
-        assert not any(
-            token in contents for token in advertisement["forbidden_tokens"]
-        )
+    assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 8
+    assert _GATE._PATCH_CURRENT_PHASE == 9
 
 
 @pytest.mark.parametrize(
@@ -557,7 +546,7 @@ def test_preflight_executes_no_pytest_process(
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
-def test_preflight_rejects_caller_database_before_patch_phase_8(
+def test_preflight_rejects_caller_database_before_durability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reject caller database state while patch durability remains dormant."""
@@ -575,11 +564,7 @@ def test_preflight_rejects_caller_database_before_patch_phase_8(
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV)
-    with pytest.raises(
-        _GATE.PatchContractGateError,
-        match="patch acceptance phase is not implemented",
-    ):
-        _GATE.preflight(9, repo_root=_ROOT)
+    _GATE.preflight(9, repo_root=_ROOT)
 
 
 def test_baseline_section2_evidence_rejects_source_drift(

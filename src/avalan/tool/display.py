@@ -26,6 +26,7 @@ MAX_DISPLAY_PREVIEW_LENGTH = 1000
 MAX_DISPLAY_DETAILS = 12
 MAX_DISPLAY_METRICS = 12
 MAX_DISPLAY_SCAN_LENGTH = 1000
+_PATCH_TOOL_NAMES = frozenset({"patch.edit", "patch.apply"})
 
 ToolDisplayScalar: TypeAlias = None | bool | int | float | str
 
@@ -512,6 +513,8 @@ def tool_call_display_projection_from_metadata(
 ) -> ToolDisplayProjection:
     assert isinstance(call, ToolCall)
     projection = tool_display_projection_from_metadata(metadata)
+    if call.name in _PATCH_TOOL_NAMES:
+        return patch_tool_call_display_projection(call)
     return projection or fallback_tool_call_display_projection(call)
 
 
@@ -520,7 +523,73 @@ def tool_outcome_display_projection_from_metadata(
     metadata: Mapping[str, object] | None,
 ) -> ToolDisplayProjection:
     projection = tool_display_projection_from_metadata(metadata)
+    if _is_patch_tool_outcome(outcome):
+        return patch_tool_outcome_display_projection(outcome)
     return projection or fallback_tool_outcome_display_projection(outcome)
+
+
+def patch_tool_call_display_projection(
+    call: ToolCall,
+) -> ToolDisplayProjection:
+    """Return the closed content-free display projection for a patch call."""
+    assert isinstance(call, ToolCall)
+    assert call.name in _PATCH_TOOL_NAMES
+    return ToolDisplayProjection(
+        action="patch",
+        label=call.name,
+        target="patch",
+        summary="Patch request handled by the trusted host.",
+        status="received",
+        redacted=True,
+    )
+
+
+def patch_tool_outcome_display_projection(
+    outcome: ToolCallOutcome,
+) -> ToolDisplayProjection:
+    """Return the closed content-free display projection for patch output."""
+    assert _is_patch_tool_outcome(outcome)
+    if isinstance(outcome, ToolCallResult):
+        return ToolDisplayProjection(
+            action="patch",
+            label=outcome.call.name,
+            target="patch",
+            summary="Patch request reached a terminal state.",
+            status="completed",
+            outcome="result",
+            redacted=True,
+        )
+    if isinstance(outcome, ToolCallError):
+        return ToolDisplayProjection(
+            action="patch",
+            label=outcome.call.name,
+            target="patch",
+            summary="Patch request could not be completed.",
+            status="error",
+            outcome="error",
+            severity="error",
+            redacted=True,
+        )
+    return ToolDisplayProjection(
+        action="patch",
+        label=outcome.canonical_name or outcome.requested_name or "patch",
+        target="patch",
+        summary="Patch request was not executed.",
+        status="rejected",
+        outcome="diagnostic",
+        severity="error",
+        redacted=True,
+    )
+
+
+def _is_patch_tool_outcome(outcome: ToolCallOutcome) -> bool:
+    """Return whether an outcome belongs to the closed patch namespace."""
+    if isinstance(outcome, ToolCallResult | ToolCallError):
+        return outcome.call.name in _PATCH_TOOL_NAMES
+    return (
+        outcome.canonical_name in _PATCH_TOOL_NAMES
+        or outcome.requested_name in _PATCH_TOOL_NAMES
+    )
 
 
 def fallback_tool_call_display_projection(

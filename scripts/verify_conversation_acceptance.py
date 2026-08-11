@@ -444,7 +444,7 @@ _PHASE9_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase9.json"
 )
 _PHASE9_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "2a3ac941941ad358c54d13e8ac07dfda9a829efbec3aa45b7d3efee69ac51d10"
+    "3908043c7a3505c885b1ca551b7070e8b2032eadc17f97d563c0fb1b79870a64"
 )
 _PHASE10_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase10.json"
@@ -3719,7 +3719,7 @@ def _phase9_provider_transitions(
             to_size,
             to_sha256,
         )
-    if len(transitions) != 14:
+    if len(transitions) != 15:
         raise ConversationAcceptanceError(
             "Phase 9 provider transition inventory is invalid"
         )

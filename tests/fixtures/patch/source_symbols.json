@@ -21,21 +21,21 @@
       "path": "src/avalan/tool/manager.py",
       "symbol": "ToolManager",
       "artifact_class": "tool_manager",
-      "source_sha256": "1dadfbe9fd9fa368d026a77f836ae049289883b3a8ae2f4476fde827279f5b5a"
+      "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
     },
     {
       "id": "PATCH-SYM-004",
       "path": "src/avalan/entities.py",
       "symbol": "ToolCall",
       "artifact_class": "entity",
-      "source_sha256": "c394d52be456eed62e76d53659f45d80182fbeaa8ddadd539984646cd18a5f77"
+      "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
     },
     {
       "id": "PATCH-SYM-005",
       "path": "src/avalan/agent/loader.py",
       "symbol": "OrchestratorLoader",
       "artifact_class": "loader",
-      "source_sha256": "e91dafed0ae12af9d1e8cec0280798fa1fdcf44073d06ed68a2a6963c42e6c3e"
+      "source_sha256": "ff62787046ee0a15334522f478a45890800794002d83eaaebf29c0359e4bb39e"
     },
     {
       "id": "PATCH-SYM-006",
@@ -77,7 +77,7 @@
       "path": "src/avalan/tool/context.py",
       "symbol": "ToolSettingsContext",
       "artifact_class": "context",
-      "source_sha256": "05aca36f84498465350f3c4d4cdcc20fad143011a572f03e1d6460dafba679b0"
+      "source_sha256": "cac62d75190c74e613ce2c84b6ad9e9e2ac0b41fff80186b3c36887d16174841"
     },
     {
       "id": "PATCH-SYM-012",
@@ -253,7 +253,14 @@
       "symbol": "EventManagerDurableOutboxProjection",
       "artifact_class": "patch_durable_outbox_projection",
       "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
+    },
+    {
+      "id": "PATCH-SYM-037",
+      "path": "src/avalan/patch/toolset.py",
+      "symbol": "PatchToolSet",
+      "artifact_class": "patch_toolset",
+      "source_sha256": "9289c6ef6838a71aa2359bb6b39a267ed0435e7e355c0df97b424d53779da86e"
     }
   ],
-  "inventory_sha256": "957afdeec7545caa3a23cfe61bf70e474cdadcf00974f81ef39479fdbaf14291"
+  "inventory_sha256": "cc592c5fdbc6644c2c18b5b3a8f32bca9a2034d9ec05999f6aec50adb2db9f56"
 }

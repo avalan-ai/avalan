@@ -3217,7 +3217,991 @@
       "review_round": 4,
       "reviewer": "phase8-max-review-turn4",
       "rationale": "Turn 4 replaces the mislabeled in-memory witness with the isolated PostgreSQL pending, restart, authenticated inspect, await, and replay acceptance node."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P6-016",
+        "requirement_ids": [
+          "PATCH-R-0585",
+          "PATCH-R-0586",
+          "PATCH-R-0587",
+          "PATCH-R-0588",
+          "PATCH-R-0589",
+          "PATCH-R-0590",
+          "PATCH-R-0591",
+          "PATCH-R-0592"
+        ],
+        "category": "negative",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_has_no_public_mutation_tool_or_local_worker",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "c63e50d971db92e04d538e0fc2f73cc6d34a71267fcb4f4076d88b1d8a58fd5d"
+      },
+      "new": {
+        "id": "PATCH-A-P6-016",
+        "requirement_ids": [
+          "PATCH-R-0585",
+          "PATCH-R-0586",
+          "PATCH-R-0587",
+          "PATCH-R-0588",
+          "PATCH-R-0589",
+          "PATCH-R-0590",
+          "PATCH-R-0591",
+          "PATCH-R-0592"
+        ],
+        "category": "negative",
+        "surface": "coordinator",
+        "context": "local",
+        "platform": "portable",
+        "operation": "commit",
+        "authority": "lease",
+        "commit_boundary": "commit",
+        "evidence_class": "race",
+        "node_id": "tests/patch/phase_6_contract_test.py::test_patch_phase_6_has_no_public_mutation_tool_or_local_worker",
+        "lifecycle": "active",
+        "active_from_phase": 6,
+        "executable_sha256": "213e5d746f5a57d0a1e21cf432b1011e5e1be89b13b9abe01a8e24b03b09df9e"
+      },
+      "review_round": 1,
+      "reviewer": "phase9-validation",
+      "rationale": "Phase 9 exposes the sealed toolset class while preserving the Phase 6 direct-callable and worker-inactivity boundary."
     }
   ],
-  "history_sha256": "72670c22ea16e460cf1cd3527bf0a045365a455599af302a4a47091b246c7b7b"
+  "introductions": [
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-01",
+        "requirement_ids": [
+          "PATCH-R-0166",
+          "PATCH-R-0167",
+          "PATCH-R-0168",
+          "PATCH-R-0169",
+          "PATCH-R-0170",
+          "PATCH-R-0171",
+          "PATCH-R-0172",
+          "PATCH-R-0173"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_static_public_tools_and_selection",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "a2868deb2551a82d912636cc4534d2379c01078d85e304992756b52dbb368ee8"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-02",
+        "requirement_ids": [
+          "PATCH-R-0174",
+          "PATCH-R-0175",
+          "PATCH-R-0176",
+          "PATCH-R-0177",
+          "PATCH-R-0178",
+          "PATCH-R-0179",
+          "PATCH-R-0180",
+          "PATCH-R-0181"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_schema_exports_and_tool_copies_do_not_share_state",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "514fdf543f6445a028395a8fc5624c05b76e46c47f67fb3b94fba61ef96a2440"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-03",
+        "requirement_ids": [
+          "PATCH-R-0182",
+          "PATCH-R-0183",
+          "PATCH-R-0184",
+          "PATCH-R-0185",
+          "PATCH-R-0186",
+          "PATCH-R-0187",
+          "PATCH-R-0188",
+          "PATCH-R-0189"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_runtime_binding_rejects_unready_approval",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "80acfdc2e76a6bd867903f9b818abec00c1c6a5cde6492fc83a400e4151b7a91"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-04",
+        "requirement_ids": [
+          "PATCH-R-0190",
+          "PATCH-R-0191",
+          "PATCH-R-0192",
+          "PATCH-R-0193",
+          "PATCH-R-0194",
+          "PATCH-R-0195",
+          "PATCH-R-0196",
+          "PATCH-R-0197"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_runtime_binding_rejects_unready_coordinator",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "ee87162bcdcec258878cb3ba4637ba59ce081bc6fa59c957bd8f77da8d179846"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-05",
+        "requirement_ids": [
+          "PATCH-R-0198",
+          "PATCH-R-0199",
+          "PATCH-R-0200",
+          "PATCH-R-0201",
+          "PATCH-R-0202",
+          "PATCH-R-0203",
+          "PATCH-R-0204",
+          "PATCH-R-0205"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_runtime_binding_rejects_unready_persistence",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "effad0d92417c08121a9082e6bbd6b4bcf1dfd54fd4b9bb5b70b9f0dff3f46c4"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-06",
+        "requirement_ids": [
+          "PATCH-R-0206",
+          "PATCH-R-0207",
+          "PATCH-R-0208",
+          "PATCH-R-0209",
+          "PATCH-R-0210",
+          "PATCH-R-0211",
+          "PATCH-R-0212",
+          "PATCH-R-0213"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_orchestrator_loader_binds_ready_patch_tools",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "244e66e376f5a163bf009666317771cec7192dae1b5394a352dd82a396608c9b"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-07",
+        "requirement_ids": [
+          "PATCH-R-0214",
+          "PATCH-R-0215",
+          "PATCH-R-0216",
+          "PATCH-R-0217",
+          "PATCH-R-0218",
+          "PATCH-R-0219",
+          "PATCH-R-0220",
+          "PATCH-R-0221"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_loader_binds_once_and_requires_test_host",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "8a801d557ff998dbc551dec22c17ed509cccd62972b12ae60993430e7eccf541"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-08",
+        "requirement_ids": [
+          "PATCH-R-0222",
+          "PATCH-R-0223",
+          "PATCH-R-0224",
+          "PATCH-R-0225",
+          "PATCH-R-0226",
+          "PATCH-R-0227",
+          "PATCH-R-0228",
+          "PATCH-R-0599"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_manager_bypasses_generic_hooks_and_confirmation",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "1518808fe4c633c58e8ce6c4a0551bb01ae5e0876341f6987979ede99aeeec3b"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-09",
+        "requirement_ids": [
+          "PATCH-R-0600",
+          "PATCH-R-0601",
+          "PATCH-R-0602",
+          "PATCH-R-0603",
+          "PATCH-R-0604",
+          "PATCH-R-0605",
+          "PATCH-R-0606",
+          "PATCH-R-0607"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_generic_filter_cannot_rewrite_ordinary_call_to_patch",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "1eeb5c7b7a5ff3836c363644c0f05938acb1cebf5374b8f5be56e5a9199b2078"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-10",
+        "requirement_ids": [
+          "PATCH-R-0608",
+          "PATCH-R-0609",
+          "PATCH-R-0610",
+          "PATCH-R-0611",
+          "PATCH-R-0612",
+          "PATCH-R-0613",
+          "PATCH-R-0614",
+          "PATCH-R-0615"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_reserved_names_require_branded_tool_ownership",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "0b05adf33259a9b2fcca9740f2f0cb979e207e5c14cce2e380485f2292f854a1"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-11",
+        "requirement_ids": [
+          "PATCH-R-0616",
+          "PATCH-R-0617",
+          "PATCH-R-0618",
+          "PATCH-R-0619",
+          "PATCH-R-0620",
+          "PATCH-R-0621",
+          "PATCH-R-0622",
+          "PATCH-R-0623"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_forged_capabilities_cannot_reach_manager_or_sdk",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "a10405999318d4913ca6560e70ddf9741597be48923b434daad761566c90ff8b"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-12",
+        "requirement_ids": [
+          "PATCH-R-0624",
+          "PATCH-R-0625",
+          "PATCH-R-0626",
+          "PATCH-R-0627",
+          "PATCH-R-0628",
+          "PATCH-R-0629",
+          "PATCH-R-0630",
+          "PATCH-R-0631"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_distinct_raw_patches_bypass_generic_repetition_guard",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "f1fced7c3295de049c2b6ea6947d8634a6986432029c5fd40dc5c9716b1e3950"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-13",
+        "requirement_ids": [
+          "PATCH-R-0632",
+          "PATCH-R-0633",
+          "PATCH-R-0634",
+          "PATCH-R-0635",
+          "PATCH-R-0636",
+          "PATCH-R-0637",
+          "PATCH-R-0638",
+          "PATCH-R-0639"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_malformed_provider_arguments_cannot_fall_back",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "d3c8f178a0806f00b494479f1456a210b8b9dc9633e2aa98c804ef23d02b6aba"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-14",
+        "requirement_ids": [
+          "PATCH-R-0640",
+          "PATCH-R-0641",
+          "PATCH-R-0642",
+          "PATCH-R-0643",
+          "PATCH-R-0644",
+          "PATCH-R-0645",
+          "PATCH-R-0646",
+          "PATCH-R-0647"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_admission_cancellation",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "183bd0e4a2c5a5ce56955d61bbd550e3f24094252ae3a98c85d044eaea5b1454"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-15",
+        "requirement_ids": [
+          "PATCH-R-0648",
+          "PATCH-R-0649",
+          "PATCH-R-0650",
+          "PATCH-R-0651",
+          "PATCH-R-0652",
+          "PATCH-R-0653",
+          "PATCH-R-0654",
+          "PATCH-R-0655"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_pending_is_never_a_generic_tool_result",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "1b085b4b506cfa83b72d023232a737c0fea7330dfd94b0eea3ef6f2e866e10e6"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-16",
+        "requirement_ids": [
+          "PATCH-R-0656",
+          "PATCH-R-0657",
+          "PATCH-R-0658",
+          "PATCH-R-0659",
+          "PATCH-R-0660",
+          "PATCH-R-0661",
+          "PATCH-R-0662",
+          "PATCH-R-0663"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_pending_blocks_one_agent_branch_until_reinjection",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "781175cafae1a02a005fc361f0c41641c57ef621b2e6cbab6916765d287633d1"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-17",
+        "requirement_ids": [
+          "PATCH-R-0664",
+          "PATCH-R-0665",
+          "PATCH-R-0666",
+          "PATCH-R-0667",
+          "PATCH-R-0668",
+          "PATCH-R-0669",
+          "PATCH-R-0670",
+          "PATCH-R-0671"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_provider_raw_ingress_preserves_duplicate_evidence",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "38c9b1b0ab67bdedd78863ea01c7ac02d237764ee1802f5d5f1b7d768b34b08b"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-18",
+        "requirement_ids": [
+          "PATCH-R-0672",
+          "PATCH-R-0673",
+          "PATCH-R-0674",
+          "PATCH-R-0675",
+          "PATCH-R-0676",
+          "PATCH-R-0677",
+          "PATCH-R-0678",
+          "PATCH-R-0679"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_raw_retention_and_display_are_closed",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "a07061ac7d7073da0ac25817a605658d702f26704d7a54059765b84f7ff584f6"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-19",
+        "requirement_ids": [
+          "PATCH-R-0680",
+          "PATCH-R-0681",
+          "PATCH-R-0682",
+          "PATCH-R-0683",
+          "PATCH-R-0684",
+          "PATCH-R-0685",
+          "PATCH-R-0686",
+          "PATCH-R-0687"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_context_capability_is_loader_bound",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "044900871ca56068b05cecf89470a8c0a153191c0e197d1e67ecfa96ad14c492"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-20",
+        "requirement_ids": [
+          "PATCH-R-0688",
+          "PATCH-R-0689",
+          "PATCH-R-0690",
+          "PATCH-R-0691",
+          "PATCH-R-0692",
+          "PATCH-R-0693",
+          "PATCH-R-0694",
+          "PATCH-R-0695"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_stale_rebuild_and_strict_registration",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "d2d6183e063737ddb5ff4382d6696633b367aa50df3a2ce281682ba827ef314d"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-21",
+        "requirement_ids": [
+          "PATCH-R-0696",
+          "PATCH-R-0697",
+          "PATCH-R-0698",
+          "PATCH-R-0699",
+          "PATCH-R-0700",
+          "PATCH-R-0701",
+          "PATCH-R-0702",
+          "PATCH-R-0703"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_direct_sdk_host_lifecycle_subscription",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "626cd8a99f5e18549287d1924df842167a342fc8ae333f4024c9739818176a29"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-22",
+        "requirement_ids": [
+          "PATCH-R-0704",
+          "PATCH-R-0705",
+          "PATCH-R-0706",
+          "PATCH-R-0707",
+          "PATCH-R-0708",
+          "PATCH-R-0709",
+          "PATCH-R-0710",
+          "PATCH-R-0711"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_direct_sdk_json_edit_and_later_read",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "fadac551f5f6a0d71d24a9a08de8c8bdd7b1ad6295cfeada2b97c52b4a6a5839"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-23",
+        "requirement_ids": [
+          "PATCH-R-0712",
+          "PATCH-R-0713",
+          "PATCH-R-0714",
+          "PATCH-R-0715",
+          "PATCH-R-0716",
+          "PATCH-R-0717",
+          "PATCH-R-0718",
+          "PATCH-R-0719"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_e2e_010_direct_sdk_edit_reviews_approves_and_reads",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "83fe102e369afa6657f2df45ec71a6a8ed4fdf09a723b74fa4e25a374871f567"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-24",
+        "requirement_ids": [
+          "PATCH-R-0720",
+          "PATCH-R-0721",
+          "PATCH-R-0722",
+          "PATCH-R-0723",
+          "PATCH-R-0724",
+          "PATCH-R-0725",
+          "PATCH-R-0726",
+          "PATCH-R-0727"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_e2e_011_agent_json_apply_reinjects_and_reads",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "46fe9995b550db5d4a62c7aee5a1b8953c4184a3b0aae218e3229ab079546d49"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-25",
+        "requirement_ids": [
+          "PATCH-R-0728",
+          "PATCH-R-0729",
+          "PATCH-R-0730",
+          "PATCH-R-0731",
+          "PATCH-R-0732",
+          "PATCH-R-0733",
+          "PATCH-R-0734",
+          "PATCH-R-0735"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_e2e_012_stream_failures_and_handshakes_never_write",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "3fc10058dddf0aa20d83dc6cc68ac64883f538b527b98ff4d1cec2b235641d86"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-26",
+        "requirement_ids": [
+          "PATCH-R-0736",
+          "PATCH-R-0737",
+          "PATCH-R-0738",
+          "PATCH-R-0739",
+          "PATCH-R-0740",
+          "PATCH-R-0741",
+          "PATCH-R-0742",
+          "PATCH-R-0743"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_e2e_013_detached_sdk_pending_resumes_one_branch",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "0af0adb6ee83125cb88da522f2c7d62fa01adc875d2ffab8d291b591582b56c4"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-27",
+        "requirement_ids": [
+          "PATCH-R-0744",
+          "PATCH-R-0745",
+          "PATCH-R-0746",
+          "PATCH-R-0747",
+          "PATCH-R-0748",
+          "PATCH-R-0749",
+          "PATCH-R-0750",
+          "PATCH-R-0751"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_e2e_014_json_parity_and_native_replay_are_inert",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "57c67d96d89a5a9050311dd4c33abf8c4243d4cb9581f3cb8947c1323a441ae4"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-28",
+        "requirement_ids": [
+          "PATCH-R-0752",
+          "PATCH-R-0753",
+          "PATCH-R-0754",
+          "PATCH-R-0755",
+          "PATCH-R-0756",
+          "PATCH-R-0757",
+          "PATCH-R-0758",
+          "PATCH-R-0759"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_active_audience_privacy_matrix",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "a1a828575ca4ec9cb2bbaa246353aa3f22703b8f94769b3b58af1dc3d75fa833"
+      },
+      "review_round": 5,
+      "reviewer": "phase9-max-review-turn5",
+      "rationale": "Review-sealed lifecycle identity and bounded settlement evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-29",
+        "requirement_ids": [
+          "PATCH-R-0760",
+          "PATCH-R-0761",
+          "PATCH-R-0762",
+          "PATCH-R-0763",
+          "PATCH-R-0764",
+          "PATCH-R-0765",
+          "PATCH-R-0766",
+          "PATCH-R-0767"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_public_boundary_rejects_invalid_and_stale_state",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "5b6b5b7d81c2272f1b9ae0e874aa3af5ff7250c2b95d83c65db3f64b00f978a3"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-30",
+        "requirement_ids": [
+          "PATCH-R-0768",
+          "PATCH-R-0769",
+          "PATCH-R-0770",
+          "PATCH-R-0771",
+          "PATCH-R-0772",
+          "PATCH-R-0773",
+          "PATCH-R-0774",
+          "PATCH-R-0775"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_admission_failure_raw_errors_and_async_resources",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "f526ba1f3bff48f27c746dc054341eeb70e55eb79873f13798cc591ee9f15c2f"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-109-R2-31",
+        "requirement_ids": [
+          "PATCH-R-0776",
+          "PATCH-R-0777",
+          "PATCH-R-0778",
+          "PATCH-R-0779",
+          "PATCH-R-0780"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "tool",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_9_contract_test.py::test_patch_phase_9_toolset_error_projection_and_lifecycle_cleanup",
+        "lifecycle": "active",
+        "active_from_phase": 9,
+        "executable_sha256": "9ab9f5a2363e2d029ea6d8959ec46a06b7f40b35b31f6bb0f48c410bf5420c1c"
+      },
+      "review_round": 2,
+      "reviewer": "phase9-max-review-turn2",
+      "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    }
+  ],
+  "history_sha256": "a7ef9da44903e1abde6ee686b3cedc5741a23bb60be4b7f13a4522c74d6fe916"
 }

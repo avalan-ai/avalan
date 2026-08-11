@@ -2305,11 +2305,11 @@ def test_patch_phase_6_internal_pending_never_creates_a_detached_handle() -> (
 
 
 def test_patch_phase_6_has_no_public_mutation_tool_or_local_worker() -> None:
-    """Leave public tools and filesystem workers inactive."""
+    """Keep direct mutation callables and workers inactive by default."""
     assert callable(InMemoryPatchCoordinator)
     import avalan.patch as patch
 
-    assert not hasattr(patch, "PatchToolSet")
+    assert hasattr(patch, "PatchToolSet")
     assert not hasattr(patch, "patch_edit")
     assert not hasattr(patch, "patch_apply")
     assert InMemoryPatchCoordinator.scheduler_parallel_safe is False

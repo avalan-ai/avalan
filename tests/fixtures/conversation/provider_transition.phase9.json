@@ -7,6 +7,13 @@
   "reason": "Bind the authenticated durable Responses lifecycle to the frozen conversation store and server boundaries.",
   "transitions": [
     {
+      "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "from_size": 235545,
+      "from_sha256": "0c02ad374f43185e69199d1bb10a4c404cb73c16596763df2ebcc8129c0a2962",
+      "to_size": 239540,
+      "to_sha256": "f500838d5770c0ee83a7be8eb372e48c78512ade2147994c4ef8a4951e2b03f0"
+    },
+    {
       "path": "src/avalan/conversation/store.py",
       "from_size": 111380,
       "from_sha256": "99cc6586e4cd4002035330c4383f07dc215b024da87e2e309392ab6b87ac90d0",
@@ -49,20 +56,6 @@
       "to_sha256": "68454f8e7892e852d1a7b1f76bec3ecfab743a26e237ced373804524795f6edf"
     },
     {
-      "path": "src/avalan/server/routers/__init__.py",
-      "from_size": 5498,
-      "from_sha256": "cd07cd06d293c25d0f6a3f0dca9af5c242f6079804f582de7b9e986b40f9dc99",
-      "to_size": 6393,
-      "to_sha256": "a721aa2219590902a190411da56397763c28281684d5e952045179597e3573d2"
-    },
-    {
-      "path": "src/avalan/server/routers/responses.py",
-      "from_size": 97454,
-      "from_sha256": "2af7e90bf6ed4e303f91a32b17ad2127760a33c8b22c61da8fab1518379abf83",
-      "to_size": 111721,
-      "to_sha256": "58ff1830a208b415fa7c952b7ea3d46cdb2e79844e7b51d14e61f48212a343b6"
-    },
-    {
       "path": "src/avalan/server/responses_lifecycle.py",
       "from_size": 0,
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -75,6 +68,20 @@
       "from_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
       "to_size": 20666,
       "to_sha256": "ea006d774949798130dea546ba5de845a67f85b8497558b7c4ac6b4831b52c93"
+    },
+    {
+      "path": "src/avalan/server/routers/__init__.py",
+      "from_size": 5498,
+      "from_sha256": "cd07cd06d293c25d0f6a3f0dca9af5c242f6079804f582de7b9e986b40f9dc99",
+      "to_size": 6393,
+      "to_sha256": "a721aa2219590902a190411da56397763c28281684d5e952045179597e3573d2"
+    },
+    {
+      "path": "src/avalan/server/routers/responses.py",
+      "from_size": 97454,
+      "from_sha256": "2af7e90bf6ed4e303f91a32b17ad2127760a33c8b22c61da8fab1518379abf83",
+      "to_size": 111721,
+      "to_sha256": "58ff1830a208b415fa7c952b7ea3d46cdb2e79844e7b51d14e61f48212a343b6"
     },
     {
       "path": "tests/conversation/pgsql_store_test.py",
@@ -108,5 +115,5 @@
   "evidence_node_ids": [
     "tests/conversation/server_stored_e2e_test.py::test_normative_server_stored_contract"
   ],
-  "canonical_sha256": "2a3ac941941ad358c54d13e8ac07dfda9a829efbec3aa45b7d3efee69ac51d10"
+  "canonical_sha256": "3908043c7a3505c885b1ca551b7070e8b2032eadc17f97d563c0fb1b79870a64"
 }

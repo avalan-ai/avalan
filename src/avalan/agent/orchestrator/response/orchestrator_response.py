@@ -201,6 +201,7 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
         StreamItemKind.TOOL_CALL_DONE,
     }
 )
+_PATCH_TOOL_NAMES = frozenset({"patch.edit", "patch.apply"})
 _INVALID_TOOL_CALL_ARGUMENTS = object()
 
 
@@ -1360,6 +1361,30 @@ class OrchestratorResponse(
                 details={"tool_call_id": tool_call_id},
             )
             return None
+        if name in {"patch.edit", "patch.apply"}:
+            if not state.argument_deltas:
+                self._append_canonical_tool_call_lifecycle_diagnostic(
+                    tool_call_id=tool_call_id,
+                    code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,
+                    message="Patch tool-call arguments are missing.",
+                    details={"tool_call_id": tool_call_id},
+                )
+                return None
+            try:
+                raw_arguments = "".join(state.argument_deltas).encode("utf-8")
+            except UnicodeError:
+                self._append_canonical_tool_call_lifecycle_diagnostic(
+                    tool_call_id=tool_call_id,
+                    code=ToolCallDiagnosticCode.MALFORMED_ARGUMENTS.value,
+                    message="Patch tool-call arguments are invalid UTF-8.",
+                    details={"tool_call_id": tool_call_id},
+                )
+                return None
+            return ToolCall(
+                id=tool_call_id,
+                name=name,
+                raw_arguments=raw_arguments,
+            )
         arguments = self._tool_call_arguments_from_lifecycle(
             tool_call_id,
             state,
@@ -3753,10 +3778,11 @@ class OrchestratorResponse(
         if emit_ready:
             self._append_canonical_tool_call_ready(call)
         self._append_canonical_tool_execution_started(call)
-        self._append_canonical_tool_execution_cancelled(
-            call,
-            stage=ToolCallDiagnosticStage.DISPATCH,
-        )
+        if not self._is_sealed_patch_call(call):
+            self._append_canonical_tool_execution_cancelled(
+                call,
+                stage=ToolCallDiagnosticStage.DISPATCH,
+            )
 
     async def _execute_tool_call_with_lifecycle(
         self,
@@ -3826,10 +3852,11 @@ class OrchestratorResponse(
                 confirm=False,
             )
         except CancelledError:
-            self._append_canonical_tool_execution_cancelled(
-                call,
-                stage=ToolCallDiagnosticStage.DISPATCH,
-            )
+            if not self._is_sealed_patch_call(call):
+                self._append_canonical_tool_execution_cancelled(
+                    call,
+                    stage=ToolCallDiagnosticStage.DISPATCH,
+                )
             if finish_stream_on_error:
                 self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
@@ -4180,6 +4207,10 @@ class OrchestratorResponse(
                     call.name == RESERVED_INPUT_CAPABILITY_NAME
                     or provider_name == RESERVED_INPUT_CAPABILITY_NAME
                 )
+                is_patch = (
+                    call.name in _PATCH_TOOL_NAMES
+                    or provider_name in _PATCH_TOOL_NAMES
+                )
                 source_call_id = (
                     self._provider_tool_call_ids_by_canonical_id.get(
                         str(call.id)
@@ -4195,9 +4226,15 @@ class OrchestratorResponse(
                         arguments=(
                             "{"
                             if call.provider_arguments_malformed
-                            else call.arguments
+                            else (
+                                call.raw_arguments.decode("utf-8")
+                                if call.raw_arguments is not None
+                                else call.arguments
+                            )
                         ),
-                        structured=not (parser_originated and is_reserved),
+                        structured=not (
+                            parser_originated and (is_reserved or is_patch)
+                        ),
                     )
                 )
         except (AssertionError, ModelCapabilityValidationError):
@@ -4300,6 +4337,14 @@ class OrchestratorResponse(
         self._staged_tool_batch_present = False
         for item in staged_items:
             metadata = dict(item.metadata)
+            tool_call_id = item.correlation.tool_call_id
+            assert tool_call_id is not None
+            call = calls_by_id[tool_call_id]
+            if call.name in _PATCH_TOOL_NAMES:
+                if item.kind is StreamItemKind.TOOL_CALL_ARGUMENT_DELTA:
+                    continue
+                if item.kind is StreamItemKind.TOOL_CALL_READY:
+                    item = replace(item, data={"name": call.name})
             if item.kind is StreamItemKind.TOOL_CALL_READY:
                 tool_call_id = item.correlation.tool_call_id
                 assert tool_call_id is not None
@@ -4614,12 +4659,14 @@ class OrchestratorResponse(
     ) -> ToolCallOutcome | None:
         if self._tool_manager is None:
             return None
-        if self._block_repeated_tool_calls:
+        sealed_patch = self._is_sealed_patch_call(call)
+        if self._block_repeated_tool_calls and not sealed_patch:
             repeated_diagnostic = self._repeated_call_diagnostic(call)
             if repeated_diagnostic is not None:
                 return repeated_diagnostic
 
-        self._attempted_call_signatures.add(self._call_signature(call))
+        if not sealed_patch:
+            self._attempted_call_signatures.add(self._call_signature(call))
         if type(self._tool_manager) is ToolManager:
             confirmation = self._tool_confirm if confirm else None
             return await self._tool_manager.execute_call(
@@ -4722,7 +4769,8 @@ class OrchestratorResponse(
         except CancelledError:
             if call is not None:
                 self._append_canonical_tool_execution_started(call)
-                self._append_canonical_tool_execution_cancelled(call)
+                if not self._is_sealed_patch_call(call):
+                    self._append_canonical_tool_execution_cancelled(call)
             if finish_stream:
                 self._finish_canonical_stream(StreamItemKind.STREAM_CANCELLED)
             raise
@@ -4747,9 +4795,13 @@ class OrchestratorResponse(
             )
             return False
 
+        sealed_patch = any(
+            self._is_sealed_patch_outcome(outcome) for outcome in outcomes
+        )
         cycle_signature = self._tool_cycle_signature(tool_messages)
         if (
             self._block_repeated_tool_calls
+            and not sealed_patch
             and cycle_signature in self._tool_cycle_signatures
         ):
             self._append_canonical_guard_diagnostic(
@@ -4765,7 +4817,7 @@ class OrchestratorResponse(
             )
             return False
 
-        if (
+        if not sealed_patch and (
             self._maximum_tool_cycles != UNLIMITED_TOOL_CYCLES
             and self._tool_cycle_count >= self._maximum_tool_cycles
         ):
@@ -4814,9 +4866,22 @@ class OrchestratorResponse(
             )
             return False
 
-        self._tool_cycle_signatures.add(cycle_signature)
-        self._tool_cycle_count += 1
+        if not sealed_patch:
+            self._tool_cycle_signatures.add(cycle_signature)
+            self._tool_cycle_count += 1
         return True
+
+    def _is_sealed_patch_call(self, call: ToolCall) -> bool:
+        """Return whether a call belongs to the manager-owned patch domain."""
+        return type(
+            self._tool_manager
+        ) is ToolManager and self._tool_manager.is_sealed_patch_call(call)
+
+    def _is_sealed_patch_outcome(self, outcome: ToolCallOutcome) -> bool:
+        """Return whether one outcome came from the sealed patch domain."""
+        if not isinstance(outcome, (ToolCallResult, ToolCallError)):
+            return False
+        return self._is_sealed_patch_call(outcome.call)
 
     def _attempted_call_signature_details(self) -> list[str]:
         return sorted(self._attempted_call_signatures)
@@ -5749,12 +5814,19 @@ class OrchestratorResponse(
         call: ToolCall,
         exc: Exception,
     ) -> None:
+        is_patch = call.name in _PATCH_TOOL_NAMES
         self._append_canonical_tool_execution_result(
             StreamItemKind.TOOL_EXECUTION_ERROR,
             call,
             {
-                "error_type": exc.__class__.__name__,
-                "message": str(exc),
+                "error_type": (
+                    "PatchInvocationError"
+                    if is_patch
+                    else exc.__class__.__name__
+                ),
+                "message": (
+                    "Patch invocation failed." if is_patch else str(exc)
+                ),
             },
             result=self._exception_tool_call_error(call, exc),
         )
@@ -5954,16 +6026,32 @@ class OrchestratorResponse(
         call: ToolCall,
         exc: Exception,
     ) -> ToolCallError:
+        is_patch = call.name in _PATCH_TOOL_NAMES
+        outcome_call = (
+            ToolCall(
+                id=call.id,
+                name=call.name,
+                provider_name=call.provider_name,
+                provider_name_encoded=call.provider_name_encoded,
+                provider_arguments_malformed=(
+                    call.provider_arguments_malformed
+                ),
+            )
+            if is_patch
+            else call
+        )
         return ToolCallError(
             id=uuid4(),
-            call=call,
-            name=call.name,
-            arguments=call.arguments,
-            provider_name=call.provider_name,
-            provider_name_encoded=call.provider_name_encoded,
-            provider_arguments_malformed=call.provider_arguments_malformed,
-            error=exc,
-            message=str(exc),
+            call=outcome_call,
+            name=outcome_call.name,
+            arguments=outcome_call.arguments,
+            provider_name=outcome_call.provider_name,
+            provider_name_encoded=outcome_call.provider_name_encoded,
+            provider_arguments_malformed=(
+                outcome_call.provider_arguments_malformed
+            ),
+            error={"type": "PatchInvocationError"} if is_patch else exc,
+            message="Patch invocation failed." if is_patch else str(exc),
         )
 
     @staticmethod

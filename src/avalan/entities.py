@@ -25,6 +25,7 @@ from uuid import UUID
 if TYPE_CHECKING:
     from .agent.execution import AgentExecution, BranchInteractionBroker
     from .interaction.entities import ExecutionOrigin
+    from .patch.toolset import PatchInvocationCapability
 
     from numpy.typing import NDArray
     from torch import Tensor, dtype
@@ -798,6 +799,7 @@ class ToolCall:
     id: UUID | str | None
     name: str
     arguments: dict[str, ToolValue] | None = None
+    raw_arguments: bytes | None = None
     provider_name: str | None = None
     provider_name_encoded: bool = False
     provider_arguments_malformed: bool = False
@@ -806,6 +808,7 @@ class ToolCall:
         if self.id is not None:
             _assert_tool_identifier(self.id, "id")
         assert isinstance(self.name, str)
+        assert self.raw_arguments is None or type(self.raw_arguments) is bytes
         _assert_optional_tool_name(self.provider_name, "provider_name")
         assert isinstance(self.provider_name_encoded, bool)
         assert isinstance(self.provider_arguments_malformed, bool)
@@ -964,6 +967,64 @@ class ToolCapabilities:
         assert isinstance(self.parallel_safe, bool)
 
 
+class ToolDomainInputKind(StrEnum):
+    """Name the immutable ingress representation a domain owns."""
+
+    STRICT_RAW_JSON = "strict_raw_json"
+
+
+class ToolDomainApprovalKind(StrEnum):
+    """Name the authority boundary that approves a domain action."""
+
+    SEALED_PLAN = "sealed_plan"
+
+
+class ToolDomainRetryKind(StrEnum):
+    """Name the component allowed to retry a domain action."""
+
+    DOMAIN = "domain"
+
+
+class ToolDomainParallelismKind(StrEnum):
+    """Name the component that schedules domain work."""
+
+    COORDINATOR = "coordinator"
+
+
+class ToolDomainPendingKind(StrEnum):
+    """Name the owner of nonterminal domain state."""
+
+    HOST = "host"
+
+
+class ToolDomainProjectionKind(StrEnum):
+    """Name the owner that projects a domain result to a model."""
+
+    DOMAIN = "domain"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolDomainExecutionContract:
+    """Declare the strict execution boundary of a privileged domain tool."""
+
+    input_kind: ToolDomainInputKind
+    approval_kind: ToolDomainApprovalKind
+    retry_kind: ToolDomainRetryKind
+    parallelism_kind: ToolDomainParallelismKind
+    pending_kind: ToolDomainPendingKind
+    projection_kind: ToolDomainProjectionKind
+
+    def __post_init__(self) -> None:
+        """Require every domain execution boundary to be explicit."""
+        assert isinstance(self.input_kind, ToolDomainInputKind)
+        assert isinstance(self.approval_kind, ToolDomainApprovalKind)
+        assert isinstance(self.retry_kind, ToolDomainRetryKind)
+        assert isinstance(self.parallelism_kind, ToolDomainParallelismKind)
+        assert isinstance(self.pending_kind, ToolDomainPendingKind)
+        assert isinstance(self.projection_kind, ToolDomainProjectionKind)
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class ToolDescriptor:
@@ -976,6 +1037,7 @@ class ToolDescriptor:
     provider_safe_schema: dict[str, Any] | None = None
     namespace: str | None = None
     capabilities: ToolCapabilities = field(default_factory=ToolCapabilities)
+    domain_execution: ToolDomainExecutionContract | None = None
     policy: dict[str, ToolValue] = field(default_factory=dict)
     metadata: dict[str, ToolDescriptorMetadataValue] = field(
         default_factory=dict
@@ -998,6 +1060,9 @@ class ToolDescriptor:
             assert isinstance(self.provider_safe_schema, dict)
         _assert_optional_tool_name(self.namespace, "namespace")
         assert isinstance(self.capabilities, ToolCapabilities)
+        assert self.domain_execution is None or isinstance(
+            self.domain_execution, ToolDomainExecutionContract
+        )
         assert isinstance(self.policy, dict)
         assert isinstance(self.metadata, dict)
         projector = self.metadata.get(TOOL_DISPLAY_PROJECTOR_METADATA_KEY)
@@ -1409,6 +1474,7 @@ class ToolCallContext:
     execution_origin: "ExecutionOrigin | None" = None
     interaction_broker: "BranchInteractionBroker | None" = None
     durable_a2a_input: bool = False
+    patch_capability: "PatchInvocationCapability | None" = None
 
     def __post_init__(self) -> None:
         if self.skills_registry is not None:
