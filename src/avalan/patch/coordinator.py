@@ -8,12 +8,14 @@ mutation authority is activated.
 """
 
 from asyncio import CancelledError, Event, Lock
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
-from typing import Protocol, TypeGuard, final
+from typing import Protocol, TypeGuard, final, runtime_checkable
 from weakref import WeakKeyDictionary
 
+from avalan._patch_authority import _PatchAuthorityValidator
 from avalan.patch.domain import (
     AlgorithmDigest,
     ArtifactState,
@@ -490,6 +492,23 @@ class RootedCommitChannel(Protocol):
         """Return retained local settlement truth without another commit."""
 
 
+@runtime_checkable
+class RootedSandboxCommitChannel(Protocol):
+    """Execute one command through an authenticated sandbox worker channel."""
+
+    async def commit_sandbox(
+        self,
+        command: SealedCommitCommand,
+        validator: "RootedCommandAuthorityValidator",
+    ) -> WorkerReport:
+        """Return a journal-derived report from the sandbox target."""
+
+    async def reconcile_sandbox(
+        self, request_id: PatchRequestId
+    ) -> WorkerReport:
+        """Return retained sandbox truth without another commit."""
+
+
 @dataclass(frozen=True, slots=True, eq=False)
 class _RootedWorkerAuthorization:
     """Keep local mutation-worker construction inside target runtime code."""
@@ -507,7 +526,7 @@ class RootedLocalCommitWorker:
 
     async def commit(self, command: SealedCommitCommand) -> WorkerReport:
         """Execute one sealed command without exposing target handles."""
-        if not await _consume_rooted_command_authority(command):
+        if await _consume_rooted_command_authority(command) is None:
             raise CoordinatorError(CoordinatorErrorCode.FENCED)
         return await self._channel.commit_local(command)
 
@@ -518,18 +537,95 @@ class RootedLocalCommitWorker:
         return await self._channel.reconcile_local(request_id)
 
 
+@final
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True)
+class RootedSandboxCommitWorker:
+    """Forward commands through a sealed context-owned sandbox endpoint."""
+
+    async def commit(self, command: SealedCommitCommand) -> WorkerReport:
+        """Execute one sealed sandbox command without target handles."""
+        endpoint = _ROOTED_SANDBOX_WORKERS.get(self)
+        validator = await _consume_rooted_command_authority(command)
+        if endpoint is None or validator is None:
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        active = _ACTIVE_SANDBOX_WORKER.set(self)
+        try:
+            return await endpoint.commit_sandbox(command, validator)
+        finally:
+            _ACTIVE_SANDBOX_WORKER.reset(active)
+
+    async def _reconcile_for_owner(
+        self, request_id: PatchRequestId
+    ) -> WorkerReport:
+        """Read retained sandbox truth without replaying its command."""
+        endpoint = _ROOTED_SANDBOX_WORKERS.get(self)
+        if endpoint is None:
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        active = _ACTIVE_SANDBOX_WORKER.set(self)
+        try:
+            return await endpoint.reconcile_sandbox(request_id)
+        finally:
+            _ACTIVE_SANDBOX_WORKER.reset(active)
+
+
+@final
+@dataclass(frozen=True, slots=True, eq=False, weakref_slot=True, repr=False)
+class _RootedSandboxEndpoint:
+    """Retain the only channel reference outside a public worker object."""
+
+    _channel: RootedSandboxCommitChannel
+
+    async def commit_sandbox(
+        self,
+        command: SealedCommitCommand,
+        validator: "RootedCommandAuthorityValidator",
+    ) -> WorkerReport:
+        """Forward one authenticated command to the context endpoint."""
+        worker = _ACTIVE_SANDBOX_WORKER.get()
+        if worker is None or _ROOTED_SANDBOX_WORKERS.get(worker) is not self:
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        return await self._channel.commit_sandbox(command, validator)
+
+    async def reconcile_sandbox(
+        self, request_id: PatchRequestId
+    ) -> WorkerReport:
+        """Read one retained settlement report from the context endpoint."""
+        worker = _ACTIVE_SANDBOX_WORKER.get()
+        if worker is None or _ROOTED_SANDBOX_WORKERS.get(worker) is not self:
+            raise CoordinatorError(CoordinatorErrorCode.FENCED)
+        return await self._channel.reconcile_sandbox(request_id)
+
+
+@runtime_checkable
+class RootedCommandAuthorityValidator(Protocol):
+    """Validate one worker command against its live ownership record."""
+
+    async def is_rooted_command_current(
+        self, command: SealedCommitCommand
+    ) -> bool:
+        """Return whether this exact command still has live authority."""
+
+
 @dataclass(frozen=True, slots=True)
 class _RootedCommandAuthority:
-    """Bind a one-shot rooted command to a live store and private nonce."""
+    """Bind a one-shot rooted command to a live private validator."""
 
-    store: "InMemoryCoordinatorStore"
-    lease: CommitLease
+    validator: RootedCommandAuthorityValidator
     nonce: object = field(default_factory=object)
 
 
 _ROOTED_LOCAL_WORKERS: WeakKeyDictionary[
     RootedLocalCommitWorker, _RootedWorkerAuthorization
 ] = WeakKeyDictionary()
+_ROOTED_SANDBOX_WORKERS: WeakKeyDictionary[
+    RootedSandboxCommitWorker, _RootedSandboxEndpoint
+] = WeakKeyDictionary()
+_ROOTED_SANDBOX_ENDPOINTS: WeakKeyDictionary[
+    _RootedSandboxEndpoint, object
+] = WeakKeyDictionary()
+_ACTIVE_SANDBOX_WORKER: ContextVar[RootedSandboxCommitWorker | None] = (
+    ContextVar("active_sandbox_commit_worker", default=None)
+)
 _ROOTED_COMMAND_AUTHORITIES: WeakKeyDictionary[
     SealedCommitCommand, _RootedCommandAuthority
 ] = WeakKeyDictionary()
@@ -544,6 +640,31 @@ def _rooted_local_worker(
     return worker
 
 
+def _rooted_sandbox_endpoint(
+    channel: RootedSandboxCommitChannel,
+) -> _RootedSandboxEndpoint:
+    """Seal one typed context endpoint before public-worker construction."""
+    if not _PatchAuthorityValidator.sandbox_endpoint_is_issued(channel):
+        raise CoordinatorError(CoordinatorErrorCode.FENCED)
+    endpoint = _RootedSandboxEndpoint(channel)
+    _ROOTED_SANDBOX_ENDPOINTS[endpoint] = object()
+    return endpoint
+
+
+def _sandbox_worker_for_endpoint(
+    endpoint: _RootedSandboxEndpoint,
+) -> RootedSandboxCommitWorker:
+    """Return a worker only for a coordinator-sealed sandbox endpoint."""
+    if (
+        type(endpoint) is not _RootedSandboxEndpoint
+        or endpoint not in _ROOTED_SANDBOX_ENDPOINTS
+    ):
+        raise CoordinatorError(CoordinatorErrorCode.FENCED)
+    worker = RootedSandboxCommitWorker()
+    _ROOTED_SANDBOX_WORKERS[worker] = endpoint
+    return worker
+
+
 def _is_rooted_local_worker(
     worker: CommitWorker,
 ) -> TypeGuard[RootedLocalCommitWorker]:
@@ -554,31 +675,59 @@ def _is_rooted_local_worker(
     )
 
 
+def _is_rooted_sandbox_worker(
+    worker: CommitWorker,
+) -> TypeGuard[RootedSandboxCommitWorker]:
+    """Accept only a worker minted by the private sandbox-worker factory."""
+    return (
+        type(worker) is RootedSandboxCommitWorker
+        and _ROOTED_SANDBOX_WORKERS.get(worker) is not None
+    )
+
+
+def _is_rooted_target_worker(
+    worker: CommitWorker,
+) -> TypeGuard[RootedLocalCommitWorker | RootedSandboxCommitWorker]:
+    """Return whether one trusted target worker owns this sealed route."""
+    return _is_rooted_local_worker(worker) or _is_rooted_sandbox_worker(worker)
+
+
 async def _issue_rooted_command_authority(
     command: SealedCommitCommand, store: "InMemoryCoordinatorStore"
 ) -> None:
     """Bind one command identity to a coordinator-owned current-fence check."""
-    if command in _ROOTED_COMMAND_AUTHORITIES or not await store.authorize(
-        command
+    await _issue_rooted_command_authority_for_validator(
+        command, _InMemoryRootedCommandAuthorityValidator(store)
+    )
+
+
+async def _issue_rooted_command_authority_for_validator(
+    command: SealedCommitCommand,
+    validator: RootedCommandAuthorityValidator,
+) -> None:
+    """Mint one worker authority after its trusted owner verifies it live."""
+    if (
+        not isinstance(validator, RootedCommandAuthorityValidator)
+        or command in _ROOTED_COMMAND_AUTHORITIES
+        or not await validator.is_rooted_command_current(command)
     ):
         raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
-    _ROOTED_COMMAND_AUTHORITIES[command] = _RootedCommandAuthority(
-        store, command.lease
-    )
+    _ROOTED_COMMAND_AUTHORITIES[command] = _RootedCommandAuthority(validator)
 
 
 async def _consume_rooted_command_authority(
     command: SealedCommitCommand,
-) -> bool:
+) -> RootedCommandAuthorityValidator | None:
     """Consume authority only while its owner/fence remains current."""
     authority = _ROOTED_COMMAND_AUTHORITIES.pop(command, None)
     if authority is None:
-        return False
-    return (
-        authority.lease == command.lease
-        and authority.nonce is not None
-        and await authority.store.is_current(authority.lease)
-    )
+        return None
+    if (
+        authority.nonce is None
+        or not await authority.validator.is_rooted_command_current(command)
+    ):
+        return None
+    return authority.validator
 
 
 class Reconciler(Protocol):
@@ -632,7 +781,9 @@ class _RuntimeRecord:
     result: PatchResult | None = None
     pending: _AttachedPending | None = None
     pending_owner: str | None = None
-    commit_worker: RootedLocalCommitWorker | None = None
+    commit_worker: (
+        RootedLocalCommitWorker | RootedSandboxCommitWorker | None
+    ) = None
     cancellation_requested: bool = False
     sequence: int = 0
     events: list[CoordinatorEvent] = field(default_factory=list)
@@ -811,6 +962,19 @@ class InMemoryCoordinatorStore:
         ):
             raise CoordinatorError(CoordinatorErrorCode.INVALID_RESERVATION)
         return record
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class _InMemoryRootedCommandAuthorityValidator:
+    """Adapt the attached coordinator record to the rooted-worker check."""
+
+    store: InMemoryCoordinatorStore
+
+    async def is_rooted_command_current(
+        self, command: SealedCommitCommand
+    ) -> bool:
+        """Return whether the attached owner still authorizes this command."""
+        return await self.store.authorize(command)
 
 
 class InMemoryLeaseManager:
@@ -1055,7 +1219,7 @@ class InMemoryPatchCoordinator:
         """Commit a sealed plan once or return attached pending state."""
         if type(
             worker
-        ) is not ScriptedCommitWorker and not _is_rooted_local_worker(worker):
+        ) is not ScriptedCommitWorker and not _is_rooted_target_worker(worker):
             raise CoordinatorError(CoordinatorErrorCode.SCRIPTED_TARGET_ONLY)
         record = await self._store.record(reservation)
         if reservation.digest != plan.binding.request_digest:
@@ -1115,7 +1279,7 @@ class InMemoryPatchCoordinator:
             await self._store.begin_commit(reservation, plan, grant, lease)
             record = await self._store.record(reservation)
             record.commit_worker = (
-                worker if _is_rooted_local_worker(worker) else None
+                worker if _is_rooted_target_worker(worker) else None
             )
             await self._emit(record, LifecyclePhase.COMMIT_STARTED)
             try:
@@ -1130,7 +1294,7 @@ class InMemoryPatchCoordinator:
                     raise CoordinatorError(CoordinatorErrorCode.INVARIANT)
                 if not await self._leases.is_current(lease):
                     raise CoordinatorError(CoordinatorErrorCode.FENCED)
-                if _is_rooted_local_worker(worker):
+                if _is_rooted_target_worker(worker):
                     await _issue_rooted_command_authority(command, self._store)
                 self._resource = RuntimeResources(0, 1, 1, 0, 1, 0)
                 report = await worker.commit(command)

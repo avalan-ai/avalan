@@ -548,6 +548,7 @@ class TargetIdentity:
     policy_revision: str
     persistent_lease_id: str
     approval_channel_id: PatchApprovalId
+    implementation_id: str = field(default="local-target-v1", repr=False)
 
     def __post_init__(self) -> None:
         """Reject blank immutable trusted witness fields."""
@@ -559,6 +560,7 @@ class TargetIdentity:
                 self.policy_revision,
                 self.persistent_lease_id,
                 self.approval_channel_id,
+                self.implementation_id,
             )
         ):
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
@@ -806,7 +808,7 @@ class TargetHandshake:
     foreign_writer_guarantee: ForeignWriterGuarantee = (
         ForeignWriterGuarantee.REVALIDATE_BEFORE_COMMIT
     )
-    worker: EphemeralWorkerWitness | None = None
+    worker: EphemeralWorkerWitness | None = field(default=None, repr=False)
 
     def __post_init__(self) -> None:
         """Keep a capability handshake deterministic and immutable."""
@@ -950,7 +952,8 @@ class InspectionRequest:
         if (
             not self.paths
             or len(set(self.paths)) != len(self.paths)
-            or self.scope.context_kind is not ContextKind.LOCAL
+            or self.scope.context_kind
+            not in {ContextKind.LOCAL, ContextKind.SANDBOX}
         ):
             raise TargetInspectionError(TargetErrorCode.PATH_DENIED)
 
@@ -1369,10 +1372,17 @@ def _worker_seatbelt_profile(
 
 
 def _seatbelt_read_data(path: str) -> str:
-    """Grant read data for one trusted worker path without write authority."""
+    """Grant direct and descendant reads for one trusted worker path."""
     if path == "/":
         return '(allow file-read-data (literal "/"))'
-    return "(allow file-read* (subpath " + _seatbelt_string(path) + "))"
+    escaped = _seatbelt_string(path)
+    return (
+        "(allow file-read* (literal "
+        + escaped
+        + "))\n(allow file-read* (subpath "
+        + escaped
+        + "))"
+    )
 
 
 def _seatbelt_string(value: str) -> str:
@@ -1710,6 +1720,7 @@ def _fence_id(identity: TargetIdentity, witness: RootWitness) -> str:
             (
                 identity.persistent_lease_id,
                 identity.target_id.value,
+                identity.implementation_id,
                 witness.identity.opaque(),
                 witness.mount_id,
             )

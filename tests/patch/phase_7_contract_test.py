@@ -48,6 +48,7 @@ import avalan.patch.coordinator as coordinator_module
 import avalan.patch.local_commit as local_commit_module
 import avalan.patch.parser as parser_module
 import avalan.patch.policy as policy_module
+import avalan.patch.rooted_worker as rooted_worker_module
 import avalan.patch.target as target_module
 from avalan.patch.coordinator import (
     CommitLease,
@@ -1280,7 +1281,7 @@ def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
         ),
         (
             "failure:artifact_unknown:0:1:artifact.stage",
-            local_commit_module._ArtifactUncertainError,
+            rooted_worker_module._ArtifactUncertainError,
         ),
         ("failure:os:0:1:artifact.stage", OSError),
         ("failure:os:17:1:artifact.stage", OSError),
@@ -1706,7 +1707,7 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
             replace(scope.root_witness, mount_id="stale-mount"),
         )
     with pytest.raises(TargetInspectionError):
-        local_commit_module._descriptor_path(-1)
+        rooted_worker_module._descriptor_path(-1)
 
     token = bytes(range(32))
     for envelope in (b"[]", b"{}"):
@@ -1748,21 +1749,29 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
         source_fd = open_fd(source, O_RDONLY)
         try:
             with pytest.raises(TargetInspectionError):
-                local_commit_module._read_exact(source_fd, 6)
+                rooted_worker_module._read_exact(source_fd, 6)
         finally:
             close(source_fd)
         with pytest.raises(TargetInspectionError):
-            local_commit_module._absent(parent_fd, "short.txt")
+            rooted_worker_module._absent(parent_fd, "short.txt")
 
         fixed_token = b"fixed-stage-token" * 2
         stage_name = ".avalan-patch-" + sha256(fixed_token).hexdigest()[:32]
         (tmp_path / stage_name).write_bytes(b"collision")
+        monkeypatch.setattr(
+            rooted_worker_module,
+            "_validate_namespace_context",
+            lambda *arguments, **keywords: None,
+        )
+        stage_path = LogicalPath("short.txt")
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "token_bytes", lambda _size: fixed_token
+                rooted_worker_module, "token_bytes", lambda _size: fixed_token
             )
             with pytest.raises(TargetInspectionError):
-                local_commit_module._stage(parent_fd, b"value", 0o600)
+                rooted_worker_module._stage(
+                    parent_fd, b"value", 0o600, path=stage_path
+                )
         (tmp_path / stage_name).unlink()
 
         def stalled_write(descriptor: int, value: bytes) -> int:
@@ -1771,9 +1780,11 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
             return 0
 
         with monkeypatch.context() as patcher:
-            patcher.setattr(local_commit_module, "write_fd", stalled_write)
+            patcher.setattr(rooted_worker_module, "write_fd", stalled_write)
             with pytest.raises(OSError):
-                local_commit_module._stage(parent_fd, b"value", 0o600)
+                rooted_worker_module._stage(
+                    parent_fd, b"value", 0o600, path=stage_path
+                )
 
         def failed_cleanup(name: str, *, dir_fd: int) -> None:
             """Make a failed stage cleanup explicitly uncertain."""
@@ -1781,10 +1792,12 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
             raise OSError("cleanup unavailable")
 
         with monkeypatch.context() as patcher:
-            patcher.setattr(local_commit_module, "write_fd", stalled_write)
-            patcher.setattr(local_commit_module, "unlink", failed_cleanup)
-            with pytest.raises(local_commit_module._ArtifactUncertainError):
-                local_commit_module._stage(parent_fd, b"value", 0o600)
+            patcher.setattr(rooted_worker_module, "write_fd", stalled_write)
+            patcher.setattr(rooted_worker_module, "unlink", failed_cleanup)
+            with pytest.raises(rooted_worker_module._ArtifactUncertainError):
+                rooted_worker_module._stage(
+                    parent_fd, b"value", 0o600, path=stage_path
+                )
     finally:
         close(parent_fd)
 
@@ -1917,7 +1930,7 @@ def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
                 raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
 
             patcher.setattr(
-                local_commit_module, "_commit_lineage", fail_lineage
+                rooted_worker_module, "_commit_lineage", fail_lineage
             )
             rejected = local_commit_module._commit_rooted(
                 command, profile, scope.root_witness
@@ -1935,7 +1948,7 @@ def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
                 raise OSError("effect unavailable")
 
             patcher.setattr(
-                local_commit_module, "_commit_lineage", fail_lineage_os
+                rooted_worker_module, "_commit_lineage", fail_lineage_os
             )
             uncertain = local_commit_module._commit_rooted(
                 command, profile, scope.root_witness
@@ -1949,8 +1962,12 @@ def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
                 """Leave the synthetic mismatched step inventory unchanged."""
                 del arguments, keywords
 
-            patcher.setattr(local_commit_module, "_steps", lambda _command: ())
-            patcher.setattr(local_commit_module, "_commit_lineage", no_lineage)
+            patcher.setattr(
+                rooted_worker_module, "_steps", lambda _command: ()
+            )
+            patcher.setattr(
+                rooted_worker_module, "_commit_lineage", no_lineage
+            )
             with pytest.raises(TargetInspectionError):
                 local_commit_module._commit_rooted(
                     command, profile, scope.root_witness
@@ -1965,7 +1982,9 @@ def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
                 del arguments, keywords
                 raise OSError("verification unavailable")
 
-            patcher.setattr(local_commit_module, "_verify", verification_error)
+            patcher.setattr(
+                rooted_worker_module, "_verify", verification_error
+            )
             report = local_commit_module._commit_rooted(
                 command, profile, scope.root_witness
             )
@@ -2000,8 +2019,8 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
     root_fd = open_fd(tmp_path, O_RDONLY)
     status = fstat(root_fd)
     identity = target_module.FileIdentity(status.st_dev, status.st_ino)
-    root_token = local_commit_module._ROOT_DESCRIPTOR.set(root_fd)
-    parents_token = local_commit_module._PARENT_IDENTITIES.set(
+    root_token = rooted_worker_module._ROOT_DESCRIPTOR.set(root_fd)
+    parents_token = rooted_worker_module._PARENT_IDENTITIES.set(
         {
             None: identity,
             LogicalPath("sub"): target_module.FileIdentity(
@@ -2011,13 +2030,13 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
         }
     )
     try:
-        parent, leaf = local_commit_module._parent(
+        parent, leaf = rooted_worker_module._parent(
             root_fd, identity, witness, LogicalPath("sub/file.txt")
         )
         assert leaf == "file.txt"
         close(parent)
         with pytest.raises(TargetInspectionError):
-            local_commit_module._parent(
+            rooted_worker_module._parent(
                 root_fd,
                 target_module.FileIdentity(
                     identity.device + 1, identity.inode
@@ -2025,7 +2044,7 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
                 witness,
                 LogicalPath("protocol.txt"),
             )
-        mismatch = local_commit_module._PARENT_IDENTITIES.set(
+        mismatch = rooted_worker_module._PARENT_IDENTITIES.set(
             {
                 None: target_module.FileIdentity(
                     identity.device + 1, identity.inode
@@ -2034,30 +2053,30 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
         )
         try:
             with pytest.raises(TargetInspectionError):
-                local_commit_module._parent(
+                rooted_worker_module._parent(
                     root_fd, identity, witness, LogicalPath("protocol.txt")
                 )
         finally:
-            local_commit_module._PARENT_IDENTITIES.reset(mismatch)
-        absent_root = local_commit_module._ROOT_DESCRIPTOR.set(None)
+            rooted_worker_module._PARENT_IDENTITIES.reset(mismatch)
+        absent_root = rooted_worker_module._ROOT_DESCRIPTOR.set(None)
         try:
             with pytest.raises(TargetInspectionError):
-                local_commit_module._parent(
+                rooted_worker_module._parent(
                     root_fd, identity, witness, LogicalPath("protocol.txt")
                 )
         finally:
-            local_commit_module._ROOT_DESCRIPTOR.reset(absent_root)
+            rooted_worker_module._ROOT_DESCRIPTOR.reset(absent_root)
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "_rebind_parent", lambda *_args: False
+                rooted_worker_module, "_rebind_parent", lambda *_args: False
             )
             with pytest.raises(TargetInspectionError):
-                local_commit_module._parent(
+                rooted_worker_module._parent(
                     root_fd, identity, witness, LogicalPath("protocol.txt")
                 )
 
         with pytest.raises(TargetInspectionError):
-            local_commit_module._expected(
+            rooted_worker_module._expected(
                 root_fd,
                 "protocol.txt",
                 replace(
@@ -2070,9 +2089,9 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
                 ),
             )
         with pytest.raises(TargetInspectionError):
-            local_commit_module._expected(root_fd, "missing.txt", planned)
+            rooted_worker_module._expected(root_fd, "missing.txt", planned)
         with pytest.raises(TargetInspectionError):
-            local_commit_module._expected(
+            rooted_worker_module._expected(
                 root_fd,
                 "protocol.txt",
                 replace(planned, size=ByteSize(planned.size.value + 1)),
@@ -2081,33 +2100,33 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
             planned, bytes_value=SourceBytes(b"mismatched\n")
         )
         with pytest.raises(TargetInspectionError):
-            local_commit_module._expected(
+            rooted_worker_module._expected(
                 root_fd, "protocol.txt", mismatched_bytes
             )
 
         with pytest.raises(TargetInspectionError):
-            local_commit_module._validate_namespace_context(
+            rooted_worker_module._validate_namespace_context(
                 root_fd, LogicalPath("protocol.txt"), ()
             )
-        context = local_commit_module._CommitContext(
+        context = rooted_worker_module._CommitContext(
             root_fd, root_fd, identity, witness, tmp_path
         )
-        context_token = local_commit_module._COMMIT_CONTEXT.set(context)
+        context_token = rooted_worker_module._COMMIT_CONTEXT.set(context)
         try:
-            local_commit_module._validate_namespace_context(
+            rooted_worker_module._validate_namespace_context(
                 root_fd, LogicalPath("protocol.txt"), ()
             )
             missing_root = replace(context, root_path=tmp_path / "missing")
-            changed_context = local_commit_module._COMMIT_CONTEXT.set(
+            changed_context = rooted_worker_module._COMMIT_CONTEXT.set(
                 missing_root
             )
             try:
                 with pytest.raises(TargetInspectionError):
-                    local_commit_module._validate_namespace_context(
+                    rooted_worker_module._validate_namespace_context(
                         root_fd, LogicalPath("protocol.txt"), ()
                     )
             finally:
-                local_commit_module._COMMIT_CONTEXT.reset(changed_context)
+                rooted_worker_module._COMMIT_CONTEXT.reset(changed_context)
             stale_root = replace(
                 context,
                 root=replace(
@@ -2117,18 +2136,18 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
                     ),
                 ),
             )
-            changed_context = local_commit_module._COMMIT_CONTEXT.set(
+            changed_context = rooted_worker_module._COMMIT_CONTEXT.set(
                 stale_root
             )
             try:
                 with pytest.raises(TargetInspectionError):
-                    local_commit_module._validate_namespace_context(
+                    rooted_worker_module._validate_namespace_context(
                         root_fd, LogicalPath("protocol.txt"), ()
                     )
             finally:
-                local_commit_module._COMMIT_CONTEXT.reset(changed_context)
+                rooted_worker_module._COMMIT_CONTEXT.reset(changed_context)
             with pytest.raises(TargetInspectionError):
-                local_commit_module._validate_namespace_context(
+                rooted_worker_module._validate_namespace_context(
                     root_fd,
                     LogicalPath("protocol.txt"),
                     (
@@ -2140,19 +2159,19 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
                         ),
                     ),
                 )
-            missing_parent = local_commit_module._PARENT_IDENTITIES.set({})
+            missing_parent = rooted_worker_module._PARENT_IDENTITIES.set({})
             try:
                 with pytest.raises(TargetInspectionError):
-                    local_commit_module._validate_parent_context(
+                    rooted_worker_module._validate_parent_context(
                         root_fd, LogicalPath("protocol.txt"), context
                     )
             finally:
-                local_commit_module._PARENT_IDENTITIES.reset(missing_parent)
+                rooted_worker_module._PARENT_IDENTITIES.reset(missing_parent)
         finally:
-            local_commit_module._COMMIT_CONTEXT.reset(context_token)
+            rooted_worker_module._COMMIT_CONTEXT.reset(context_token)
     finally:
-        local_commit_module._PARENT_IDENTITIES.reset(parents_token)
-        local_commit_module._ROOT_DESCRIPTOR.reset(root_token)
+        rooted_worker_module._PARENT_IDENTITIES.reset(parents_token)
+        rooted_worker_module._ROOT_DESCRIPTOR.reset(root_token)
         close(root_fd)
 
     class EmptyDescriptorPath:
@@ -2164,9 +2183,9 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
             return 0
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(local_commit_module, "_LIBC", EmptyDescriptorPath())
+        patcher.setattr(rooted_worker_module, "_LIBC", EmptyDescriptorPath())
         with pytest.raises(TargetInspectionError):
-            local_commit_module._descriptor_path(0)
+            rooted_worker_module._descriptor_path(0)
 
 
 def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
@@ -2181,13 +2200,13 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
         def uncertain_stage(*arguments: object, **keywords: object) -> str:
             """Report an artifact whose cleanup outcome cannot be observed."""
             del arguments, keywords
-            raise local_commit_module._ArtifactUncertainError("uncertain")
+            raise rooted_worker_module._ArtifactUncertainError("uncertain")
 
         artifact_states = [ArtifactState.ABSENT]
         with monkeypatch.context() as patcher:
-            patcher.setattr(local_commit_module, "_stage", uncertain_stage)
-            with pytest.raises(local_commit_module._ArtifactUncertainError):
-                local_commit_module._publish_new(
+            patcher.setattr(rooted_worker_module, "_stage", uncertain_stage)
+            with pytest.raises(rooted_worker_module._ArtifactUncertainError):
+                rooted_worker_module._publish_new(
                     parent_fd,
                     path,
                     "published.txt",
@@ -2200,9 +2219,9 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
 
         artifact_states = [ArtifactState.ABSENT]
         with monkeypatch.context() as patcher:
-            patcher.setattr(local_commit_module, "_stage", uncertain_stage)
-            with pytest.raises(local_commit_module._ArtifactUncertainError):
-                local_commit_module._publish_update(
+            patcher.setattr(rooted_worker_module, "_stage", uncertain_stage)
+            with pytest.raises(rooted_worker_module._ArtifactUncertainError):
+                rooted_worker_module._publish_update(
                     parent_fd,
                     path,
                     "published.txt",
@@ -2239,14 +2258,16 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
 
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "_stage", lambda *_args: artifact.name
+                rooted_worker_module,
+                "_stage",
+                lambda *_args, **_kwargs: artifact.name,
             )
             patcher.setattr(
-                local_commit_module, "_namespace_effect", direct_effect
+                rooted_worker_module, "_namespace_effect", direct_effect
             )
-            patcher.setattr(local_commit_module, "link", occupied_link)
+            patcher.setattr(rooted_worker_module, "link", occupied_link)
             with pytest.raises(TargetInspectionError):
-                local_commit_module._publish_new(
+                rooted_worker_module._publish_new(
                     parent_fd,
                     path,
                     "published.txt",
@@ -2266,14 +2287,16 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
 
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "_stage", lambda *_args: artifact.name
+                rooted_worker_module,
+                "_stage",
+                lambda *_args, **_kwargs: artifact.name,
             )
             patcher.setattr(
-                local_commit_module, "_namespace_effect", direct_effect
+                rooted_worker_module, "_namespace_effect", direct_effect
             )
-            patcher.setattr(local_commit_module, "link", unsupported_link)
+            patcher.setattr(rooted_worker_module, "link", unsupported_link)
             with pytest.raises(TargetInspectionError):
-                local_commit_module._publish_new(
+                rooted_worker_module._publish_new(
                     parent_fd,
                     path,
                     "published.txt",
@@ -2304,12 +2327,14 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
         artifact_states = [ArtifactState.ABSENT]
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "_stage", lambda *_args: artifact.name
+                rooted_worker_module,
+                "_stage",
+                lambda *_args, **_kwargs: artifact.name,
             )
             patcher.setattr(
-                local_commit_module, "_namespace_effect", leaked_cleanup
+                rooted_worker_module, "_namespace_effect", leaked_cleanup
             )
-            local_commit_module._publish_new(
+            rooted_worker_module._publish_new(
                 parent_fd,
                 path,
                 "published.txt",
@@ -2341,13 +2366,15 @@ def test_patch_phase_7_private_publication_failures_preserve_journal_truth(
 
             with monkeypatch.context() as patcher:
                 patcher.setattr(
-                    local_commit_module, "_stage", lambda *_args: artifact.name
+                    rooted_worker_module,
+                    "_stage",
+                    lambda *_args, **_kwargs: artifact.name,
                 )
                 patcher.setattr(
-                    local_commit_module, "_namespace_effect", failed_update
+                    rooted_worker_module, "_namespace_effect", failed_update
                 )
                 with pytest.raises(OSError):
-                    local_commit_module._publish_update(
+                    rooted_worker_module._publish_update(
                         parent_fd,
                         path,
                         "published.txt",
@@ -2442,7 +2469,7 @@ def test_patch_phase_7_local_worker_micro_rejections(
     def uncertain_barrier(stage: str) -> None:
         """Report one authenticated artifact-uncertain child barrier."""
         assert stage == "artifact.stage"
-        raise local_commit_module._ArtifactUncertainError("uncertain")
+        raise rooted_worker_module._ArtifactUncertainError("uncertain")
 
     with monkeypatch.context() as patcher:
         patcher.setattr(local_commit_module, "to_thread", direct_thread)
@@ -2484,7 +2511,7 @@ def test_patch_phase_7_local_worker_micro_rejections(
     assert temporary_path.exists()
     temporary_path.unlink()
 
-    step_id, lineage_id = local_commit_module._steps(command)[0]
+    step_id, lineage_id = rooted_worker_module._steps(command)[0]
     mismatched_response = {
         "artifacts": [],
         "postcondition": PostconditionState.ESTABLISHED.value,
@@ -2764,7 +2791,7 @@ def test_patch_phase_7_final_local_commit_failure_branches(
         raise OSError(ENOSYS, "link unavailable")
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(local_commit_module, "link", unavailable_link)
+        patcher.setattr(rooted_worker_module, "link", unavailable_link)
         assert (
             local_commit_module._commit_rooted(
                 command_for(move), profile, witness
@@ -2778,7 +2805,7 @@ def test_patch_phase_7_final_local_commit_failure_branches(
         raise OSError("link unavailable")
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(local_commit_module, "link", generic_link)
+        patcher.setattr(rooted_worker_module, "link", generic_link)
         assert (
             local_commit_module._commit_rooted(
                 command_for(move), profile, witness
@@ -2802,16 +2829,16 @@ def test_patch_phase_7_final_local_commit_failure_branches(
     try:
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module,
+                rooted_worker_module,
                 "_stage",
-                lambda *_args: generic_stage.name,
+                lambda *_args, **_kwargs: generic_stage.name,
             )
             patcher.setattr(
-                local_commit_module, "_namespace_effect", direct_effect
+                rooted_worker_module, "_namespace_effect", direct_effect
             )
-            patcher.setattr(local_commit_module, "link", generic_link)
+            patcher.setattr(rooted_worker_module, "link", generic_link)
             with pytest.raises(OSError):
-                local_commit_module._publish_new(
+                rooted_worker_module._publish_new(
                     parent_fd,
                     LogicalPath("generic.txt"),
                     "generic.txt",
@@ -2829,12 +2856,12 @@ def test_patch_phase_7_final_local_commit_failure_branches(
     root_identity = target_module.FileIdentity(
         root_status.st_dev, root_status.st_ino
     )
-    root_token = local_commit_module._ROOT_DESCRIPTOR.set(root_fd)
-    parents_token = local_commit_module._PARENT_IDENTITIES.set(
+    root_token = rooted_worker_module._ROOT_DESCRIPTOR.set(root_fd)
+    parents_token = rooted_worker_module._PARENT_IDENTITIES.set(
         {None: root_identity}
     )
-    context_token = local_commit_module._COMMIT_CONTEXT.set(
-        local_commit_module._CommitContext(
+    context_token = rooted_worker_module._COMMIT_CONTEXT.set(
+        rooted_worker_module._CommitContext(
             root_fd, root_fd, root_identity, witness, tmp_path
         )
     )
@@ -2847,9 +2874,9 @@ def test_patch_phase_7_final_local_commit_failure_branches(
 
         with monkeypatch.context() as patcher:
             patcher.setattr(
-                local_commit_module, "_open_child_directory", failed_child
+                rooted_worker_module, "_open_child_directory", failed_child
             )
-            assert not local_commit_module._rebind_parent(
+            assert not rooted_worker_module._rebind_parent(
                 root_fd,
                 root_identity,
                 witness,
@@ -2860,7 +2887,7 @@ def test_patch_phase_7_final_local_commit_failure_branches(
         source = tmp_path / "source-validation.txt"
         source.write_bytes(b"source\n")
         with pytest.raises(TargetInspectionError):
-            local_commit_module._validate_namespace_context(
+            rooted_worker_module._validate_namespace_context(
                 root_fd,
                 LogicalPath("source-validation.txt"),
                 (
@@ -2874,27 +2901,27 @@ def test_patch_phase_7_final_local_commit_failure_branches(
             )
 
         assert (
-            local_commit_module._verify(
+            rooted_worker_module._verify(
                 malformed_command, root_fd, root_identity, witness
             )
             is PostconditionState.UNKNOWN
         )
         assert (
-            local_commit_module._verify(
+            rooted_worker_module._verify(
                 command_for(deletion), root_fd, root_identity, witness
             )
             is PostconditionState.SUPERSEDED
         )
         assert (
-            local_commit_module._verify(
+            rooted_worker_module._verify(
                 command, root_fd, root_identity, witness
             )
             is PostconditionState.SUPERSEDED
         )
     finally:
-        local_commit_module._COMMIT_CONTEXT.reset(context_token)
-        local_commit_module._PARENT_IDENTITIES.reset(parents_token)
-        local_commit_module._ROOT_DESCRIPTOR.reset(root_token)
+        rooted_worker_module._COMMIT_CONTEXT.reset(context_token)
+        rooted_worker_module._PARENT_IDENTITIES.reset(parents_token)
+        rooted_worker_module._ROOT_DESCRIPTOR.reset(root_token)
         close(root_fd)
 
 

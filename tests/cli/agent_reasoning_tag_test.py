@@ -1,4 +1,5 @@
 from argparse import Namespace
+from collections.abc import Awaitable, Callable
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -98,9 +99,17 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                     generation_settings=settings,
                     settings=settings,
                 )
+                self.cancellation_checker: (
+                    Callable[[], Awaitable[None]] | None
+                ) = None
 
             def __aiter__(self):
                 return self._resp.__aiter__()
+
+            def set_cancellation_checker(
+                self, checker: Callable[[], Awaitable[None]] | None
+            ) -> None:
+                self.cancellation_checker = checker
 
         with (
             patch.object(agent_cmds, "get_input", return_value="hi"),

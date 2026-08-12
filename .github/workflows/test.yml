@@ -122,10 +122,18 @@ jobs:
         if: matrix.target.os == 'ubuntu-latest'
         run: poetry run pip install "mlx-lm[cpu]==0.31.3"
 
+      - name: Install Bubblewrap runtime
+        if: matrix.target.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap
+
       - name: Verify structured-input type contracts
         run: |
           make lint
           make typecheck-input-contract INPUT_PHASE=5
+          poetry run python scripts/verify_patch_types.py \
+            --through-phase 10 --include-planned
 
       - name: Start PostgreSQL
         if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
@@ -144,6 +152,10 @@ jobs:
       - name: Run tests
         if: matrix.target.os != 'ubuntu-latest' || matrix.python != '3.11'
         run: make test no-install
+
+      - name: Verify native sandbox mutation contract
+        if: matrix.python == '3.11'
+        run: poetry run pytest -q tests/patch/phase_10_contract_test.py
 
       - name: Verify clean generated metadata
         run: git diff --check

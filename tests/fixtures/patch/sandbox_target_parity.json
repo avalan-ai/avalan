@@ -1,0 +1,219 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "target": "sandbox",
+  "shared_local_inventory": "tests/fixtures/patch/local_commit_e2e.json",
+  "shared_local_inventory_sha256": "79fc13712adceacbd12c0fc0f22e3b06509f3caccf5a33ee0b98b9bfe82918f4",
+  "transport_parity": {
+    "claimed": false,
+    "local": "authenticated local worker with legacy closed pickle payload",
+    "sandbox": "authenticated immutable worker with closed canonical JSON",
+    "shared_contract": "rooted semantics and durable result truth only"
+  },
+  "executable_shared_corpus": {
+    "node": "tests/patch/phase_10_contract_test.py::test_patch_phase_10_executes_shared_local_contract_corpus",
+    "skip_policy": "forbidden",
+    "cases": [
+      {
+        "id": "P4-nested-exact-match",
+        "source": "tests/patch/phase_4_contract_test.py",
+        "category": "semantic",
+        "production_boundary": "SandboxInspectionTarget"
+      },
+      {
+        "id": "P4-missing-match-fault",
+        "source": "tests/patch/phase_4_contract_test.py",
+        "category": "fault",
+        "production_boundary": "SandboxPatchSdkService"
+      },
+      {
+        "id": "P4-root-replacement-race",
+        "source": "tests/patch/phase_4_contract_test.py",
+        "category": "race",
+        "production_boundary": "SandboxPatchRuntime"
+      },
+      {
+        "id": "P7-operation-matrix",
+        "source": "tests/patch/phase_7_contract_test.py",
+        "category": "operation_matrix",
+        "production_boundary": "SandboxCommitTarget"
+      },
+      {
+        "id": "P9-closed-model-projection",
+        "source": "tests/patch/phase_9_contract_test.py",
+        "category": "projection",
+        "production_boundary": "project_model_result"
+      }
+    ]
+  },
+  "semantic_categories": [
+    "schema_grammar_parse",
+    "lexical_path",
+    "missing_match",
+    "ambiguous_match",
+    "duplicate_transition",
+    "nested_match",
+    "overlap",
+    "prohibited_touch",
+    "exact_first_no_fallback",
+    "representation_compatible_ambiguity",
+    "eof_final_newline",
+    "no_op",
+    "preinspection_policy",
+    "final_policy",
+    "approval",
+    "stale",
+    "limit",
+    "cancellation",
+    "timeout",
+    "target_capability"
+  ],
+  "precommit_failure_ids": [
+    "PATCH-F-001",
+    "PATCH-F-002",
+    "PATCH-F-003",
+    "PATCH-F-004",
+    "PATCH-F-005",
+    "PATCH-F-006",
+    "PATCH-F-009",
+    "PATCH-F-010",
+    "PATCH-F-011",
+    "PATCH-F-012",
+    "PATCH-F-013",
+    "PATCH-F-014",
+    "PATCH-F-015",
+    "PATCH-F-016",
+    "PATCH-F-017",
+    "PATCH-F-021",
+    "PATCH-F-023",
+    "PATCH-F-024",
+    "PATCH-F-025",
+    "PATCH-F-026",
+    "PATCH-F-030",
+    "PATCH-F-031",
+    "PATCH-F-032",
+    "PATCH-F-033",
+    "PATCH-F-035",
+    "PATCH-F-038",
+    "PATCH-F-040",
+    "PATCH-F-042"
+  ],
+  "process_races": [
+    "rooted_containment",
+    "no_replace"
+  ],
+  "operation_classes": [
+    "create",
+    "update",
+    "delete",
+    "move"
+  ],
+  "settlement_states": [
+    "pending",
+    "committed",
+    "not_committed"
+  ],
+  "identity_boundaries": [
+    "context",
+    "session",
+    "workspace",
+    "domain",
+    "target",
+    "protocol",
+    "cwd",
+    "lease",
+    "fence",
+    "filesystem",
+    "mount",
+    "policy",
+    "approval",
+    "channel",
+    "implementation",
+    "worker_epoch"
+  ],
+  "shared_target_conformance": {
+    "source": "tests/patch/phase_4_contract_test.py",
+    "nodes": [
+      "test_patch_phase_4_worker_race_and_mount_failures",
+      "test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+      "test_patch_phase_4_rejects_fifo_swap_and_aggregate_overflow",
+      "test_patch_phase_4_barriers_deny_ancestor_leaf_and_mount_replacement",
+      "test_patch_phase_4_hostile_ambient_authority_stays_unobserved",
+      "test_patch_phase_4_workspace_process_cannot_reach_worker_channel",
+      "test_patch_phase_4_root_barrier_replacement_never_reaches_canary"
+    ]
+  },
+  "shared_sandbox_inspection_conformance": {
+    "source": "tests/patch/phase_4_contract_test.py",
+    "nodes": [
+      "test_patch_phase_4_requirements",
+      "test_patch_phase_4_cwd_alias_and_parent_handle_paths",
+      "test_patch_phase_4_releases_intermediate_parent_handles",
+      "test_patch_phase_4_denies_sensitive_paths_before_open",
+      "test_patch_phase_4_denies_obscured_paths_before_open",
+      "test_patch_phase_4_rejects_links_special_files_and_hardlinks",
+      "test_patch_phase_4_alias_bounds_and_duplicate_identity_fail_closed",
+      "test_patch_phase_4_worker_channel_isolated_and_unforgeable"
+    ]
+  },
+  "shared_lifecycle_conformance": {
+    "source": "tests/patch/phase_7_contract_test.py",
+    "nodes": [
+      "test_patch_phase_7_e2e_003_precommit_failures_leave_tree_unchanged",
+      "test_patch_phase_7_e2e_003_runs_exhaustive_semantic_precommit_cases",
+      "test_patch_phase_7_e2e_004_uncertain_outcome_is_not_a_retry"
+    ]
+  },
+  "shared_sandbox_commit_conformance": {
+    "source": "tests/patch/phase_7_contract_test.py",
+    "nodes": [
+      "test_patch_phase_7_rooted_update_and_coordinator_e2e",
+      "test_patch_phase_7_local_operation_matrix",
+      "test_patch_phase_7_preserves_approved_executables_and_rejects_links",
+      "test_patch_phase_7_rejects_stale_source_and_destination_races",
+      "test_patch_phase_7_commits_one_deterministic_multilineage_graph",
+      "test_patch_phase_7_preserves_exact_text_representation",
+      "test_patch_phase_7_reader_never_observes_partial_replacement",
+      "test_patch_phase_7_reader_never_observes_partial_creation",
+      "test_patch_phase_7_records_superseded_after_proven_commit",
+      "test_patch_phase_7_preserves_known_step_after_verification_failure",
+      "test_patch_phase_7_stops_after_move_update_source_remove_failure",
+      "test_patch_phase_7_settles_each_move_update_failure_boundary",
+      "test_patch_phase_7_never_clobbers_raced_create_or_move_destination",
+      "test_patch_phase_7_keeps_leaked_staging_separate_from_effect_truth",
+      "test_patch_phase_7_rejects_symlink_and_special_source_before_effect",
+      "test_patch_phase_7_rejects_ancestor_link_before_native_commit",
+      "test_patch_phase_7_rejects_remounted_root_before_native_commit",
+      "test_patch_phase_7_e2e_003_precommit_failures_leave_tree_unchanged",
+      "test_patch_phase_7_e2e_005_process_race_never_clobbers_destination",
+      "test_patch_phase_7_revalidates_each_source_barrier_before_effect",
+      "test_patch_phase_7_cancellation_never_exposes_partial_update",
+      "test_patch_phase_7_cancelled_owner_reconciles_retained_local_journal"
+    ]
+  },
+  "shared_privacy_projections": {
+    "source": "tests/patch/phase_9_contract_test.py",
+    "nodes": [
+      "test_patch_phase_9_raw_retention_and_display_are_closed",
+      "test_patch_phase_9_active_audience_privacy_matrix",
+      "test_patch_phase_9_toolset_error_projection_and_lifecycle_cleanup"
+    ]
+  },
+  "platform_receipts": {
+    "darwin": "real-seatbelt-tested",
+    "linux": "real-bubblewrap-required"
+  },
+  "platform_job_claims": {
+    "macos-15-python-3.11": {
+      "backend": "seatbelt",
+      "claim": "required-real-receipt",
+      "test": "PATCH-E2E-015"
+    },
+    "ubuntu-latest-python-3.11": {
+      "backend": "bubblewrap",
+      "claim": "required-real-receipt",
+      "test": "PATCH-E2E-015"
+    }
+  },
+  "inventory_sha256": "6fd22a38b3df04017171ac574d1882904ce0509649c0591b52a286c069415b82"
+}

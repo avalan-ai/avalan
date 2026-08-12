@@ -8,6 +8,7 @@ from typing import Callable
 
 import pytest
 
+from avalan.patch.coordinator import CommitLease
 from avalan.patch.domain import (
     AlgorithmDigest,
     ApprovalMode,
@@ -791,7 +792,7 @@ def test_patch_phase_5_default_denial_and_preinspection_are_closed() -> None:
 def test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease() -> (
     None
 ):
-    """Change durable inputs while retaining an ephemeral lease identity."""
+    """Bind persistent identity while excluding ephemeral commit leases."""
     assert isinstance(PolicyAuthorizer(_policy()), PolicyAuthorizer)
     assert _effective_limits().value.file_count == ByteSize(20)
 
@@ -817,14 +818,28 @@ def test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease() -> (
                 persistent_lease_id="persistent-lease-b",
             ),
         )
-        lease_only = seal_plan(
+        persistent_lease_change = seal_plan(
             sealed.plan_id,
             changed_target,
             sealed.candidate,
             sealed.review.expiry,
         )
+        commit_lease = CommitLease(
+            sealed.binding.target.domain_id,
+            sealed.binding.request.request_id,
+            1,
+        )
+        replacement_commit_lease = replace(commit_lease, fence=2)
+        same_plan = seal_plan(
+            sealed.plan_id,
+            sealed.binding,
+            sealed.candidate,
+            sealed.review.expiry,
+        )
         assert changed.fingerprint != sealed.fingerprint
-        assert lease_only.fingerprint == sealed.fingerprint
+        assert persistent_lease_change.fingerprint != sealed.fingerprint
+        assert replacement_commit_lease != commit_lease
+        assert same_plan.fingerprint == sealed.fingerprint
 
     run(execute())
 
@@ -1907,6 +1922,10 @@ def test_patch_phase_5_complete_fingerprint_and_seal_matrix() -> None:
             replace(binding.target, policy_revision="policy-six"),
             replace(
                 binding.target,
+                persistent_lease_id="persistent-lease-b",
+            ),
+            replace(
+                binding.target,
                 approval_channel_id=PatchApprovalId("approval_" + "b" * 16),
             ),
         )
@@ -2243,10 +2262,21 @@ def test_patch_phase_5_complete_fingerprint_and_seal_matrix() -> None:
         for candidate_value in candidate_variants:
             assert resealed(planned=candidate_value) != sealed.fingerprint
         assert resealed(expiry=ExpiryTick(99)) != sealed.fingerprint
-        lease_only = target_binding(
-            replace(binding.target, persistent_lease_id="persistent-lease-b")
+        persistent_workspace_lease = target_binding(
+            replace(
+                binding.target,
+                persistent_lease_id="persistent-lease-b",
+            )
         )
-        assert resealed(lease_only) == sealed.fingerprint
+        commit_lease = CommitLease(
+            binding.target.domain_id,
+            binding.request.request_id,
+            1,
+        )
+        replacement_commit_lease = replace(commit_lease, fence=2)
+        assert resealed(persistent_workspace_lease) != sealed.fingerprint
+        assert replacement_commit_lease != commit_lease
+        assert resealed() == sealed.fingerprint
         mutators: tuple[Callable[[SealedPlan], None], ...] = (
             lambda plan_value: object.__setattr__(
                 plan_value, "plan_id", PatchPlanId.new()

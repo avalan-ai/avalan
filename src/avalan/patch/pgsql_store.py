@@ -56,6 +56,7 @@ from avalan.patch.durable_store import (
     DurableJournalCursor,
     DurableOutboxRecord,
     DurablePatchStore,
+    DurablePatchStoreBinding,
     DurablePendingAccess,
     DurablePendingRecord,
     DurablePendingRequest,
@@ -76,6 +77,7 @@ from avalan.patch.durable_store import (
     DurableStoreError,
     DurableStoreErrorCode,
     DurableTerminalRecord,
+    DurableWorkerBinding,
     EncryptedRetentionValue,
     derive_artifact_state,
 )
@@ -136,6 +138,44 @@ class PgsqlDurablePatchStoreSettings:
                 application_name="avalan-patch-durable-store",
             )
         )
+
+
+@dataclass(frozen=True, slots=True)
+class PgsqlDurablePatchStoreFactory:
+    """Construct one loader-owned PostgreSQL store for all patch contexts."""
+
+    settings: PgsqlDurablePatchStoreSettings
+    approval_verifier: DurableApprovalVerifier = DenyDurableApprovalVerifier()
+    retention_authorizer: DurableRetentionAuthorizer = (
+        DenyDurableRetentionAuthorizer()
+    )
+    retention_validator: DurableRetentionEnvelopeValidator = (
+        DenyDurableRetentionEnvelopeValidator()
+    )
+
+    def __post_init__(self) -> None:
+        """Require one typed configuration and closed authority adapters."""
+        if (
+            type(self.settings) is not PgsqlDurablePatchStoreSettings
+            or not callable(getattr(self.approval_verifier, "verify", None))
+            or not callable(
+                getattr(self.retention_authorizer, "audiences_for", None)
+            )
+            or not callable(
+                getattr(self.retention_validator, "validate", None)
+            )
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.LIFECYCLE_CONFLICT)
+
+    def bind(self) -> DurablePatchStoreBinding:
+        """Create exactly one shared store and its loader-owned resource."""
+        store = PgsqlDurablePatchStore.from_settings(
+            self.settings,
+            approval_verifier=self.approval_verifier,
+            retention_authorizer=self.retention_authorizer,
+            retention_validator=self.retention_validator,
+        )
+        return DurablePatchStoreBinding(store, store)
 
 
 class PgsqlDurablePatchStore(DurablePatchStore):
@@ -250,17 +290,20 @@ class PgsqlDurablePatchStore(DurablePatchStore):
         self,
         identity: DurableRequestIdentity,
         canonical_digest: AlgorithmDigest,
+        request_id: PatchRequestId | None = None,
     ) -> DurableReservation:
         """Reserve one retransmission identity before SQL inspection."""
         _require_exact(identity, DurableRequestIdentity)
         _require_exact(canonical_digest, AlgorithmDigest)
+        if request_id is not None:
+            _require_exact(request_id, PatchRequestId)
 
         async def execute(cursor: PgsqlCursor) -> DurableReservation:
-            request_id = PatchRequestId.new()
+            selected_request_id = request_id or PatchRequestId.new()
             await cursor.execute(
                 _INSERT_RESERVATION_SQL,
                 (
-                    request_id.value,
+                    selected_request_id.value,
                     identity.tenant_id.value,
                     identity.principal_id.value,
                     identity.execution_id.value,
@@ -272,7 +315,7 @@ class PgsqlDurablePatchStore(DurablePatchStore):
             inserted = await cursor.fetchone()
             if inserted is not None:
                 return DurableReservation(
-                    request_id, identity, canonical_digest, False
+                    selected_request_id, identity, canonical_digest, False
                 )
             row = await _select_identity_for_update(cursor, identity)
             if _row_str(row, "canonical_digest") != canonical_digest.value:
@@ -341,6 +384,7 @@ class PgsqlDurablePatchStore(DurablePatchStore):
         self._approval_verifier.verify(approval)
 
         async def execute(cursor: PgsqlCursor) -> DurableCommitClaim:
+            await _lock_domain(cursor, plan.domain_id)
             row = await _select_reservation_for_update(cursor, reservation)
             if (
                 _row_str(row, "lifecycle")
@@ -362,7 +406,7 @@ class PgsqlDurablePatchStore(DurablePatchStore):
                     DurableStoreErrorCode.LIFECYCLE_CONFLICT
                 )
             _validate_approval(reservation, plan, approval, now)
-            await _lock_domain(cursor, plan.domain_id)
+            await _require_unclaimed_domain(cursor, plan.domain_id, now)
             await cursor.execute(
                 _INSERT_GRANT_CONSUMPTION_SQL,
                 (
@@ -463,6 +507,83 @@ class PgsqlDurablePatchStore(DurablePatchStore):
 
         return await self._transaction("patch_durable_renew_lease", execute)
 
+    async def bind_worker(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+        now: ExpiryTick,
+    ) -> None:
+        """Persist one exact live child before any workspace effect."""
+        _require_exact(lease, DurableCommitLease)
+        _require_exact(binding, DurableWorkerBinding)
+        _require_exact(now, ExpiryTick)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            await _select_lease_for_update(cursor, lease, now)
+            await cursor.execute(
+                _BIND_WORKER_SQL,
+                (
+                    binding.fingerprint(),
+                    lease.request_id.value,
+                    lease.domain_id.value,
+                    lease.owner_id.value,
+                    lease.fence.value,
+                    lease.expires_at.value,
+                    now.value,
+                    binding.fingerprint(),
+                ),
+            )
+            if await cursor.fetchone() is None:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+        await self._transaction("patch_durable_bind_worker", execute)
+
+    async def mark_worker_reaped(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+    ) -> None:
+        """Persist exact child death after its process has been awaited."""
+        _require_exact(lease, DurableCommitLease)
+        _require_exact(binding, DurableWorkerBinding)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            await cursor.execute(
+                _MARK_WORKER_REAPED_SQL,
+                (
+                    lease.request_id.value,
+                    lease.domain_id.value,
+                    lease.owner_id.value,
+                    lease.fence.value,
+                    lease.expires_at.value,
+                    binding.fingerprint(),
+                ),
+            )
+            if await cursor.fetchone() is None:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+        await self._transaction("patch_durable_reap_worker", execute)
+
+    async def mark_worker_absent(self, lease: DurableCommitLease) -> None:
+        """Persist exact no-live-child recovery evidence for one owner."""
+        _require_exact(lease, DurableCommitLease)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            await cursor.execute(
+                _MARK_WORKER_ABSENT_SQL,
+                (
+                    lease.request_id.value,
+                    lease.domain_id.value,
+                    lease.owner_id.value,
+                    lease.fence.value,
+                    lease.expires_at.value,
+                ),
+            )
+            if await cursor.fetchone() is None:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+        await self._transaction("patch_durable_mark_worker_absent", execute)
+
     async def replace_expired_owner(
         self,
         reservation: DurableReservation,
@@ -481,6 +602,7 @@ class PgsqlDurablePatchStore(DurablePatchStore):
             raise DurableStoreError(DurableStoreErrorCode.FENCED)
 
         async def execute(cursor: PgsqlCursor) -> DurableCommitLease:
+            await _lock_domain(cursor, expired_lease.domain_id)
             row = await _select_reservation_for_update(cursor, reservation)
             if _lease_from_row(row) != expired_lease:
                 raise DurableStoreError(DurableStoreErrorCode.FENCED)
@@ -491,7 +613,7 @@ class PgsqlDurablePatchStore(DurablePatchStore):
                 LifecyclePhase.SETTLEMENT_PENDING.value,
             }:
                 raise DurableStoreError(DurableStoreErrorCode.FENCED)
-            await _lock_domain(cursor, expired_lease.domain_id)
+            await _require_current_domain_fence(cursor, expired_lease)
             fence = await _advance_domain_fence(
                 cursor, expired_lease.domain_id
             )
@@ -1353,6 +1475,8 @@ async def _snapshot(
             == LifecyclePhase.REQUEST_COMPLETED.value
             else None
         ),
+        _row_optional_str(row, "worker_binding_digest") is not None,
+        _row_bool(row, "worker_reaped"),
         _row_bool(row, "cancellation_requested"),
         SequenceNumber(_row_int(row, "event_cursor")),
     )
@@ -1611,6 +1735,19 @@ async def _lock_domain(cursor: PgsqlCursor, domain_id: PatchDomainId) -> None:
     )
 
 
+async def _require_unclaimed_domain(
+    cursor: PgsqlCursor, domain_id: PatchDomainId, now: ExpiryTick
+) -> None:
+    """Reject any nonterminal owner in the same coordination domain."""
+    del now
+    await cursor.execute(
+        _SELECT_UNSETTLED_DOMAIN_OWNER_SQL,
+        (domain_id.value,),
+    )
+    if await cursor.fetchone() is not None:
+        raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+
 async def _advance_domain_fence(
     cursor: PgsqlCursor, domain_id: PatchDomainId
 ) -> SequenceNumber:
@@ -1742,6 +1879,15 @@ _LOCK_DOMAIN_SQL = """
 SELECT pg_advisory_xact_lock(hashtextextended(%s, %s))
 """
 
+_SELECT_UNSETTLED_DOMAIN_OWNER_SQL = """
+SELECT "request_id"
+FROM "patch_durable_requests"
+WHERE "domain_id" = %s
+  AND "lifecycle" IN ('commit_started', 'settlement_pending')
+LIMIT 1
+FOR UPDATE
+"""
+
 _INSERT_DOMAIN_SQL = """
 INSERT INTO "patch_durable_domains" ("domain_id")
 VALUES (%s)
@@ -1805,15 +1951,62 @@ WHERE "request"."request_id" = %s
 RETURNING *
 """
 
+_BIND_WORKER_SQL = """
+UPDATE "patch_durable_requests" AS "request"
+SET "worker_binding_digest" = %s, "worker_reaped" = FALSE,
+    "updated_at" = CURRENT_TIMESTAMP
+FROM "patch_durable_domains" AS "domain"
+WHERE "request"."request_id" = %s
+  AND "request"."domain_id" = %s
+  AND "request"."owner_id" = %s
+  AND "request"."fence" = %s
+  AND "request"."lease_expires_at" = %s
+  AND "request"."lease_expires_at" > %s
+  AND "request"."lifecycle" IN ('commit_started', 'settlement_pending')
+  AND "domain"."domain_id" = "request"."domain_id"
+  AND "domain"."current_fence" = "request"."fence"
+  AND ("request"."worker_binding_digest" IS NULL
+       OR "request"."worker_binding_digest" = %s)
+RETURNING "request"."request_id"
+"""
+
+_MARK_WORKER_REAPED_SQL = """
+UPDATE "patch_durable_requests"
+SET "worker_reaped" = TRUE, "updated_at" = CURRENT_TIMESTAMP
+WHERE "request_id" = %s
+  AND "domain_id" = %s
+  AND "owner_id" = %s
+  AND "fence" = %s
+  AND "lease_expires_at" = %s
+  AND "worker_binding_digest" = %s
+RETURNING "request_id"
+"""
+
+_MARK_WORKER_ABSENT_SQL = """
+UPDATE "patch_durable_requests"
+SET "worker_binding_digest" = NULL, "worker_reaped" = TRUE,
+    "updated_at" = CURRENT_TIMESTAMP
+WHERE "request_id" = %s
+  AND "domain_id" = %s
+  AND "owner_id" = %s
+  AND "fence" = %s
+  AND "lease_expires_at" = %s
+  AND "lifecycle" IN ('commit_started', 'settlement_pending')
+  AND "worker_binding_digest" IS NULL
+RETURNING "request_id"
+"""
+
 _REPLACE_EXPIRED_LEASE_SQL = """
 UPDATE "patch_durable_requests"
 SET "owner_id" = %s, "fence" = %s, "lease_expires_at" = %s,
+    "worker_binding_digest" = NULL, "worker_reaped" = FALSE,
     "updated_at" = CURRENT_TIMESTAMP
 WHERE "request_id" = %s
   AND "owner_id" = %s
   AND "fence" = %s
   AND "lease_expires_at" = %s
   AND "lease_expires_at" <= %s
+  AND ("worker_binding_digest" IS NULL OR "worker_reaped" = TRUE)
   AND "lifecycle" IN ('commit_started', 'settlement_pending')
 RETURNING *
 """

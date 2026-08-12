@@ -108,16 +108,16 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 9
+    assert manifest.current_phase == 10
     assert len(manifest.active_nodes(5)) == 59
 
 
-def test_patch_acceptance_validates_complete_phase_evidence() -> None:
-    """Validate required typed fields in the in-progress Phase 0 record."""
+def test_patch_acceptance_validates_in_progress_phase_evidence() -> None:
+    """Validate required typed fields in the in-progress Phase 10 record."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
     _VERIFIER._validate_phase_evidence(
-        _FIXTURES / "phase_evidence.json", manifest, _ROOT
+        _FIXTURES / "phase10_evidence.json", manifest, _ROOT
     )
 
 
@@ -146,7 +146,7 @@ def test_patch_acceptance_inherits_only_postgresql_test_dsn(
 
     monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
 
-    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=9)
+    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=10)
 
     assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
@@ -415,13 +415,13 @@ def test_patch_acceptance_rejects_unreviewed_history_semantic_change(
         )
 
 
-def test_patch_acceptance_rejects_complete_phase_with_pending_gates(
+def test_patch_acceptance_rejects_complete_phase_with_pending_platform_receipts(
     tmp_path: Path,
 ) -> None:
-    """Reject a terminal evidence status while quality receipts are pending."""
+    """Reject a terminal evidence status while platform proof is pending."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase_evidence.json"
+    path = fixtures / "phase10_evidence.json"
     payload = _read(path)
     payload["status"] = "complete"
     _resign(payload, "record_sha256")
@@ -430,7 +430,7 @@ def test_patch_acceptance_rejects_complete_phase_with_pending_gates(
 
     with pytest.raises(
         _VERIFIER.PatchAcceptanceError,
-        match="complete evidence exact gate is not complete",
+        match="complete phase evidence has pending platform receipts",
     ):
         _VERIFIER._validate_phase_evidence(path, manifest, _ROOT)
 

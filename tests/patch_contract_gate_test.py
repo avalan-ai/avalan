@@ -142,7 +142,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
-    assert baseline["phase"] == 9
+    assert baseline["phase"] == 10
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -165,7 +165,7 @@ def test_patch_gate_contract_is_current() -> None:
     }
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 9
+    assert _GATE._PATCH_CURRENT_PHASE == 10
 
 
 @pytest.mark.parametrize(
@@ -546,10 +546,10 @@ def test_preflight_executes_no_pytest_process(
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
-def test_preflight_rejects_caller_database_before_durability(
+def test_preflight_accepts_caller_database_after_durability(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Reject caller database state while patch durability remains dormant."""
+    """Reject early database state and accept it after durability activates."""
     monkeypatch.setenv(
         _GATE.POSTGRESQL_TEST_DSN_ENV,
         "postgresql://test/patch_phase2",
@@ -564,7 +564,7 @@ def test_preflight_rejects_caller_database_before_durability(
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
     monkeypatch.delenv(_GATE.POSTGRESQL_TEST_DSN_ENV)
-    _GATE.preflight(9, repo_root=_ROOT)
+    _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
 def test_baseline_section2_evidence_rejects_source_drift(

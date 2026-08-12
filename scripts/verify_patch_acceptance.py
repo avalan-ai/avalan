@@ -55,7 +55,7 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 9
+_CURRENT_PHASE = 10
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
     "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
@@ -75,6 +75,7 @@ _FIXTURE_NAMES = (
     "baseline_evidence.json",
     "phase8_evidence.json",
     "phase_evidence.json",
+    "phase10_evidence.json",
     "phase7_evidence.json",
     "phase_evidence_index.json",
 )
@@ -1109,7 +1110,9 @@ def load_phase0_contracts(
         fixtures / "contract_decisions.json",
         root,
     )
-    _validate_phase_evidence(fixtures / "phase_evidence.json", manifest, root)
+    _validate_phase_evidence(
+        fixtures / "phase10_evidence.json", manifest, root
+    )
     _validate_phase_evidence_history(
         fixtures / "phase_evidence_index.json",
         fixtures / "phase7_evidence.json",
@@ -3206,6 +3209,7 @@ def _validate_phase_evidence(
             "node_counts",
             "quality_gates",
             "database_lifecycle",
+            "platform_receipts",
             "profiles",
             "e2e_ids",
             "redaction_and_bounds",
@@ -3228,11 +3232,18 @@ def _validate_phase_evidence(
     _string(payload.get("scope"), "phase evidence scope")
     if (
         _string(payload.get("recorded_on"), "phase evidence date")
-        != "2026-08-08"
+        != "2026-08-11"
     ):
         raise PatchAcceptanceError("phase evidence date is invalid")
     _validate_phase_evidence_ownership(payload.get("ownership"))
     _validate_phase_evidence_changed_paths(payload.get("changed_paths"))
+    platform_receipts_complete = _validate_phase_evidence_platform_receipts(
+        payload.get("platform_receipts")
+    )
+    if status == "complete" and not platform_receipts_complete:
+        raise PatchAcceptanceError(
+            "complete phase evidence has pending platform receipts"
+        )
     exact_gate_complete = _validate_phase_evidence_exact_gate(
         payload.get("exact_gate"), status
     )
@@ -3264,7 +3275,9 @@ def _validate_phase_evidence(
     quality_complete = _validate_phase_evidence_quality(
         payload.get("quality_gates"), command_ids, exact_gate_complete
     )
-    _validate_phase_evidence_database(payload.get("database_lifecycle"))
+    _validate_phase_evidence_database(
+        payload.get("database_lifecycle"), exact_gate_complete
+    )
     _validate_phase_evidence_profiles(
         payload.get("profiles"), payload.get("e2e_ids"), command_ids
     )
@@ -3305,6 +3318,10 @@ def _validate_phase_evidence(
         if not quality_complete or not redaction_complete:
             raise PatchAcceptanceError(
                 "complete phase evidence has incomplete quality gates"
+            )
+        if not platform_receipts_complete:
+            raise PatchAcceptanceError(
+                "complete phase evidence has pending platform receipts"
             )
     canonical = {
         key: value for key, value in payload.items() if key != "record_sha256"
@@ -3398,11 +3415,11 @@ def _validate_phase_evidence_exact_gate(value: object, status: str) -> bool:
     )
     _string(gate.get("reason"), "phase evidence exact gate reason")
     if status == "in_progress":
-        if gate_status != "pending":
+        if gate_status not in {"pending", "complete"}:
             raise PatchAcceptanceError(
-                "in-progress evidence must keep exact gate pending"
+                "in-progress evidence exact gate is invalid"
             )
-        return False
+        return gate_status == "complete"
     if gate_status != "complete":
         raise PatchAcceptanceError(
             "complete evidence exact gate is not complete"
@@ -3766,8 +3783,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 796,
-        "planned_requirements": 221,
+        "active_requirements": 802,
+        "planned_requirements": 215,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))
@@ -3824,8 +3841,10 @@ def _validate_phase_evidence_quality(
     return complete
 
 
-def _validate_phase_evidence_database(value: object) -> None:
-    """Record the explicit non-applicable Phase 0 database lifecycle facts."""
+def _validate_phase_evidence_database(
+    value: object, exact_gate_complete: bool
+) -> None:
+    """Record pending or exact database lifecycle facts for this phase."""
     database = mapping(value, "phase evidence database lifecycle")
     _exact_keys(
         database,
@@ -3840,11 +3859,46 @@ def _validate_phase_evidence_database(value: object) -> None:
         "phase evidence database lifecycle",
     )
     for field in database:
+        receipt = _string(database.get(field), f"phase database {field}")
         if (
-            _string(database.get(field), f"phase database {field}")
-            != f"not_applicable_phase_{_CURRENT_PHASE}"
+            not exact_gate_complete
+            and receipt != f"pending_phase_{_CURRENT_PHASE}"
         ):
             raise PatchAcceptanceError("phase database lifecycle is invalid")
+        if exact_gate_complete and receipt.startswith(
+            (
+                "pending_",
+                "not_applicable_",
+            )
+        ):
+            raise PatchAcceptanceError("phase database lifecycle is invalid")
+
+
+def _validate_phase_evidence_platform_receipts(value: object) -> bool:
+    """Require explicit current-platform sandbox receipt states."""
+    receipts = mapping(value, "phase evidence platform receipts")
+    expected = {"darwin_seatbelt", "linux_bubblewrap"}
+    _exact_keys(receipts, expected, "phase evidence platform receipts")
+    complete = True
+    for platform in expected:
+        receipt = mapping(
+            receipts.get(platform), f"phase platform receipt {platform}"
+        )
+        _exact_keys(
+            receipt,
+            {"status", "evidence"},
+            f"phase platform receipt {platform}",
+        )
+        status = _string(
+            receipt.get("status"), f"phase platform {platform} status"
+        )
+        if status not in {"passed", "pending"}:
+            raise PatchAcceptanceError("phase platform receipt is invalid")
+        _string(
+            receipt.get("evidence"), f"phase platform {platform} evidence"
+        )
+        complete = complete and status == "passed"
+    return complete
 
 
 def _validate_phase_evidence_profiles(

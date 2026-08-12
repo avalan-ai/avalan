@@ -1615,7 +1615,9 @@ def _canonical_fingerprint_bytes(
         _text(binding.target.filesystem_id),
         _text(binding.target.mount_id),
         _text(binding.target.policy_revision),
+        _text(binding.target.persistent_lease_id),
         _text(binding.target.approval_channel_id.value),
+        _text(binding.target.implementation_id),
         _handshake(binding.final.handshake),
         _path(binding.cwd),
         _text(binding.preflight.revision.value),
@@ -1764,7 +1766,11 @@ def _handshake(value: TargetHandshake) -> bytes:
         for item in sorted(value.primitives, key=lambda item: item.value)
     )
     probes = tuple(
-        item.primitive.value + ":" + item.state.value
+        item.primitive.value
+        + ":"
+        + item.state.value
+        + ":"
+        + (item.receipt or "")
         for item in sorted(value.probes, key=lambda item: item.primitive.value)
     )
     return b"".join(
@@ -1789,7 +1795,7 @@ def _handshake(value: TargetHandshake) -> bytes:
 
 
 def _target_identity(value: TargetIdentity) -> bytes:
-    """Serialize durable target identity while excluding the lease epoch."""
+    """Serialize every plan-bound target identity without worker epochs."""
     return b"".join(
         _length_prefix(item)
         for item in (
@@ -1801,7 +1807,9 @@ def _target_identity(value: TargetIdentity) -> bytes:
             _text(value.filesystem_id),
             _text(value.mount_id),
             _text(value.policy_revision),
+            _text(value.persistent_lease_id),
             _text(value.approval_channel_id.value),
+            _text(value.implementation_id),
         )
     )
 

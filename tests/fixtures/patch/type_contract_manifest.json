@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 9,
+  "current_phase": 10,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -327,6 +327,15 @@
       "path": "tests/patch_type_contracts/phase9_positive.py",
       "source_sha256": "d5dc8686365aedf46e3f332cc6db16527e1032e0cb051a000c00cb6fd54eb7d4",
       "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-032",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 10,
+      "path": "tests/patch_type_contracts/phase10_positive.py",
+      "source_sha256": "c04f157e75e9a58d7e24d3dd8856f92deaa805256e7fc99e6ee964836eb7abeb",
+      "expected_diagnostics": []
     }
   ],
   "sources": [
@@ -355,7 +364,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "aa93374d5a57367f2a17c5a55b23b8f6c0ca7ee79004eaed8cde52f160c2fb5d"
+      "source_sha256": "a9bf036e9bf108b582f018be6c4184d367387b7bf947ce29b4e0ee17116e4f34"
     },
     {
       "id": "PATCH-TS-004",
@@ -364,7 +373,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1f8a9c394df0793a8379cf4d0ebc9f175f8ed37047bf5fae181526ea40f8eed5"
+      "source_sha256": "befb8a4e83351596a80eb3a2dbbda8988f7863b6e8881d74e45f7b3f0094b201"
     },
     {
       "id": "PATCH-TS-005",
@@ -373,7 +382,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "54f731efdd19971e5d292ec9662b03fbdc4f1afac61d62e37b9f4123f27da9ea"
+      "source_sha256": "723c5b404df31ec64bcdd29ecabc7238b1d180b76bf0667b500a3cd28671671a"
     },
     {
       "id": "PATCH-TS-006",
@@ -400,7 +409,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "bcf88ced1d1fde2064bb991b358ccee12c8adc266af88a0b8ea138f19c7d78b1"
+      "source_sha256": "c45dfb74b0e8e80ea263504ac1211cb7d27dc0b4d1781b3fbb899324a10703fe"
     },
     {
       "id": "PATCH-TS-009",
@@ -409,7 +418,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "36dfe0e6c5025d1b7757402a590c1a86f555eece29c7d34f7b52a5c5786dc99e"
+      "source_sha256": "0ed77243ec77aa643707afc431d51565886e860eb5c2e20c7cc74b2ea5cc4b6f"
     },
     {
       "id": "PATCH-TS-010",
@@ -526,7 +535,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d7ce9327a33fc1abf8cd4dbfa4780e659607447ab128002547e381eb46f475cc"
+      "source_sha256": "5982d1025363decdaab48f15e25342592a1f728e06b82bd88be3f572618080e2"
     },
     {
       "id": "PATCH-TS-023",
@@ -544,7 +553,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "4a45d27527b5961553fda8dd51a1a69476071f55789b481b4ac207d111d68f80"
+      "source_sha256": "f38a9a4cc40485fbc1d46df7a105d6ec44ed9f4ef9e624057eb53b6b767bc6de"
     },
     {
       "id": "PATCH-TS-025",
@@ -553,7 +562,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "cdace0ee18ede748bafd8021153bd54b772b22546010134f9e1d9e9ebf18c45c"
+      "source_sha256": "b7d9637e2a26b1e6a74e5ad1c9ea8a0def5ead51afd095c86d5157f19d2e1a14"
     },
     {
       "id": "PATCH-TS-026",
@@ -562,7 +571,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8e02a20ef78372b7195a947561e84f0d8b80e2aa70aadad63004c4b16e8a33b4"
+      "source_sha256": "7dd623facd08ed0c022e98e138b6a6c52fcdfa3661bdc002b723a8aa382f22f3"
     },
     {
       "id": "PATCH-TS-027",
@@ -580,7 +589,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "805962125528b3d15ffe8ef09c20d956191a4c269312ece7e4f4db9dbc3c9310"
+      "source_sha256": "526adc72575971d3d551871ca8a65f76a39e3708cc2d3dbb463a1150a0a67846"
     },
     {
       "id": "PATCH-TS-029",
@@ -589,7 +598,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d79728f1d2d3f82c6bde8b82f7583e43e4f7a3450fae06c8f43cb7f786dc036e"
+      "source_sha256": "18de039d3d2c37fe2282434e42c7e1c2a99b0372340c3d3b6b82d823518ec91b"
     },
     {
       "id": "PATCH-TS-030",
@@ -598,7 +607,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "700553868876640da16b296e99683ca83719000bdf40a60195432f378ecb3463"
+      "source_sha256": "dc7f64a792c3d4dc2b70a14e5510ff1771d2e2e1e0a78ff33afb7af8475b5e29"
     },
     {
       "id": "PATCH-TS-031",
@@ -607,7 +616,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "c8af7d47f4bfde4ce7548201a7aa8ee030e28a5bc4490aefef83bfc92bd0b830"
+      "source_sha256": "e6791a69249a8c49e445ebd5edc668b07f9b165fe660daee9bd7e19ecc5f3d83"
     },
     {
       "id": "PATCH-TS-032",
@@ -616,7 +625,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "bf21a322283fea5e5e0818f9bf9e823b972be54d13dca3632cde587bb0dcf9aa"
+      "source_sha256": "65c5e8bd05d3ab304f6c90c38acb79a7b6701b7e2cc5ee334c15ca3dd414b15f"
     },
     {
       "id": "PATCH-TS-033",
@@ -626,7 +635,7 @@
         "TASK_PGSQL_HEAD_REVISION",
         "_TASK_PGSQL_REVISION_MODULES"
       ],
-      "source_sha256": "b27a8eb84a9dc63e4bf635fe21a9c1f9b94e0b3b4c15e70736e49eddc345ae54"
+      "source_sha256": "29ed0df59125994c15b83dad1bc66d71b24e327907752ec9d97e028537ee28cf"
     },
     {
       "id": "PATCH-TS-034",
@@ -671,7 +680,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "4b1456dc5711512004412c4ad7a44f72fd9eaf7dee12cefee800c0d9851f5283"
+      "source_sha256": "51645aedd2a0aa26febd3febdac1f1ed58dc75729eea91fc9e73cb117d110bff"
     },
     {
       "id": "PATCH-TS-039",
@@ -680,7 +689,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "762e89bf0d3dd197a8795b2b7966d5a35f49056e320e5e449f47114b0886222b"
+      "source_sha256": "477d71429f2310657187a45aad49e33553769c36d5e9f4c6c75d75beb35267f3"
     },
     {
       "id": "PATCH-TS-040",
@@ -743,7 +752,7 @@
       "symbols": [
         "TASK_PGSQL_HEAD_REVISION"
       ],
-      "source_sha256": "134aba0b2513253bba2618851c1e199b12cc7e9a73b6a8ccb6350da1588f57c9"
+      "source_sha256": "37abd4ce41aa7c351706a5758e57ccb080907be57cd7029b4abb09cd7ca21d6a"
     },
     {
       "id": "PATCH-TS-047",
@@ -844,7 +853,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "9289c6ef6838a71aa2359bb6b39a267ed0435e7e355c0df97b424d53779da86e"
+      "source_sha256": "d85d908840ebb3488fd233ac460c4c31e941429155e9ab69963ff4ae20b51c79"
     },
     {
       "id": "PATCH-TS-058",
@@ -853,7 +862,7 @@
       "symbols": [
         "_result"
       ],
-      "source_sha256": "f71bf758d8460e1bc1d36ce63dfad371c5ba8c3bcf62c25d1d1a52cf67744e4e"
+      "source_sha256": "a40dad90352b5a7352d2f20ec43a59c264132571e2f891e48bb3d0c8748d195c"
     },
     {
       "id": "PATCH-TS-059",
@@ -882,7 +891,7 @@
       "symbols": [
         "_PATCH_TOOL_LOADER_INTEGRATION"
       ],
-      "source_sha256": "ff62787046ee0a15334522f478a45890800794002d83eaaebf29c0359e4bb39e"
+      "source_sha256": "bf98cec32a0bf5c1f3175745a01f9f64dac01f2cf33118a458b1458764f7c8ff"
     },
     {
       "id": "PATCH-TS-062",
@@ -900,7 +909,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "084fca0f51a3b3e9aac86fd2bccb0651ad5dbc1837940a8d471e083ab33a58fb"
+      "source_sha256": "80836ff92c8459ba5d5d38a18719a37f3138f251584778923093544509446e7f"
     },
     {
       "id": "PATCH-TS-064",
@@ -919,7 +928,106 @@
         "test_patch_outcome_projection_covers_error_and_diagnostic"
       ],
       "source_sha256": "93bc9222caf7532fc037287ec52d9b678d6006c038cdad81f7e73a02eccd3610"
+    },
+    {
+      "id": "PATCH-TS-066",
+      "path": "src/avalan/patch/sandbox_commit.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "65a2d4265a4a61f93b54e91a8096fc498f7f23fd1f7fba7852cdc8f0598e16e1"
+    },
+    {
+      "id": "PATCH-TS-067",
+      "path": "tests/patch/phase_10_contract_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9be10ed6548f677e162c4f8c46f401a7d2c5e459e07c16d9d067f7ab9951ab19"
+    },
+    {
+      "id": "PATCH-TS-068",
+      "path": "src/avalan/patch/sandbox_worker.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "01a83f30cc5f3908c6df8bdd661b3b421b1b8b6c1b04cfb3d5a909552ddd63c3"
+    },
+    {
+      "id": "PATCH-TS-069",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260811_0002_patch_worker_reaping.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "7922bf6ca9c1aa9e4b1fa434a283c026204ba2351a34694a520a1ed17d0eae50"
+    },
+    {
+      "id": "PATCH-TS-070",
+      "path": "src/avalan/patch/rooted_worker.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ca4d1ea8be1935c89000e4ecded74fdd79c00421b70ee41815d09bf3ffd43366"
+    },
+    {
+      "id": "PATCH-TS-071",
+      "path": "src/avalan/model/deterministic.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ad0f8fa8d0f39809f60ed2242df96262d01e4c07fd70fd34d7bd1b0672a2689c"
+    },
+    {
+      "id": "PATCH-TS-072",
+      "path": "src/avalan/patch/sandbox_wire.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "aa0ed51469bfa4e1024327714137c6d4af74b2e9daf2f03942b1161acff62637"
+    },
+    {
+      "id": "PATCH-TS-073",
+      "path": "tests/task/stores/pgsql_migration_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d10207a19d2cfd19a6afbc060f6cb1765e2eb994303072d06004ab73adfc8388"
+    },
+    {
+      "id": "PATCH-TS-074",
+      "path": "src/avalan/cli/commands/agent.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_cli_interaction_runtime"
+      ],
+      "source_sha256": "6e6ee493f3777ad03b440708722a40ba84d54820712074f43f0ad4ff66c37acc"
+    },
+    {
+      "id": "PATCH-TS-075",
+      "path": "tests/patch/phase_10_authority_default_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "6609acbeddc2a5b388940ab90fe19a1f171cf1a1663c92c115693b0c3118750b"
+    },
+    {
+      "id": "PATCH-TS-076",
+      "path": "tests/cli/agent_reasoning_tag_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_run"
+      ],
+      "source_sha256": "60c192f0824a51bcaf465cada5b25ab5cace474efc5d7d83b4b4f579a5ddb7dc"
     }
   ],
-  "manifest_sha256": "587612ab1d01d1f8fa6176ab61c505ab19870e42ee92aee419518dea934e0aa0"
+  "manifest_sha256": "149dd853969f7bf40889f36d62cc2dcea731e3f1f334bb201ea4be51754227df"
 }

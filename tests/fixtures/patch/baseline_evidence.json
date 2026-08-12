@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "phase": 9,
+  "phase": 10,
   "patch_tools": [],
   "public_tool_inventory": [
     "browser",
@@ -208,6 +208,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "c9f3d93809109fdb3c619f9624809b7ada9e2d21e827ef7d9aee8647bbd12be2",
-  "evidence_sha256": "d83ef6d3006db19cc806e281e811ef797b927b26c3d0a2c9250170a073213c13"
+  "contract_inventory_sha256": "2b84dea6294a35689fe9fc24d04773fd22bcf2aa9212e3dde85c463e6004d66e",
+  "evidence_sha256": "0713ee1f9fdc8b55ae4df0bfb5e7185a40d564829a8741ae1f5ffb9ff953f6c5"
 }

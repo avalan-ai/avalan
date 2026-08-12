@@ -279,6 +279,21 @@ class DurablePatchReconciler:
                         DurableStoreErrorCode.JOURNAL_CONFLICT
                     )
                 continue
+            if (
+                artifact_state is DurableArtifactState.INTENDED
+                and artifact.state
+                in {
+                    DurableArtifactState.REMOVED,
+                    DurableArtifactState.LEAKED,
+                }
+            ):
+                current = await self._store.append_artifact(
+                    lease,
+                    current.cursor,
+                    artifact.artifact_id,
+                    DurableArtifactState.PRESENT,
+                    now,
+                )
             current = await self._store.append_artifact(
                 lease,
                 current.cursor,

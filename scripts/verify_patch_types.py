@@ -37,7 +37,7 @@ from tempfile import TemporaryDirectory
 from contract_gate import StrictJsonError, canonical_sha256, strict_json_path
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 9
+_CURRENT_PHASE = 10
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
 _PROHIBITED_SOURCE_PATTERN = compile_regex(
@@ -205,24 +205,44 @@ def verify_patch_types(
     *,
     repo_root: Path | None = None,
     through_phase: int,
+    include_planned: bool = False,
 ) -> TypeManifest:
-    """Run strict mypy against all active fixtures through one phase."""
+    """Run strict mypy against active or explicitly planned fixtures."""
     root = (repo_root or repository_root()).resolve()
     manifest = load_manifest(manifest_path or default_manifest_path())
-    if through_phase < 0 or through_phase > manifest.current_phase:
-        raise PatchTypeContractError("patch type phase is not implemented")
-    selected = tuple(
-        item
-        for item in manifest.fixtures
-        if item.lifecycle == "active"
-        and item.active_from_phase <= through_phase
-    )
+    selected = _selected_fixtures(manifest, through_phase, include_planned)
     if not selected:
         raise PatchTypeContractError("patch type phase has no active fixtures")
     _verify_strict_sources(root, manifest.sources, manifest.fixtures)
     environment = _fixture_mypy_environment(root)
     _verify_type_fixtures(root, selected, environment)
     return manifest
+
+
+def _selected_fixtures(
+    manifest: TypeManifest, through_phase: int, include_planned: bool
+) -> tuple[TypeFixture, ...]:
+    """Return active fixtures and an explicitly requested next phase."""
+    if through_phase < 0 or (
+        through_phase > manifest.current_phase
+        and (
+            not include_planned or through_phase != manifest.current_phase + 1
+        )
+    ):
+        raise PatchTypeContractError("patch type phase is not implemented")
+    selected = tuple(
+        item
+        for item in manifest.fixtures
+        if item.active_from_phase <= through_phase
+        and (
+            item.lifecycle == "active"
+            or include_planned
+            and item.lifecycle == "planned"
+        )
+    )
+    if not selected:
+        raise PatchTypeContractError("patch type phase has no active fixtures")
+    return selected
 
 
 def _fixture(raw: object, current_phase: int) -> TypeFixture:
@@ -1106,6 +1126,7 @@ def _parse_args() -> Namespace:
     """Parse the strict type-gate command line."""
     parser = ArgumentParser(description="Run patch strict type contracts.")
     parser.add_argument("--through-phase", type=int, required=True)
+    parser.add_argument("--include-planned", action="store_true")
     return parser.parse_args()
 
 
@@ -1113,7 +1134,10 @@ def main() -> int:
     """Run the strict patch type gate."""
     args = _parse_args()
     try:
-        verify_patch_types(through_phase=args.through_phase)
+        verify_patch_types(
+            through_phase=args.through_phase,
+            include_planned=args.include_planned,
+        )
     except PatchTypeContractError as exc:
         print(f"patch type contract failed: {exc}", file=stderr)
         return 1
