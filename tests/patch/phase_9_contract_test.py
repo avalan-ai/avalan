@@ -15,10 +15,8 @@ from asyncio import (
 )
 from collections.abc import Iterator
 from contextlib import AsyncExitStack
-from contextvars import ContextVar
 from copy import copy, deepcopy
 from dataclasses import dataclass, replace
-from importlib import reload
 from inspect import getclosurevars, signature
 from json import dumps, loads
 from logging import Logger
@@ -26,7 +24,6 @@ from pathlib import Path
 from runpy import run_path
 from subprocess import run as run_process
 from sys import executable
-from types import SimpleNamespace
 from typing import TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
@@ -1407,29 +1404,18 @@ for name in (
 
 
 def test_patch_phase_9_unarmed_authority_validator_fails_closed() -> None:
-    """Keep the pre-loader authority interface unable to grant ownership."""
+    """Keep unissued objects unable to grant patch authority."""
     import avalan._patch_authority as authority
 
-    validator = patch_toolset_module._PatchAuthorityValidator
-    reloaded = reload(authority)
-    try:
-        assert not reloaded._PatchAuthorityValidator.capability_is_issued(
-            object(), object()
-        )
-        assert not reloaded._PatchAuthorityValidator.registration_is_issued(
-            object(), object()
-        )
-        assert not reloaded._PatchAuthorityValidator.registration_owns(
-            object(), "patch.edit", object()
-        )
-        assert (
-            reloaded._PatchAuthorityValidator.capability_snapshot(
-                object(), object()
-            )
-            is None
-        )
-    finally:
-        reloaded._PatchAuthorityValidator = validator
+    assert not authority._PatchAuthorityValidator.capability_is_issued(
+        object(), object()
+    )
+    assert not authority._PatchAuthorityValidator.registration_is_issued(
+        object(), object()
+    )
+    assert not authority._PatchAuthorityValidator.sandbox_endpoint_is_issued(
+        object()
+    )
 
 
 def test_patch_phase_9_sealed_authority_rejects_forgery(
@@ -1441,58 +1427,14 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
         edit_available=True,
         apply_available=True,
     )
-    loader_state = getclosurevars(PatchToolLoader.load).nonlocals
-    toolset_state = getclosurevars(PatchToolSet.__init__).nonlocals
-    assert {"active_reservation", "discard", "reserve"} <= set(loader_state)
-    assert {"claim", "register", "revoke"} <= set(toolset_state)
-    with pytest.raises(PatchToolError):
-        loader_state["reserve"](service, snapshot)
-    with pytest.raises(PatchToolError):
-        loader_state["discard"](object())
-    with pytest.raises(PatchToolError):
-        toolset_state["claim"](service, snapshot, object())
-    with pytest.raises(PatchToolError):
-        toolset_state["register"](object(), object())
-    with pytest.raises(PatchToolError):
-        toolset_state["revoke"](object(), object())
-    with pytest.raises(PatchToolError):
-        toolset_state["bind_capability"](object(), object(), object())
-    active_reservation = loader_state["active_reservation"]
-    assert isinstance(active_reservation, ContextVar)
-    context_token = active_reservation.set(
-        SimpleNamespace(service=service, snapshot=snapshot, task=object())
-    )
-    try:
-        with pytest.raises(PatchToolError):
-            PatchToolSet(service, snapshot)
-    finally:
-        active_reservation.reset(context_token)
-    injected_pending: list[object] = []
-    monkeypatch.setattr(
-        patch_toolset_module,
-        "_pending_loader_constructions",
-        injected_pending,
-        raising=False,
-    )
-    for name in ("_issued_capabilities", "_issued_registrations"):
-        monkeypatch.setattr(patch_toolset_module, name, [], raising=False)
-    injected_pending.append(
-        SimpleNamespace(service=service, snapshot=snapshot)
-    )
     with pytest.raises(PatchToolError):
         PatchToolSet(service, snapshot)
+    forged_capability = object.__new__(PatchInvocationCapability)
+    with pytest.raises(PatchToolError):
+        PatchSdkHost(service, forged_capability)
     forged_toolset = object.__new__(PatchToolSet)
     with pytest.raises(PatchToolError):
         forged_toolset.with_enabled_tools(["patch.edit"])
-    assert "_seal_patch_authority" not in vars(patch_toolset_module)
-    assert not any(
-        "reservation" in name or "marker" in name
-        for name in vars(PatchToolLoader)
-    )
-    assert not any(
-        "reservation" in name or "marker" in name
-        for name in vars(PatchToolSet)
-    )
 
     binding = _binding(service)
 

@@ -38,3 +38,15 @@ class _PatchAuthorityValidator:
         """Return the immutable snapshot for one active issued capability."""
         del capability, service
         return None
+
+    @staticmethod
+    def loader_is_issued(loader: object) -> bool:
+        """Return whether an exact loader retains its constructor binding."""
+        del loader
+        return False
+
+    @staticmethod
+    def sandbox_endpoint_is_issued(endpoint: object) -> bool:
+        """Return whether an endpoint belongs to an issued SDK capability."""
+        del endpoint
+        return False

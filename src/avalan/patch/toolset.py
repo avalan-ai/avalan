@@ -68,6 +68,7 @@ from avalan.patch.domain import (
     PatchResult,
     coarsen_error_code,
 )
+from avalan.patch.durable_store import DurablePatchStore
 from avalan.patch.parser import (
     PatchInputError,
     PatchInputLimits,
@@ -230,6 +231,33 @@ class PatchToolError(ValueError):
     """Report a content-free patch public-boundary failure."""
 
 
+def _durable_store_contract(store: DurablePatchStore) -> bool:
+    """Return whether one binding exposes the complete durable store API."""
+    return all(
+        callable(getattr(store, name, None))
+        for name in (
+            "reserve",
+            "persist_plan",
+            "claim_commit",
+            "renew_lease",
+            "bind_worker",
+            "mark_worker_reaped",
+            "mark_worker_absent",
+            "replace_expired_owner",
+            "is_current_fence",
+            "append_step",
+            "append_artifact",
+            "suspend",
+            "request_cancellation",
+            "settle",
+            "inspect",
+            "inspect_pending",
+            "await_terminal",
+            "outbox",
+        )
+    )
+
+
 class PatchAdmissionDecision(StrEnum):
     """Name the closed admission outcomes available before parsing."""
 
@@ -294,7 +322,7 @@ class PatchSdkService(Protocol):
 
     async def review(
         self, handle: "PatchInvocationHandle"
-    ) -> dict[str, object]:
+    ) -> Mapping[str, object]:
         """Return the privileged review projection for the current request."""
 
     async def approve(
@@ -341,10 +369,16 @@ class PatchCoordinatorBinding:
     """Witness one probed host-owned patch coordinator service."""
 
     ready: bool
+    durable_store: DurablePatchStore | None = None
 
     def __post_init__(self) -> None:
         """Reject unavailable or untyped coordinator bindings."""
-        if type(self.ready) is not bool or not self.ready:
+        if (
+            type(self.ready) is not bool
+            or not self.ready
+            or self.durable_store is not None
+            and not _durable_store_contract(self.durable_store)
+        ):
             raise PatchToolError("patch coordinator binding is not ready")
 
 
@@ -353,10 +387,16 @@ class PatchPersistenceBinding:
     """Witness one probed host-owned patch persistence service."""
 
     ready: bool
+    durable_store: DurablePatchStore | None = None
 
     def __post_init__(self) -> None:
         """Reject unavailable or untyped persistence bindings."""
-        if type(self.ready) is not bool or not self.ready:
+        if (
+            type(self.ready) is not bool
+            or not self.ready
+            or self.durable_store is not None
+            and not _durable_store_contract(self.durable_store)
+        ):
             raise PatchToolError("patch persistence binding is not ready")
 
 
@@ -371,6 +411,7 @@ class PatchRuntimeBinding:
     coordinator: PatchCoordinatorBinding
     persistence: PatchPersistenceBinding
     service: PatchSdkService
+    owned_resources: tuple[AbstractAsyncContextManager[object], ...] = ()
 
     def __post_init__(self) -> None:
         """Require target, policy, approval, coordinator, and store binding."""
@@ -383,6 +424,12 @@ class PatchRuntimeBinding:
             or type(self.persistence) is not PatchPersistenceBinding
             or not isinstance(self.service, PatchSdkService)
             or not isinstance(self.service.settlement, PatchSettlementPort)
+            or type(self.owned_resources) is not tuple
+            or any(
+                not isinstance(item, AbstractAsyncContextManager)
+                or hasattr(item, "__enter__")
+                for item in self.owned_resources
+            )
         ):
             raise PatchToolError("patch runtime handshake is incomplete")
 
@@ -448,6 +495,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
         owner: object
         snapshot: object
         capability: object | None = None
+        sandbox_endpoint: object | None = None
         active: bool = True
 
     @dataclass(frozen=True, slots=True)
@@ -477,7 +525,8 @@ def _seal_patch_authority() -> tuple[object, ...]:
     reservations: list[_Reservation] = []
     capabilities: list[_CapabilityIssue] = []
     registrations: list[_PatchToolsetRegistration] = []
-    invocations: list[_InvocationIssue] = []
+    invocations: tuple[_InvocationIssue, ...] = ()
+    loaders: tuple[tuple[object, object, object], ...] = ()
     active_reservation: ContextVar[_Reservation | None] = ContextVar(
         "patch_loader_reservation",
         default=None,
@@ -491,6 +540,32 @@ def _seal_patch_authority() -> tuple[object, ...]:
             and frame.f_back is not None
             and frame.f_back.f_back is not None
             and frame.f_back.f_back.f_code is code
+        )
+
+    def loader_init(
+        self: "PatchToolLoader",
+        binder: PatchRuntimeBinder,
+        profile: PatchTestHostProfile,
+    ) -> None:
+        """Issue one exact loader only through its validated constructor."""
+        nonlocal loaders
+        if (
+            type(self) is not PatchToolLoader
+            or not isinstance(binder, PatchRuntimeBinder)
+            or type(profile) is not PatchTestHostProfile
+        ):
+            raise PatchToolError("patch tool loader is invalid")
+        self._binder = binder
+        self._profile = profile
+        loaders = (*loaders, (self, binder, profile))
+
+    def loader_is_issued(self: object) -> bool:
+        """Return whether this exact loader retains its issued binding."""
+        return type(self) is PatchToolLoader and any(
+            loader is self
+            and getattr(self, "_binder", None) is binder
+            and getattr(self, "_profile", None) is profile
+            for loader, binder, profile in loaders
         )
 
     def sealed_capability_is_issued(
@@ -549,10 +624,12 @@ def _seal_patch_authority() -> tuple[object, ...]:
         correlation: PatchObserverCorrelationId,
     ) -> "PatchInvocationHandle":
         """Issue an opaque handle for one exact SDK request correlation."""
+        nonlocal invocations
         if not sealed_capability_is_issued(capability, service):
             raise PatchToolError("patch invocation capability is invalid")
         handle = PatchInvocationHandle(object())
-        invocations.append(
+        invocations = (
+            *invocations,
             _InvocationIssue(
                 handle,
                 capability,
@@ -560,7 +637,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
                 operation,
                 correlation,
                 request_id,
-            )
+            ),
         )
         return handle
 
@@ -569,6 +646,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
         outcome: PatchInvocationOutcome,
     ) -> None:
         """Bind an issued handle to the exact returned request identity."""
+        nonlocal invocations
         for index, issue in enumerate(invocations):
             if issue.handle is not handle:
                 continue
@@ -579,13 +657,17 @@ def _seal_patch_authority() -> tuple[object, ...]:
                 and outcome.correlation_id is not issue.correlation
             ):
                 raise PatchToolError("patch invocation correlation is invalid")
-            invocations[index] = _InvocationIssue(
-                issue.handle,
-                issue.capability,
-                issue.service,
-                issue.operation,
-                issue.correlation,
-                issue.request_id,
+            invocations = (
+                *invocations[:index],
+                _InvocationIssue(
+                    issue.handle,
+                    issue.capability,
+                    issue.service,
+                    issue.operation,
+                    issue.correlation,
+                    issue.request_id,
+                ),
+                *invocations[index + 1 :],
             )
             return
         raise PatchToolError("patch invocation handle is invalid")
@@ -629,6 +711,27 @@ def _seal_patch_authority() -> tuple[object, ...]:
             and event.request_id == issue.request_id
             and event.correlation_id is issue.correlation
             for issue in invocations
+        )
+
+    def invocation_subscription_access(
+        handle: object,
+        service: object,
+    ) -> tuple[PatchRequestId, PatchObserverCorrelationId] | None:
+        """Return sealed durable stream facts for one issued handle only."""
+        for issue in invocations:
+            if issue.handle is handle and issue.service is service:
+                correlation = issue.correlation
+                if type(correlation) is PatchObserverCorrelationId:
+                    return issue.request_id, correlation
+        return None
+
+    def sandbox_endpoint_is_issued(endpoint: object) -> bool:
+        """Read whether one endpoint belongs to an active SDK capability."""
+        return any(
+            issue.sandbox_endpoint is endpoint
+            and issue.capability is not None
+            and sealed_capability_is_issued(issue.capability, issue.service)
+            for issue in capabilities
         )
 
     def sealed_registration_is_issued(
@@ -678,6 +781,10 @@ def _seal_patch_authority() -> tuple[object, ...]:
     )
     authority_validator.registration_owns = staticmethod(registration_owns)
     authority_validator.capability_snapshot = staticmethod(capability_snapshot)
+    authority_validator.loader_is_issued = staticmethod(loader_is_issued)
+    authority_validator.sandbox_endpoint_is_issued = staticmethod(
+        sandbox_endpoint_is_issued
+    )
 
     def reserve(service: object, snapshot: object) -> _Reservation:
         """Record one loader-private construction reservation."""
@@ -756,7 +863,18 @@ def _seal_patch_authority() -> tuple[object, ...]:
             )
         ]
         assert len(matches) == 1, "patch invocation capability is invalid"
-        matches[0].capability = capability
+        issue = matches[0]
+        issue.capability = capability
+        if (
+            type(issue.snapshot) is PatchCapabilitySnapshot
+            and issue.snapshot.context_kind is ContextKind.SANDBOX
+        ):
+            endpoint_factory = getattr(
+                issue.service, "_patch_sandbox_endpoint", None
+            )
+            if not callable(endpoint_factory):
+                raise PatchToolError("sandbox endpoint is unavailable")
+            issue.sandbox_endpoint = endpoint_factory()
 
     def revoke(marker: object, owner: object) -> None:
         """Remove an issuance that failed before construction completed."""
@@ -803,6 +921,8 @@ def _seal_patch_authority() -> tuple[object, ...]:
         settings: ToolManagerSettings | None = None,
     ) -> PatchToolManagerBundle:
         """Bind once and construct a manager without inventory-time probing."""
+        if not _PatchAuthorityValidator.loader_is_issued(self):
+            raise PatchToolError("patch tool loader is invalid")
         if isinstance(enable_tools, str):
             raise PatchToolError("patch tool selection is invalid")
         selects_patch = enable_tools is not None and any(
@@ -822,11 +942,26 @@ def _seal_patch_authority() -> tuple[object, ...]:
         if not (self._profile.enabled and self._profile.authenticated):
             raise PatchToolError("patch activation requires local test host")
         binding = await self._binder.bind()
+        if binding.scope.context_kind is ContextKind.SANDBOX:
+            from avalan.patch.sandbox_commit import SandboxPatchRuntimeBinder
+
+            if type(self._binder) is not SandboxPatchRuntimeBinder:
+                raise PatchToolError(
+                    "sandbox patch activation requires selected runtime"
+                )
         snapshot = _snapshot_for_binding(binding)
         reservation = reserve(binding.service, snapshot)
         context_token = active_reservation.set(reservation)
         try:
-            toolset = PatchToolSet(binding.service, snapshot)
+            toolset = (
+                PatchToolSet(
+                    binding.service,
+                    snapshot,
+                    owned_resources=binding.owned_resources,
+                )
+                if binding.owned_resources
+                else PatchToolSet(binding.service, snapshot)
+            )
         finally:
             active_reservation.reset(context_token)
             discard(reservation)
@@ -941,6 +1076,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
         revoke_active(self._capability, self._capability_owner)
 
     return (
+        loader_init,
         loader_load,
         capability_post_init,
         toolset_init,
@@ -958,10 +1094,12 @@ def _seal_patch_authority() -> tuple[object, ...]:
         resume_invocation,
         invocation_is_issued,
         invocation_matches_event,
+        invocation_subscription_access,
     )
 
 
 (
+    _sealed_loader_init,
     _sealed_loader_load,
     _sealed_capability_post_init,
     _sealed_toolset_init,
@@ -979,6 +1117,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
     _sealed_resume_invocation,
     _sealed_invocation_is_issued,
     _sealed_invocation_matches_event,
+    _sealed_invocation_subscription_access,
 ) = _seal_patch_authority()
 del _seal_patch_authority
 
@@ -1095,6 +1234,7 @@ def _bind_sealed_sdk_handles(
     resume_invocation: Callable[..., object],
     invocation_is_issued: Callable[..., bool],
     invocation_matches_event: Callable[..., bool],
+    invocation_subscription_access: Callable[..., object],
 ) -> tuple[
     Callable[
         [
@@ -1110,6 +1250,7 @@ def _bind_sealed_sdk_handles(
     Callable[[object, object, PatchPending], object],
     Callable[[object, object, object], bool],
     Callable[[object, object], bool],
+    Callable[[object, object], object],
 ]:
     """Bind SDK request-handle operations to sealed authority records."""
 
@@ -1149,7 +1290,11 @@ def _bind_sealed_sdk_handles(
         """Validate one lifecycle event against its request handle."""
         return invocation_matches_event(handle, event)
 
-    return issue, bind, resume, issued, matches
+    def access(handle: object, service: object) -> object:
+        """Return sealed subscription facts without exposing issuance state."""
+        return invocation_subscription_access(handle, service)
+
+    return issue, bind, resume, issued, matches, access
 
 
 (
@@ -1158,12 +1303,14 @@ def _bind_sealed_sdk_handles(
     _bound_resume_invocation,
     _bound_invocation_is_issued,
     _bound_invocation_matches_event,
+    _bound_invocation_subscription_access,
 ) = _bind_sealed_sdk_handles(
     cast(Callable[..., object], _sealed_issue_invocation),
     cast(Callable[..., None], _sealed_bind_invocation),
     cast(Callable[..., object], _sealed_resume_invocation),
     cast(Callable[..., bool], _sealed_invocation_is_issued),
     cast(Callable[..., bool], _sealed_invocation_matches_event),
+    cast(Callable[..., object], _sealed_invocation_subscription_access),
 )
 del _bind_sealed_sdk_handles
 
@@ -1171,19 +1318,13 @@ del _bind_sealed_sdk_handles
 class PatchToolLoader:
     """Construct patch tools only after one complete async handshake."""
 
-    def __init__(
-        self,
-        binder: PatchRuntimeBinder,
-        profile: PatchTestHostProfile,
-    ) -> None:
-        """Bind the runtime loader and test-host activation."""
-        if (
-            not isinstance(binder, PatchRuntimeBinder)
-            or type(profile) is not PatchTestHostProfile
-        ):
-            raise PatchToolError("patch tool loader is invalid")
-        self._binder = binder
-        self._profile = profile
+    _binder: PatchRuntimeBinder
+    _profile: PatchTestHostProfile
+
+    __init__ = cast(
+        Callable[[object, PatchRuntimeBinder, PatchTestHostProfile], None],
+        _sealed_loader_init,
+    )
 
     load = cast(
         Callable[..., Awaitable[PatchToolManagerBundle]],
@@ -1205,6 +1346,9 @@ class PatchToolLoader:
             enable_tools=enable_tools,
             ordinary_toolsets=ordinary_toolsets,
         )
+
+
+del _sealed_loader_init
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -1269,6 +1413,7 @@ class PatchCapabilitySnapshot:
     policy_revision: str = "test-host"
     input_limits: PatchInputLimits = PatchInputLimits()
     settlement_duration: DurationTicks = DurationTicks(60_000)
+    context_kind: ContextKind = ContextKind.LOCAL
 
     def __post_init__(self) -> None:
         """Keep provider freeform optional and disabled by default."""
@@ -1281,6 +1426,7 @@ class PatchCapabilitySnapshot:
             or not self.policy_revision
             or type(self.input_limits) is not PatchInputLimits
             or type(self.settlement_duration) is not DurationTicks
+            or type(self.context_kind) is not ContextKind
         ):
             raise PatchToolError("patch capability snapshot is invalid")
         if self.provider_verified_freeform:
@@ -1477,6 +1623,10 @@ class PatchToolSet(ToolSet):
     def capability(self) -> PatchInvocationCapability:
         """Return the immutable capability to place in a trusted context."""
         return self._capability
+
+    def sdk_host(self) -> "PatchSdkHost":
+        """Return the selected runtime's authenticated host SDK surface."""
+        return PatchSdkHost(self._service, self._capability)
 
     def _patch_registration(self) -> object:
         """Return the private exact ownership witness for manager binding."""
@@ -1842,7 +1992,95 @@ class PatchSdkHost:
             raise PatchToolError("patch operation is unavailable")
         if type(raw_arguments) is not bytes:
             raise PatchToolError("patch SDK arguments are invalid")
-        correlation = PatchObserverCorrelationId.new()
+        return await self._invoke_raw_with_identity(
+            operation,
+            raw_arguments,
+            PatchRequestId.new(),
+            PatchObserverCorrelationId.new(),
+        )
+
+    async def retransmit_json(
+        self,
+        operation: OperationType,
+        arguments: dict[str, object],
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+    ) -> PatchInvocationOutcome:
+        """Retransmit one trusted request with its original durable identity.
+
+        Args:
+            operation: The original edit or apply operation.
+            arguments: The original complete JSON object.
+            request_id: The original host-issued request identifier.
+            correlation_id: The original host-issued observer correlation.
+
+        Returns:
+            The recorded or reconciled outcome without another logical commit.
+        """
+        try:
+            raw_arguments = dumps(
+                arguments,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, UnicodeError, ValueError) as exc:
+            raise PatchToolError("patch SDK arguments are invalid") from exc
+        return await self.retransmit_raw(
+            operation,
+            raw_arguments,
+            request_id,
+            correlation_id,
+        )
+
+    async def retransmit_raw(
+        self,
+        operation: OperationType,
+        raw_arguments: bytes,
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+    ) -> PatchInvocationOutcome:
+        """Retransmit exact bytes under their original host-issued identity.
+
+        Args:
+            operation: The original edit or apply operation.
+            raw_arguments: The original complete canonical request bytes.
+            request_id: The original host-issued request identifier.
+            correlation_id: The original host-issued observer correlation.
+
+        Returns:
+            The recorded or reconciled outcome without another logical commit.
+        """
+        if (
+            type(request_id) is not PatchRequestId
+            or type(correlation_id) is not PatchObserverCorrelationId
+        ):
+            raise PatchToolError("patch retransmission identity is invalid")
+        return await self._invoke_raw_with_identity(
+            operation,
+            raw_arguments,
+            request_id,
+            correlation_id,
+        )
+
+    async def _invoke_raw_with_identity(
+        self,
+        operation: OperationType,
+        raw_arguments: bytes,
+        request_id: PatchRequestId,
+        correlation: PatchObserverCorrelationId,
+    ) -> PatchInvocationOutcome:
+        """Invoke or attach through one exact trusted durable identity."""
+        if operation not in {OperationType.EDIT, OperationType.APPLY}:
+            raise PatchToolError("patch operation is invalid")
+        if not self._snapshot.permits(operation) or not self._is_active():
+            raise PatchToolError("patch operation is unavailable")
+        if (
+            type(raw_arguments) is not bytes
+            or type(request_id) is not PatchRequestId
+            or type(correlation) is not PatchObserverCorrelationId
+        ):
+            raise PatchToolError("patch SDK request is invalid")
         if not PatchToolSet._valid_raw_ingress(
             operation,
             raw_arguments,
@@ -1850,7 +2088,6 @@ class PatchSdkHost:
             self._snapshot.input_limits,
         ):
             raise PatchToolError("patch SDK request is invalid")
-        request_id = PatchRequestId.new()
         handle = cast(
             PatchInvocationHandle,
             _bound_issue_invocation(
@@ -1878,7 +2115,7 @@ class PatchSdkHost:
         self._pending = outcome if isinstance(outcome, PatchPending) else None
         return outcome
 
-    async def review(self) -> dict[str, object]:
+    async def review(self) -> Mapping[str, object]:
         """Return the complete host-owned review projection.
 
         Returns:
@@ -2134,7 +2371,8 @@ def _snapshot_for_binding(
 ) -> PatchCapabilitySnapshot:
     """Intersect frozen target and policy authority without target I/O."""
     if (
-        binding.scope.context_kind is not ContextKind.LOCAL
+        binding.scope.context_kind
+        not in {ContextKind.LOCAL, ContextKind.SANDBOX}
         or binding.handshake.identity != binding.scope.identity
         or binding.handshake.identity.policy_revision
         != binding.policy.revision.value
@@ -2182,6 +2420,7 @@ def _snapshot_for_binding(
         policy_revision=binding.policy.revision.value,
         input_limits=_effective_input_limits(binding.scope.limits),
         settlement_duration=binding.scope.limits.commit_duration,
+        context_kind=binding.scope.context_kind,
     )
 
 

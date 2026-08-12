@@ -499,6 +499,9 @@ class OrchestratorLoader:
     _logger: Logger
     _participant_id: UUID
     _stack: AsyncExitStack
+    _model_manager_factory: (
+        Callable[[HuggingfaceHub, Logger, EventManager], ModelManager] | None
+    )
 
     @dataclass(frozen=True, slots=True, kw_only=True)
     class _RuntimeEnvelopeSelection:
@@ -539,6 +542,10 @@ class OrchestratorLoader:
         participant_id: UUID,
         stack: AsyncExitStack,
         runtime_envelope_loader: AgentRuntimeEnvelopeLoader | None = None,
+        model_manager_factory: (
+            Callable[[HuggingfaceHub, Logger, EventManager], ModelManager]
+            | None
+        ) = None,
     ) -> None:
         self._hub = hub
         self._logger = logger
@@ -553,6 +560,7 @@ class OrchestratorLoader:
                 runtime_envelope_loader
             ), "runtime envelope loader must be trusted"
         self._runtime_envelope_loader = runtime_envelope_loader
+        self._model_manager_factory = model_manager_factory
 
     def clone_for_stack(self, stack: AsyncExitStack) -> "OrchestratorLoader":
         """Return an equivalent loader with isolated resource ownership."""
@@ -563,6 +571,7 @@ class OrchestratorLoader:
             participant_id=self._participant_id,
             stack=stack,
             runtime_envelope_loader=self._runtime_envelope_loader,
+            model_manager_factory=self._model_manager_factory,
         )
 
     @staticmethod
@@ -2195,9 +2204,15 @@ class OrchestratorLoader:
             settings.agent_id,
         )
 
-        model_manager = ModelManager(
-            self._hub, self._logger, event_manager=event_manager
+        model_manager = (
+            ModelManager(self._hub, self._logger, event_manager=event_manager)
+            if self._model_manager_factory is None
+            else self._model_manager_factory(
+                self._hub, self._logger, event_manager
+            )
         )
+        if self._model_manager_factory is not None:
+            assert isinstance(model_manager, ModelManager)
         model_manager = self._stack.enter_context(model_manager)
 
         engine_uri = model_manager.parse_uri(settings.uri)

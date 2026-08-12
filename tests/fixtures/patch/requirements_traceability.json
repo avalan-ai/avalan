@@ -7599,10 +7599,10 @@
       10,
       "required",
       "contract",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchRuntimeBinder",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -7615,10 +7615,10 @@
       10,
       "required",
       "contract",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchSdkService",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -7631,10 +7631,10 @@
       10,
       "required",
       "contract",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchServiceConfiguration",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -7647,10 +7647,10 @@
       10,
       "required",
       "contract",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchRuntimeBinder",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -7663,10 +7663,10 @@
       10,
       "required",
       "contract",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchSdkService",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -7679,10 +7679,10 @@
       10,
       "required",
       "normative",
-      "src/avalan/patch/sandbox_target.py",
-      "SandboxPatchTarget",
-      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
-      "Phase 10 implementation record",
+      "src/avalan/patch/sandbox_commit.py",
+      "SandboxPatchRuntimeBinder",
+      "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+      "Sandbox runtime implementation record",
       "context"
     ],
     [
@@ -16294,5 +16294,5 @@
       "golden"
     ]
   ],
-  "catalog_sha256": "7ed17023e538d6380831e10f7ec466829bc6a26a348919fad087c026e3cc3f49"
+  "catalog_sha256": "6cc25bde98e9bed5776754e6eefe3eb0f4d5493f1b6888c35431ee56b4669035"
 }

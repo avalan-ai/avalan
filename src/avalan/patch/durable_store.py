@@ -6,6 +6,7 @@ worker, open a database connection, or expose a transport route.
 """
 
 from asyncio import Event, Lock
+from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
@@ -261,6 +262,48 @@ class DurableCommitLease:
             or type(self.expires_at) is not ExpiryTick
         ):
             raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+
+@dataclass(frozen=True, slots=True)
+class DurableWorkerBinding:
+    """Bind one write-capable child lifetime to its durable owner epoch."""
+
+    session_id: str
+    channel_id: str
+    implementation_id: str
+    implementation_digest: AlgorithmDigest
+    root_digest: AlgorithmDigest
+
+    def __post_init__(self) -> None:
+        """Require complete opaque worker and root identities."""
+        if (
+            not self.session_id
+            or not self.channel_id
+            or not self.implementation_id
+            or type(self.implementation_digest) is not AlgorithmDigest
+            or type(self.root_digest) is not AlgorithmDigest
+            or max(
+                len(self.session_id),
+                len(self.channel_id),
+                len(self.implementation_id),
+            )
+            > 256
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+    def fingerprint(self) -> str:
+        """Return a canonical non-secret identity for durable comparison."""
+        return sha256(
+            "\x00".join(
+                (
+                    self.session_id,
+                    self.channel_id,
+                    self.implementation_id,
+                    self.implementation_digest.value,
+                    self.root_digest.value,
+                )
+            ).encode()
+        ).hexdigest()
 
 
 class DurableCommitClaimState(str, Enum):
@@ -550,6 +593,8 @@ class DurableRequestSnapshot:
     journal: DurableJournal
     pending: DurablePendingRecord | None
     terminal: DurableTerminalRecord | None
+    worker_bound: bool
+    worker_reaped: bool
     cancellation_requested: bool
     event_cursor: SequenceNumber
 
@@ -575,6 +620,8 @@ class DurableRequestSnapshot:
                 self.terminal is not None
                 and type(self.terminal) is not DurableTerminalRecord
             )
+            or type(self.worker_bound) is not bool
+            or type(self.worker_reaped) is not bool
             or type(self.cancellation_requested) is not bool
             or type(self.event_cursor) is not SequenceNumber
             or self.journal.cursor.request_id != self.reservation.request_id
@@ -783,6 +830,7 @@ class DurablePatchStore(Protocol):
         self,
         identity: DurableRequestIdentity,
         canonical_digest: AlgorithmDigest,
+        request_id: PatchRequestId | None = None,
     ) -> DurableReservation:
         """Reserve an authenticated request identity before inspection."""
 
@@ -812,6 +860,24 @@ class DurablePatchStore(Protocol):
         lease_duration: DurationTicks,
     ) -> DurableCommitLease:
         """Renew one still-current fenced lease without changing its epoch."""
+
+    async def bind_worker(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+        now: ExpiryTick,
+    ) -> None:
+        """Persist the exact live write-capable child for this owner epoch."""
+
+    async def mark_worker_reaped(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+    ) -> None:
+        """Persist child death even after its owner lease has expired."""
+
+    async def mark_worker_absent(self, lease: DurableCommitLease) -> None:
+        """Persist that no write-capable child remains for this owner."""
 
     async def replace_expired_owner(
         self,
@@ -915,6 +981,24 @@ class DurablePatchStore(Protocol):
         """Delete expired or terminal-selected private retained values."""
 
 
+@dataclass(frozen=True, slots=True)
+class DurablePatchStoreBinding:
+    """Bind one shared store to the loader-owned async resource lifetime."""
+
+    store: DurablePatchStore
+    resource: AbstractAsyncContextManager[object]
+
+    def __post_init__(self) -> None:
+        """Require one exact shared async store resource."""
+        if (
+            not callable(getattr(self.store, "reserve", None))
+            or not isinstance(self.resource, AbstractAsyncContextManager)
+            or hasattr(self.resource, "__enter__")
+            or id(self.resource) != id(self.store)
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.LIFECYCLE_CONFLICT)
+
+
 @dataclass(slots=True)
 class _DurableRecord:
     """Keep mutable implementation state private to one durable backend."""
@@ -923,6 +1007,8 @@ class _DurableRecord:
     plan: DurablePlanReference | None = None
     lifecycle: LifecyclePhase = LifecyclePhase.RECEIVED
     lease: DurableCommitLease | None = None
+    worker: DurableWorkerBinding | None = None
+    worker_reaped: bool = False
     steps: dict[PatchStepId, CommitStepState] = field(default_factory=dict)
     step_history: list[DurableStepJournalEntry] = field(default_factory=list)
     artifact_history: list[DurableArtifactJournalEntry] = field(
@@ -974,6 +1060,7 @@ class InMemoryDurablePatchBackend:
         self.records: dict[DurableRequestIdentity, _DurableRecord] = {}
         self.by_request: dict[PatchRequestId, _DurableRecord] = {}
         self.fences: dict[PatchDomainId, int] = {}
+        self.active_leases: dict[PatchDomainId, DurableCommitLease] = {}
         self.consumed_grants: dict[PatchGrantId, PatchRequestId] = {}
         self.event_ids: set[PatchEventId] = set()
 
@@ -991,10 +1078,13 @@ class InMemoryDurablePatchStore:
         self,
         identity: DurableRequestIdentity,
         canonical_digest: AlgorithmDigest,
+        request_id: PatchRequestId | None = None,
     ) -> DurableReservation:
         """Reserve an authenticated identity or attach only to its digest."""
         _require_exact(identity, DurableRequestIdentity)
         _require_exact(canonical_digest, AlgorithmDigest)
+        if request_id is not None:
+            _require_exact(request_id, PatchRequestId)
         async with self._backend.lock:
             existing = self._backend.records.get(identity)
             if existing is not None:
@@ -1009,7 +1099,10 @@ class InMemoryDurablePatchStore:
                     True,
                 )
             reservation = DurableReservation(
-                PatchRequestId.new(), identity, canonical_digest, False
+                request_id or PatchRequestId.new(),
+                identity,
+                canonical_digest,
+                False,
             )
             record = _DurableRecord(reservation)
             self._backend.records[identity] = record
@@ -1077,6 +1170,7 @@ class InMemoryDurablePatchStore:
                     DurableStoreErrorCode.LIFECYCLE_CONFLICT
                 )
             self._validate_approval(reservation, plan, approval, now)
+            self._require_unclaimed_domain(plan.domain_id, now)
             consumed = self._backend.consumed_grants.get(approval.grant_id)
             if consumed is not None:
                 raise DurableStoreError(
@@ -1091,6 +1185,7 @@ class InMemoryDurablePatchStore:
                 SequenceNumber(fence),
                 _lease_expiry(now, lease_duration),
             )
+            self._backend.active_leases[plan.domain_id] = lease
             self._backend.consumed_grants[approval.grant_id] = (
                 reservation.request_id
             )
@@ -1132,6 +1227,7 @@ class InMemoryDurablePatchStore:
                 expires_at,
             )
             record.lease = renewed
+            self._backend.active_leases[renewed.domain_id] = renewed
             if record.pending is not None:
                 record.pending = DurablePendingRecord(
                     record.pending.request_id,
@@ -1144,6 +1240,45 @@ class InMemoryDurablePatchStore:
                     record.pending.next_check_after,
                 )
             return renewed
+
+    async def bind_worker(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+        now: ExpiryTick,
+    ) -> None:
+        """Persist one exact live child before any workspace effect."""
+        _require_exact(binding, DurableWorkerBinding)
+        _require_exact(now, ExpiryTick)
+        async with self._backend.lock:
+            record = self._current_record(lease, now)
+            if record.worker is not None and record.worker != binding:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+            record.worker = binding
+            record.worker_reaped = False
+
+    async def mark_worker_reaped(
+        self,
+        lease: DurableCommitLease,
+        binding: DurableWorkerBinding,
+    ) -> None:
+        """Persist exact child reaping without requiring an unexpired lease."""
+        _require_exact(lease, DurableCommitLease)
+        _require_exact(binding, DurableWorkerBinding)
+        async with self._backend.lock:
+            record = self._record_for_lease(lease)
+            if record.lease != lease or record.worker != binding:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+            record.worker_reaped = True
+
+    async def mark_worker_absent(self, lease: DurableCommitLease) -> None:
+        """Persist exact no-live-child recovery evidence for one owner."""
+        _require_exact(lease, DurableCommitLease)
+        async with self._backend.lock:
+            record = self._record_for_lease(lease)
+            if record.lease != lease or record.worker is not None:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+            record.worker_reaped = True
 
     async def replace_expired_owner(
         self,
@@ -1173,7 +1308,16 @@ class InMemoryDurablePatchStore:
                 raise DurableStoreError(DurableStoreErrorCode.FENCED)
             if now.value < expired_lease.expires_at.value:
                 raise DurableStoreError(DurableStoreErrorCode.LEASE_EXPIRED)
+            if (
+                self._backend.active_leases.get(expired_lease.domain_id)
+                != expired_lease
+                or self._backend.fences.get(expired_lease.domain_id)
+                != expired_lease.fence.value
+            ):
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
             if owner_id == expired_lease.owner_id:
+                raise DurableStoreError(DurableStoreErrorCode.FENCED)
+            if record.worker is not None and not record.worker_reaped:
                 raise DurableStoreError(DurableStoreErrorCode.FENCED)
             fence = self._backend.fences.get(expired_lease.domain_id, 0) + 1
             self._backend.fences[expired_lease.domain_id] = fence
@@ -1185,6 +1329,9 @@ class InMemoryDurablePatchStore:
                 _lease_expiry(now, lease_duration),
             )
             record.lease = lease
+            record.worker = None
+            record.worker_reaped = False
+            self._backend.active_leases[lease.domain_id] = lease
             if record.pending is not None:
                 record.pending = DurablePendingRecord(
                     record.pending.request_id,
@@ -1211,6 +1358,7 @@ class InMemoryDurablePatchStore:
                 and record.lease == lease
                 and record.terminal is None
                 and now.value < lease.expires_at.value
+                and self._backend.active_leases.get(lease.domain_id) == lease
                 and self._backend.fences.get(lease.domain_id)
                 == lease.fence.value
             )
@@ -1417,6 +1565,8 @@ class InMemoryDurablePatchStore:
             record.pending = None
             record.terminal = terminal
             record.outbox.append(outbox)
+            if self._backend.active_leases.get(lease.domain_id) == lease:
+                del self._backend.active_leases[lease.domain_id]
             self._backend.event_ids.add(outbox.event_id)
             self._delete_terminal_retention(record)
             record.terminal_event.set()
@@ -1656,6 +1806,31 @@ class InMemoryDurablePatchStore:
             raise DurableStoreError(DurableStoreErrorCode.FENCED)
         if now.value >= lease.expires_at.value:
             raise DurableStoreError(DurableStoreErrorCode.LEASE_EXPIRED)
+        if self._backend.active_leases.get(lease.domain_id) != lease:
+            raise DurableStoreError(DurableStoreErrorCode.FENCED)
+
+    def _require_unclaimed_domain(
+        self, domain_id: PatchDomainId, now: ExpiryTick
+    ) -> None:
+        """Reject a different live owner before consuming its approval."""
+        del now
+        active = self._backend.active_leases.get(domain_id)
+        if active is None:
+            return
+        record = self._backend.by_request.get(active.request_id)
+        if (
+            record is None
+            or record.lease != active
+            or record.terminal is not None
+            or record.lifecycle
+            not in {
+                LifecyclePhase.COMMIT_STARTED,
+                LifecyclePhase.SETTLEMENT_PENDING,
+            }
+        ):
+            del self._backend.active_leases[domain_id]
+            return
+        raise DurableStoreError(DurableStoreErrorCode.FENCED)
 
     def _validate_approval(
         self,
@@ -1723,6 +1898,8 @@ class InMemoryDurablePatchStore:
             self._journal(record),
             record.pending,
             record.terminal,
+            record.worker is not None,
+            record.worker_reaped,
             record.cancellation_requested,
             SequenceNumber(record.event_cursor),
         )
@@ -1883,9 +2060,7 @@ def derive_artifact_state(
         return ArtifactState.UNKNOWN
     if any(item is DurableArtifactState.LEAKED for item in states):
         return ArtifactState.LEAKED
-    if all(item is DurableArtifactState.REMOVED for item in states):
-        return ArtifactState.CLEANED
-    raise DurableStoreError(DurableStoreErrorCode.JOURNAL_INCOMPLETE)
+    return ArtifactState.CLEANED
 
 
 def _artifact_current_state(

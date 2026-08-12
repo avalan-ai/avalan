@@ -3272,6 +3272,61 @@
       "review_round": 1,
       "reviewer": "phase9-validation",
       "rationale": "Phase 9 exposes the sealed toolset class while preserving the Phase 6 direct-callable and worker-inactivity boundary."
+    },
+    {
+      "old": {
+        "id": "PATCH-A-P5-003",
+        "requirement_ids": [
+          "PATCH-R-0370",
+          "PATCH-R-0371",
+          "PATCH-R-0372",
+          "PATCH-R-0373",
+          "PATCH-R-0374",
+          "PATCH-R-0375",
+          "PATCH-R-0376",
+          "PATCH-R-0377"
+        ],
+        "category": "positive",
+        "surface": "approval",
+        "context": "local",
+        "platform": "portable",
+        "operation": "review",
+        "authority": "approval",
+        "commit_boundary": "precommit",
+        "evidence_class": "security",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
+        "lifecycle": "active",
+        "active_from_phase": 5,
+        "executable_sha256": "c16992cfda0f0e1ac9a8a01c3e2fff60c88b02cd1a3b0da8c5e9914dc7a5a46f"
+      },
+      "new": {
+        "id": "PATCH-A-P5-003",
+        "requirement_ids": [
+          "PATCH-R-0370",
+          "PATCH-R-0371",
+          "PATCH-R-0372",
+          "PATCH-R-0373",
+          "PATCH-R-0374",
+          "PATCH-R-0375",
+          "PATCH-R-0376",
+          "PATCH-R-0377"
+        ],
+        "category": "positive",
+        "surface": "approval",
+        "context": "local",
+        "platform": "portable",
+        "operation": "review",
+        "authority": "approval",
+        "commit_boundary": "precommit",
+        "evidence_class": "security",
+        "node_id": "tests/patch/phase_5_contract_test.py::test_patch_phase_5_fingerprint_binds_plan_inputs_not_ephemeral_lease",
+        "lifecycle": "active",
+        "active_from_phase": 5,
+        "executable_sha256": "8b2314671f99da88bc89e5d3304693ece0dc225813c0da6f2ca854e0e433e1ef"
+      },
+      "review_round": 5,
+      "reviewer": "phase10-contract-alignment",
+      "rationale": "The active fingerprint contract binds the persistent workspace lease while retaining the ephemeral commit lease outside the sealed plan fingerprint."
     }
   ],
   "introductions": [
@@ -4201,7 +4256,35 @@
       "review_round": 2,
       "reviewer": "phase9-max-review-turn2",
       "rationale": "Review-sealed concrete Phase 9 artifact-bound evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-110",
+        "requirement_ids": [
+          "PATCH-R-0474",
+          "PATCH-R-0475",
+          "PATCH-R-0476",
+          "PATCH-R-0477",
+          "PATCH-R-0478",
+          "PATCH-R-0479"
+        ],
+        "category": "context_conformance",
+        "surface": "sandbox",
+        "context": "sandbox",
+        "platform": "darwin",
+        "operation": "commit",
+        "authority": "target",
+        "commit_boundary": "requested_effect",
+        "evidence_class": "context",
+        "node_id": "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
+        "lifecycle": "active",
+        "active_from_phase": 10,
+        "executable_sha256": "4e252a7d4d88fa8e009b8e172b4e3da340a874bf69b9b656bc0ac7e9d2a6631b"
+      },
+      "review_round": 5,
+      "reviewer": "phase10-max-review",
+      "rationale": "Bounded Phase 10 review activated the concrete sandbox requirement node after the focused implementation and regression evidence passed."
     }
   ],
-  "history_sha256": "a7ef9da44903e1abde6ee686b3cedc5741a23bb60be4b7f13a4522c74d6fe916"
+  "history_sha256": "f8740f6bc4fbd840eb95f6e445c6a1300d13a01e081d60d84bf2aa7f1875be2c"
 }

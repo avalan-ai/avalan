@@ -2169,7 +2169,7 @@ async def _cli_interaction_runtime(
             session_id=str(session_id) if session_id is not None else None,
         ),
     )
-    public_runtime = await stack.enter_async_context(public_runtime)
+    await stack.enter_async_context(public_runtime)
     runtime = _unwrap_interaction_runtime(public_runtime)
     assert runtime is not None
     return runtime

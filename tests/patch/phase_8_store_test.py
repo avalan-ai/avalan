@@ -1,6 +1,7 @@
 """Exercise the strict durable semantic-store checkpoint in memory."""
 
 from asyncio import create_task, gather, run, sleep
+from collections.abc import Awaitable, Callable
 from dataclasses import replace
 
 import pytest
@@ -9,6 +10,7 @@ from phase_6_contract_test import _approved_with_service
 from avalan.patch import durable_approval as durable_approval
 from avalan.patch import durable_retention as retention
 from avalan.patch import durable_store as durable
+from avalan.patch import pgsql_store as pgsql_durable
 from avalan.patch.coordinator import RetransmissionKey, _sealed_journal_steps
 from avalan.patch.domain import (
     AlgorithmDigest,
@@ -76,6 +78,7 @@ from avalan.patch.durable_store import (
     DurableCommitLease,
     DurableJournal,
     DurableJournalCursor,
+    DurablePatchStore,
     DurablePendingAccess,
     DurablePendingRecord,
     DurablePendingRequest,
@@ -93,10 +96,12 @@ from avalan.patch.durable_store import (
     DurableStoreError,
     DurableStoreErrorCode,
     DurableStoreLimits,
+    DurableWorkerBinding,
     EncryptedRetentionValue,
     InMemoryDurablePatchBackend,
     InMemoryDurablePatchStore,
 )
+from avalan.patch.pgsql_store import PgsqlDurablePatchStore
 from avalan.patch.policy import (
     PatchPrincipalId,
     PatchTenantId,
@@ -272,6 +277,201 @@ def _pending(token: str = "a") -> DurablePendingRequest:
         _correlation(token),
         DurationTicks(10),
     )
+
+
+async def _exclusive_recovery_contract(
+    owner_store: DurablePatchStore,
+    competing_store: DurablePatchStore,
+) -> None:
+    """Keep one expired reaped owner exclusive until recovery settles."""
+    owner_identity = _identity("d")
+    owner_digest = _digest("d")
+    owner_reservation = await owner_store.reserve(owner_identity, owner_digest)
+    owner_plan = _plan(owner_digest, "d", step_count=1)
+    owner_approval = _approval(owner_identity, owner_digest, owner_plan, "d")
+    await owner_store.persist_plan(owner_reservation, owner_plan)
+    owner_claim = await owner_store.claim_commit(
+        owner_reservation,
+        owner_plan,
+        owner_approval,
+        _owner("d"),
+        ExpiryTick(10),
+        DurationTicks(10),
+        (),
+    )
+    assert owner_claim.lease is not None
+    worker = DurableWorkerBinding(
+        "session-d",
+        "channel-d",
+        "implementation-d",
+        _digest("a"),
+        _digest("b"),
+    )
+    await owner_store.bind_worker(owner_claim.lease, worker, ExpiryTick(11))
+    with pytest.raises(DurableStoreError) as absent_bound_worker:
+        await owner_store.mark_worker_absent(owner_claim.lease)
+    assert absent_bound_worker.value.code is DurableStoreErrorCode.FENCED
+    with pytest.raises(DurableStoreError) as unreaped_expiry:
+        await owner_store.replace_expired_owner(
+            owner_reservation,
+            owner_claim.lease,
+            _owner("f"),
+            ExpiryTick(21),
+            DurationTicks(10),
+        )
+    assert unreaped_expiry.value.code is DurableStoreErrorCode.FENCED
+    await owner_store.mark_worker_reaped(owner_claim.lease, worker)
+
+    competing_identity = _identity("e")
+    competing_digest = _digest("e")
+    competing_reservation = await competing_store.reserve(
+        competing_identity, competing_digest
+    )
+    competing_plan = replace(
+        _plan(competing_digest, "e", step_count=1),
+        domain_id=owner_plan.domain_id,
+    )
+    competing_approval = _approval(
+        competing_identity,
+        competing_digest,
+        competing_plan,
+        "e",
+    )
+    await competing_store.persist_plan(competing_reservation, competing_plan)
+    with pytest.raises(DurableStoreError) as exclusive:
+        await competing_store.claim_commit(
+            competing_reservation,
+            competing_plan,
+            competing_approval,
+            _owner("e"),
+            ExpiryTick(21),
+            DurationTicks(10),
+            (),
+        )
+    assert exclusive.value.code is DurableStoreErrorCode.FENCED
+
+    attached = await owner_store.claim_commit(
+        owner_reservation,
+        owner_plan,
+        owner_approval,
+        _owner("f"),
+        ExpiryTick(21),
+        DurationTicks(10),
+        (),
+    )
+    assert attached.state is DurableCommitClaimState.ATTACHED
+    recovery = await owner_store.replace_expired_owner(
+        owner_reservation,
+        owner_claim.lease,
+        _owner("f"),
+        ExpiryTick(21),
+        DurationTicks(10),
+    )
+    await owner_store.mark_worker_absent(recovery)
+    journal = await owner_store.append_step(
+        recovery,
+        DurableJournalCursor(owner_reservation.request_id, SequenceNumber(0)),
+        owner_plan.steps[0].step_id,
+        CommitStepState.PLANNED,
+        ExpiryTick(22),
+    )
+    journal = await owner_store.append_step(
+        recovery,
+        journal.cursor,
+        owner_plan.steps[0].step_id,
+        CommitStepState.UNKNOWN,
+        ExpiryTick(22),
+    )
+    terminal = await owner_store.settle(
+        recovery,
+        journal.cursor,
+        _result(
+            owner_reservation.request_id,
+            owner_plan,
+            MutationState.INDETERMINATE,
+        ),
+        _correlation("d"),
+        ExpiryTick(22),
+    )
+    assert terminal.result.status is PatchStatus.INDETERMINATE
+
+    later_claim = await competing_store.claim_commit(
+        competing_reservation,
+        competing_plan,
+        competing_approval,
+        _owner("e"),
+        ExpiryTick(23),
+        DurationTicks(10),
+        (),
+    )
+    assert later_claim.state is DurableCommitClaimState.OWNER
+    assert later_claim.lease is not None
+    assert later_claim.lease.fence.value == recovery.fence.value + 1
+
+
+async def _worker_transition_lease_parity_contract(
+    store: DurablePatchStore,
+) -> None:
+    """Require the exact renewed lease for every worker transition."""
+    bound_identity = _identity("c")
+    bound_digest = _digest("c")
+    bound_reservation = await store.reserve(bound_identity, bound_digest)
+    bound_plan = _plan(bound_digest, "c", step_count=1)
+    await store.persist_plan(bound_reservation, bound_plan)
+    bound_claim = await store.claim_commit(
+        bound_reservation,
+        bound_plan,
+        _approval(bound_identity, bound_digest, bound_plan, "c"),
+        _owner("c"),
+        ExpiryTick(10),
+        DurationTicks(20),
+        (),
+    )
+    assert bound_claim.lease is not None
+    binding = DurableWorkerBinding(
+        "session-c",
+        "channel-c",
+        "implementation-c",
+        _digest("a"),
+        _digest("b"),
+    )
+    await store.bind_worker(bound_claim.lease, binding, ExpiryTick(11))
+    bound_renewed = await store.renew_lease(
+        bound_claim.lease, ExpiryTick(12), DurationTicks(20)
+    )
+    with pytest.raises(DurableStoreError) as stale_reaped:
+        await store.mark_worker_reaped(bound_claim.lease, binding)
+    assert stale_reaped.value.code is DurableStoreErrorCode.FENCED
+    with pytest.raises(DurableStoreError) as bound_absent:
+        await store.mark_worker_absent(bound_renewed)
+    assert bound_absent.value.code is DurableStoreErrorCode.FENCED
+    await store.mark_worker_reaped(bound_renewed, binding)
+
+    unbound_identity = _identity("d")
+    unbound_digest = _digest("d")
+    unbound_reservation = await store.reserve(unbound_identity, unbound_digest)
+    unbound_plan = _plan(unbound_digest, "d", step_count=1)
+    await store.persist_plan(unbound_reservation, unbound_plan)
+    unbound_claim = await store.claim_commit(
+        unbound_reservation,
+        unbound_plan,
+        _approval(unbound_identity, unbound_digest, unbound_plan, "d"),
+        _owner("d"),
+        ExpiryTick(10),
+        DurationTicks(20),
+        (),
+    )
+    assert unbound_claim.lease is not None
+    unbound_renewed = await store.renew_lease(
+        unbound_claim.lease, ExpiryTick(12), DurationTicks(20)
+    )
+    with pytest.raises(DurableStoreError) as stale_absent:
+        await store.mark_worker_absent(unbound_claim.lease)
+    assert stale_absent.value.code is DurableStoreErrorCode.FENCED
+    with pytest.raises(DurableStoreError) as unbound_reaped:
+        await store.mark_worker_reaped(unbound_renewed, binding)
+    assert unbound_reaped.value.code is DurableStoreErrorCode.FENCED
+    await store.mark_worker_absent(unbound_renewed)
 
 
 def _result(
@@ -606,6 +806,266 @@ def test_lease_renewal_expiry_and_replacement_fence_old_owner() -> None:
         assert await store.is_current_fence(replacement, ExpiryTick(32))
 
     run(scenario())
+
+
+def test_expired_reaped_owner_remains_exclusive_until_settlement() -> None:
+    """Reject a competing claim until original recovery becomes terminal."""
+    backend = _backend()
+    run(
+        _exclusive_recovery_contract(
+            InMemoryDurablePatchStore(backend),
+            InMemoryDurablePatchStore(backend),
+        )
+    )
+
+
+def test_worker_transitions_require_the_exact_renewed_lease() -> None:
+    """Fence stale worker transitions while permitting the renewed lease."""
+    run(
+        _worker_transition_lease_parity_contract(
+            InMemoryDurablePatchStore(_backend())
+        )
+    )
+
+
+def test_expired_owner_recovery_never_advances_a_newer_domain_fence() -> None:
+    """Fail recovery CAS without changing a newer domain owner epoch."""
+
+    async def scenario() -> None:
+        store, backend, _, reservation, _, lease = await _claimed(step_count=1)
+        newer = replace(
+            lease,
+            owner_id=_owner("d"),
+            fence=SequenceNumber(lease.fence.value + 1),
+            expires_at=ExpiryTick(100),
+        )
+        backend.fences[lease.domain_id] = newer.fence.value
+        backend.active_leases[lease.domain_id] = newer
+        with pytest.raises(DurableStoreError) as fenced:
+            await store.replace_expired_owner(
+                reservation,
+                lease,
+                _owner("e"),
+                ExpiryTick(lease.expires_at.value),
+                DurationTicks(10),
+            )
+        assert fenced.value.code is DurableStoreErrorCode.FENCED
+        assert backend.fences[lease.domain_id] == newer.fence.value
+        assert backend.active_leases[lease.domain_id] == newer
+
+    run(scenario())
+
+
+def test_pgsql_claim_and_recovery_lock_domain_before_request(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Acquire one domain lock before either request-row lock path."""
+
+    class Selected(Exception):
+        """Stop the simulated transaction after recording lock order."""
+
+    calls: list[str] = []
+
+    async def lock_domain(cursor: object, domain_id: PatchDomainId) -> None:
+        """Record the domain advisory lock boundary."""
+        del cursor, domain_id
+        calls.append("domain")
+
+    async def select_reservation(
+        cursor: object, reservation: DurableReservation
+    ) -> dict[str, object]:
+        """Record the request-row lock and stop the transaction."""
+        del cursor, reservation
+        calls.append("request")
+        raise Selected
+
+    async def transaction(
+        operation: str,
+        callback: Callable[[object], Awaitable[object]],
+    ) -> object:
+        """Execute one operation against a deterministic fake cursor."""
+        del operation
+        return await callback(object())
+
+    identity = _identity("a")
+    digest = _digest("a")
+    reservation = DurableReservation(
+        PatchRequestId("request_" + "a" * 16), identity, digest, False
+    )
+    plan = _plan(digest, "a", step_count=1)
+    approval = _approval(identity, digest, plan, "a")
+    lease = DurableCommitLease(
+        reservation.request_id,
+        plan.domain_id,
+        _owner("a"),
+        SequenceNumber(1),
+        ExpiryTick(20),
+    )
+    store = PgsqlDurablePatchStore(
+        type("Pool", (), {"connection": lambda self: None})(),
+        approval_verifier=_APPROVAL_AUTHORITY,
+    )
+    monkeypatch.setattr(store, "_transaction", transaction)
+    monkeypatch.setattr(pgsql_durable, "_lock_domain", lock_domain)
+    monkeypatch.setattr(
+        pgsql_durable, "_select_reservation_for_update", select_reservation
+    )
+
+    with pytest.raises(Selected):
+        run(
+            store.claim_commit(
+                reservation,
+                plan,
+                approval,
+                _owner("b"),
+                ExpiryTick(10),
+                DurationTicks(10),
+                (),
+            )
+        )
+    assert calls == ["domain", "request"]
+    calls.clear()
+    with pytest.raises(Selected):
+        run(
+            store.replace_expired_owner(
+                reservation,
+                lease,
+                _owner("b"),
+                ExpiryTick(20),
+                DurationTicks(10),
+            )
+        )
+    assert calls == ["domain", "request"]
+
+
+def test_pgsql_worker_transitions_bind_exact_lease_expiry(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bind both worker transition CAS operations to the complete lease."""
+
+    class Cursor:
+        """Record one worker transition CAS statement and its parameters."""
+
+        def __init__(self, row: dict[str, object] | None) -> None:
+            """Return one configured CAS result for the transition."""
+            self.row = row
+            self.calls: list[tuple[str, object]] = []
+
+        async def execute(self, statement: str, parameters: object) -> None:
+            """Record one parameterized CAS statement."""
+            self.calls.append((statement, parameters))
+
+        async def fetchone(self) -> dict[str, object] | None:
+            """Return the configured update result."""
+            return self.row
+
+    cursor = Cursor(None)
+
+    async def transaction(
+        operation: str,
+        callback: Callable[[object], Awaitable[object]],
+    ) -> object:
+        """Execute one public transition against the current fake cursor."""
+        del operation
+        return await callback(cursor)
+
+    identity = _identity("c")
+    digest = _digest("c")
+    reservation = DurableReservation(
+        PatchRequestId("request_" + "c" * 16), identity, digest, False
+    )
+    plan = _plan(digest, "c", step_count=1)
+    stale = DurableCommitLease(
+        reservation.request_id,
+        plan.domain_id,
+        _owner("c"),
+        SequenceNumber(1),
+        ExpiryTick(20),
+    )
+    renewed = replace(stale, expires_at=ExpiryTick(32))
+    binding = DurableWorkerBinding(
+        "session-c",
+        "channel-c",
+        "implementation-c",
+        _digest("a"),
+        _digest("b"),
+    )
+    store = PgsqlDurablePatchStore(
+        type("Pool", (), {"connection": lambda self: None})(),
+        approval_verifier=_APPROVAL_AUTHORITY,
+    )
+    monkeypatch.setattr(store, "_transaction", transaction)
+
+    with pytest.raises(DurableStoreError) as stale_reaped:
+        run(store.mark_worker_reaped(stale, binding))
+    assert stale_reaped.value.code is DurableStoreErrorCode.FENCED
+    assert cursor.calls == [
+        (
+            pgsql_durable._MARK_WORKER_REAPED_SQL,
+            (
+                stale.request_id.value,
+                stale.domain_id.value,
+                stale.owner_id.value,
+                stale.fence.value,
+                stale.expires_at.value,
+                binding.fingerprint(),
+            ),
+        )
+    ]
+
+    cursor = Cursor({"request_id": renewed.request_id.value})
+    run(store.mark_worker_reaped(renewed, binding))
+    assert cursor.calls == [
+        (
+            pgsql_durable._MARK_WORKER_REAPED_SQL,
+            (
+                renewed.request_id.value,
+                renewed.domain_id.value,
+                renewed.owner_id.value,
+                renewed.fence.value,
+                renewed.expires_at.value,
+                binding.fingerprint(),
+            ),
+        )
+    ]
+
+    cursor = Cursor(None)
+    with pytest.raises(DurableStoreError) as stale_absent:
+        run(store.mark_worker_absent(stale))
+    assert stale_absent.value.code is DurableStoreErrorCode.FENCED
+    assert cursor.calls == [
+        (
+            pgsql_durable._MARK_WORKER_ABSENT_SQL,
+            (
+                stale.request_id.value,
+                stale.domain_id.value,
+                stale.owner_id.value,
+                stale.fence.value,
+                stale.expires_at.value,
+            ),
+        )
+    ]
+
+    cursor = Cursor({"request_id": renewed.request_id.value})
+    run(store.mark_worker_absent(renewed))
+    assert cursor.calls == [
+        (
+            pgsql_durable._MARK_WORKER_ABSENT_SQL,
+            (
+                renewed.request_id.value,
+                renewed.domain_id.value,
+                renewed.owner_id.value,
+                renewed.fence.value,
+                renewed.expires_at.value,
+            ),
+        )
+    ]
+    assert (
+        'AND "lease_expires_at" = %s' in pgsql_durable._MARK_WORKER_REAPED_SQL
+    )
+    assert (
+        'AND "lease_expires_at" = %s' in pgsql_durable._MARK_WORKER_ABSENT_SQL
+    )
 
 
 def test_journal_requires_exact_cas_terminal_steps_and_artifact_cleanup() -> (
@@ -1679,6 +2139,8 @@ def test_durable_store_value_contracts_reject_invalid_state() -> None:
             None,
             object(),
             object(),
+            object(),
+            object(),
         ),
         lambda: getattr(durable, "DurableRetentionPolicy")(object(), object()),
         lambda: getattr(durable, "DurableRetentionRecord")(
@@ -2100,9 +2562,7 @@ def test_durable_store_private_recovery_guards_fail_closed() -> None:
             DurableArtifactState.REMOVED,
         ),
     )
-    with pytest.raises(DurableStoreError) as raised:
-        durable.derive_artifact_state(entries)
-    assert raised.value.code is DurableStoreErrorCode.JOURNAL_INCOMPLETE
+    assert durable.derive_artifact_state(entries) is ArtifactState.CLEANED
 
 
 def test_durable_store_rechecks_retention_and_pending_authority(

@@ -14,10 +14,12 @@ from phase_8_store_test import (
     _artifact,
     _correlation,
     _digest,
+    _exclusive_recovery_contract,
     _identity,
     _owner,
     _plan,
     _result,
+    _worker_transition_lease_parity_contract,
 )
 
 from avalan.patch import pgsql_store as pgsql_durable
@@ -672,137 +674,32 @@ def test_pgsql_store_rotates_retention_and_fences_expired_owner() -> None:
     run(_run_schema(scenario))
 
 
-def test_pgsql_domain_epoch_fences_every_old_owner_action() -> None:
-    """Fence one request when a second pool claims the same domain epoch."""
+def test_pgsql_expired_reaped_owner_remains_exclusive_until_settlement() -> (
+    None
+):
+    """Run the shared exclusive-recovery contract across two SQL pools."""
 
     async def scenario(dsn: str, schema: str) -> None:
         first = await _store(dsn, schema)
         second = await _store(dsn, schema)
         try:
-            first_identity = _identity("e")
-            first_digest = _digest("e")
-            first_reservation = await first.reserve(
-                first_identity, first_digest
-            )
-            first_plan = _plan(first_digest, "e", step_count=1)
-            await first.persist_plan(first_reservation, first_plan)
-            first_claim = await first.claim_commit(
-                first_reservation,
-                first_plan,
-                _approval(first_identity, first_digest, first_plan, "e"),
-                _owner("e"),
-                ExpiryTick(10),
-                DurationTicks(30),
-                (),
-            )
-            assert first_claim.lease is not None
-
-            second_identity = _identity("f")
-            second_digest = _digest("f")
-            second_reservation = await second.reserve(
-                second_identity, second_digest
-            )
-            second_plan = replace(
-                _plan(second_digest, "f", step_count=1),
-                domain_id=first_plan.domain_id,
-            )
-            await second.persist_plan(second_reservation, second_plan)
-            second_claim = await second.claim_commit(
-                second_reservation,
-                second_plan,
-                _approval(second_identity, second_digest, second_plan, "f"),
-                _owner("f"),
-                ExpiryTick(11),
-                DurationTicks(30),
-                (),
-            )
-            assert second_claim.lease is not None
-            assert (
-                second_claim.lease.fence.value
-                == first_claim.lease.fence.value + 1
-            )
-            assert not await first.is_current_fence(
-                first_claim.lease, ExpiryTick(12)
-            )
-
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.renew_lease(
-                    first_claim.lease,
-                    ExpiryTick(12),
-                    DurationTicks(30),
-                )
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.append_step(
-                    first_claim.lease,
-                    DurableJournalCursor(
-                        first_reservation.request_id, SequenceNumber(0)
-                    ),
-                    first_plan.steps[0].step_id,
-                    CommitStepState.PLANNED,
-                    ExpiryTick(12),
-                )
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.append_artifact(
-                    first_claim.lease,
-                    DurableJournalCursor(
-                        first_reservation.request_id, SequenceNumber(0)
-                    ),
-                    _artifact("e"),
-                    DurableArtifactState.NOT_CREATED,
-                    ExpiryTick(12),
-                )
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            pending = DurablePendingRequest(
-                PatchPendingOperationId("pending_" + "e" * 16),
-                _correlation("e"),
-                DurationTicks(5),
-            )
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.suspend(first_claim.lease, pending, ExpiryTick(12))
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.request_cancellation(
-                    DurableRequestAccess(
-                        first_reservation.request_id, first_identity
-                    )
-                )
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            with pytest.raises(DurableStoreError) as fenced:
-                await first.settle(
-                    first_claim.lease,
-                    DurableJournalCursor(
-                        first_reservation.request_id, SequenceNumber(0)
-                    ),
-                    _result(
-                        first_reservation.request_id,
-                        first_plan,
-                        MutationState.COMMITTED,
-                    ),
-                    _correlation("e"),
-                    ExpiryTick(12),
-                )
-            assert fenced.value.code is DurableStoreErrorCode.FENCED
-
-            current = await second.append_step(
-                second_claim.lease,
-                DurableJournalCursor(
-                    second_reservation.request_id, SequenceNumber(0)
-                ),
-                second_plan.steps[0].step_id,
-                CommitStepState.PLANNED,
-                ExpiryTick(12),
-            )
-            assert current.cursor.revision == SequenceNumber(1)
+            await _exclusive_recovery_contract(first, second)
         finally:
             await first.aclose()
             await second.aclose()
+
+    run(_run_schema(scenario))
+
+
+def test_pgsql_worker_transitions_require_the_exact_renewed_lease() -> None:
+    """Run renewed worker transition parity through PostgreSQL."""
+
+    async def scenario(dsn: str, schema: str) -> None:
+        store = await _store(dsn, schema)
+        try:
+            await _worker_transition_lease_parity_contract(store)
+        finally:
+            await store.aclose()
 
     run(_run_schema(scenario))
 

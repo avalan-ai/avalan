@@ -2617,18 +2617,14 @@
       686
     ],
     "src/avalan/task/stores/pgsql.py": [
-      172,
-      173,
-      174,
-      175,
+      176,
+      177,
       178,
       179,
-      180,
-      181,
+      182,
+      183,
+      184,
       185,
-      186,
-      187,
-      188,
       189,
       190,
       191,
@@ -2646,7 +2642,11 @@
       203,
       204,
       205,
-      206
+      206,
+      207,
+      208,
+      209,
+      210
     ],
     "src/avalan/task/target.py": [
       134,
@@ -2830,5 +2830,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "f0797ed4f594de9d54c8d0aec12bf73b9e10323f1061abc983c65ce8198217c6"
+  "snapshot_sha256": "9a29523313b4335c3db250e337da82a26dfbcce3d8a47df4bffc951d4e99f667"
 }

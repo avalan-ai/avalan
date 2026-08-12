@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 9,
+  "current_phase": 10,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -958,7 +958,7 @@
     {
       "id": "PATCH-A-110",
       "category": "context_conformance",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 10,
       "requirement_ids": [
         "PATCH-R-0474",
@@ -968,13 +968,13 @@
         "PATCH-R-0478",
         "PATCH-R-0479"
       ],
-      "node_id": "tests/patch/phase_10_contract_test.py::test_patch_phase_10_requirements",
+      "node_id": "tests/patch/phase_10_contract_test.py::test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager",
       "surface": "sandbox",
       "context": "sandbox",
-      "platform": "posix",
+      "platform": "darwin",
       "operation": "commit",
       "authority": "target",
-      "commit_boundary": "commit",
+      "commit_boundary": "requested_effect",
       "evidence_class": "context"
     },
     {
@@ -2845,5 +2845,5 @@
       "evidence_class": "public"
     }
   ],
-  "manifest_sha256": "cde4d9d4b0e6c4536e618b15a4ab7c3b7bd75a5733fe94c16e3e78e1b2d87f09"
+  "manifest_sha256": "bcf030d2cf56b5f31d5daa3d3be783ee9a79c70360fa6467ba09cff1df485b54"
 }
