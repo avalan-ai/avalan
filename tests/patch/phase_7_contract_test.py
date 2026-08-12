@@ -3749,7 +3749,9 @@ def test_patch_phase_7_preserves_native_protected_metadata(
         before = target_module._capture_protected_metadata(descriptor)
     finally:
         close(descriptor)
-    assert before.flags == source.stat().st_flags
+    native_flags = getattr(source.stat(), "st_flags", None)
+    assert isinstance(native_flags, int)
+    assert before.flags == native_flags
     assert before.acl is None
     assert (b"user.avalan.phase7", b"retained") in before.xattrs
     profile = _profile(tmp_path)
