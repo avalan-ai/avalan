@@ -3894,9 +3894,7 @@ def _validate_phase_evidence_platform_receipts(value: object) -> bool:
         )
         if status not in {"passed", "pending"}:
             raise PatchAcceptanceError("phase platform receipt is invalid")
-        _string(
-            receipt.get("evidence"), f"phase platform {platform} evidence"
-        )
+        _string(receipt.get("evidence"), f"phase platform {platform} evidence")
         complete = complete and status == "passed"
     return complete
 
