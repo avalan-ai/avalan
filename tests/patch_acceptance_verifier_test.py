@@ -415,7 +415,7 @@ def test_patch_acceptance_rejects_unreviewed_history_semantic_change(
         )
 
 
-def test_patch_acceptance_rejects_complete_phase_with_pending_platform_receipts(
+def test_patch_acceptance_rejects_pending_platform_receipts(
     tmp_path: Path,
 ) -> None:
     """Reject a terminal evidence status while platform proof is pending."""
