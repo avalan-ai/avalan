@@ -45,6 +45,7 @@ from avalan.patch.rooted_worker import (
     _commit_rooted,
     capture_rooted_root,
     inspect_rooted,
+    probe_rooted_metadata,
     rooted_snapshot_payload,
 )
 from avalan.patch.sandbox_wire import canonical_sandbox_plan_bytes
@@ -274,7 +275,17 @@ def _child_dispatch(
             denied = True
         else:
             denied = False
-        return {"pid": getpid(), "outside_read_denied": denied}, False
+        try:
+            metadata_probe = probe_rooted_metadata(Path(config["namespace"]))
+        except OSError as exc:
+            raise TargetInspectionError(
+                TargetErrorCode.CAPABILITY_UNAVAILABLE
+            ) from exc
+        return {
+            "pid": getpid(),
+            "outside_read_denied": denied,
+            "metadata_probe": metadata_probe,
+        }, False
     if kind == "inspect":
         if set(body) != {"paths", "root"}:
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)

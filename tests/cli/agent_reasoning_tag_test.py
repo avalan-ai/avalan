@@ -1,17 +1,19 @@
 from argparse import Namespace
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
 from logging import getLogger
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, MagicMock, patch
 
+from avalan.agent.loader import OrchestratorLoader
 from avalan.cli.commands import agent as agent_cmds
 from avalan.entities import GenerationSettings, ReasoningSettings, ReasoningTag
 from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.text import TextGenerationResponse
+from avalan.model.stream import CanonicalStreamItem
 
 
 class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
-    def setUp(self) -> None:  # type: ignore[override]
+    def setUp(self) -> None:
         self.args = Namespace(
             specifications_file="spec.toml",
             id="aid",
@@ -103,7 +105,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                     Callable[[], Awaitable[None]] | None
                 ) = None
 
-            def __aiter__(self):
+            def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
                 return self._resp.__aiter__()
 
             def set_cancellation_checker(
@@ -117,7 +119,7 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                 agent_cmds, "AsyncExitStack", return_value=self.dummy_stack
             ),
             patch.object(
-                agent_cmds.OrchestratorLoader,
+                OrchestratorLoader,
                 "from_file",
                 new=AsyncMock(return_value=self.orch),
             ),
@@ -136,12 +138,12 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
             )
         return ReasoningParser.tags[recorded["tag"]]
 
-    async def test_think_tag(self):
+    async def test_think_tag(self) -> None:
         start, end = await self._run(ReasoningTag.THINK)
         self.assertEqual(start, "<think>")
         self.assertEqual(end, "</think>")
 
-    async def test_channel_tag(self):
+    async def test_channel_tag(self) -> None:
         start, end = await self._run(ReasoningTag.CHANNEL)
         self.assertEqual(start, "<|channel|>analysis<|message|>")
         self.assertEqual(end, "<|end|>")

@@ -2165,11 +2165,11 @@
       },
       {
         "path": "src/avalan/patch/rooted_worker.py",
-        "source_sha256": "ca4d1ea8be1935c89000e4ecded74fdd79c00421b70ee41815d09bf3ffd43366"
+        "source_sha256": "876e9897222fc35a6bd9de39aa6e3ef2159e9e50af9610fd1410203ce5cbbde5"
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "65a2d4265a4a61f93b54e91a8096fc498f7f23fd1f7fba7852cdc8f0598e16e1"
+        "source_sha256": "4dacc96aeeade7c840e8c0bbc95757c6d707e5493257d5c894ea777740df448e"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -2177,11 +2177,11 @@
       },
       {
         "path": "src/avalan/patch/sandbox_worker.py",
-        "source_sha256": "01a83f30cc5f3908c6df8bdd661b3b421b1b8b6c1b04cfb3d5a909552ddd63c3"
+        "source_sha256": "744bd42e6ba054268c8eeec2667a737aa6c212165d703a4dc452772a785da3fe"
       },
       {
         "path": "src/avalan/patch/target.py",
-        "source_sha256": "5982d1025363decdaab48f15e25342592a1f728e06b82bd88be3f572618080e2"
+        "source_sha256": "a3fa0bb7ad9a7fc67802af784d74e84541537905d829baccf169d378fcc6f458"
       },
       {
         "path": "src/avalan/patch/toolset.py",
@@ -3175,7 +3175,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "8de9c2c531b0c873cf92bd2ea9419e815c1382c8e876cbac842dc29723ca5960"
+        "source_sha256": "be2abe463ba68a79927a5a86be364cceb2433bdeed9f592a40db51cf2462fa9a"
       }
     ],
     "public_tools": [
@@ -3221,6 +3221,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "2b84dea6294a35689fe9fc24d04773fd22bcf2aa9212e3dde85c463e6004d66e",
-  "record_sha256": "20e4d77936e29ad116cd02fe3652ad9b1d7df2f0c2638a0675c0784450a86bc7"
+  "inventory_sha256": "3b4be131480896e7c6908247c06b3a67fdd7da067f2011f7f9502394988d9e65",
+  "record_sha256": "8ff737e9e303114701fe6d28b82cc399a78e25738f1f2e842e7be060b6b6cf01"
 }
