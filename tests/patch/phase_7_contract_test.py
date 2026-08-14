@@ -854,6 +854,17 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
                     "_probe_acl_round_trip",
                     lambda _fd, _acl: None,
                 )
+                observed_xattrs = iter(
+                    (
+                        ((b"user.avalan.patch.probe", b"probe"),),
+                        baseline.xattrs,
+                    )
+                )
+                patcher.setattr(
+                    target_module,
+                    "_capture_xattrs",
+                    lambda _fd: next(observed_xattrs),
+                )
                 patcher.setattr(target_module, "_METADATA_LIBC", native)
                 with pytest.raises(OSError):
                     target_module._probe_metadata_round_trip(descriptor)

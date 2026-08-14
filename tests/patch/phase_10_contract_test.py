@@ -29,7 +29,7 @@ from runpy import run_path
 from subprocess import run as run_process
 from sys import platform as sys_platform
 from types import SimpleNamespace
-from typing import cast
+from typing import Protocol, cast
 from uuid import uuid4
 
 import pytest
@@ -64,6 +64,7 @@ from avalan.patch import rooted_worker as rooted_worker_module
 from avalan.patch import sandbox_commit as sandbox_commit_module
 from avalan.patch import sandbox_wire as sandbox_wire_module
 from avalan.patch import sandbox_worker as sandbox_worker_module
+from avalan.patch import target as target_module
 from avalan.patch import toolset as patch_toolset_module
 from avalan.patch.coordinator import (
     ArtifactJournal,
@@ -1290,6 +1291,304 @@ def test_patch_phase_10_requirements(tmp_path: Path) -> None:
         await _assert_ordinary_tool_writes_are_denied(root, namespace)
 
     run(exercise())
+
+
+def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Seal only path-free Linux topology and reject changed evidence."""
+    first = (
+        b"42 1 0:42 /host\\040root /workspace rw,nosuid - ext4 "
+        b"/dev/host rw,discard\n"
+    )
+    alternate_paths = (
+        b"42 1 0:42 /other\\040root /sandbox rw,nosuid - ext4 "
+        b"/dev/other rw,discard\n"
+    )
+    monkeypatch.setattr(
+        target_module, "_linux_descriptor_mount_id", lambda _descriptor: 42
+    )
+    monkeypatch.setattr(target_module, "_linux_mountinfo_bytes", lambda: first)
+    topology = target_module._linux_mount_topology(7)
+    monkeypatch.setattr(
+        target_module,
+        "_linux_mountinfo_bytes",
+        lambda: alternate_paths,
+    )
+    assert target_module._linux_mount_topology(7) == topology
+    assert "host" not in repr(topology)
+    assert "workspace" not in repr(topology)
+    changed = iter((first, alternate_paths.replace(b"nosuid", b"nodev")))
+    monkeypatch.setattr(
+        target_module, "_linux_mountinfo_bytes", lambda: next(changed)
+    )
+    with pytest.raises(TargetInspectionError) as changed_error:
+        target_module._linux_mount_topology(7)
+    assert changed_error.value.code is TargetErrorCode.MOUNT_DENIED
+    with pytest.raises(TargetInspectionError) as duplicate:
+        target_module._linux_selected_mount_record(first + first, 42)
+    assert duplicate.value.code is TargetErrorCode.MOUNT_DENIED
+    with pytest.raises(TargetInspectionError) as malformed:
+        target_module._linux_selected_mount_record(b"malformed\n", 42)
+    assert malformed.value.code is TargetErrorCode.MOUNT_DENIED
+    with pytest.raises(TargetInspectionError) as missing:
+        target_module._linux_selected_mount_record(first, 43)
+    assert missing.value.code is TargetErrorCode.MOUNT_DENIED
+    with pytest.raises(TargetInspectionError) as unterminated:
+        target_module._linux_selected_mount_record(first.rstrip(b"\n"), 42)
+    assert unterminated.value.code is TargetErrorCode.MOUNT_DENIED
+    descriptor_ids = iter((42, 42, 43))
+    monkeypatch.setattr(
+        target_module,
+        "_linux_descriptor_mount_id",
+        lambda _descriptor: next(descriptor_ids),
+    )
+    monkeypatch.setattr(target_module, "_linux_mountinfo_bytes", lambda: first)
+    with pytest.raises(TargetInspectionError) as raced:
+        target_module._linux_mount_topology(7)
+    assert raced.value.code is TargetErrorCode.MOUNT_DENIED
+
+
+def test_patch_phase_10_linux_native_metadata_abis_fail_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject unavailable statx, libacl, xattr, and inode-flag ABIs."""
+
+    class StatxUnavailable:
+        """Model a libc without a working descriptor statx call."""
+
+        def statx(self, *_arguments: object) -> int:
+            """Report the kernel primitive as unavailable."""
+            return -1
+
+    class XattrUnavailable:
+        """Model a libc without fd-based xattr listing."""
+
+        def flistxattr(self, *_arguments: object) -> int:
+            """Report the descriptor xattr primitive as unavailable."""
+            return -1
+
+    class FlagUnavailable:
+        """Model a libc without the descriptor flag ioctl."""
+
+        def ioctl(self, *_arguments: object) -> int:
+            """Report the descriptor flag primitive as unavailable."""
+            return -1
+
+    monkeypatch.setattr(target_module, "_LINUX_LIBC", StatxUnavailable())
+    with pytest.raises(TargetInspectionError) as statx:
+        target_module._linux_descriptor_mount_id(7)
+    assert statx.value.code is TargetErrorCode.MOUNT_DENIED
+    monkeypatch.setattr(target_module, "_LINUX_ACL_LIBC", None)
+    with pytest.raises(OSError):
+        target_module._linux_capture_acl(7)
+    monkeypatch.setattr(
+        target_module, "_LINUX_METADATA_LIBC", XattrUnavailable()
+    )
+    with pytest.raises(OSError):
+        target_module._linux_capture_xattrs(7)
+    monkeypatch.setattr(
+        target_module, "_LINUX_METADATA_LIBC", FlagUnavailable()
+    )
+    with pytest.raises(OSError):
+        target_module._linux_capture_flags(7)
+
+
+def test_patch_phase_10_linux_metadata_round_trips_by_descriptor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve Linux xattrs, ACLs, and flags through reversible probes."""
+    baseline = target_module._ProtectedMetadata(
+        ((b"user.retained", b"value"),),
+        0,
+        b"user::rw-\ngroup::---\nother::---\n",
+    )
+    xattrs = {b"user.retained": b"value"}
+    acl = baseline.acl
+    flags = baseline.flags
+    calls: list[tuple[object, ...]] = []
+
+    def captured(_descriptor: int) -> target_module._ProtectedMetadata:
+        """Capture the exact current descriptor-native test state."""
+        return target_module._ProtectedMetadata(
+            tuple(sorted(xattrs.items())), flags, acl
+        )
+
+    def set_xattr(_descriptor: int, name: bytes, value: bytes) -> None:
+        """Apply one fake descriptor xattr for the reversible probe."""
+        xattrs[name] = value
+        calls.append(("xattr-set", name, value))
+
+    def remove_xattr(_descriptor: int, name: bytes) -> None:
+        """Remove one fake descriptor xattr for the reversible probe."""
+        del xattrs[name]
+        calls.append(("xattr-remove", name))
+
+    def probe_acl(_descriptor: int, expected: bytes | None) -> None:
+        """Exercise a distinct ACL then restore the exact baseline."""
+        nonlocal acl
+        acl = b"user::rw-\ngroup::r--\nother::---\n"
+        assert acl != expected
+        acl = expected
+        calls.append(("acl", expected))
+
+    def set_flags(_descriptor: int, value: int) -> None:
+        """Apply one fake descriptor inode-flag state."""
+        nonlocal flags
+        flags = value
+        calls.append(("flags", value))
+
+    def restore(
+        _descriptor: int, expected: target_module._ProtectedMetadata
+    ) -> None:
+        """Restore and verify all fake descriptor-native values exactly."""
+        nonlocal acl, flags
+        xattrs.clear()
+        xattrs.update(expected.xattrs)
+        acl = expected.acl
+        flags = expected.flags
+        assert captured(7) == expected
+        calls.append(("restore", expected.digest().value))
+
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(target_module, "_capture_protected_metadata", captured)
+    monkeypatch.setattr(
+        target_module,
+        "_capture_xattrs",
+        lambda _fd: tuple(sorted(xattrs.items())),
+    )
+    monkeypatch.setattr(target_module, "_set_xattr", set_xattr)
+    monkeypatch.setattr(target_module, "_remove_xattr", remove_xattr)
+    monkeypatch.setattr(target_module, "_probe_acl_round_trip", probe_acl)
+    monkeypatch.setattr(target_module, "_set_native_flags", set_flags)
+    monkeypatch.setattr(target_module, "_restore_protected_metadata", restore)
+    target_module._probe_metadata_round_trip(7)
+    assert captured(7) == baseline
+    assert calls == [
+        ("xattr-set", b"user.avalan.patch.probe", b"probe"),
+        ("xattr-remove", b"user.avalan.patch.probe"),
+        ("acl", baseline.acl),
+        ("flags", target_module._LINUX_FS_NODUMP_FL),
+        ("flags", baseline.flags),
+        ("restore", baseline.digest().value),
+    ]
+
+
+def test_patch_phase_10_linux_flag_ioctl_uses_the_native_uint_abi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the Linux fd ioctl's exact unsigned-int value width."""
+    observed = 0
+
+    class FlagPointer(Protocol):
+        """Type the minimal mutable unsigned-int ioctl buffer contract."""
+
+        def __getitem__(self, index: int) -> int:
+            """Read one native unsigned-int item."""
+            ...
+
+        def __setitem__(self, index: int, value: int) -> None:
+            """Write one native unsigned-int item."""
+            ...
+
+    class FlagIoctl:
+        """Retain one reversible inode-flag value through ioctl calls."""
+
+        def ioctl(
+            self, _descriptor: int, request: int, value: FlagPointer
+        ) -> int:
+            """Read or write flags through the ABI-correct cffi pointer."""
+            nonlocal observed
+            assert (
+                target_module._LINUX_METADATA_FFI.typeof(value).cname
+                == "unsigned int *"
+            )
+            if request == target_module._LINUX_FS_IOC_GETFLAGS:
+                value[0] = observed
+            elif request == target_module._LINUX_FS_IOC_SETFLAGS:
+                observed = value[0]
+            else:
+                raise AssertionError("unexpected Linux inode-flag request")
+            return 0
+
+    monkeypatch.setattr(target_module, "_LINUX_METADATA_LIBC", FlagIoctl())
+    assert target_module._linux_capture_flags(7) == 0
+    target_module._linux_set_flags(7, target_module._LINUX_FS_NODUMP_FL)
+    assert observed == target_module._LINUX_FS_NODUMP_FL
+    target_module._linux_set_flags(7, 0)
+    assert target_module._linux_capture_flags(7) == 0
+
+
+def test_patch_phase_10_linux_metadata_dispatch_never_uses_darwin_abi(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Route xattr, ACL, and inode flags through Linux descriptor helpers."""
+    metadata = target_module._ProtectedMetadata(
+        ((b"user.avalan", b"retained"),),
+        0,
+        b"user::rw-\ngroup::---\nother::---\n",
+    )
+    calls: list[tuple[object, ...]] = []
+
+    class DarwinForbidden:
+        """Raise if a Linux dispatch reaches a Darwin-only ABI symbol."""
+
+        def __getattr__(self, _name: str) -> object:
+            """Reject every unavailable Darwin ABI lookup."""
+            raise AssertionError("Darwin metadata ABI reached on Linux")
+
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(target_module, "_METADATA_LIBC", DarwinForbidden())
+    monkeypatch.setattr(
+        target_module,
+        "_linux_capture_xattrs",
+        lambda _descriptor: metadata.xattrs,
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_capture_flags",
+        lambda _descriptor: metadata.flags,
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_capture_acl",
+        lambda _descriptor: metadata.acl,
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_remove_xattr",
+        lambda descriptor, name: calls.append(("remove", descriptor, name)),
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_set_xattr",
+        lambda descriptor, name, value: calls.append(
+            (
+                "set",
+                descriptor,
+                name,
+                value,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_restore_acl",
+        lambda descriptor, acl: calls.append(("acl", descriptor, acl)),
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_set_flags",
+        lambda descriptor, flags: calls.append(("flags", descriptor, flags)),
+    )
+    assert target_module._capture_protected_metadata(7) == metadata
+    target_module._restore_protected_metadata(7, metadata)
+    assert calls == [
+        ("remove", 7, b"user.avalan"),
+        ("set", 7, b"user.avalan", b"retained"),
+        ("acl", 7, metadata.acl),
+        ("flags", 7, 0),
+    ]
 
 
 def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(
@@ -3810,6 +4109,11 @@ def test_patch_phase_10_worker_protocol_primitives_are_closed(
     monkeypatch.setattr(
         sandbox_worker_module, "inspect_rooted", lambda *_args: ()
     )
+    monkeypatch.setattr(
+        sandbox_worker_module,
+        "probe_rooted_metadata",
+        lambda _namespace: "a" * 64,
+    )
     witness, witness_closed = sandbox_worker_module._child_dispatch(
         "witness", {}, config, root, request, token
     )
@@ -3818,7 +4122,11 @@ def test_patch_phase_10_worker_protocol_primitives_are_closed(
     canary, canary_closed = sandbox_worker_module._child_dispatch(
         "canary", {}, config, root, request, token
     )
-    assert canary == {"pid": 456, "outside_read_denied": True}
+    assert canary == {
+        "pid": 456,
+        "outside_read_denied": True,
+        "metadata_probe": "a" * 64,
+    }
     assert not canary_closed
     inspected, inspected_closed = sandbox_worker_module._child_dispatch(
         "inspect",
@@ -4783,10 +5091,19 @@ def test_patch_phase_10_worker_direct_protocol_failure_branches(
 
     Path(config["read_canary"]).write_bytes(b"visible only in this unit view")
     monkeypatch.setattr(sandbox_worker_module, "getpid", lambda: 789)
+    monkeypatch.setattr(
+        sandbox_worker_module,
+        "probe_rooted_metadata",
+        lambda _namespace: "a" * 64,
+    )
     canary, closed = sandbox_worker_module._child_dispatch(
         "canary", {}, config, root, request, token
     )
-    assert canary == {"pid": 789, "outside_read_denied": False}
+    assert canary == {
+        "pid": 789,
+        "outside_read_denied": False,
+        "metadata_probe": "a" * 64,
+    }
     assert not closed
 
     invalid_dispatches: tuple[tuple[str, Mapping[str, object]], ...] = (
@@ -6891,7 +7208,11 @@ def test_patch_phase_10_runtime_start_reaps_canary_and_launch_faults(
                 **_kwargs: object,
             ) -> Mapping[str, object]:
                 """Expose a child response that fails canary attestation."""
-                return {"pid": 42, "outside_read_denied": False}
+                return {
+                    "pid": 42,
+                    "outside_read_denied": True,
+                    "metadata_probe": "not-a-sha256-digest",
+                }
 
             reaped: list[str] = []
 

@@ -216,7 +216,7 @@ _PROCESS_CLOSE_SECONDS = 0.25
 _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "8366881508cdfa2a43d8a15c925a3e9793467ec3942faec0b9a43727eecb40d5"
+    "31da974059204134359885bf423b1932905922ece8be83774360d5b6aca04286"
 )
 _base_candidate = Path(base_prefix) / "bin" / "python3"
 base_executable = str(
@@ -228,6 +228,15 @@ _pycparser_spec = find_spec("pycparser")
 if _pycparser_spec is None or _pycparser_spec.origin is None:
     raise RuntimeError("pycparser package is unavailable")
 pycparser_file = _pycparser_spec.origin
+
+
+def _is_sha256_digest(value: str) -> bool:
+    """Return whether one attestation field has canonical SHA-256 form."""
+    return len(value) == 64 and all(
+        character in "0123456789abcdef" for character in value
+    )
+
+
 _SANDBOX_PRIMITIVES = frozenset(
     (
         TargetPrimitive.PERSISTENCE,
@@ -1111,9 +1120,12 @@ class _SandboxRuntimeProcess:
             try:
                 canary = await self._request_locked("canary", {})
                 if (
-                    set(canary) != {"pid", "outside_read_denied"}
+                    set(canary)
+                    != {"pid", "outside_read_denied", "metadata_probe"}
                     or canary["pid"] != process.pid
                     or canary["outside_read_denied"] is not True
+                    or not isinstance(canary["metadata_probe"], str)
+                    or not _is_sha256_digest(canary["metadata_probe"])
                 ):
                     raise TargetInspectionError(
                         TargetErrorCode.CAPABILITY_UNAVAILABLE

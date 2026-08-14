@@ -20,6 +20,7 @@ from ctypes import (
     c_uint32,
     c_uint64,
 )
+from ctypes.util import find_library
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from hashlib import sha256
@@ -135,6 +136,76 @@ _MAX_PROTECTED_METADATA_BYTES = 1_048_576
 _ACL_EXTENDED_ALLOW = 1
 _ACL_READ_DATA = 1 << 1
 
+_LINUX_FFI = FFI()
+_LINUX_FFI.cdef("""
+    struct _LinuxStatxTimestamp {
+        long long tv_sec;
+        unsigned int tv_nsec;
+        int reserved;
+    };
+    struct _LinuxStatx {
+        unsigned int mask;
+        unsigned int blksize;
+        unsigned long long attributes;
+        unsigned int nlink;
+        unsigned int uid;
+        unsigned int gid;
+        unsigned short mode;
+        unsigned short spare0;
+        unsigned long long ino;
+        unsigned long long size;
+        unsigned long long blocks;
+        unsigned long long attributes_mask;
+        struct _LinuxStatxTimestamp atime;
+        struct _LinuxStatxTimestamp btime;
+        struct _LinuxStatxTimestamp ctime;
+        struct _LinuxStatxTimestamp mtime;
+        unsigned int rdev_major;
+        unsigned int rdev_minor;
+        unsigned int dev_major;
+        unsigned int dev_minor;
+        unsigned long long mnt_id;
+        unsigned int dio_mem_align;
+        unsigned int dio_offset_align;
+        unsigned long long spare3[12];
+    };
+    int statx(int, const char *, int, unsigned int, struct _LinuxStatx *);
+    """)
+_LINUX_LIBC = _LINUX_FFI.dlopen(None)
+_LINUX_AT_EMPTY_PATH = 0x1000
+_LINUX_STATX_MNT_ID = 0x00001000
+
+_LINUX_METADATA_FFI = FFI()
+_LINUX_METADATA_FFI.cdef("""
+    ssize_t flistxattr(int, char *, size_t);
+    ssize_t fgetxattr(int, const char *, void *, size_t);
+    int fsetxattr(int, const char *, const void *, size_t, int);
+    int fremovexattr(int, const char *);
+    int ioctl(int, unsigned long, void *);
+    """)
+_LINUX_METADATA_LIBC = _LINUX_METADATA_FFI.dlopen(None)
+_LINUX_ACL_FFI = FFI()
+_LINUX_ACL_FFI.cdef("""
+    typedef void *acl_t;
+    acl_t acl_get_fd(int);
+    int acl_set_fd(int, acl_t);
+    char *acl_to_text(acl_t, ssize_t *);
+    acl_t acl_from_text(const char *);
+    int acl_free(void *);
+    """)
+_LINUX_ACL_LIBRARY = find_library("acl")
+try:
+    _LINUX_ACL_LIBC = (
+        _LINUX_ACL_FFI.dlopen(_LINUX_ACL_LIBRARY)
+        if _LINUX_ACL_LIBRARY is not None
+        else None
+    )
+except OSError:
+    _LINUX_ACL_LIBC = None
+_LINUX_FS_IOC_GETFLAGS = 0x80086601
+_LINUX_FS_IOC_SETFLAGS = 0x40086602
+_LINUX_FS_NODUMP_FL = 0x00000040
+
 
 async def _test_precommit_checkpoint(stage: str) -> None:
     """Provide inert local-test boundaries around target observation steps."""
@@ -151,6 +222,72 @@ class TargetInspectionError(PatchValidationError):
         """Initialize one closed target rejection."""
         super().__init__(code.value)
         self.code = code
+
+
+class _LinuxAclLibc(Protocol):
+    """Type the small libacl descriptor ABI needed by the Linux target."""
+
+    def acl_get_fd(self, descriptor: int) -> object:
+        """Return one allocated access-ACL handle."""
+        ...
+
+    def acl_set_fd(self, descriptor: int, acl: object) -> int:
+        """Apply one access-ACL handle to its retained descriptor."""
+        ...
+
+    def acl_to_text(self, acl: object, length: object) -> object:
+        """Encode one ACL handle as allocated canonical text."""
+        ...
+
+    def acl_from_text(self, value: bytes) -> object:
+        """Decode canonical ACL text into one allocated handle."""
+        ...
+
+    def acl_free(self, value: object) -> int:
+        """Release one libacl allocation."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class _LinuxAclLibcAdapter:
+    """Type and validate the dynamically loaded Linux libacl ABI."""
+
+    libc: object
+
+    def acl_get_fd(self, descriptor: int) -> object:
+        """Return one allocated access-ACL handle."""
+        return self._call("acl_get_fd", descriptor)
+
+    def acl_set_fd(self, descriptor: int, acl: object) -> int:
+        """Apply one access-ACL handle to its retained descriptor."""
+        return self._integer("acl_set_fd", descriptor, acl)
+
+    def acl_to_text(self, acl: object, length: object) -> object:
+        """Encode canonical ACL text into an allocated native buffer."""
+        return self._call("acl_to_text", acl, length)
+
+    def acl_from_text(self, value: bytes) -> object:
+        """Decode canonical ACL text into one allocated native handle."""
+        return self._call("acl_from_text", value)
+
+    def acl_free(self, value: object) -> int:
+        """Release one libacl allocation."""
+        return self._integer("acl_free", value)
+
+    def _call(self, name: str, *arguments: object) -> object:
+        """Call exactly one discovered libacl symbol or fail closed."""
+        operation = getattr(self.libc, name, None)
+        if not callable(operation):
+            raise OSError("Linux access ACL ABI is unavailable")
+        result: object = operation(*arguments)
+        return result
+
+    def _integer(self, name: str, *arguments: object) -> int:
+        """Return one integer libacl status value or fail closed."""
+        result = self._call(name, *arguments)
+        if type(result) is not int:
+            raise OSError("Linux access ACL ABI is unavailable")
+        return result
 
 
 class TargetPrimitive(str, Enum):
@@ -421,6 +558,17 @@ class _MountTopology:
 
     mount_id: str
     filesystem_id: str
+
+
+@dataclass(frozen=True, slots=True)
+class _LinuxMountRecord:
+    """Retain path-free mount-source facts selected by an opened descriptor."""
+
+    mount_id: int
+    major_minor: str
+    filesystem_type: str
+    mount_options: tuple[str, ...]
+    super_options: tuple[str, ...]
 
 
 class _DarwinStatFs(Structure):
@@ -1640,22 +1788,17 @@ def _probe_metadata_round_trip(descriptor: int) -> None:
     baseline = _capture_protected_metadata(descriptor)
     attribute = b"user.avalan.patch.probe"
     value = b"probe"
-    buffer = _METADATA_FFI.new("char[]", value)
-    if (
-        _METADATA_LIBC.fsetxattr(
-            descriptor, attribute, buffer, len(value), 0, 0
-        )
-        != 0
+    _set_xattr(descriptor, attribute, value)
+    if _capture_xattrs(descriptor) != tuple(
+        sorted((*baseline.xattrs, (attribute, value)))
     ):
-        raise OSError("probe xattr set failed")
-    if _METADATA_LIBC.fremovexattr(descriptor, attribute, 0) != 0:
-        raise OSError("probe xattr cleanup failed")
+        raise OSError("probe xattr set did not persist")
+    _remove_xattr(descriptor, attribute)
+    if _capture_xattrs(descriptor) != baseline.xattrs:
+        raise OSError("probe xattr cleanup did not round trip")
     _probe_acl_round_trip(descriptor, baseline.acl)
-    toggled = baseline.flags ^ 1
-    if _METADATA_LIBC.fchflags(descriptor, toggled) != 0:
-        raise OSError("probe flags set failed")
-    if _METADATA_LIBC.fchflags(descriptor, baseline.flags) != 0:
-        raise OSError("probe flags cleanup failed")
+    _set_native_flags(descriptor, _probe_flags(baseline.flags))
+    _set_native_flags(descriptor, baseline.flags)
     _restore_protected_metadata(descriptor, baseline)
 
 
@@ -1665,9 +1808,10 @@ def _probe_acl_round_trip(descriptor: int, baseline: bytes | None) -> None:
     try:
         _set_acl(descriptor, probe_acl)
     finally:
-        _METADATA_LIBC.acl_free(probe_acl)
+        _free_acl(probe_acl)
     try:
-        if _capture_acl(descriptor) is None:
+        observed = _capture_acl(descriptor)
+        if observed is None or observed == baseline:
             raise OSError("probe ACL set did not persist")
     finally:
         _restore_acl(descriptor, baseline)
@@ -1677,6 +1821,8 @@ def _probe_acl_round_trip(descriptor: int, baseline: bytes | None) -> None:
 
 def _probe_acl() -> object:
     """Create one harmless non-empty extended ACL for a live round trip."""
+    if platform.startswith("linux"):
+        return _linux_probe_acl()
     acl = _METADATA_LIBC.acl_init(1)
     if acl == _METADATA_FFI.NULL:
         raise OSError("probe ACL initialization is unavailable")
@@ -2142,17 +2288,17 @@ def _snapshot_leaf(
 
 def _capture_protected_metadata(descriptor: int) -> _ProtectedMetadata:
     """Capture native metadata from one retained regular-file descriptor."""
-    status = fstat(descriptor)
-    flags = getattr(status, "st_flags", None)
-    if type(flags) is not int:
-        raise OSError("native flags are unavailable")
     return _ProtectedMetadata(
-        _capture_xattrs(descriptor), flags, _capture_acl(descriptor)
+        _capture_xattrs(descriptor),
+        _capture_native_flags(descriptor),
+        _capture_acl(descriptor),
     )
 
 
 def _capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
     """Read every native extended attribute through one retained descriptor."""
+    if platform.startswith("linux"):
+        return _linux_capture_xattrs(descriptor)
     _METADATA_FFI.errno = 0
     length = _METADATA_LIBC.flistxattr(descriptor, _METADATA_FFI.NULL, 0, 0)
     if length < 0 or length > _MAX_PROTECTED_METADATA_BYTES:
@@ -2167,7 +2313,7 @@ def _capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
     if not raw_names.endswith(b"\x00"):
         raise OSError("extended attribute list is malformed")
     names = raw_names[:-1].split(b"\x00")
-    if any(not name for name in names):
+    if any(not name for name in names) or len(names) != len(set(names)):
         raise OSError("extended attribute list is malformed")
     values: list[tuple[bytes, bytes]] = []
     total = length
@@ -2198,6 +2344,8 @@ def _capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
 
 def _capture_acl(descriptor: int) -> bytes | None:
     """Read a native ACL text form or an explicit empty-ACL witness."""
+    if platform.startswith("linux"):
+        return _linux_capture_acl(descriptor)
     _METADATA_FFI.errno = 0
     acl = _METADATA_LIBC.acl_get_fd(descriptor)
     if acl == _METADATA_FFI.NULL:
@@ -2223,12 +2371,18 @@ def _capture_acl(descriptor: int) -> bytes | None:
 
 def _set_acl(descriptor: int, acl: object) -> None:
     """Apply one initialized native ACL through the retained descriptor."""
+    if platform.startswith("linux"):
+        _linux_set_acl(descriptor, acl)
+        return
     if _METADATA_LIBC.acl_set_fd(descriptor, acl) != 0:
         raise OSError("ACL set failed")
 
 
 def _restore_acl(descriptor: int, baseline: bytes | None) -> None:
     """Clear or restore the exact native ACL captured before mutation."""
+    if platform.startswith("linux"):
+        _linux_restore_acl(descriptor, baseline)
+        return
     if baseline is None:
         acl = _METADATA_LIBC.acl_init(0)
         if acl == _METADATA_FFI.NULL:
@@ -2249,23 +2403,231 @@ def _restore_protected_metadata(
     """Restore exact xattrs, ACL, and flags before staged publication."""
     current = _capture_protected_metadata(descriptor)
     for name, _ in current.xattrs:
-        _METADATA_FFI.errno = 0
-        if _METADATA_LIBC.fremovexattr(descriptor, name, 0) != 0:
-            raise OSError("extended attribute removal failed")
+        _remove_xattr(descriptor, name)
     for name, value in metadata.xattrs:
-        buffer = _METADATA_FFI.new("char[]", value)
-        if (
-            _METADATA_LIBC.fsetxattr(
-                descriptor, name, buffer, len(value), 0, 0
-            )
-            != 0
-        ):
-            raise OSError("extended attribute restore failed")
+        _set_xattr(descriptor, name, value)
     _restore_acl(descriptor, metadata.acl)
-    if _METADATA_LIBC.fchflags(descriptor, metadata.flags) != 0:
-        raise OSError("flags restore failed")
+    _set_native_flags(descriptor, metadata.flags)
     if _capture_protected_metadata(descriptor) != metadata:
         raise OSError("metadata restore did not round trip")
+
+
+def _capture_native_flags(descriptor: int) -> int:
+    """Capture platform inode flags through one retained descriptor."""
+    if platform.startswith("linux"):
+        return _linux_capture_flags(descriptor)
+    status = fstat(descriptor)
+    flags = getattr(status, "st_flags", None)
+    if type(flags) is not int:
+        raise OSError("native flags are unavailable")
+    return flags
+
+
+def _set_native_flags(descriptor: int, flags: int) -> None:
+    """Set and revalidate one platform inode-flag value by descriptor."""
+    if type(flags) is not int or flags < 0:
+        raise OSError("native flags are invalid")
+    if platform.startswith("linux"):
+        _linux_set_flags(descriptor, flags)
+        return
+    if _METADATA_LIBC.fchflags(descriptor, flags) != 0:
+        raise OSError("flags restore failed")
+    if _capture_native_flags(descriptor) != flags:
+        raise OSError("flags restore did not round trip")
+
+
+def _probe_flags(flags: int) -> int:
+    """Return one ordinary reversible inode-flag mutation for this platform."""
+    return (
+        flags ^ _LINUX_FS_NODUMP_FL
+        if platform.startswith("linux")
+        else flags ^ 1
+    )
+
+
+def _set_xattr(descriptor: int, name: bytes, value: bytes) -> None:
+    """Set one native extended attribute through its retained descriptor."""
+    if platform.startswith("linux"):
+        _linux_set_xattr(descriptor, name, value)
+        return
+    buffer = _METADATA_FFI.new("char[]", value)
+    if (
+        _METADATA_LIBC.fsetxattr(descriptor, name, buffer, len(value), 0, 0)
+        != 0
+    ):
+        raise OSError("extended attribute restore failed")
+
+
+def _remove_xattr(descriptor: int, name: bytes) -> None:
+    """Remove one native extended attribute through its retained descriptor."""
+    if platform.startswith("linux"):
+        _linux_remove_xattr(descriptor, name)
+        return
+    _METADATA_FFI.errno = 0
+    if _METADATA_LIBC.fremovexattr(descriptor, name, 0) != 0:
+        raise OSError("extended attribute removal failed")
+
+
+def _free_acl(acl: object) -> None:
+    """Release one platform ACL handle after its descriptor operation."""
+    if platform.startswith("linux"):
+        _linux_acl_libc().acl_free(acl)
+        return
+    _METADATA_LIBC.acl_free(acl)
+
+
+def _linux_capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
+    """Capture Linux fd xattrs while keeping ACL semantics separate."""
+    _LINUX_METADATA_FFI.errno = 0
+    length = _LINUX_METADATA_LIBC.flistxattr(
+        descriptor, _LINUX_METADATA_FFI.NULL, 0
+    )
+    if length < 0 or length > _MAX_PROTECTED_METADATA_BYTES:
+        raise OSError("extended attribute list is unavailable")
+    if length == 0:
+        return ()
+    names_buffer = _LINUX_METADATA_FFI.new("char[]", length)
+    observed = _LINUX_METADATA_LIBC.flistxattr(
+        descriptor, names_buffer, length
+    )
+    if observed != length:
+        raise OSError("extended attribute list changed")
+    raw_names = bytes(_LINUX_METADATA_FFI.buffer(names_buffer, length))
+    if not raw_names.endswith(b"\x00"):
+        raise OSError("extended attribute list is malformed")
+    names = raw_names[:-1].split(b"\x00")
+    if any(not name for name in names):
+        raise OSError("extended attribute list is malformed")
+    values: list[tuple[bytes, bytes]] = []
+    total = length
+    for name in names:
+        if name == b"system.posix_acl_access":
+            continue
+        value_size = _LINUX_METADATA_LIBC.fgetxattr(
+            descriptor, name, _LINUX_METADATA_FFI.NULL, 0
+        )
+        if (
+            value_size < 0
+            or total + value_size > _MAX_PROTECTED_METADATA_BYTES
+        ):
+            raise OSError("extended attribute value is unavailable")
+        value_buffer = _LINUX_METADATA_FFI.new("char[]", value_size)
+        observed_size = _LINUX_METADATA_LIBC.fgetxattr(
+            descriptor, name, value_buffer, value_size
+        )
+        if observed_size != value_size:
+            raise OSError("extended attribute value changed")
+        values.append(
+            (
+                name,
+                bytes(_LINUX_METADATA_FFI.buffer(value_buffer, value_size)),
+            )
+        )
+        total += value_size
+    return tuple(sorted(values))
+
+
+def _linux_set_xattr(descriptor: int, name: bytes, value: bytes) -> None:
+    """Set one Linux extended attribute through its retained descriptor."""
+    buffer = _LINUX_METADATA_FFI.new("char[]", value)
+    if (
+        _LINUX_METADATA_LIBC.fsetxattr(descriptor, name, buffer, len(value), 0)
+        != 0
+    ):
+        raise OSError("extended attribute restore failed")
+
+
+def _linux_remove_xattr(descriptor: int, name: bytes) -> None:
+    """Remove one Linux extended attribute through its retained descriptor."""
+    _LINUX_METADATA_FFI.errno = 0
+    if _LINUX_METADATA_LIBC.fremovexattr(descriptor, name) != 0:
+        raise OSError("extended attribute removal failed")
+
+
+def _linux_acl_libc() -> _LinuxAclLibc:
+    """Return libacl only when the Linux runtime exposed the real ABI."""
+    if _LINUX_ACL_LIBC is None:
+        raise OSError("Linux access ACL ABI is unavailable")
+    return _LinuxAclLibcAdapter(_LINUX_ACL_LIBC)
+
+
+def _linux_capture_acl(descriptor: int) -> bytes:
+    """Capture a Linux access ACL through the retained file descriptor."""
+    libc = _linux_acl_libc()
+    _LINUX_ACL_FFI.errno = 0
+    acl = libc.acl_get_fd(descriptor)
+    if acl == _LINUX_ACL_FFI.NULL:
+        raise OSError("access ACL capture is unavailable")
+    try:
+        length = _LINUX_ACL_FFI.new("ssize_t *")
+        text = libc.acl_to_text(acl, length)
+        if (
+            text == _LINUX_ACL_FFI.NULL
+            or length[0] <= 0
+            or length[0] > _MAX_PROTECTED_METADATA_BYTES
+        ):
+            raise OSError("access ACL text is unavailable")
+        try:
+            return bytes(_LINUX_ACL_FFI.buffer(text, length[0]))
+        finally:
+            libc.acl_free(text)
+    finally:
+        libc.acl_free(acl)
+
+
+def _linux_set_acl(descriptor: int, acl: object) -> None:
+    """Apply one initialized Linux access ACL through a retained descriptor."""
+    if _linux_acl_libc().acl_set_fd(descriptor, acl) != 0:
+        raise OSError("ACL set failed")
+
+
+def _linux_restore_acl(descriptor: int, baseline: bytes | None) -> None:
+    """Restore the exact Linux access ACL captured before mutation."""
+    if baseline is None:
+        raise OSError("Linux access ACL baseline is unavailable")
+    libc = _linux_acl_libc()
+    acl = libc.acl_from_text(baseline)
+    if acl == _LINUX_ACL_FFI.NULL:
+        raise OSError("ACL restore is unavailable")
+    try:
+        _linux_set_acl(descriptor, acl)
+    finally:
+        libc.acl_free(acl)
+
+
+def _linux_probe_acl() -> object:
+    """Create a reversible Linux ACL distinct from the 0600 probe baseline."""
+    acl = _linux_acl_libc().acl_from_text(
+        b"user::rw-\ngroup::r--\nother::---\n"
+    )
+    if acl == _LINUX_ACL_FFI.NULL:
+        raise OSError("probe ACL initialization is unavailable")
+    return acl
+
+
+def _linux_capture_flags(descriptor: int) -> int:
+    """Read Linux inode flags through the file-descriptor ioctl ABI."""
+    value = _LINUX_METADATA_FFI.new("unsigned int *")
+    if (
+        _LINUX_METADATA_LIBC.ioctl(descriptor, _LINUX_FS_IOC_GETFLAGS, value)
+        != 0
+    ):
+        raise OSError("inode flags are unavailable")
+    return int(value[0])
+
+
+def _linux_set_flags(descriptor: int, flags: int) -> None:
+    """Set and exactly revalidate Linux inode flags by descriptor ioctl."""
+    if flags > 0xFFFFFFFF:
+        raise OSError("inode flags are invalid")
+    value = _LINUX_METADATA_FFI.new("unsigned int *", flags)
+    if (
+        _LINUX_METADATA_LIBC.ioctl(descriptor, _LINUX_FS_IOC_SETFLAGS, value)
+        != 0
+    ):
+        raise OSError("inode flags restore failed")
+    if _linux_capture_flags(descriptor) != flags:
+        raise OSError("inode flags restore did not round trip")
 
 
 def _metadata_bytes(value: bytes) -> bytes:
@@ -2593,7 +2955,9 @@ def _filesystem_id(descriptor: int) -> str:
 
 
 def _mount_topology(descriptor: int) -> _MountTopology:
-    """Read Darwin mount-table topology for one retained descriptor."""
+    """Read platform mount topology for one retained descriptor."""
+    if platform.startswith("linux"):
+        return _linux_mount_topology(descriptor)
     if platform != "darwin":
         raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
     try:
@@ -2621,6 +2985,233 @@ def _mount_topology(descriptor: int) -> _MountTopology:
         )
     )
     return _MountTopology(sha256(topology.encode()).hexdigest(), filesystem_id)
+
+
+def _linux_mount_topology(descriptor: int) -> _MountTopology:
+    """Seal one Linux descriptor's current path-free mount topology."""
+    mount_id = _linux_descriptor_mount_id(descriptor)
+    first = _linux_selected_mount_record(_linux_mountinfo_bytes(), mount_id)
+    if _linux_descriptor_mount_id(descriptor) != mount_id:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    second = _linux_selected_mount_record(_linux_mountinfo_bytes(), mount_id)
+    if _linux_descriptor_mount_id(descriptor) != mount_id or first != second:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    source_topology = "\x00".join(
+        (
+            "linux-mount-source-v1",
+            first.major_minor,
+            first.filesystem_type,
+            ",".join(first.mount_options),
+            ",".join(first.super_options),
+        )
+    )
+    filesystem = "\x00".join(
+        (
+            "linux-filesystem-v1",
+            first.major_minor,
+            first.filesystem_type,
+        )
+    )
+    return _MountTopology(
+        sha256(source_topology.encode()).hexdigest(),
+        sha256(filesystem.encode()).hexdigest(),
+    )
+
+
+def _linux_descriptor_mount_id(descriptor: int) -> int:
+    """Read the kernel mount identifier from one already-open descriptor."""
+    try:
+        observation = _LINUX_FFI.new("struct _LinuxStatx *")
+        if (
+            _LINUX_LIBC.statx(
+                descriptor,
+                b"",
+                _LINUX_AT_EMPTY_PATH,
+                _LINUX_STATX_MNT_ID,
+                observation,
+            )
+            != 0
+            or observation.mask & _LINUX_STATX_MNT_ID == 0
+            or observation.mnt_id <= 0
+        ):
+            raise OSError("descriptor mount identifier is unavailable")
+        return int(observation.mnt_id)
+    except (AttributeError, OSError) as exc:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED) from exc
+
+
+def _linux_mountinfo_bytes() -> bytes:
+    """Read one bounded current-process mount namespace observation."""
+    try:
+        value = Path("/proc/self/mountinfo").read_bytes()
+    except OSError as exc:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED) from exc
+    if not value or len(value) > _MAX_PROTECTED_METADATA_BYTES:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return value
+
+
+def _linux_selected_mount_record(
+    value: bytes, expected_mount_id: int
+) -> _LinuxMountRecord:
+    """Strictly select exactly one descriptor-bound mountinfo record."""
+    if not value.endswith(b"\n") or b"\r" in value:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    try:
+        text = value.decode("ascii", "strict")
+    except UnicodeDecodeError as exc:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED) from exc
+    lines = text[:-1].split("\n")
+    if not lines or any(not line for line in lines):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    matches = tuple(
+        record
+        for record in (_linux_mount_record(line) for line in lines)
+        if record.mount_id == expected_mount_id
+    )
+    if len(matches) != 1:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return matches[0]
+
+
+def _linux_mount_record(value: str) -> _LinuxMountRecord:
+    """Parse one complete Linux mountinfo record without retaining paths."""
+    fields = value.split(" ")
+    separators = tuple(
+        index for index, item in enumerate(fields) if item == "-"
+    )
+    if (
+        len(separators) != 1
+        or separators[0] < 6
+        or len(fields) != separators[0] + 4
+        or any(not item for item in fields)
+    ):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    separator = separators[0]
+    mount_id = _linux_decimal(fields[0])
+    _linux_nonnegative_decimal(fields[1])
+    major_minor = _linux_major_minor(fields[2])
+    _linux_mount_path(fields[3])
+    _linux_mount_path(fields[4])
+    mount_options = _linux_mount_options(fields[5])
+    for optional in fields[6:separator]:
+        if not _linux_field(optional) or optional == "-":
+            raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    filesystem_type = fields[separator + 1]
+    source = fields[separator + 2]
+    if (
+        not _linux_field(filesystem_type)
+        or "/" in filesystem_type
+        or not _linux_mount_source(source)
+    ):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return _LinuxMountRecord(
+        mount_id,
+        major_minor,
+        filesystem_type,
+        mount_options,
+        _linux_mount_options(fields[separator + 3]),
+    )
+
+
+def _linux_decimal(value: str) -> int:
+    """Decode one positive unpadded Linux decimal namespace identifier."""
+    if not value.isascii() or not value.isdecimal() or value.startswith("0"):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    parsed = int(value)
+    if parsed <= 0:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return parsed
+
+
+def _linux_nonnegative_decimal(value: str) -> int:
+    """Decode one unpadded Linux decimal identifier that may be zero."""
+    if (
+        not value.isascii()
+        or not value.isdecimal()
+        or value.startswith("0")
+        and value != "0"
+    ):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return int(value)
+
+
+def _linux_major_minor(value: str) -> str:
+    """Validate and canonicalize one Linux device major/minor field."""
+    parts = value.split(":")
+    if len(parts) != 2:
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    major, minor = parts
+    if (
+        not major.isascii()
+        or not minor.isascii()
+        or not major.isdecimal()
+        or not minor.isdecimal()
+        or major.startswith("0")
+        and major != "0"
+        or minor.startswith("0")
+        and minor != "0"
+    ):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return str(int(major)) + ":" + str(int(minor))
+
+
+def _linux_mount_path(value: str) -> None:
+    """Validate one escaped absolute mount path while retaining no path."""
+    if not value.startswith("/") or not _linux_escaped_field(value):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+
+
+def _linux_mount_source(value: str) -> bool:
+    """Validate one source field without including it in any witness digest."""
+    return _linux_escaped_field(value)
+
+
+def _linux_field(value: str) -> bool:
+    """Return whether one mountinfo token has no control or separator bytes."""
+    return bool(value) and all("!" <= character <= "~" for character in value)
+
+
+def _linux_escaped_field(value: str) -> bool:
+    """Validate mountinfo's only permitted octal escape spelling."""
+    index = 0
+    while index < len(value):
+        character = value[index]
+        if character == "\\":
+            escaped = value[index + 1 : index + 4]
+            if len(escaped) != 3 or any(
+                item not in "01234567" for item in escaped
+            ):
+                return False
+            index += 4
+            continue
+        if not "!" <= character <= "~":
+            return False
+        index += 1
+    return True
+
+
+def _linux_mount_options(value: str) -> tuple[str, ...]:
+    """Return opaque strict mount-option facts without retaining paths."""
+    options = value.split(",")
+    facts: list[str] = []
+    for option in options:
+        key, separator, option_value = option.partition("=")
+        if (
+            not _linux_field(option)
+            or not key
+            or any(
+                not (character.isalnum() or character in "._-")
+                for character in key
+            )
+            or separator
+            and (not option_value or not _linux_escaped_field(option_value))
+        ):
+            raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+        facts.append(sha256(option.encode()).hexdigest())
+    if len(facts) != len(set(facts)):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    return tuple(sorted(facts))
 
 
 def _root_mount_id(descriptor: int, status: object) -> str:

@@ -76,6 +76,7 @@ from avalan.patch.target import (
     _open_child_directory,
     _open_cwd,
     _open_directory,
+    _probe_metadata_round_trip,
     _ProtectedMetadata,
     _restore_protected_metadata,
     _root_mount_id,
@@ -141,6 +142,44 @@ def capture_rooted_root(path: Path) -> RootWitness:
         )
     finally:
         close(descriptor)
+
+
+def probe_rooted_metadata(namespace: Path) -> str:
+    """Probe protected metadata only in the private rooted namespace."""
+    namespace_descriptor = _open_directory(namespace)
+    name = ".avalan-patch-metadata-" + sha256(token_bytes(32)).hexdigest()[:24]
+    descriptor: int | None = None
+    created = False
+    try:
+        descriptor = open(
+            name,
+            O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+            0o600,
+            dir_fd=namespace_descriptor,
+        )
+        created = True
+        if write_fd(descriptor, b"metadata-probe\n") != len(
+            b"metadata-probe\n"
+        ):
+            raise OSError("metadata probe write stalled")
+        fchmod(descriptor, 0o600)
+        fsync(descriptor)
+        _probe_metadata_round_trip(descriptor)
+        metadata = _capture_protected_metadata(descriptor)
+        fsync(descriptor)
+        return sha256(
+            b"rooted-metadata-probe-v1:" + metadata.digest().value.encode()
+        ).hexdigest()
+    finally:
+        if descriptor is not None:
+            close(descriptor)
+        if created:
+            try:
+                unlink(name, dir_fd=namespace_descriptor)
+                fsync(namespace_descriptor)
+            except FileNotFoundError:
+                raise OSError("metadata probe artifact disappeared") from None
+        close(namespace_descriptor)
 
 
 def inspect_rooted(
