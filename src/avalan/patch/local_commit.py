@@ -83,10 +83,8 @@ from avalan.patch.rooted_worker import (
 )
 from avalan.patch.target import (
     _FUTURE_MUTATION_PRIMITIVES,
-    _SEATBELT_EXECUTABLE,
     _WORKER_TOKEN_ENV,
     FileIdentity,
-    LocalPlatformProfile,
     LocalTargetProfile,
     ResolvedMutationScope,
     RootWitness,
@@ -94,9 +92,11 @@ from avalan.patch.target import (
     TargetHandshake,
     TargetInspectionError,
     _filesystem_id,
+    _is_local_mutation_test_platform,
     _open_directory,
     _root_mount_id,
     _seatbelt_string,
+    _worker_sandbox_command,
     _worker_seatbelt_profile,
 )
 
@@ -229,10 +229,7 @@ class LocalCommitTarget:
 
     def __post_init__(self) -> None:
         """Fail closed unless the runtime selected the test profile."""
-        if (
-            not self.profile.mutation_test_profile
-            or self.profile.platform is not LocalPlatformProfile.DARWIN
-        ):
+        if not _is_local_mutation_test_platform(self.profile):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
 
     async def handshake(self, scope: ResolvedMutationScope) -> TargetHandshake:
@@ -299,7 +296,7 @@ async def _commit_in_seatbelt(
     profile: LocalTargetProfile,
     witness: RootWitness,
 ) -> WorkerReport:
-    """Execute one authenticated command in a Darwin write sandbox."""
+    """Execute one authenticated command in the selected native sandbox."""
     namespace = _commit_namespace(profile, witness)
     token = token_bytes(32)
     marker = namespace / (
@@ -344,21 +341,24 @@ async def _commit_in_seatbelt(
         str(Path(__file__).resolve().parents[2]),
     )
     try:
-        process = await create_subprocess_exec(
-            _SEATBELT_EXECUTABLE,
-            "-p",
-            _commit_seatbelt_profile(profile, namespace, token.hex()),
-            "--",
-            *worker_argv,
-            stdin=PIPE,
-            stdout=PIPE,
-            stderr=PIPE,
-            cwd="/",
-            env={
+        process_command, environment = _worker_sandbox_command(
+            profile,
+            worker_argv,
+            {
                 _SEATBELT_BARRIER_ENV: str(marker),
                 _SEATBELT_RELEASE_ENV: str(release),
                 _WORKER_TOKEN_ENV: token.hex(),
             },
+            (profile.root._path, namespace),
+            _commit_seatbelt_profile(profile, namespace, token.hex()),
+        )
+        process = await create_subprocess_exec(
+            *process_command,
+            stdin=PIPE,
+            stdout=PIPE,
+            stderr=PIPE,
+            cwd="/",
+            env=environment,
             close_fds=True,
         )
     except OSError as exc:

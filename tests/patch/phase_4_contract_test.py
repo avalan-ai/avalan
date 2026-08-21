@@ -869,7 +869,7 @@ def test_patch_phase_4_worker_channel_isolated_and_unforgeable(
     assert "environ" not in getsource(target_module._inspect_many)
 
 
-def test_patch_phase_4_denies_worker_when_seatbelt_is_unavailable(
+def test_patch_phase_4_denies_worker_when_native_isolation_is_unavailable(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fail closed before launching any unsandboxed worker fallback."""
@@ -887,9 +887,7 @@ def test_patch_phase_4_denies_worker_when_seatbelt_is_unavailable(
         launched = True
         raise AssertionError("worker launch must not occur")
 
-    monkeypatch.setattr(
-        target_module, "_seatbelt_worker_available", unavailable
-    )
+    monkeypatch.setattr(target_module, "_local_worker_available", unavailable)
     monkeypatch.setattr(
         target_module, "create_subprocess_exec", unexpected_launch
     )
@@ -919,6 +917,146 @@ def test_patch_phase_4_generates_network_denied_seatbelt_worker_policy(
     assert "(allow network" not in policy
     assert "(deny process-fork)" in policy
     assert str(tmp_path) in policy
+
+
+def test_patch_phase_4_builds_linux_bubblewrap_worker_view(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Build a no-network Linux worker view with declared write mounts only."""
+    profile = _profile(tmp_path)
+    worker_argv = (executable, "-I", "-c", "pass")
+    monkeypatch.setattr(target_module, "platform", "linux")
+    command, environment = target_module._worker_sandbox_command(
+        profile,
+        worker_argv,
+        {target_module._WORKER_TOKEN_ENV: "a" * 64},
+    )
+    assert environment == {}
+    assert command[:13] == (
+        target_module._BUBBLEWRAP_EXECUTABLE,
+        "--die-with-parent",
+        "--unshare-user",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--new-session",
+        "--unshare-net",
+        "--clearenv",
+    )
+    assert ("--setenv", target_module._WORKER_TOKEN_ENV, "a" * 64) in tuple(
+        zip(command, command[1:], command[2:])
+    )
+    assert ("--ro-bind", str(tmp_path), str(tmp_path)) in tuple(
+        zip(command, command[1:], command[2:])
+    )
+    writable_command = target_module._bubblewrap_worker_command(
+        profile,
+        worker_argv,
+        {target_module._WORKER_TOKEN_ENV: "a" * 64},
+        (tmp_path,),
+    )
+    assert ("--bind", str(tmp_path), str(tmp_path)) in tuple(
+        zip(writable_command, writable_command[1:], writable_command[2:])
+    )
+    with pytest.raises(TargetInspectionError):
+        target_module._bubblewrap_worker_command(profile, worker_argv, {}, ())
+    with pytest.raises(TargetInspectionError):
+        target_module._bubblewrap_worker_command(
+            profile,
+            worker_argv,
+            {target_module._WORKER_TOKEN_ENV: "a" * 64},
+            (tmp_path / "missing",),
+        )
+    with pytest.raises(TargetInspectionError):
+        target_module._bubblewrap_worker_parent_directories(("relative",))
+
+    class UnreadablePath:
+        """Model a filesystem view with no readable Bubblewrap source root."""
+
+        def __init__(self, _value: object) -> None:
+            """Accept each requested source path without retaining it."""
+
+        @property
+        def parent(self) -> "UnreadablePath":
+            """Return the sole unreadable parent path."""
+            return self
+
+        @property
+        def parents(self) -> tuple["UnreadablePath", ...]:
+            """Return enough unreadable ancestors for the source lookup."""
+            return (self, self, self)
+
+        def resolve(self) -> "UnreadablePath":
+            """Return this unreadable path without resolving it."""
+            return self
+
+        def is_dir(self) -> bool:
+            """Report that no requested source root is readable."""
+            return False
+
+        def __str__(self) -> str:
+            """Render a stable unavailable source root."""
+            return "/unreadable"
+
+    monkeypatch.setattr(target_module, "Path", UnreadablePath)
+    with pytest.raises(TargetInspectionError):
+        target_module._bubblewrap_worker_read_roots()
+    monkeypatch.setattr(target_module, "platform", "darwin")
+    seatbelt_command, seatbelt_environment = (
+        target_module._worker_sandbox_command(
+            profile,
+            worker_argv,
+            {target_module._WORKER_TOKEN_ENV: "a"},
+            (tmp_path,),
+            "commit-policy",
+        )
+    )
+    assert seatbelt_command == (
+        target_module._SEATBELT_EXECUTABLE,
+        "-p",
+        "commit-policy",
+        "--",
+        *worker_argv,
+    )
+    assert seatbelt_environment == {target_module._WORKER_TOKEN_ENV: "a"}
+    monkeypatch.setattr(target_module, "platform", "unsupported")
+    with pytest.raises(TargetInspectionError):
+        target_module._worker_sandbox_command(
+            profile, worker_argv, {target_module._WORKER_TOKEN_ENV: "a"}, ()
+        )
+    monkeypatch.setattr(target_module, "cryptography_file", None)
+    with pytest.raises(TargetInspectionError):
+        target_module._bubblewrap_worker_read_roots()
+
+
+@pytest.mark.parametrize(
+    "failure",
+    (OSError("acl lookup failed"), UnicodeError("acl lookup failed")),
+)
+def test_patch_phase_4_linux_worker_availability_and_acl_discovery_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+) -> None:
+    """Select Linux isolation and retain the libacl lookup fallback."""
+    bubblewrap = tmp_path / "bwrap"
+    bubblewrap.write_text("", encoding="utf-8")
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(
+        target_module, "_BUBBLEWRAP_EXECUTABLE", str(bubblewrap)
+    )
+    assert run(target_module._local_worker_available())
+    monkeypatch.setattr(target_module, "platform", "unsupported")
+    assert not run(target_module._local_worker_available())
+
+    def unavailable_acl_library(_name: str) -> str:
+        """Raise the selected discovery failure without returning a library."""
+        raise failure
+
+    monkeypatch.setattr(target_module, "find_library", unavailable_acl_library)
+    assert target_module._linux_acl_library_name() == "libacl.so.1"
 
 
 def test_patch_phase_4_platform_handshake_and_read_only_probes(
@@ -1501,7 +1639,7 @@ def test_patch_phase_4_worker_request_rejects_transport_failures(
         """Keep all cases on the sealed-worker branch."""
         return True
 
-    monkeypatch.setattr(target_module, "_seatbelt_worker_available", available)
+    monkeypatch.setattr(target_module, "_local_worker_available", available)
 
     def envelope(payload: object, mac: str | None = None) -> bytes:
         """Encode one worker response using the current private channel key."""

@@ -126,7 +126,17 @@ jobs:
         if: matrix.target.os == 'ubuntu-latest'
         run: |
           sudo apt-get update
-          sudo apt-get install --yes bubblewrap
+          sudo apt-get install --yes bubblewrap libacl1
+
+      - name: Enable Bubblewrap user namespace isolation
+        if: matrix.target.os == 'ubuntu-latest'
+        run: |
+          sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl --write kernel.unprivileged_userns_clone=1
+          bwrap --die-with-parent --unshare-user --uid 0 --gid 0 \
+            --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
+            --new-session --ro-bind / / --proc /proc --dev /dev \
+            -- /usr/bin/id --user | grep --fixed-strings --line-regexp 0
 
       - name: Verify structured-input type contracts
         run: |
