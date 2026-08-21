@@ -43,10 +43,11 @@ from avalan.patch.rooted_worker import (
     TargetErrorCode,
     TargetInspectionError,
     _commit_rooted,
-    capture_rooted_root,
+    capture_rooted_root_binding,
     inspect_rooted,
     probe_rooted_metadata,
     rooted_snapshot_payload,
+    validate_rooted_root_binding,
 )
 from avalan.patch.sandbox_wire import canonical_sandbox_plan_bytes
 
@@ -136,7 +137,7 @@ def main() -> int:
             != config["source_digest"]
         ):
             return 2
-        root = capture_rooted_root(Path(config["root"]))
+        root, mount_binding = capture_rooted_root_binding(Path(config["root"]))
     except (OSError, TypeError, ValueError, TargetInspectionError):
         return 2
     sequence = 0
@@ -148,7 +149,13 @@ def main() -> int:
             request = _child_request(line, token, config, sequence + 1)
             sequence += 1
             body, should_close = _child_dispatch(
-                request["kind"], request["body"], config, root, request, token
+                request["kind"],
+                request["body"],
+                config,
+                root,
+                request,
+                token,
+                mount_binding,
             )
             response = _child_response(request, body, None, token)
         except TargetInspectionError as exc:
@@ -254,6 +261,7 @@ def _child_dispatch(
     root: RootWitness,
     request: _RuntimeRequestPayload,
     token: bytes,
+    mount_binding: str | None = None,
 ) -> tuple[Mapping[str, object], bool]:
     """Execute only closed operations against the initial selected root."""
     profile = RootedInspectionProfile(
@@ -262,76 +270,100 @@ def _child_dispatch(
         config["maximum"],
         config["aggregate_maximum"],
     )
-    if kind == "witness":
-        if body:
-            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
-        return {"root": _root_payload(root)}, False
-    if kind == "canary":
-        if body:
-            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
-        try:
-            Path(config["read_canary"]).read_bytes()
-        except OSError:
-            denied = True
-        else:
-            denied = False
-        try:
-            metadata_probe = probe_rooted_metadata(Path(config["namespace"]))
-        except OSError as exc:
-            raise TargetInspectionError(
-                TargetErrorCode.CAPABILITY_UNAVAILABLE
-            ) from exc
-        return {
-            "pid": getpid(),
-            "outside_read_denied": denied,
-            "metadata_probe": metadata_probe,
-        }, False
-    if kind == "inspect":
-        if set(body) != {"paths", "root"}:
-            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
-        paths = body["paths"]
-        expected_root = _root_from_payload(body["root"])
-        if (
-            expected_root != root
-            or not isinstance(paths, list)
-            or any(not isinstance(path, str) for path in paths)
-        ):
-            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
-        snapshots = inspect_rooted(
-            profile, tuple(LogicalPath(path) for path in paths), root
-        )
-        return {
-            "snapshots": [rooted_snapshot_payload(item) for item in snapshots]
-        }, False
-    if kind == "commit":
-        command = _mutation_command(body, config, root)
-        mutation = RootedMutationProfile(
-            Path(config["root"]),
-            profile.cwd,
-            FileMode(0o644),
-        )
-        fence = _FenceChecker(request, config, token)
-        report = _commit_rooted(command, mutation, root, fence.check)
-        if report.journal is None:
-            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
-        return {
-            "steps": [
-                {
-                    "id": item.identifier.value,
-                    "lineage": item.lineage.value,
-                    "state": item.state.value,
-                }
-                for item in report.journal.steps
-            ],
-            "artifacts": [
-                {"id": item.identifier, "state": item.state.value}
-                for item in report.journal.artifacts
-            ],
-            "postcondition": report.journal.postcondition.value,
-        }, False
-    if kind == "close" and not body:
-        return {}, True
-    raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    if mount_binding is not None:
+        validate_rooted_root_binding(Path(config["root"]), root, mount_binding)
+    try:
+        if kind == "witness":
+            if body:
+                raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            return {"root": _root_payload(root)}, False
+        if kind == "canary":
+            if body:
+                raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            try:
+                Path(config["read_canary"]).read_bytes()
+            except OSError:
+                denied = True
+            else:
+                denied = False
+            try:
+                metadata_probe = probe_rooted_metadata(
+                    Path(config["root"]), root, mount_binding
+                )
+            except OSError as exc:
+                raise TargetInspectionError(
+                    TargetErrorCode.CAPABILITY_UNAVAILABLE
+                ) from exc
+            return {
+                "pid": getpid(),
+                "outside_read_denied": denied,
+                "metadata_probe": metadata_probe,
+            }, False
+        if kind == "inspect":
+            if set(body) != {"paths", "root"}:
+                raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            paths = body["paths"]
+            expected_root = _root_from_payload(body["root"])
+            if (
+                expected_root != root
+                or not isinstance(paths, list)
+                or any(not isinstance(path, str) for path in paths)
+            ):
+                raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+            snapshots = inspect_rooted(
+                profile,
+                tuple(LogicalPath(path) for path in paths),
+                root,
+                mount_binding,
+            )
+            return {
+                "snapshots": [
+                    rooted_snapshot_payload(item) for item in snapshots
+                ]
+            }, False
+        if kind == "commit":
+            command = _mutation_command(body, config, root)
+            mutation = RootedMutationProfile(
+                Path(config["root"]),
+                profile.cwd,
+                FileMode(0o644),
+            )
+            fence = _FenceChecker(request, config, token)
+            if mount_binding is None:
+                report = _commit_rooted(command, mutation, root, fence.check)
+            else:
+                report = _commit_rooted(
+                    command,
+                    mutation,
+                    root,
+                    fence.check,
+                    mount_binding=mount_binding,
+                )
+            if report.journal is None:
+                raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            return {
+                "steps": [
+                    {
+                        "id": item.identifier.value,
+                        "lineage": item.lineage.value,
+                        "state": item.state.value,
+                    }
+                    for item in report.journal.steps
+                ],
+                "artifacts": [
+                    {"id": item.identifier, "state": item.state.value}
+                    for item in report.journal.artifacts
+                ],
+                "postcondition": report.journal.postcondition.value,
+            }, False
+        if kind == "close" and not body:
+            return {}, True
+        raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    finally:
+        if mount_binding is not None:
+            validate_rooted_root_binding(
+                Path(config["root"]), root, mount_binding
+            )
 
 
 @dataclass(slots=True)

@@ -12,6 +12,7 @@ from os import (
     O_EXCL,
     O_NOFOLLOW,
     O_RDONLY,
+    O_RDWR,
     O_WRONLY,
     close,
     fchmod,
@@ -73,6 +74,7 @@ from avalan.patch.target import (
     _capture_protected_metadata,
     _filesystem_id,
     _inspect_many,
+    _namespace_mount_binding,
     _open_child_directory,
     _open_cwd,
     _open_directory,
@@ -132,30 +134,54 @@ class RootedInspectionProfile:
 
 def capture_rooted_root(path: Path) -> RootWitness:
     """Capture the immutable identity of one selected worker root."""
+    root, _mount_binding = capture_rooted_root_binding(path)
+    return root
+
+
+def capture_rooted_root_binding(path: Path) -> tuple[RootWitness, str]:
+    """Capture one worker root and its opaque local mount binding."""
     descriptor = _open_directory(path)
     try:
         status = fstat(descriptor)
-        return RootWitness(
-            FileIdentity(status.st_dev, status.st_ino),
-            _root_mount_id(descriptor, status),
-            _filesystem_id(descriptor),
+        return (
+            RootWitness(
+                FileIdentity(status.st_dev, status.st_ino),
+                _root_mount_id(descriptor, status),
+                _filesystem_id(descriptor),
+            ),
+            _namespace_mount_binding(descriptor),
         )
     finally:
         close(descriptor)
 
 
-def probe_rooted_metadata(namespace: Path) -> str:
-    """Probe protected metadata only in the private rooted namespace."""
-    namespace_descriptor = _open_directory(namespace)
+def probe_rooted_metadata(
+    workspace: Path,
+    root: RootWitness,
+    mount_binding: str | None = None,
+) -> str:
+    """Probe metadata through the authenticated selected workspace.
+
+    Retain the workspace descriptor for every probe operation.
+    """
+    root_descriptor = _open_directory(workspace)
+    workspace_descriptor: int | None = None
     name = ".avalan-patch-metadata-" + sha256(token_bytes(32)).hexdigest()[:24]
     descriptor: int | None = None
     created = False
     try:
+        _validate_rooted_witness(root_descriptor, root)
+        _validate_rooted_mount_binding(root_descriptor, mount_binding)
+        workspace_descriptor = open(
+            ".", O_RDONLY | O_DIRECTORY | O_CLOEXEC, dir_fd=root_descriptor
+        )
+        _validate_rooted_witness(workspace_descriptor, root)
+        _validate_rooted_mount_binding(workspace_descriptor, mount_binding)
         descriptor = open(
             name,
-            O_CREAT | O_EXCL | O_NOFOLLOW | O_WRONLY | O_CLOEXEC,
+            O_CREAT | O_EXCL | O_NOFOLLOW | O_RDWR | O_CLOEXEC,
             0o600,
-            dir_fd=namespace_descriptor,
+            dir_fd=workspace_descriptor,
         )
         created = True
         if write_fd(descriptor, b"metadata-probe\n") != len(
@@ -171,30 +197,98 @@ def probe_rooted_metadata(namespace: Path) -> str:
             b"rooted-metadata-probe-v1:" + metadata.digest().value.encode()
         ).hexdigest()
     finally:
-        if descriptor is not None:
-            close(descriptor)
-        if created:
+        try:
+            if descriptor is not None:
+                close(descriptor)
+        finally:
             try:
-                unlink(name, dir_fd=namespace_descriptor)
-                fsync(namespace_descriptor)
-            except FileNotFoundError:
-                raise OSError("metadata probe artifact disappeared") from None
-        close(namespace_descriptor)
+                if created:
+                    assert workspace_descriptor is not None
+                    try:
+                        unlink(name, dir_fd=workspace_descriptor)
+                        fsync(workspace_descriptor)
+                    except FileNotFoundError:
+                        raise OSError(
+                            "metadata probe artifact disappeared"
+                        ) from None
+            finally:
+                try:
+                    if workspace_descriptor is not None:
+                        _validate_rooted_witness(workspace_descriptor, root)
+                        _validate_rooted_mount_binding(
+                            workspace_descriptor, mount_binding
+                        )
+                finally:
+                    try:
+                        if workspace_descriptor is not None:
+                            close(workspace_descriptor)
+                    finally:
+                        close(root_descriptor)
+
+
+def _validate_rooted_witness(descriptor: int, expected: RootWitness) -> None:
+    """Require a retained descriptor to remain the authenticated workspace."""
+    status = fstat(descriptor)
+    observed = RootWitness(
+        FileIdentity(status.st_dev, status.st_ino),
+        _root_mount_id(descriptor, status),
+        _filesystem_id(descriptor),
+    )
+    if observed != expected:
+        raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+
+def _validate_rooted_mount_binding(
+    descriptor: int, expected: str | None
+) -> None:
+    """Require one descriptor to retain its child-local mount binding."""
+    if (
+        expected is not None
+        and _namespace_mount_binding(descriptor) != expected
+    ):
+        raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+
+def validate_rooted_root_binding(
+    path: Path, root: RootWitness, mount_binding: str
+) -> None:
+    """Revalidate the root witness and its process-local mount binding."""
+    descriptor = _open_directory(path)
+    try:
+        _validate_rooted_witness(descriptor, root)
+        _validate_rooted_mount_binding(descriptor, mount_binding)
+    finally:
+        close(descriptor)
 
 
 def inspect_rooted(
     profile: RootedInspectionProfile,
     paths: tuple[LogicalPath, ...],
     expected_root: RootWitness,
+    mount_binding: str | None = None,
 ) -> tuple[TargetSnapshot, ...]:
     """Inspect exact paths through neutral rooted worker primitives."""
+    descriptor = _open_directory(profile.root_path)
+    try:
+        _validate_rooted_witness(descriptor, expected_root)
+        _validate_rooted_mount_binding(descriptor, mount_binding)
+    finally:
+        close(descriptor)
     worker_profile = _WorkerInspectionProfile(
         profile.root_path,
         profile.cwd,
         profile.max_snapshot_bytes,
         profile.max_aggregate_snapshot_bytes,
     )
-    return _inspect_many(worker_profile, paths, expected_root)
+    try:
+        return _inspect_many(worker_profile, paths, expected_root)
+    finally:
+        descriptor = _open_directory(profile.root_path)
+        try:
+            _validate_rooted_witness(descriptor, expected_root)
+            _validate_rooted_mount_binding(descriptor, mount_binding)
+        finally:
+            close(descriptor)
 
 
 def rooted_snapshot_payload(snapshot: TargetSnapshot) -> Mapping[str, object]:
@@ -241,6 +335,7 @@ class _CommitContext:
     cwd_identity: FileIdentity
     root: RootWitness
     root_path: Path
+    mount_binding: str | None = None
 
 
 def _steps(
@@ -327,11 +422,14 @@ def _commit_rooted(
     witness: RootWitness,
     fence_check: Callable[[], None] | None = None,
     barrier: Callable[[str], None] | None = None,
+    mount_binding: str | None = None,
 ) -> WorkerReport:
     """Apply one transaction with a scoped fixed-boundary callback."""
     token = _ROOTED_BARRIER.set(barrier)
     try:
-        return _commit_rooted_impl(command, profile, witness, fence_check)
+        return _commit_rooted_impl(
+            command, profile, witness, fence_check, mount_binding
+        )
     finally:
         _ROOTED_BARRIER.reset(token)
 
@@ -341,6 +439,7 @@ def _commit_rooted_impl(
     profile: RootedMutationProfile,
     witness: RootWitness,
     fence_check: Callable[[], None] | None = None,
+    mount_binding: str | None = None,
 ) -> WorkerReport:
     """Use retained root and parent descriptors for every write primitive."""
     steps = _steps(command)
@@ -359,6 +458,7 @@ def _commit_rooted_impl(
     )
     try:
         status = fstat(root_fd)
+        _validate_rooted_mount_binding(root_fd, mount_binding)
         current = RootWitness(
             FileIdentity(status.st_dev, status.st_ino),
             _root_mount_id(root_fd, status),
@@ -376,6 +476,7 @@ def _commit_rooted_impl(
                 cwd_identity,
                 current,
                 profile.root_path,
+                mount_binding,
             )
         )
         try:
@@ -449,9 +550,14 @@ def _commit_rooted_impl(
             _COMMIT_CONTEXT.reset(context_token)
             close(cwd_fd)
     finally:
-        _PARENT_IDENTITIES.reset(parent_token)
-        _ROOT_DESCRIPTOR.reset(root_token)
-        close(root_fd)
+        try:
+            _validate_rooted_mount_binding(root_fd, mount_binding)
+        finally:
+            try:
+                _PARENT_IDENTITIES.reset(parent_token)
+                _ROOT_DESCRIPTOR.reset(root_token)
+            finally:
+                close(root_fd)
 
 
 def _report(
@@ -702,6 +808,7 @@ def _validate_namespace_context(
     context = _COMMIT_CONTEXT.get()
     if context is None:
         raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    _validate_context_root_binding(context)
     root_status = fstat(context.root_fd)
     cwd_status = fstat(context.cwd_fd)
     try:
@@ -744,6 +851,16 @@ def _validate_namespace_context(
             or source_status.st_ino != entry_status.st_ino
         ):
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+
+def _validate_context_root_binding(context: _CommitContext) -> None:
+    """Reopen and validate the configured root at a final effect barrier."""
+    descriptor = _open_directory(context.root_path)
+    try:
+        _validate_rooted_witness(descriptor, context.root)
+        _validate_rooted_mount_binding(descriptor, context.mount_binding)
+    finally:
+        close(descriptor)
 
 
 def _validate_parent_context(

@@ -14,6 +14,7 @@ from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
+from ctypes import util as ctypes_util
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from hmac import digest
@@ -22,7 +23,7 @@ from inspect import getclosurevars
 from io import BytesIO
 from json import dumps, loads
 from logging import getLogger
-from os import close, fstat, mkfifo
+from os import close, fstat, fsync, mkfifo, unlink
 from os import open as open_fd
 from pathlib import Path
 from runpy import run_path
@@ -33,6 +34,7 @@ from typing import Protocol, cast
 from uuid import uuid4
 
 import pytest
+from cffi import FFI
 
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
@@ -96,9 +98,11 @@ from avalan.patch.domain import (
     DurationTicks,
     ErrorStage,
     ExpiryTick,
+    FileMode,
     LifecyclePhase,
     LineageState,
     LogicalPath,
+    MetadataProfile,
     MutationState,
     OperationType,
     PatchApprovalId,
@@ -124,6 +128,7 @@ from avalan.patch.domain import (
     PatchTargetId,
     PatchWorkspaceId,
     PostconditionState,
+    ProposedBytes,
     RequestedEffectOccurrence,
     Retryability,
     SequenceNumber,
@@ -163,6 +168,8 @@ from avalan.patch.pgsql_store import (
 )
 from avalan.patch.planner import (
     BoundedPlannerWorker,
+    PlannedFile,
+    PlannedLineage,
     PlannerFacade,
     PlannerLimits,
 )
@@ -1349,6 +1356,213 @@ def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
     assert raced.value.code is TargetErrorCode.MOUNT_DENIED
 
 
+def test_patch_phase_10_worker_rejects_changed_linux_namespace_mount_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a later child mount ID despite unchanged canonical topology."""
+    config = _worker_child_config(tmp_path)
+    root = rooted_worker_module.RootWitness(
+        FileIdentity(1, 2), "canonical-source-topology", "filesystem"
+    )
+    request = cast(
+        sandbox_worker_module._RuntimeRequestPayload,
+        {
+            "version": _MESSAGE_VERSION,
+            "sequence": 1,
+            "kind": "witness",
+            "receipt": config["receipt"],
+            "identity": config["identity"],
+            "channel_id": config["channel_id"],
+            "implementation_id": config["implementation_id"],
+            "body": {},
+        },
+    )
+    observed_bindings = iter(
+        (
+            "opaque-linux-mount-42",
+            "opaque-linux-mount-42",
+            "opaque-linux-mount-43",
+            "opaque-linux-mount-43",
+        )
+    )
+
+    def validate_namespace_mount(
+        path: Path,
+        expected_root: rooted_worker_module.RootWitness,
+        expected_binding: str,
+    ) -> None:
+        """Model the same source topology under a replacement mount ID."""
+        assert path == Path(config["root"])
+        assert expected_root is root
+        if next(observed_bindings) != expected_binding:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+    monkeypatch.setattr(
+        sandbox_worker_module,
+        "validate_rooted_root_binding",
+        validate_namespace_mount,
+    )
+    witnessed, closed = sandbox_worker_module._child_dispatch(
+        "witness",
+        {},
+        config,
+        root,
+        request,
+        b"a" * 32,
+        "opaque-linux-mount-42",
+    )
+    assert witnessed == {"root": sandbox_worker_module._root_payload(root)}
+    assert not closed
+    with pytest.raises(TargetInspectionError) as changed_binding:
+        sandbox_worker_module._child_dispatch(
+            "witness",
+            {},
+            config,
+            root,
+            request,
+            b"a" * 32,
+            "opaque-linux-mount-42",
+        )
+    assert changed_binding.value.code is TargetErrorCode.WITNESS_STALE
+
+
+def test_patch_phase_10_metadata_canary_uses_and_cleans_workspace_witness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Probe only a live selected workspace and fsync its final cleanup."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    witness = rooted_worker_module.capture_rooted_root(workspace)
+    metadata = target_module._ProtectedMetadata((), 0, None)
+    root_status = workspace.stat()
+
+    def successful_metadata_probe(descriptor: int) -> None:
+        """Prove that the live probe file belongs to the selected workspace."""
+        status = fstat(descriptor)
+        assert status.st_dev == root_status.st_dev
+
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_capture_protected_metadata",
+        lambda _descriptor: metadata,
+    )
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_probe_metadata_round_trip",
+        successful_metadata_probe,
+    )
+    receipt = rooted_worker_module.probe_rooted_metadata(workspace, witness)
+    assert len(receipt) == 64
+    assert not tuple(workspace.iterdir())
+
+    def failed_metadata_probe(_descriptor: int) -> None:
+        """Fail after creation to exercise unconditional artifact cleanup."""
+        raise OSError("native metadata probe rejected")
+
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_probe_metadata_round_trip",
+        failed_metadata_probe,
+    )
+    with pytest.raises(OSError, match="native metadata probe rejected"):
+        rooted_worker_module.probe_rooted_metadata(workspace, witness)
+    assert not tuple(workspace.iterdir())
+
+    stale = replace(witness, filesystem_id="replaced-filesystem")
+    with pytest.raises(TargetInspectionError) as stale_error:
+        rooted_worker_module.probe_rooted_metadata(workspace, stale)
+    assert stale_error.value.code is TargetErrorCode.WITNESS_STALE
+    assert not tuple(workspace.iterdir())
+
+
+def test_patch_phase_10_metadata_canary_cleanup_survives_close_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Unlink and fsync the workspace even when probe-file close fails."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    witness = rooted_worker_module.capture_rooted_root(workspace)
+    metadata = target_module._ProtectedMetadata((), 0, None)
+    real_close = close
+    real_fsync = fsync
+    close_calls: list[int] = []
+    fsync_calls: list[int] = []
+
+    def failed_probe_close(descriptor: int) -> None:
+        """Close the artifact before reporting its simulated close failure."""
+        close_calls.append(descriptor)
+        real_close(descriptor)
+        if len(close_calls) == 1:
+            raise OSError("probe descriptor close failed")
+
+    def recorded_fsync(descriptor: int) -> None:
+        """Record every probe durability boundary without changing it."""
+        fsync_calls.append(descriptor)
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_capture_protected_metadata",
+        lambda _descriptor: metadata,
+    )
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_probe_metadata_round_trip",
+        lambda _descriptor: None,
+    )
+    monkeypatch.setattr(rooted_worker_module, "close", failed_probe_close)
+    monkeypatch.setattr(rooted_worker_module, "fsync", recorded_fsync)
+    with pytest.raises(OSError, match="probe descriptor close failed"):
+        rooted_worker_module.probe_rooted_metadata(workspace, witness)
+    assert not tuple(workspace.iterdir())
+    assert len(fsync_calls) == 3
+    assert len(close_calls) == 3
+
+
+def test_patch_phase_10_metadata_canary_cleanup_closes_after_fsync_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Close all probe descriptors after a directory fsync failure."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    witness = rooted_worker_module.capture_rooted_root(workspace)
+    metadata = target_module._ProtectedMetadata((), 0, None)
+    real_close = close
+    real_fsync = fsync
+    close_calls: list[int] = []
+    fsync_calls: list[int] = []
+
+    def recorded_close(descriptor: int) -> None:
+        """Record every owned descriptor close while releasing it."""
+        close_calls.append(descriptor)
+        real_close(descriptor)
+
+    def failed_directory_fsync(descriptor: int) -> None:
+        """Fail only the final directory durability boundary."""
+        fsync_calls.append(descriptor)
+        if len(fsync_calls) == 3:
+            raise OSError("directory fsync failed")
+        real_fsync(descriptor)
+
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_capture_protected_metadata",
+        lambda _descriptor: metadata,
+    )
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_probe_metadata_round_trip",
+        lambda _descriptor: None,
+    )
+    monkeypatch.setattr(rooted_worker_module, "close", recorded_close)
+    monkeypatch.setattr(rooted_worker_module, "fsync", failed_directory_fsync)
+    with pytest.raises(OSError, match="directory fsync failed"):
+        rooted_worker_module.probe_rooted_metadata(workspace, witness)
+    assert not tuple(workspace.iterdir())
+    assert len(fsync_calls) == 3
+    assert len(close_calls) == 3
+
+
 def test_patch_phase_10_linux_native_metadata_abis_fail_closed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1589,6 +1803,725 @@ def test_patch_phase_10_linux_metadata_dispatch_never_uses_darwin_abi(
         ("acl", 7, metadata.acl),
         ("flags", 7, 0),
     ]
+
+
+def test_patch_phase_10_linux_metadata_ffi_success_and_failure_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise every Linux metadata ABI branch through descriptors."""
+    xattrs = {
+        b"user.avalan.first": b"one",
+        b"user.avalan.second": b"two",
+        b"system.posix_acl_access": b"ignored",
+    }
+    freed: list[object] = []
+    acl_handles: list[object] = []
+    flags = 0
+
+    class NativeMetadata:
+        """Provide mutable descriptor-scoped Linux metadata ABI state."""
+
+        def flistxattr(
+            self, _descriptor: int, buffer: object, size: int
+        ) -> int:
+            """Return and optionally copy the native xattr-name list."""
+            names = b"".join(name + b"\0" for name in sorted(xattrs))
+            if buffer != target_module._LINUX_METADATA_FFI.NULL:
+                target_module._LINUX_METADATA_FFI.buffer(buffer, size)[
+                    :
+                ] = names
+            return len(names)
+
+        def fgetxattr(
+            self,
+            _descriptor: int,
+            name: bytes,
+            buffer: object,
+            size: int,
+        ) -> int:
+            """Return and optionally copy the requested xattr value."""
+            value = xattrs[name]
+            if buffer != target_module._LINUX_METADATA_FFI.NULL:
+                target_module._LINUX_METADATA_FFI.buffer(buffer, size)[
+                    :
+                ] = value
+            return len(value)
+
+        def fsetxattr(
+            _self,
+            _descriptor: int,
+            name: bytes,
+            buffer: object,
+            size: int,
+            _flags: int,
+        ) -> int:
+            """Store one xattr using the ABI-provided byte buffer."""
+            xattrs[name] = bytes(
+                target_module._LINUX_METADATA_FFI.buffer(buffer, size)
+            )
+            return 0
+
+        def fremovexattr(self, _descriptor: int, name: bytes) -> int:
+            """Remove one retained descriptor xattr."""
+            del xattrs[name]
+            return 0
+
+        def ioctl(self, _descriptor: int, request: int, value: object) -> int:
+            """Read and write the reversible Linux inode-flag value."""
+            nonlocal flags
+            pointer = cast("FlagPointer", value)
+            if request == target_module._LINUX_FS_IOC_GETFLAGS:
+                pointer[0] = flags
+                return 0
+            if request == target_module._LINUX_FS_IOC_SETFLAGS:
+                flags = pointer[0]
+                return 0
+            raise AssertionError("unexpected Linux inode-flag request")
+
+    class LinuxAcl:
+        """Model libacl allocations and textual descriptor ACL state."""
+
+        def acl_get_fd(self, _descriptor: int) -> object:
+            """Allocate one distinct ACL handle."""
+            handle = object()
+            acl_handles.append(handle)
+            return handle
+
+        def acl_set_fd(self, _descriptor: int, _acl: object) -> int:
+            """Accept one ACL application through the retained descriptor."""
+            return 0
+
+        def acl_to_text(self, _acl: object, length: object) -> object:
+            """Allocate one canonical textual ACL projection."""
+            encoded = b"user::rw-\ngroup::---\nother::---\n"
+            pointer = cast("AclLengthPointer", length)
+            pointer[0] = len(encoded)
+            return target_module._LINUX_ACL_FFI.new("char[]", encoded)
+
+        def acl_from_text(self, _value: bytes) -> object:
+            """Allocate one ACL parsed from exact canonical text."""
+            handle = object()
+            acl_handles.append(handle)
+            return handle
+
+        def acl_free(self, value: object) -> int:
+            """Record every liberated native ACL allocation."""
+            freed.append(value)
+            return 0
+
+    class FlagPointer(Protocol):
+        """Type the mutable native unsigned-integer ioctl value."""
+
+        def __getitem__(self, index: int) -> int:
+            """Read one integer value from the native pointer."""
+            ...
+
+        def __setitem__(self, index: int, value: int) -> None:
+            """Write one integer value to the native pointer."""
+            ...
+
+    class AclLengthPointer(Protocol):
+        """Type the mutable native ACL text-length pointer."""
+
+        def __setitem__(self, index: int, value: int) -> None:
+            """Write one ACL text length to the native pointer."""
+            ...
+
+    native = NativeMetadata()
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(target_module, "_LINUX_METADATA_LIBC", native)
+    monkeypatch.setattr(target_module, "_LINUX_ACL_LIBC", LinuxAcl())
+    captured = target_module._linux_capture_xattrs(7)
+    assert captured == (
+        (b"user.avalan.first", b"one"),
+        (b"user.avalan.second", b"two"),
+    )
+    target_module._linux_set_xattr(7, b"user.avalan.third", b"three")
+    target_module._linux_remove_xattr(7, b"user.avalan.third")
+    assert b"user.avalan.third" not in xattrs
+    baseline_acl = target_module._linux_capture_acl(7)
+    target_module._linux_set_acl(7, object())
+    target_module._linux_restore_acl(7, baseline_acl)
+    probe_acl = target_module._linux_probe_acl()
+    target_module._free_acl(probe_acl)
+    target_module._linux_set_flags(7, target_module._LINUX_FS_NODUMP_FL)
+    assert (
+        target_module._linux_capture_flags(7)
+        == target_module._LINUX_FS_NODUMP_FL
+    )
+    assert freed
+
+    class MalformedXattrs(NativeMetadata):
+        """Return selected malformed xattr-list and value observations."""
+
+        def __init__(self, names: bytes, values: tuple[int, ...]) -> None:
+            """Store the exact malformed native observations."""
+            self._names = names
+            self._values = list(values)
+
+        def flistxattr(
+            self, _descriptor: int, buffer: object, size: int
+        ) -> int:
+            """Return the selected malformed name list consistently."""
+            if buffer != target_module._LINUX_METADATA_FFI.NULL:
+                target_module._LINUX_METADATA_FFI.buffer(buffer, size)[
+                    :
+                ] = self._names
+            return len(self._names)
+
+        def fgetxattr(self, *_arguments: object) -> int:
+            """Return the next malformed value size or reread result."""
+            return self._values.pop(0)
+
+    for malformed in (
+        MalformedXattrs(b"broken", ()),
+        MalformedXattrs(b"user.a\0user.a\0", ()),
+        MalformedXattrs(b"user.a\0", (-1,)),
+        MalformedXattrs(b"user.a\0", (1, 0)),
+    ):
+        monkeypatch.setattr(target_module, "_LINUX_METADATA_LIBC", malformed)
+        with pytest.raises(OSError):
+            target_module._linux_capture_xattrs(7)
+
+    class MetadataFailure:
+        """Fail xattr and ioctl writes after their real argument handling."""
+
+        def fsetxattr(self, *_arguments: object) -> int:
+            """Reject the descriptor xattr write."""
+            return -1
+
+        def fremovexattr(self, *_arguments: object) -> int:
+            """Reject the descriptor xattr cleanup."""
+            return -1
+
+        def ioctl(self, *_arguments: object) -> int:
+            """Reject the inode-flag update."""
+            return -1
+
+    monkeypatch.setattr(
+        target_module, "_LINUX_METADATA_LIBC", MetadataFailure()
+    )
+    with pytest.raises(OSError):
+        target_module._linux_set_xattr(7, b"user.avalan", b"value")
+    with pytest.raises(OSError):
+        target_module._linux_remove_xattr(7, b"user.avalan")
+    with pytest.raises(OSError):
+        target_module._linux_set_flags(7, 0)
+    with pytest.raises(OSError):
+        target_module._linux_set_flags(7, 0x1_0000_0000)
+
+    class AclFailure(LinuxAcl):
+        """Fail every ACL operation after descriptor and text validation."""
+
+        def acl_set_fd(self, _descriptor: int, _acl: object) -> int:
+            """Reject the ACL application."""
+            return -1
+
+        def acl_from_text(self, _value: bytes) -> object:
+            """Reject the ACL reconstruction."""
+            return target_module._LINUX_ACL_FFI.NULL
+
+    monkeypatch.setattr(target_module, "_LINUX_ACL_LIBC", AclFailure())
+    with pytest.raises(OSError):
+        target_module._linux_set_acl(7, object())
+    with pytest.raises(OSError):
+        target_module._linux_restore_acl(7, None)
+    with pytest.raises(OSError):
+        target_module._linux_restore_acl(7, b"invalid")
+    with pytest.raises(OSError):
+        target_module._linux_probe_acl()
+
+
+def test_patch_phase_10_linux_mount_parser_rejects_hostile_native_inputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Exercise canonical Linux mount evidence without retaining host paths."""
+    mountinfo = (
+        b"42 1 0:42 /host\\040root /workspace rw,nosuid - ext4 "
+        b"/dev/host rw,discard\n"
+    )
+    native_descriptor_mount_id = target_module._linux_descriptor_mount_id
+    native_mountinfo_bytes = target_module._linux_mountinfo_bytes
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(
+        target_module, "_linux_descriptor_mount_id", lambda _descriptor: 42
+    )
+    monkeypatch.setattr(
+        target_module, "_linux_mountinfo_bytes", lambda: mountinfo
+    )
+    topology = target_module._mount_topology(7)
+    assert target_module._namespace_mount_binding(7) != topology.mount_id
+
+    descriptor_ids = iter((42, 43))
+    monkeypatch.setattr(
+        target_module,
+        "_linux_descriptor_mount_id",
+        lambda _descriptor: next(descriptor_ids),
+    )
+    with pytest.raises(TargetInspectionError) as changed_before_read:
+        target_module._linux_mount_topology(7)
+    assert changed_before_read.value.code is TargetErrorCode.MOUNT_DENIED
+    monkeypatch.setattr(
+        target_module,
+        "_linux_descriptor_mount_id",
+        native_descriptor_mount_id,
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_mountinfo_bytes",
+        native_mountinfo_bytes,
+    )
+
+    class StatxAvailable:
+        """Populate the exact Linux statx mount-ID field."""
+
+        def statx(
+            self,
+            _descriptor: int,
+            _path: bytes,
+            _flags: int,
+            mask: int,
+            observation: object,
+        ) -> int:
+            """Set a positive descriptor-local namespace mount identifier."""
+            assert mask == target_module._LINUX_STATX_MNT_ID
+            statx = cast("LinuxStatxPointer", observation)
+            statx.mask = mask
+            statx.mnt_id = 42
+            return 0
+
+    class LinuxStatxPointer(Protocol):
+        """Type the mounted fields used from CFFI's statx structure."""
+
+        mask: int
+        mnt_id: int
+
+    monkeypatch.setattr(target_module, "_LINUX_LIBC", StatxAvailable())
+    assert target_module._linux_descriptor_mount_id(7) == 42
+
+    class MountInfoPath:
+        """Provide one controlled current-process mountinfo observation."""
+
+        def __init__(self, value: str) -> None:
+            """Retain the requested procfs path without opening it."""
+            assert value == "/proc/self/mountinfo"
+
+        def read_bytes(self) -> bytes:
+            """Return one canonical bounded mountinfo payload."""
+            return mountinfo
+
+    monkeypatch.setattr(target_module, "Path", MountInfoPath)
+    assert target_module._linux_mountinfo_bytes() == mountinfo
+
+    class MissingMountInfoPath(MountInfoPath):
+        """Report the procfs mountinfo observation as unavailable."""
+
+        def read_bytes(self) -> bytes:
+            """Raise the native procfs read failure."""
+            raise OSError("mountinfo unavailable")
+
+    monkeypatch.setattr(target_module, "Path", MissingMountInfoPath)
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_mountinfo_bytes()
+    monkeypatch.setattr(target_module, "Path", MountInfoPath)
+
+    for malformed in (
+        b"\xff\n",
+        b"\n",
+    ):
+        with pytest.raises(TargetInspectionError):
+            target_module._linux_selected_mount_record(malformed, 42)
+    for record in (
+        "42 1 0:42 /root /workspace rw bad\x01 - ext4 /dev/root rw",
+        "42 1 0:42 /root /workspace rw - ext/4 /dev/root rw",
+        "42 1 0:42 /root /workspace rw - ext4 \x01 rw",
+    ):
+        with pytest.raises(TargetInspectionError):
+            target_module._linux_mount_record(record)
+    for value in ("0", "01"):
+        with pytest.raises(TargetInspectionError):
+            target_module._linux_decimal(value)
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_nonnegative_decimal("01")
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_major_minor("invalid")
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_major_minor("01:0")
+    assert not target_module._linux_escaped_field("\\12")
+    assert not target_module._linux_escaped_field("\x01")
+    for options in ("rw,rw", "bad*=value"):
+        with pytest.raises(TargetInspectionError):
+            target_module._linux_mount_options(options)
+
+
+def test_patch_phase_10_rooted_metadata_and_dispatch_failure_branches(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject failed canaries and mount-aware commits before an effect."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    witness, binding = rooted_worker_module.capture_rooted_root_binding(
+        workspace
+    )
+    metadata = target_module._ProtectedMetadata((), 0, None)
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_capture_protected_metadata",
+        lambda _descriptor: metadata,
+    )
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_probe_metadata_round_trip",
+        lambda _descriptor: None,
+    )
+
+    def stalled_write(_descriptor: int, _value: bytes) -> int:
+        """Return a short write after the rooted probe creates its artifact."""
+        return 0
+
+    monkeypatch.setattr(rooted_worker_module, "write_fd", stalled_write)
+    with pytest.raises(OSError, match="metadata probe write stalled"):
+        rooted_worker_module.probe_rooted_metadata(workspace, witness, binding)
+    assert not tuple(workspace.iterdir())
+    monkeypatch.setattr(
+        rooted_worker_module, "write_fd", lambda _fd, value: len(value)
+    )
+
+    real_unlink = unlink
+
+    def vanished_artifact(name: str, *, dir_fd: int) -> None:
+        """Remove the artifact, then report its adverse replacement race."""
+        real_unlink(name, dir_fd=dir_fd)
+        raise FileNotFoundError(name)
+
+    monkeypatch.setattr(rooted_worker_module, "unlink", vanished_artifact)
+    with pytest.raises(OSError, match="artifact disappeared"):
+        rooted_worker_module.probe_rooted_metadata(workspace, witness, binding)
+    assert not tuple(workspace.iterdir())
+    monkeypatch.setattr(rooted_worker_module, "unlink", real_unlink)
+    rooted_worker_module.validate_rooted_root_binding(
+        workspace, witness, binding
+    )
+
+    config = _worker_child_config(tmp_path)
+    child_root = Path(config["root"])
+    child_witness, child_binding = (
+        rooted_worker_module.capture_rooted_root_binding(child_root)
+    )
+    request = cast(
+        sandbox_worker_module._RuntimeRequestPayload,
+        {
+            "version": _MESSAGE_VERSION,
+            "sequence": 1,
+            "kind": "canary",
+            "receipt": config["receipt"],
+            "identity": config["identity"],
+            "channel_id": config["channel_id"],
+            "implementation_id": config["implementation_id"],
+            "body": {},
+        },
+    )
+
+    def unavailable_probe(*_arguments: object) -> str:
+        """Fail a child metadata canary after its authenticated dispatch."""
+        raise OSError("native metadata unavailable")
+
+    monkeypatch.setattr(
+        sandbox_worker_module, "probe_rooted_metadata", unavailable_probe
+    )
+    with pytest.raises(TargetInspectionError) as unavailable:
+        sandbox_worker_module._child_dispatch(
+            "canary",
+            {},
+            config,
+            child_witness,
+            request,
+            b"a" * 32,
+            child_binding,
+        )
+    assert unavailable.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+
+    def fake_mutation(*_arguments: object) -> object:
+        """Return a commit command already authenticated by the child wire."""
+        return object()
+
+    recorded_binding: list[str] = []
+
+    def fake_commit(
+        _command: object,
+        _profile: object,
+        _root: object,
+        _fence: Callable[[], None],
+        *,
+        mount_binding: str,
+    ) -> object:
+        """Record the child-local mount binding passed to the final worker."""
+        recorded_binding.append(mount_binding)
+        return SimpleNamespace(
+            journal=SimpleNamespace(
+                steps=(),
+                artifacts=(),
+                postcondition=PostconditionState.ESTABLISHED,
+            )
+        )
+
+    monkeypatch.setattr(
+        sandbox_worker_module, "_mutation_command", fake_mutation
+    )
+    monkeypatch.setattr(sandbox_worker_module, "_commit_rooted", fake_commit)
+    committed, closed = sandbox_worker_module._child_dispatch(
+        "commit",
+        {"authenticated": True},
+        config,
+        child_witness,
+        request,
+        b"a" * 32,
+        child_binding,
+    )
+    assert committed == {
+        "steps": [],
+        "artifacts": [],
+        "postcondition": PostconditionState.ESTABLISHED.value,
+    }
+    assert not closed
+    assert recorded_binding == [child_binding]
+
+
+def test_patch_phase_10_final_context_and_linux_residual_failures(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject stale final context and each residual Linux native fault."""
+    root = tmp_path / "root"
+    root.mkdir()
+    root_descriptor = _open_directory(root)
+    cwd_descriptor = _open_directory(root)
+    status = fstat(root_descriptor)
+    identity = FileIdentity(status.st_dev, status.st_ino)
+    witness = rooted_worker_module.capture_rooted_root(root)
+    parent_token = rooted_worker_module._PARENT_IDENTITIES.set(
+        {None: identity}
+    )
+    context_token = rooted_worker_module._COMMIT_CONTEXT.set(
+        rooted_worker_module._CommitContext(
+            root_descriptor, cwd_descriptor, identity, witness, root
+        )
+    )
+    try:
+        monkeypatch.setattr(
+            rooted_worker_module,
+            "stat_at",
+            lambda *_arguments, **_keywords: (_ for _ in ()).throw(
+                OSError("selected root disappeared")
+            ),
+        )
+        with pytest.raises(TargetInspectionError):
+            rooted_worker_module._validate_namespace_context(
+                root_descriptor, LogicalPath("note.txt"), ()
+            )
+        monkeypatch.undo()
+        stale_context = rooted_worker_module._CommitContext(
+            root_descriptor,
+            cwd_descriptor,
+            FileIdentity(identity.device + 1, identity.inode),
+            witness,
+            root,
+        )
+        stale_token = rooted_worker_module._COMMIT_CONTEXT.set(stale_context)
+        try:
+            with pytest.raises(TargetInspectionError):
+                rooted_worker_module._validate_namespace_context(
+                    root_descriptor, LogicalPath("note.txt"), ()
+                )
+        finally:
+            rooted_worker_module._COMMIT_CONTEXT.reset(stale_token)
+    finally:
+        rooted_worker_module._COMMIT_CONTEXT.reset(context_token)
+        rooted_worker_module._PARENT_IDENTITIES.reset(parent_token)
+        close(cwd_descriptor)
+        close(root_descriptor)
+
+    class MissingAclSymbol:
+        """Omit a dynamically discovered libacl operation."""
+
+    adapter = target_module._LinuxAclLibcAdapter(MissingAclSymbol())
+    with pytest.raises(OSError):
+        adapter.acl_get_fd(7)
+    with pytest.raises(OSError):
+        target_module._LinuxAclLibcAdapter(
+            SimpleNamespace(acl_free=lambda _value: object())
+        ).acl_free(object())
+
+    monkeypatch.setattr(target_module, "platform", "linux")
+    baseline = target_module._ProtectedMetadata((), 0, None)
+    observed = iter(((), ((b"user.avalan.patch.probe", b"other"),)))
+    monkeypatch.setattr(
+        target_module,
+        "_capture_protected_metadata",
+        lambda _descriptor: baseline,
+    )
+    monkeypatch.setattr(
+        target_module, "_capture_xattrs", lambda _descriptor: next(observed)
+    )
+    monkeypatch.setattr(target_module, "_set_xattr", lambda *_arguments: None)
+    monkeypatch.setattr(
+        target_module, "_remove_xattr", lambda *_arguments: None
+    )
+    with pytest.raises(OSError):
+        target_module._probe_metadata_round_trip(7)
+    observed = iter(
+        (
+            ((b"user.avalan.patch.probe", b"probe"),),
+            ((b"other", b"value"),),
+        )
+    )
+    monkeypatch.setattr(
+        target_module, "_capture_xattrs", lambda _descriptor: next(observed)
+    )
+    with pytest.raises(OSError):
+        target_module._probe_metadata_round_trip(7)
+    monkeypatch.setattr(target_module, "_linux_probe_acl", lambda: object())
+    assert target_module._probe_acl() is not None
+    monkeypatch.setattr(
+        target_module, "_linux_set_acl", lambda *_arguments: None
+    )
+    target_module._set_acl(7, object())
+    monkeypatch.setattr(target_module, "platform", "darwin")
+    monkeypatch.setattr(target_module, "fstat", lambda _descriptor: object())
+    with pytest.raises(OSError):
+        target_module._capture_native_flags(7)
+    with pytest.raises(OSError):
+        target_module._set_native_flags(7, -1)
+
+    class EmptyXattrs:
+        """Return no descriptor xattrs through the Linux ABI."""
+
+        def flistxattr(self, *_arguments: object) -> int:
+            """Report an empty native xattr-name listing."""
+            return 0
+
+    class ChangedXattrs:
+        """Report a size-changing second xattr-name listing."""
+
+        def __init__(self) -> None:
+            """Start with the sizing result before the changed reread."""
+            self._results = iter((2, 1))
+
+        def flistxattr(self, *_arguments: object) -> int:
+            """Return the next native xattr-list size observation."""
+            return next(self._results)
+
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(target_module, "_LINUX_METADATA_LIBC", EmptyXattrs())
+    assert target_module._linux_capture_xattrs(7) == ()
+    monkeypatch.setattr(target_module, "_LINUX_METADATA_LIBC", ChangedXattrs())
+    with pytest.raises(OSError):
+        target_module._linux_capture_xattrs(7)
+
+    class NullAcl:
+        """Return unavailable Linux ACL handles and text projections."""
+
+        def acl_get_fd(self, _descriptor: int) -> object:
+            """Report an unavailable ACL handle."""
+            return target_module._LINUX_ACL_FFI.NULL
+
+    monkeypatch.setattr(target_module, "_LINUX_ACL_LIBC", NullAcl())
+    with pytest.raises(OSError):
+        target_module._linux_capture_acl(7)
+
+    class BadAclText:
+        """Return a handle whose canonical text cannot be captured."""
+
+        def acl_get_fd(self, _descriptor: int) -> object:
+            """Return one non-null synthetic ACL handle."""
+            return object()
+
+        def acl_to_text(self, _acl: object, _length: object) -> object:
+            """Report unavailable native ACL text."""
+            return target_module._LINUX_ACL_FFI.NULL
+
+        def acl_free(self, _value: object) -> int:
+            """Release one synthetic allocation."""
+            return 0
+
+    monkeypatch.setattr(target_module, "_LINUX_ACL_LIBC", BadAclText())
+    with pytest.raises(OSError):
+        target_module._linux_capture_acl(7)
+
+    class MismatchedFlags:
+        """Report a different value at Linux flag postcondition readback."""
+
+        def ioctl(self, _descriptor: int, request: int, value: object) -> int:
+            """Succeed while returning a mismatched readback flag word."""
+            pointer = cast("FlagPointer", value)
+            if request == target_module._LINUX_FS_IOC_GETFLAGS:
+                pointer[0] = 1
+            return 0
+
+    class FlagPointer(Protocol):
+        """Type the mutable native unsigned-integer pointer."""
+
+        def __setitem__(self, index: int, value: int) -> None:
+            """Write one native unsigned-integer value."""
+            ...
+
+    monkeypatch.setattr(
+        target_module, "_LINUX_METADATA_LIBC", MismatchedFlags()
+    )
+    with pytest.raises(OSError):
+        target_module._linux_set_flags(7, 0)
+
+    class EmptyMountInfoPath:
+        """Return an empty procfs mount-table observation."""
+
+        def __init__(self, _value: str) -> None:
+            """Accept the fixed procfs path without retaining it."""
+
+        def read_bytes(self) -> bytes:
+            """Return the invalid empty mountinfo observation."""
+            return b""
+
+    monkeypatch.setattr(target_module, "Path", EmptyMountInfoPath)
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_mountinfo_bytes()
+
+    class ZeroWithoutPrefix(str):
+        """Model a hostile str subclass that hides a leading zero."""
+
+        def startswith(self, _prefix: str, *_arguments: int) -> bool:
+            """Suppress only the ordinary leading-zero validation method."""
+            return False
+
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_decimal(ZeroWithoutPrefix("0"))
+    with pytest.raises(TargetInspectionError):
+        target_module._linux_mount_path("relative")
+
+
+def test_patch_phase_10_linux_acl_loader_fails_closed_at_module_boot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leave the optional Linux ACL ABI unavailable after a dlopen failure."""
+    original_dlopen = FFI.dlopen
+
+    def unavailable_acl_dlopen(
+        ffi: FFI, name: object, *arguments: object
+    ) -> object:
+        """Fail only the optional libacl load while retaining other ABIs."""
+        if name == "libacl-unavailable-for-test":
+            raise OSError("libacl unavailable")
+        return original_dlopen(ffi, name, *arguments)
+
+    monkeypatch.setattr(
+        ctypes_util,
+        "find_library",
+        lambda name: "libacl-unavailable-for-test" if name == "acl" else None,
+    )
+    monkeypatch.setattr(FFI, "dlopen", unavailable_acl_dlopen)
+    loaded = run_path(
+        str(Path("src/avalan/patch/target.py").resolve()),
+        run_name="avalan.patch._target_acl_loader_probe",
+    )
+    assert loaded["_LINUX_ACL_LIBC"] is None
 
 
 def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(
@@ -3901,8 +4834,13 @@ def test_patch_phase_10_worker_main_authenticates_close_and_error_paths(
     )
     monkeypatch.setattr(
         sandbox_worker_module,
-        "capture_rooted_root",
-        lambda _root: root,
+        "capture_rooted_root_binding",
+        lambda _root: (root, "mount-binding"),
+    )
+    monkeypatch.setattr(
+        sandbox_worker_module,
+        "validate_rooted_root_binding",
+        lambda *_arguments: None,
     )
     monkeypatch.setenv(
         "AVALAN_SANDBOX_PATCH_SESSION",
@@ -4013,8 +4951,13 @@ def test_patch_phase_10_worker_main_rejects_boot_and_protocol_failures(
     )
     monkeypatch.setattr(
         sandbox_worker_module,
-        "capture_rooted_root",
-        lambda _root: root,
+        "capture_rooted_root_binding",
+        lambda _root: (root, "mount-binding"),
+    )
+    monkeypatch.setattr(
+        sandbox_worker_module,
+        "validate_rooted_root_binding",
+        lambda *_arguments: None,
     )
     monkeypatch.setattr(
         sandbox_worker_module,
@@ -4112,7 +5055,11 @@ def test_patch_phase_10_worker_protocol_primitives_are_closed(
     monkeypatch.setattr(
         sandbox_worker_module,
         "probe_rooted_metadata",
-        lambda _namespace: "a" * 64,
+        lambda workspace, expected, *_args: (
+            "a" * 64
+            if workspace == Path(config["root"]) and expected == root
+            else (_ for _ in ()).throw(AssertionError("wrong probe witness"))
+        ),
     )
     witness, witness_closed = sandbox_worker_module._child_dispatch(
         "witness", {}, config, root, request, token
@@ -4269,6 +5216,92 @@ def test_patch_phase_10_fences_immediately_before_namespace_effect(
         )
     assert stale.value.code is CoordinatorErrorCode.FENCED
     assert order == ["validate", "validate", "fence"]
+
+
+@pytest.mark.parametrize(
+    "barrier_stage",
+    ("target.namespace_before_final_check", "target.namespace_before_effect"),
+)
+def test_patch_phase_10_commit_rejects_swapped_root_mount_before_effect(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    barrier_stage: str,
+) -> None:
+    """Write nothing when a child-local root mount changes at commit.
+
+    Trigger the replacement at the final native-effect barrier.
+    """
+    root = tmp_path / "root"
+    root.mkdir()
+    path = LogicalPath("note.txt")
+    witness = rooted_worker_module.capture_rooted_root(root)
+    root_status = root.stat()
+    value = ProposedBytes(b"after\n")
+    command = rooted_worker_module.RootedMutationCommand(
+        PatchPlanId("plan_" + "a" * 16),
+        (
+            PlannedLineage(
+                PatchLineageId("lineage_" + "a" * 16),
+                PlannedFile(path, False, None, None, None, ByteSize(0)),
+                PlannedFile(
+                    path,
+                    True,
+                    value,
+                    MetadataProfile(FileMode(0o600), False, "lf"),
+                    value.digest(),
+                    value.size(),
+                ),
+                None,
+                path,
+                frozenset((Capability.CREATE,)),
+                (),
+                (),
+                ("created",),
+                (path,),
+                "single_step",
+                ("terminal_effect",),
+                "target_private",
+                b"",
+                ((None, (root_status.st_dev, root_status.st_ino)),),
+            ),
+        ),
+        frozenset((Capability.CREATE,)),
+    )
+    commit_root_descriptor: int | None = None
+    mount_swapped = False
+
+    def namespace_binding(descriptor: int) -> str:
+        """Keep the retained root binding while replacements use a new ID."""
+        nonlocal commit_root_descriptor
+        if commit_root_descriptor is None:
+            commit_root_descriptor = descriptor
+        if descriptor == commit_root_descriptor:
+            return "before-swap"
+        return "after-swap" if mount_swapped else "before-swap"
+
+    def swap_mount(stage: str) -> None:
+        """Replace the namespace-local mount binding before the syscall."""
+        nonlocal mount_swapped
+        if stage == barrier_stage:
+            mount_swapped = True
+
+    monkeypatch.setattr(
+        rooted_worker_module, "_namespace_mount_binding", namespace_binding
+    )
+    report = rooted_worker_module._commit_rooted(
+        command,
+        rooted_worker_module.RootedMutationProfile(
+            root, None, FileMode(0o600)
+        ),
+        witness,
+        barrier=swap_mount,
+        mount_binding="before-swap",
+    )
+    assert mount_swapped
+    assert report.journal is not None
+    assert report.journal.steps[0].state is CommitStepState.NOT_COMMITTED
+    assert not (root / path.value).exists()
+    assert not tuple(root.glob(".avalan-patch-*"))
 
 
 @pytest.mark.parametrize("replacement", ("root", "ancestor"))
@@ -5094,7 +6127,11 @@ def test_patch_phase_10_worker_direct_protocol_failure_branches(
     monkeypatch.setattr(
         sandbox_worker_module,
         "probe_rooted_metadata",
-        lambda _namespace: "a" * 64,
+        lambda workspace, expected, *_args: (
+            "a" * 64
+            if workspace == Path(config["root"]) and expected == root
+            else (_ for _ in ()).throw(AssertionError("wrong probe witness"))
+        ),
     )
     canary, closed = sandbox_worker_module._child_dispatch(
         "canary", {}, config, root, request, token
