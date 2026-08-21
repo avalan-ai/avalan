@@ -2496,7 +2496,7 @@ def _linux_capture_xattrs(descriptor: int) -> tuple[tuple[bytes, bytes], ...]:
     if not raw_names.endswith(b"\x00"):
         raise OSError("extended attribute list is malformed")
     names = raw_names[:-1].split(b"\x00")
-    if any(not name for name in names):
+    if any(not name for name in names) or len(names) != len(set(names)):
         raise OSError("extended attribute list is malformed")
     values: list[tuple[bytes, bytes]] = []
     total = length
@@ -3219,6 +3219,19 @@ def _root_mount_id(descriptor: int, status: object) -> str:
     if not hasattr(status, "st_dev"):
         raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
     return _mount_topology(descriptor).mount_id
+
+
+def _namespace_mount_binding(descriptor: int) -> str:
+    """Return one opaque mount binding valid only in this process namespace."""
+    if platform.startswith("linux"):
+        value = "\x00".join(
+            (
+                "linux-namespace-mount-binding-v1",
+                str(_linux_descriptor_mount_id(descriptor)),
+            )
+        )
+        return sha256(value.encode()).hexdigest()
+    return _root_mount_id(descriptor, fstat(descriptor))
 
 
 if __name__ == "__main__":

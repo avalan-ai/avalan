@@ -161,7 +161,7 @@
       "path": "src/avalan/patch/target.py",
       "symbol": "LocalInspectionTarget",
       "artifact_class": "patch_target",
-      "source_sha256": "a3fa0bb7ad9a7fc67802af784d74e84541537905d829baccf169d378fcc6f458"
+      "source_sha256": "5d3f9bb279f1ed66197526632748a6ecb1ba7d1452b93fea66f5e9102c2686cb"
     },
     {
       "id": "PATCH-SYM-024",
@@ -266,22 +266,22 @@
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "4dacc96aeeade7c840e8c0bbc95757c6d707e5493257d5c894ea777740df448e"
+      "source_sha256": "f712dcf06ae62ffcc7e261320647270605ad540f408a837e4329391b57d4ddaa"
     },
     {
       "id": "PATCH-SYM-039",
       "path": "src/avalan/patch/sandbox_worker.py",
       "symbol": "main",
       "artifact_class": "patch_sandbox_worker",
-      "source_sha256": "744bd42e6ba054268c8eeec2667a737aa6c212165d703a4dc452772a785da3fe"
+      "source_sha256": "20927e5bd5b51bd3875f6ad9c63793eca64fec701484b2b0dc39e869249654d2"
     },
     {
       "id": "PATCH-SYM-040",
       "path": "src/avalan/patch/rooted_worker.py",
       "symbol": "RootedMutationCommand",
       "artifact_class": "patch_rooted_worker",
-      "source_sha256": "876e9897222fc35a6bd9de39aa6e3ef2159e9e50af9610fd1410203ce5cbbde5"
+      "source_sha256": "a60d950407a10366df4fbea6a560c24e4438b77858c8e9f8c94d9d42f0e4eb63"
     }
   ],
-  "inventory_sha256": "800bc011e818aeea1aa884c84493df4af582c1c70cb68d7b25c06482961e475b"
+  "inventory_sha256": "6e3ec9e78040bb460b329bd5215be24df737ef0ccd0b54b1d033ee34bbc6fb66"
 }
