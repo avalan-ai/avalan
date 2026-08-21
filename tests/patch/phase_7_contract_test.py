@@ -38,6 +38,7 @@ from runpy import run_path
 from stat import S_IMODE, S_ISREG
 from subprocess import run as run_process
 from sys import executable
+from sys import platform as runtime_platform
 from threading import Event, Thread
 from time import sleep
 from typing import Callable, Protocol, cast
@@ -476,7 +477,11 @@ def _profile(root: Path) -> LocalTargetProfile:
     namespace.mkdir(mode=0o700, exist_ok=True)
     return replace(
         profile,
-        platform=LocalPlatformProfile.DARWIN,
+        platform=(
+            LocalPlatformProfile.DARWIN
+            if runtime_platform == "darwin"
+            else LocalPlatformProfile.LINUX
+        ),
         mutation_test_profile=True,
         commit_namespace=namespace,
     )
@@ -673,10 +678,10 @@ def test_patch_phase_7_failed_live_mutation_probe_withholds_receipts(
     assert not tuple(profile.commit_namespace.iterdir())
 
 
-def test_patch_phase_7_live_acl_probe_sets_and_clears_empty_baseline(
+def test_patch_phase_7_live_acl_probe_sets_and_restores_baseline(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Require a real non-empty ACL set and exact empty-baseline clear."""
+    """Require a real non-empty ACL set and exact baseline restoration."""
     path = tmp_path / "acl-probe.txt"
     path.write_bytes(b"probe\n")
     descriptor = open_fd(path, O_RDWR)
@@ -689,12 +694,13 @@ def test_patch_phase_7_live_acl_probe_sets_and_clears_empty_baseline(
         observed.append(target_module._capture_acl(target_descriptor))
 
     try:
-        assert target_module._capture_acl(descriptor) is None
+        baseline = target_module._capture_acl(descriptor)
         monkeypatch.setattr(target_module, "_set_acl", observe_set_acl)
         target_module._probe_metadata_round_trip(descriptor)
         assert observed[0] is not None
-        assert observed[1] is None
-        assert target_module._capture_acl(descriptor) is None
+        assert observed[0] != baseline
+        assert observed[1] == baseline
+        assert target_module._capture_acl(descriptor) == baseline
     finally:
         close(descriptor)
 
@@ -802,6 +808,16 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Fail closed for native metadata probe and ACL round-trip errors."""
+    metadata_libc = (
+        "_LINUX_METADATA_LIBC"
+        if runtime_platform.startswith("linux")
+        else "_METADATA_LIBC"
+    )
+    acl_libc = (
+        "_LINUX_ACL_LIBC"
+        if runtime_platform.startswith("linux")
+        else "_METADATA_LIBC"
+    )
     path = tmp_path / "metadata-probe.txt"
     path.write_bytes(b"probe\n")
     descriptor = open_fd(path, O_RDWR)
@@ -836,6 +852,11 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
             del arguments
             return self._flag_results.pop(0)
 
+        def ioctl(self, *arguments: object) -> int:
+            """Return the next configured Linux inode-flag result."""
+            del arguments
+            return self._flag_results.pop(0)
+
     try:
         for native in (
             MetadataFailure(-1, 0, ()),
@@ -865,7 +886,7 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
                     "_capture_xattrs",
                     lambda _fd: next(observed_xattrs),
                 )
-                patcher.setattr(target_module, "_METADATA_LIBC", native)
+                patcher.setattr(target_module, metadata_libc, native)
                 with pytest.raises(OSError):
                     target_module._probe_metadata_round_trip(descriptor)
     finally:
@@ -884,7 +905,7 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
         patcher.setattr(target_module, "_set_acl", lambda _fd, _acl: None)
         patcher.setattr(target_module, "_restore_acl", lambda _fd, _acl: None)
         patcher.setattr(target_module, "_capture_acl", lambda _fd: None)
-        patcher.setattr(target_module, "_METADATA_LIBC", AclRelease())
+        patcher.setattr(target_module, acl_libc, AclRelease())
         with pytest.raises(OSError):
             target_module._probe_acl_round_trip(0, None)
 
@@ -896,7 +917,7 @@ def test_patch_phase_7_native_metadata_probe_rejects_each_failure(
         patcher.setattr(
             target_module, "_capture_acl", lambda _fd: next(captured)
         )
-        patcher.setattr(target_module, "_METADATA_LIBC", AclRelease())
+        patcher.setattr(target_module, acl_libc, AclRelease())
         with pytest.raises(OSError):
             target_module._probe_acl_round_trip(0, None)
 
@@ -905,6 +926,26 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reject malformed native metadata observations before publication."""
+    metadata_ffi = (
+        target_module._LINUX_METADATA_FFI
+        if runtime_platform.startswith("linux")
+        else target_module._METADATA_FFI
+    )
+    metadata_libc = (
+        "_LINUX_METADATA_LIBC"
+        if runtime_platform.startswith("linux")
+        else "_METADATA_LIBC"
+    )
+    acl_ffi = (
+        target_module._LINUX_ACL_FFI
+        if runtime_platform.startswith("linux")
+        else target_module._METADATA_FFI
+    )
+    acl_libc = (
+        "_LINUX_ACL_LIBC"
+        if runtime_platform.startswith("linux")
+        else "_METADATA_LIBC"
+    )
     with pytest.raises(TargetInspectionError):
         target_module.PrimitiveProbe(
             TargetPrimitive.PERSISTENCE,
@@ -962,16 +1003,13 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             self._names = names
             self._get_results = list(get_results)
 
-        def flistxattr(
-            self, descriptor: int, buffer: object, length: int, flags: int
-        ) -> int:
+        def flistxattr(self, *arguments: object) -> int:
             """Return a list result and fill the supplied native buffer."""
-            del descriptor, flags
+            _descriptor, buffer, length, *_flags = arguments
+            assert type(length) is int
             result = self._list_results.pop(0)
-            if buffer != target_module._METADATA_FFI.NULL and result == length:
-                target_module._METADATA_FFI.buffer(buffer, length)[
-                    :
-                ] = self._names
+            if buffer != metadata_ffi.NULL and result == length:
+                metadata_ffi.buffer(buffer, length)[:] = self._names
             return result
 
         def fgetxattr(self, *arguments: object) -> int:
@@ -989,7 +1027,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         (XattrResults((2, 2), b"a\x00", (1, 0)), True),
     ):
         with monkeypatch.context() as patcher:
-            patcher.setattr(target_module, "_METADATA_LIBC", native)
+            patcher.setattr(target_module, metadata_libc, native)
             if rejected:
                 with pytest.raises(OSError):
                     target_module._capture_xattrs(0)
@@ -1002,11 +1040,11 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         def acl_get_fd(self, descriptor: int) -> object:
             """Report no ACL handle for one invalid descriptor."""
             del descriptor
-            return target_module._METADATA_FFI.NULL
+            return acl_ffi.NULL
 
     with monkeypatch.context() as patcher:
-        target_module._METADATA_FFI.errno = 1
-        patcher.setattr(target_module, "_METADATA_LIBC", AclUnavailable())
+        acl_ffi.errno = 1
+        patcher.setattr(target_module, acl_libc, AclUnavailable())
         with pytest.raises(OSError):
             target_module._capture_acl(0)
 
@@ -1021,7 +1059,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         def acl_to_text(self, acl: object, length: object) -> object:
             """Report unavailable ACL text without changing its length."""
             del acl, length
-            return target_module._METADATA_FFI.NULL
+            return acl_ffi.NULL
 
         def acl_free(self, value: object) -> int:
             """Release one synthetic ACL resource without side effects."""
@@ -1029,7 +1067,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             return 0
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(target_module, "_METADATA_LIBC", AclTextUnavailable())
+        patcher.setattr(target_module, acl_libc, AclTextUnavailable())
         with pytest.raises(OSError):
             target_module._capture_acl(0)
 
@@ -1042,7 +1080,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             return -1
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(target_module, "_METADATA_LIBC", AclSetFailure())
+        patcher.setattr(target_module, acl_libc, AclSetFailure())
         with pytest.raises(OSError):
             target_module._set_acl(0, object())
 

@@ -193,7 +193,17 @@ _LINUX_ACL_FFI.cdef("""
     acl_t acl_from_text(const char *);
     int acl_free(void *);
     """)
-_LINUX_ACL_LIBRARY = find_library("acl")
+
+
+def _linux_acl_library_name() -> str:
+    """Return the Linux libacl SONAME without requiring helper executables."""
+    try:
+        return find_library("acl") or "libacl.so.1"
+    except (OSError, UnicodeError):
+        return "libacl.so.1"
+
+
+_LINUX_ACL_LIBRARY = _linux_acl_library_name()
 try:
     _LINUX_ACL_LIBC = (
         _LINUX_ACL_FFI.dlopen(_LINUX_ACL_LIBRARY)
@@ -279,7 +289,10 @@ class _LinuxAclLibcAdapter:
         operation = getattr(self.libc, name, None)
         if not callable(operation):
             raise OSError("Linux access ACL ABI is unavailable")
-        result: object = operation(*arguments)
+        try:
+            result: object = operation(*arguments)
+        except TypeError as exc:
+            raise OSError("Linux access ACL ABI is unavailable") from exc
         return result
 
     def _integer(self, name: str, *arguments: object) -> int:
@@ -336,6 +349,7 @@ class LocalPlatformProfile(str, Enum):
 
     POSIX = "posix"
     DARWIN = "darwin"
+    LINUX = "linux"
     UNSUPPORTED = "unsupported"
 
 
@@ -886,14 +900,15 @@ class LocalScopeResolver:
             _INSPECTION_PRIMITIVES
             | (
                 available
-                if (
-                    self.profile.mutation_test_profile
-                    and self.profile.platform is LocalPlatformProfile.DARWIN
-                )
+                if (_is_local_mutation_test_platform(self.profile))
                 else frozenset()
             )
             if self.profile.platform
-            in {LocalPlatformProfile.POSIX, LocalPlatformProfile.DARWIN}
+            in {
+                LocalPlatformProfile.POSIX,
+                LocalPlatformProfile.DARWIN,
+                LocalPlatformProfile.LINUX,
+            }
             else frozenset()
         )
         worker = EphemeralWorkerWitness(
@@ -1228,7 +1243,11 @@ class LocalInspectionTarget:
         self._require_scope(request.scope)
         if (
             self.profile.platform
-            not in {LocalPlatformProfile.POSIX, LocalPlatformProfile.DARWIN}
+            not in {
+                LocalPlatformProfile.POSIX,
+                LocalPlatformProfile.DARWIN,
+                LocalPlatformProfile.LINUX,
+            }
             or request.scope.root_witness is None
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
@@ -1261,6 +1280,7 @@ class LocalInspectionTarget:
 
 _WORKER_TOKEN_ENV = "AVALAN_PATCH_LOCAL_WORKER_TOKEN"
 _SEATBELT_EXECUTABLE = "/usr/bin/sandbox-exec"
+_BUBBLEWRAP_EXECUTABLE = "/usr/bin/bwrap"
 _SEATBELT_SYSTEM_READ_DATA_PATHS = (
     "/",
     "/System/Library/dyld",
@@ -1360,7 +1380,7 @@ async def _worker_request(
             profile._runtime_authority,
             profile.root._path,
         )
-        or not await _seatbelt_worker_available()
+        or not await _local_worker_available()
     ):
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
     expected_root_payload: _WorkerRootPayload | None
@@ -1408,17 +1428,16 @@ async def _worker_request(
         str(Path(cffi_file).resolve().parents[1]),
     )
     try:
+        command, environment = _worker_sandbox_command(
+            profile, worker_argv, {_WORKER_TOKEN_ENV: token.hex()}
+        )
         process = await create_subprocess_exec(
-            _SEATBELT_EXECUTABLE,
-            "-p",
-            _worker_seatbelt_profile(profile, worker_argv, token.hex()),
-            "--",
-            *worker_argv,
+            *command,
             stdin=PIPE,
             stdout=PIPE,
             stderr=PIPE,
             cwd="/",
-            env={_WORKER_TOKEN_ENV: token.hex()},
+            env=environment,
             close_fds=True,
         )
     except OSError as exc:
@@ -1466,6 +1485,147 @@ async def _worker_request(
 async def _seatbelt_worker_available() -> bool:
     """Return whether Avalan can enforce this worker's network denial."""
     return Path(_SEATBELT_EXECUTABLE).is_file()
+
+
+async def _local_worker_available() -> bool:
+    """Return whether this host has its selected native worker isolation."""
+    if platform == "darwin":
+        return await _seatbelt_worker_available()
+    if platform.startswith("linux"):
+        return Path(_BUBBLEWRAP_EXECUTABLE).is_file()
+    return False
+
+
+def _worker_sandbox_command(
+    profile: LocalTargetProfile,
+    worker_argv: tuple[str, ...],
+    environment: dict[str, str],
+    writable_paths: tuple[Path, ...] = (),
+    seatbelt_policy: str | None = None,
+) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Build the sole native no-network command for one local worker."""
+    if platform == "darwin":
+        return (
+            (
+                _SEATBELT_EXECUTABLE,
+                "-p",
+                seatbelt_policy
+                or _worker_seatbelt_profile(profile, worker_argv, ""),
+                "--",
+                *worker_argv,
+            ),
+            environment,
+        )
+    if platform.startswith("linux"):
+        return (
+            _bubblewrap_worker_command(
+                profile, worker_argv, environment, writable_paths
+            ),
+            {},
+        )
+    raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+
+
+def _bubblewrap_worker_command(
+    profile: LocalTargetProfile,
+    worker_argv: tuple[str, ...],
+    environment: dict[str, str],
+    writable_paths: tuple[Path, ...],
+) -> tuple[str, ...]:
+    """Build a Linux worker mount view with only declared writable paths."""
+    if not environment or any(
+        not key or "=" in key or "\x00" in key or "\x00" in value
+        for key, value in environment.items()
+    ):
+        raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    root = profile.root._path
+    views: dict[Path, bool] = {root: False}
+    for path in writable_paths:
+        if not path.is_absolute() or not path.is_dir():
+            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+        views[path] = True
+    if root in views and root in writable_paths:
+        views[root] = True
+    roots = _bubblewrap_worker_read_roots()
+    directories = _bubblewrap_worker_parent_directories(
+        (
+            *roots,
+            *(str(path) for path in views),
+        )
+    )
+    command: list[str] = [
+        _BUBBLEWRAP_EXECUTABLE,
+        "--die-with-parent",
+        "--unshare-user",
+        "--uid",
+        "0",
+        "--gid",
+        "0",
+        "--unshare-pid",
+        "--unshare-ipc",
+        "--unshare-uts",
+        "--new-session",
+        "--unshare-net",
+        "--clearenv",
+    ]
+    for key, value in sorted(environment.items()):
+        command.extend(("--setenv", key, value))
+    for directory in directories:
+        command.extend(("--dir", directory))
+    for source in roots:
+        command.extend(("--ro-bind", source, source))
+    for path, writable in views.items():
+        command.extend(
+            (
+                "--bind" if writable else "--ro-bind",
+                str(path),
+                str(path),
+            )
+        )
+    command.extend(("--proc", "/proc", "--dev", "/dev", "--chdir", "/"))
+    command.extend(("--", *worker_argv))
+    return tuple(command)
+
+
+def _bubblewrap_worker_read_roots() -> tuple[str, ...]:
+    """Return exact interpreter, native, and source roots for Bubblewrap."""
+    if cryptography_file is None:
+        raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    values = (
+        Path("/lib"),
+        Path("/lib64"),
+        Path("/usr/lib"),
+        Path("/usr/lib64"),
+        Path(executable).parent,
+        Path(executable).resolve().parent,
+        Path(executable).resolve().parent.parent,
+        Path(__file__).resolve().parents[2],
+        Path(cryptography_file).resolve().parent,
+        Path(cffi_file).resolve().parents[1],
+    )
+    roots: list[str] = []
+    for value in values:
+        root = str(value)
+        if value.is_dir() and root not in roots:
+            roots.append(root)
+    if not roots:
+        raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    return tuple(roots)
+
+
+def _bubblewrap_worker_parent_directories(
+    paths: tuple[str, ...],
+) -> tuple[str, ...]:
+    """Create every absolute Bubblewrap bind destination before mounting."""
+    directories: set[str] = set()
+    for path in paths:
+        current = Path(path)
+        if not current.is_absolute():
+            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+        while current != current.parent:
+            directories.add(str(current))
+            current = current.parent
+    return tuple(sorted(directories, key=lambda item: (len(item), item)))
 
 
 def _cffi_backend_runtime_path() -> Path:
@@ -1642,12 +1802,8 @@ def _future_primitive_probes() -> tuple[PrimitiveProbe, ...]:
 async def _mutation_primitive_receipts(
     profile: LocalTargetProfile, witness: RootWitness
 ) -> tuple[PrimitiveProbe, ...]:
-    """Probe Darwin mutation primitives in a private same-mount namespace."""
-    if (
-        not profile.mutation_test_profile
-        or profile.platform is not LocalPlatformProfile.DARWIN
-        or platform != "darwin"
-    ):
+    """Probe supported native mutation primitives in a private namespace."""
+    if not _is_local_mutation_test_platform(profile):
         return _future_primitive_probes()
     try:
         receipt = await to_thread(_probe_mutation_primitives, profile, witness)
@@ -1658,6 +1814,16 @@ async def _mutation_primitive_receipts(
         for primitive in sorted(
             _FUTURE_MUTATION_PRIMITIVES, key=lambda item: item.value
         )
+    )
+
+
+def _is_local_mutation_test_platform(profile: LocalTargetProfile) -> bool:
+    """Return whether this explicit test profile matches the native host."""
+    return profile.mutation_test_profile and (
+        profile.platform is LocalPlatformProfile.DARWIN
+        and platform == "darwin"
+        or profile.platform is LocalPlatformProfile.LINUX
+        and platform.startswith("linux")
     )
 
 
@@ -1757,7 +1923,7 @@ def _probe_mutation_primitives(
         created.clear()
         return sha256(
             (
-                "darwin-local-commit-live-probe-v2:"
+                "local-commit-live-probe-v3:"
                 + profile.identity.context_id.value
                 + ":"
                 + profile.identity.target_id.value
@@ -3001,7 +3167,6 @@ def _linux_mount_topology(descriptor: int) -> _MountTopology:
             "linux-mount-source-v1",
             first.major_minor,
             first.filesystem_type,
-            ",".join(first.mount_options),
             ",".join(first.super_options),
         )
     )

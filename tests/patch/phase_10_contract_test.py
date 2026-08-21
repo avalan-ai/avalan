@@ -1325,7 +1325,7 @@ def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
     assert target_module._linux_mount_topology(7) == topology
     assert "host" not in repr(topology)
     assert "workspace" not in repr(topology)
-    changed = iter((first, alternate_paths.replace(b"nosuid", b"nodev")))
+    changed = iter((first, alternate_paths.replace(b"discard", b"barrier")))
     monkeypatch.setattr(
         target_module, "_linux_mountinfo_bytes", lambda: next(changed)
     )
@@ -2350,6 +2350,14 @@ def test_patch_phase_10_final_context_and_linux_residual_failures(
         target_module._LinuxAclLibcAdapter(
             SimpleNamespace(acl_free=lambda _value: object())
         ).acl_free(object())
+    with pytest.raises(OSError):
+        target_module._LinuxAclLibcAdapter(
+            SimpleNamespace(
+                acl_free=lambda _value: (_ for _ in ()).throw(
+                    TypeError("invalid CFFI pointer")
+                )
+            )
+        ).acl_free(object())
 
     monkeypatch.setattr(target_module, "platform", "linux")
     baseline = target_module._ProtectedMetadata((), 0, None)
@@ -2522,6 +2530,33 @@ def test_patch_phase_10_linux_acl_loader_fails_closed_at_module_boot(
         run_name="avalan.patch._target_acl_loader_probe",
     )
     assert loaded["_LINUX_ACL_LIBC"] is None
+
+
+def test_patch_phase_10_linux_acl_loader_uses_soname_without_discovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Load libacl through its standard SONAME without host helper tools."""
+    original_dlopen = FFI.dlopen
+    loaded_names: list[object] = []
+
+    def soname_acl_dlopen(
+        ffi: FFI, name: object, *arguments: object
+    ) -> object:
+        """Record the fallback load while retaining native dlopen calls."""
+        if name == "libacl.so.1":
+            loaded_names.append(name)
+            return object()
+        return original_dlopen(ffi, name, *arguments)
+
+    monkeypatch.setattr(ctypes_util, "find_library", lambda _name: None)
+    monkeypatch.setattr(FFI, "dlopen", soname_acl_dlopen)
+    loaded = run_path(
+        str(Path("src/avalan/patch/target.py").resolve()),
+        run_name="avalan.patch._target_acl_soname_probe",
+    )
+    assert loaded["_LINUX_ACL_LIBRARY"] == "libacl.so.1"
+    assert loaded_names == ["libacl.so.1"]
+    assert loaded["_LINUX_ACL_LIBC"] is not None
 
 
 def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(
@@ -4638,7 +4673,11 @@ def test_patch_phase_10_sandbox_wire_rejects_invalid_runtime_shapes(
     root.mkdir()
     namespace.mkdir()
     source_root.mkdir()
-    seatbelt_profile = _runtime(root, namespace).profile
+    seatbelt_profile = (
+        _settings(root, namespace, backend_name="seatbelt")
+        .create_runtime()
+        .profile
+    )
     bubblewrap_profile = (
         _settings(root, namespace, backend_name="bubblewrap")
         .create_runtime()
