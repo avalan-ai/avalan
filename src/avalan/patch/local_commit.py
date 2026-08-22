@@ -129,6 +129,8 @@ def _commit_rooted(
 _SEATBELT_BARRIER_ENV = "AVALAN_PATCH_COMMIT_BARRIER"
 _SEATBELT_RELEASE_ENV = "AVALAN_PATCH_COMMIT_RELEASE"
 _SEATBELT_BARRIER_TIMEOUT_SECONDS = 2.0
+_SEATBELT_CHILD_TO_PARENT_DOMAIN = b"avalan.patch.commit.child-to-parent.v1"
+_SEATBELT_PARENT_TO_CHILD_DOMAIN = b"avalan.patch.commit.parent-to-child.v1"
 _SEATBELT_RUNTIME_READ_PATHS = (Path("/opt/homebrew/opt/openssl@3/lib"),)
 _SEATBELT_BOUNDARIES = frozenset(
     (
@@ -307,7 +309,7 @@ async def _commit_in_seatbelt(
 ) -> WorkerReport:
     """Execute one authenticated command in the selected native sandbox."""
     _validate_host_root_binding(profile.root, host_root_binding)
-    namespace = _commit_namespace(profile, host_root_binding)
+    namespace = _commit_namespace(profile)
 
     def validate_host_root() -> None:
         """Require the dispatch root to stay bound before a child effect."""
@@ -419,7 +421,12 @@ async def _relay_seatbelt_barriers(
     last_sequence = 0
     last_value: str | None = None
     while True:
-        value = await to_thread(_read_barrier_message, marker, token)
+        value = await to_thread(
+            _read_barrier_message,
+            marker,
+            token,
+            _SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
         if value is None:
             await sleep(0.001)
             continue
@@ -443,6 +450,7 @@ async def _relay_seatbelt_barriers(
                 release,
                 "failure:artifact_unknown:0:" + value,
                 token,
+                _SEATBELT_PARENT_TO_CHILD_DOMAIN,
             )
             last_sequence = sequence
             last_value = value
@@ -453,6 +461,7 @@ async def _relay_seatbelt_barriers(
                 release,
                 "failure:target:" + exc.code.value + ":" + value,
                 token,
+                _SEATBELT_PARENT_TO_CHILD_DOMAIN,
             )
             last_sequence = sequence
             last_value = value
@@ -464,11 +473,18 @@ async def _relay_seatbelt_barriers(
                 release,
                 "failure:os:" + str(error_number) + ":" + value,
                 token,
+                _SEATBELT_PARENT_TO_CHILD_DOMAIN,
             )
             last_sequence = sequence
             last_value = value
             continue
-        await to_thread(_write_barrier_message, release, value, token)
+        await to_thread(
+            _write_barrier_message,
+            release,
+            value,
+            token,
+            _SEATBELT_PARENT_TO_CHILD_DOMAIN,
+        )
         last_sequence = sequence
         last_value = value
 
@@ -502,8 +518,15 @@ def _barrier_token() -> bytes:
     return token
 
 
-def _read_barrier_message(path: Path, token: bytes) -> str | None:
-    """Read one signed atomic barrier message or reject malformed state."""
+def _barrier_message_key(token: bytes, direction: bytes) -> bytes:
+    """Derive one direction-specific authentication key for relay messages."""
+    return digest(token, direction, "sha256")
+
+
+def _read_barrier_message(
+    path: Path, token: bytes, direction: bytes
+) -> str | None:
+    """Read one direction-bound atomic relay message or reject bad state."""
     try:
         raw = path.read_bytes()
     except FileNotFoundError:
@@ -518,7 +541,12 @@ def _read_barrier_message(path: Path, token: bytes) -> str | None:
             not isinstance(value, str)
             or not isinstance(message_mac, str)
             or not compare_digest(
-                message_mac, digest(token, value.encode(), "sha256").hex()
+                message_mac,
+                digest(
+                    _barrier_message_key(token, direction),
+                    value.encode(),
+                    "sha256",
+                ).hex(),
             )
         ):
             raise ValueError
@@ -527,11 +555,19 @@ def _read_barrier_message(path: Path, token: bytes) -> str | None:
     return value
 
 
-def _write_barrier_message(path: Path, value: str, token: bytes) -> None:
-    """Publish one signed marker atomically in the private worker namespace."""
+def _write_barrier_message(
+    path: Path, value: str, token: bytes, direction: bytes
+) -> None:
+    """Publish one direction-bound relay message atomically."""
     payload = dumps(
         {
-            "mac": digest(token, value.encode(), "sha256").hex(),
+            "mac": (
+                digest(
+                    _barrier_message_key(token, direction),
+                    value.encode(),
+                    "sha256",
+                ).hex()
+            ),
             "value": value,
         },
         separators=(",", ":"),
@@ -570,21 +606,15 @@ def _write_barrier_message(path: Path, value: str, token: bytes) -> None:
         raise
 
 
-def _commit_namespace(
-    profile: LocalTargetProfile, host_root_binding: _HostRootBinding
-) -> Path:
-    """Require one configured private namespace on the rooted filesystem."""
+def _commit_namespace(profile: LocalTargetProfile) -> Path:
+    """Require one configured owner-private commit namespace."""
     namespace = profile.commit_namespace
     if namespace is None:
         raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
     descriptor = _open_directory(namespace)
     try:
         status = fstat(descriptor)
-        if (
-            status.st_dev != host_root_binding.identity.device
-            or status.st_mode & 0o077
-            or status.st_uid != getuid()
-        ):
+        if status.st_mode & 0o077 or status.st_uid != getuid():
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
     finally:
         close(descriptor)
@@ -879,7 +909,9 @@ def _commit_barrier(stage: str) -> None:
     if session != _SEATBELT_WORKER_SESSION:
         _SEATBELT_WORKER_SESSION = session
         _SEATBELT_WORKER_SEQUENCE = 0
-    previous = _read_barrier_message(marker, token)
+    previous = _read_barrier_message(
+        marker, token, _SEATBELT_CHILD_TO_PARENT_DOMAIN
+    )
     if _SEATBELT_WORKER_SEQUENCE == 0:
         if previous is not None:
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
@@ -890,11 +922,15 @@ def _commit_barrier(stage: str) -> None:
         if sequence != _SEATBELT_WORKER_SEQUENCE:
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
     value = str(_SEATBELT_WORKER_SEQUENCE + 1) + ":" + stage
-    _write_barrier_message(marker, value, token)
+    _write_barrier_message(
+        marker, value, token, _SEATBELT_CHILD_TO_PARENT_DOMAIN
+    )
     _SEATBELT_WORKER_SEQUENCE += 1
     deadline = monotonic() + _SEATBELT_BARRIER_TIMEOUT_SECONDS
     while monotonic() < deadline:
-        response = _read_barrier_message(release, token)
+        response = _read_barrier_message(
+            release, token, _SEATBELT_PARENT_TO_CHILD_DOMAIN
+        )
         if response == value:
             release.unlink()
             return
