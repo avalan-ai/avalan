@@ -1033,14 +1033,10 @@ def test_patch_phase_4_builds_linux_bubblewrap_worker_view(
         target_module._bubblewrap_worker_read_roots()
 
 
-@pytest.mark.parametrize(
-    "failure",
-    (OSError("acl lookup failed"), UnicodeError("acl lookup failed")),
-)
-def test_patch_phase_4_linux_worker_availability_and_acl_discovery_fail_closed(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: Exception
+def test_patch_phase_4_linux_worker_availability_and_acl_soname(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Select Linux isolation and retain the libacl lookup fallback."""
+    """Select Linux isolation and retain the fixed libacl SONAME."""
     bubblewrap = tmp_path / "bwrap"
     bubblewrap.write_text("", encoding="utf-8")
     monkeypatch.setattr(target_module, "platform", "linux")
@@ -1051,11 +1047,6 @@ def test_patch_phase_4_linux_worker_availability_and_acl_discovery_fail_closed(
     monkeypatch.setattr(target_module, "platform", "unsupported")
     assert not run(target_module._local_worker_available())
 
-    def unavailable_acl_library(_name: str) -> str:
-        """Raise the selected discovery failure without returning a library."""
-        raise failure
-
-    monkeypatch.setattr(target_module, "find_library", unavailable_acl_library)
     assert target_module._linux_acl_library_name() == "libacl.so.1"
 
 
@@ -2150,22 +2141,15 @@ def test_patch_phase_4_remaining_target_statement_branches(
     )
     assert target_module._snapshot_to_worker(present)["present"]
 
-    class FailedStatFs:
-        """Model Darwin fstatfs returning an untrusted failure."""
+    class FailedLibc:
+        """Expose the native CFFI fstatfs failure stub."""
 
-        argtypes: object
-        restype: object
-
-        def __call__(self, _fd: int, _buffer: object) -> int:
+        def fstatfs(self, _fd: int, _buffer: object) -> int:
             """Return the native error result."""
             return -1
 
-    class FailedLibc:
-        """Expose the native fstatfs failure stub."""
-
-        fstatfs = FailedStatFs()
-
-    monkeypatch.setattr(target_module, "CDLL", lambda _name: FailedLibc())
+    monkeypatch.setattr(target_module, "platform", "darwin")
+    monkeypatch.setattr(target_module, "_DARWIN_STATFS_LIBC", FailedLibc())
     with pytest.raises(TargetInspectionError):
         target_module._mount_topology(-1)
     monkeypatch.delenv(target_module._WORKER_TOKEN_ENV, raising=False)

@@ -1,5 +1,6 @@
 """Exercise the selected persistent sandbox patch runtime."""
 
+import sys
 from asyncio import (
     CancelledError,
     Event,
@@ -14,7 +15,6 @@ from base64 import b64encode
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack
 from copy import deepcopy
-from ctypes import util as ctypes_util
 from dataclasses import dataclass, replace
 from hashlib import sha256
 from hmac import digest
@@ -28,6 +28,7 @@ from os import open as open_fd
 from pathlib import Path
 from runpy import run_path
 from subprocess import run as run_process
+from sys import executable
 from sys import platform as sys_platform
 from types import SimpleNamespace
 from typing import Protocol, cast
@@ -2518,15 +2519,11 @@ def test_patch_phase_10_linux_acl_loader_fails_closed_at_module_boot(
         ffi: FFI, name: object, *arguments: object
     ) -> object:
         """Fail only the optional libacl load while retaining other ABIs."""
-        if name == "libacl-unavailable-for-test":
+        if name == "libacl.so.1":
             raise OSError("libacl unavailable")
         return original_dlopen(ffi, name, *arguments)
 
-    monkeypatch.setattr(
-        ctypes_util,
-        "find_library",
-        lambda name: "libacl-unavailable-for-test" if name == "acl" else None,
-    )
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(FFI, "dlopen", unavailable_acl_dlopen)
     loaded = run_path(
         str(Path("src/avalan/patch/target.py").resolve()),
@@ -2551,7 +2548,7 @@ def test_patch_phase_10_linux_acl_loader_uses_soname_without_discovery(
             return object()
         return original_dlopen(ffi, name, *arguments)
 
-    monkeypatch.setattr(ctypes_util, "find_library", lambda _name: None)
+    monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(FFI, "dlopen", soname_acl_dlopen)
     loaded = run_path(
         str(Path("src/avalan/patch/target.py").resolve()),
@@ -2560,6 +2557,84 @@ def test_patch_phase_10_linux_acl_loader_uses_soname_without_discovery(
     assert loaded["_LINUX_ACL_LIBRARY"] == "libacl.so.1"
     assert loaded_names == ["libacl.so.1"]
     assert loaded["_LINUX_ACL_LIBC"] is not None
+
+
+def test_patch_phase_10_native_worker_imports_do_not_reach_ctypes() -> None:
+    """Import target and worker protocol modules without ctypes bootstrap."""
+    command = "\n".join(
+        (
+            "import sys",
+            "import avalan.patch.target",
+            "assert 'ctypes' not in sys.modules",
+            "assert 'ctypes.util' not in sys.modules",
+            "import avalan.patch.sandbox_worker",
+            "assert 'ctypes' not in sys.modules",
+            "assert 'ctypes.util' not in sys.modules",
+        )
+    )
+    result = run_process(
+        (executable, "-c", command),
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+    assert result.returncode == 0, result.stderr
+
+
+def test_patch_phase_10_darwin_cffi_mount_topology_fails_closed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Use the fixed Darwin CFFI ABI and reject failed fstatfs calls."""
+    assert (
+        target_module._DARWIN_STATFS_FFI.sizeof("struct _DarwinStatFs")
+        == 2_168
+    )
+    assert (
+        target_module._DARWIN_STATFS_FFI.offsetof(
+            "struct _DarwinStatFs", "f_flags_ext"
+        )
+        == 2_136
+    )
+    assert (
+        target_module._DARWIN_STATFS_FFI.offsetof(
+            "struct _DarwinStatFs", "f_reserved"
+        )
+        == 2_140
+    )
+    observation = target_module._DARWIN_STATFS_FFI.new(
+        "struct _DarwinStatFs *"
+    )
+    assert len(observation.f_reserved) == 7
+
+    class SuccessfulDarwinLibc:
+        """Return a zero-initialized native fstatfs observation."""
+
+        def fstatfs(self, descriptor: int, _observation: object) -> int:
+            """Accept the descriptor and report a successful observation."""
+            assert descriptor == 7
+            return 0
+
+    class FailedDarwinLibc:
+        """Reject the native fstatfs observation without fallback."""
+
+        def fstatfs(self, _descriptor: int, _observation: object) -> int:
+            """Return the native failure result."""
+            return -1
+
+    monkeypatch.setattr(target_module, "platform", "darwin")
+    monkeypatch.setattr(
+        target_module, "_DARWIN_STATFS_LIBC", SuccessfulDarwinLibc()
+    )
+    topology = target_module._mount_topology(7)
+    assert topology.filesystem_id == sha256(b"0:0").hexdigest()
+    assert topology.mount_id == sha256(b"0:0:0:0:::").hexdigest()
+
+    monkeypatch.setattr(
+        target_module, "_DARWIN_STATFS_LIBC", FailedDarwinLibc()
+    )
+    with pytest.raises(TargetInspectionError) as failed:
+        target_module._mount_topology(7)
+    assert failed.value.code is TargetErrorCode.MOUNT_DENIED
 
 
 def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(

@@ -9,18 +9,6 @@ server, and shell surfaces.
 
 from asyncio import CancelledError, create_subprocess_exec, sleep, to_thread
 from base64 import b64decode, b64encode
-from ctypes import (
-    CDLL,
-    POINTER,
-    Structure,
-    byref,
-    c_char,
-    c_int,
-    c_int32,
-    c_uint32,
-    c_uint64,
-)
-from ctypes.util import find_library
 from dataclasses import dataclass, field, replace
 from enum import Enum
 from hashlib import sha256
@@ -136,6 +124,31 @@ _MAX_PROTECTED_METADATA_BYTES = 1_048_576
 _ACL_EXTENDED_ALLOW = 1
 _ACL_READ_DATA = 1 << 1
 
+_DARWIN_STATFS_FFI = FFI()
+_DARWIN_STATFS_FFI.cdef("""
+    struct _DarwinStatFs {
+        unsigned int f_bsize;
+        int f_iosize;
+        unsigned long long f_blocks;
+        unsigned long long f_bfree;
+        unsigned long long f_bavail;
+        unsigned long long f_files;
+        unsigned long long f_ffree;
+        int f_fsid[2];
+        unsigned int f_owner;
+        unsigned int f_type;
+        unsigned int f_flags;
+        unsigned int f_fssubtype;
+        char f_fstypename[16];
+        char f_mntonname[1024];
+        char f_mntfromname[1024];
+        unsigned int f_flags_ext;
+        unsigned int f_reserved[7];
+    };
+    int fstatfs(int, struct _DarwinStatFs *);
+    """)
+_DARWIN_STATFS_LIBC = _DARWIN_STATFS_FFI.dlopen(None)
+
 _LINUX_FFI = FFI()
 _LINUX_FFI.cdef("""
     struct _LinuxStatxTimestamp {
@@ -197,20 +210,18 @@ _LINUX_ACL_FFI.cdef("""
 
 def _linux_acl_library_name() -> str:
     """Return the Linux libacl SONAME without requiring helper executables."""
+    return "libacl.so.1"
+
+
+_LINUX_ACL_LIBRARY: str | None
+if platform.startswith("linux"):
+    _LINUX_ACL_LIBRARY = _linux_acl_library_name()
     try:
-        return find_library("acl") or "libacl.so.1"
-    except (OSError, UnicodeError):
-        return "libacl.so.1"
-
-
-_LINUX_ACL_LIBRARY = _linux_acl_library_name()
-try:
-    _LINUX_ACL_LIBC = (
-        _LINUX_ACL_FFI.dlopen(_LINUX_ACL_LIBRARY)
-        if _LINUX_ACL_LIBRARY is not None
-        else None
-    )
-except OSError:
+        _LINUX_ACL_LIBC = _LINUX_ACL_FFI.dlopen(_LINUX_ACL_LIBRARY)
+    except OSError:
+        _LINUX_ACL_LIBC = None
+else:
+    _LINUX_ACL_LIBRARY = None
     _LINUX_ACL_LIBC = None
 _LINUX_FS_IOC_GETFLAGS = 0x80086601
 _LINUX_FS_IOC_SETFLAGS = 0x40086602
@@ -583,29 +594,6 @@ class _LinuxMountRecord:
     filesystem_type: str
     mount_options: tuple[str, ...]
     super_options: tuple[str, ...]
-
-
-class _DarwinStatFs(Structure):
-    """Represent Darwin's platform-owned statfs mount-table observation."""
-
-    _fields_ = (
-        ("f_bsize", c_uint32),
-        ("f_iosize", c_int32),
-        ("f_blocks", c_uint64),
-        ("f_bfree", c_uint64),
-        ("f_bavail", c_uint64),
-        ("f_files", c_uint64),
-        ("f_ffree", c_uint64),
-        ("f_fsid", c_int32 * 2),
-        ("f_owner", c_uint32),
-        ("f_type", c_uint32),
-        ("f_flags", c_uint32),
-        ("f_fssubtype", c_uint32),
-        ("f_fstypename", c_char * 16),
-        ("f_mntonname", c_char * 1024),
-        ("f_mntfromname", c_char * 1024),
-        ("f_reserved", c_uint32 * 8),
-    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -3127,12 +3115,8 @@ def _mount_topology(descriptor: int) -> _MountTopology:
     if platform != "darwin":
         raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
     try:
-        libc = CDLL(None)
-        fstatfs = libc.fstatfs
-        fstatfs.argtypes = (c_int, POINTER(_DarwinStatFs))
-        fstatfs.restype = c_int
-        observation = _DarwinStatFs()
-        if fstatfs(descriptor, byref(observation)) != 0:
+        observation = _DARWIN_STATFS_FFI.new("struct _DarwinStatFs *")
+        if _DARWIN_STATFS_LIBC.fstatfs(descriptor, observation) != 0:
             raise OSError("fstatfs failed")
     except (AttributeError, OSError) as exc:
         raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED) from exc
@@ -3145,9 +3129,9 @@ def _mount_topology(descriptor: int) -> _MountTopology:
             str(observation.f_fsid[1]),
             str(observation.f_type),
             str(observation.f_fssubtype),
-            bytes(observation.f_fstypename).rstrip(b"\0").decode(),
-            bytes(observation.f_mntonname).rstrip(b"\0").decode(),
-            bytes(observation.f_mntfromname).rstrip(b"\0").decode(),
+            _DARWIN_STATFS_FFI.string(observation.f_fstypename).decode(),
+            _DARWIN_STATFS_FFI.string(observation.f_mntonname).decode(),
+            _DARWIN_STATFS_FFI.string(observation.f_mntfromname).decode(),
         )
     )
     return _MountTopology(sha256(topology.encode()).hexdigest(), filesystem_id)
