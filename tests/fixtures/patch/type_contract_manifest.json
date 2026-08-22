@@ -1045,7 +1045,16 @@
         "module"
       ],
       "source_sha256": "9ce7f6fb1bea2878b68dc566abecffce1b7aeadd605a9bb3190b0a64fddbef5e"
+    },
+    {
+      "id": "PATCH-TS-079",
+      "path": "tests/input_contract_metadata_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d7a8b5d7b466da963be63181d7ccf26d6999b0c4ea30d910118da37fee71c3bf"
     }
   ],
-  "manifest_sha256": "a08ca9c00e6b34b6a5dd893aab6ce8d5d347d293a557290fc0e7bd53d5d43714"
+  "manifest_sha256": "04a2b818939f61b5e86a35fbde3eccde843d0f9507c38cfa00914d41d2c628d1"
 }
