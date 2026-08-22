@@ -2649,17 +2649,17 @@
       210
     ],
     "src/avalan/patch/target.py": [
-      242,
-      243,
-      246,
-      247,
-      250,
-      251,
+      253,
       254,
-      255,
+      257,
       258,
-      259,
-      260
+      261,
+      262,
+      265,
+      266,
+      269,
+      270,
+      271
     ],
     "src/avalan/task/target.py": [
       134,
@@ -2843,5 +2843,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "e4f1e8519263b3635e28d8ff8f9172d5ce990818052dd7a02924b7d3ef93d0a0"
+  "snapshot_sha256": "1e6602769c8b86439db81427509271c53eb75dd4262daab61b5962d38fbe89b4"
 }

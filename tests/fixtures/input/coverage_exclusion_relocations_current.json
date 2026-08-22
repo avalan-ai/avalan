@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "e4f1e8519263b3635e28d8ff8f9172d5ce990818052dd7a02924b7d3ef93d0a0",
+  "current_snapshot_sha256": "1e6602769c8b86439db81427509271c53eb75dd4262daab61b5962d38fbe89b4",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -11,11 +11,11 @@
   "report_lines": {
     "added": 1338,
     "removed": 289,
-    "sha256": "fd04691c28b0ac1193982ecb21f579a675a4fa41131b2c46f0acb48552c3c512"
+    "sha256": "54c570a0538ae3a97e5aecf21001bc7f34c5989aa725b994b123580250407cb9"
   },
   "review": {
     "reviewed_by": "durable migration coverage audit",
     "rationale": "The current snapshot preserves the reviewed directive inventory, records parser-generated Protocol exclusions introduced by durable migration interfaces, relocates parser exclusions after shared migration-head imports, and records the Phase 10 target formatter line relocation without adding exclusions."
   },
-  "ledger_sha256": "67c6ce89c062ea08abbd0f4707ed17bee99a8076224238efd61e969a67a6a91b"
+  "ledger_sha256": "bb3a5f814dc208fe124c8e1ae5d5839c18d6ba41ed7d6000085e3d6e0e84973f"
 }
