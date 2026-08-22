@@ -228,6 +228,7 @@ from avalan.patch.sandbox_worker import (
     _RuntimeChildConfig as _WorkerChildConfig,
 )
 from avalan.patch.target import (
+    _FUTURE_MUTATION_PRIMITIVES,
     EphemeralWorkerWitness,
     FileIdentity,
     InspectionRequest,
@@ -7288,6 +7289,291 @@ def test_patch_phase_10_runtime_and_endpoint_reject_stale_or_reused_state(
         assert (
             await endpoint.reconcile_sandbox(other_request)
         ).state is WorkerState.LIVE
+
+    run(exercise())
+
+
+def test_patch_phase_10_runtime_revalidates_host_root_before_and_after_start(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a host-root replacement at each runtime use boundary."""
+    root = tmp_path / "view"
+    namespace = tmp_path / "namespace"
+    root.mkdir()
+    namespace.mkdir()
+    runtime = _runtime(root, namespace)
+
+    async def unexpected_start(
+        _process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> tuple[
+        rooted_worker_module.RootWitness,
+        sandbox_commit_module.SandboxProfileReceipt,
+        SandboxSessionId,
+        Mapping[TargetPrimitive, str],
+        sandbox_commit_module._RuntimeAttestation,
+    ]:
+        """Reject an attempted native worker launch after a root swap."""
+        raise AssertionError("stale host root started a worker")
+
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "start",
+        unexpected_start,
+    )
+
+    async def exercise_before_start() -> None:
+        """Require the captured host binding before starting a worker."""
+        parked = tmp_path / "parked-before-start"
+        root.rename(parked)
+        root.mkdir()
+        with pytest.raises(TargetInspectionError) as stale_root:
+            await runtime.resolve(ScopeSelection(ContextKind.SANDBOX))
+        assert stale_root.value.code is TargetErrorCode.WITNESS_STALE
+
+    run(exercise_before_start())
+
+    active_root = tmp_path / "active-view"
+    active_namespace = tmp_path / "active-namespace"
+    active_root.mkdir()
+    active_namespace.mkdir()
+    active_runtime = _runtime(active_root, active_namespace)
+    active_witness = rooted_worker_module.capture_rooted_root(active_root)
+    receipt = sandbox_commit_module.SandboxProfileReceipt("receipt")
+    session = SandboxSessionId("session-" + "r" * 16)
+    attestation = sandbox_commit_module._RuntimeAttestation(
+        "runtime", "policy", "child", "canary"
+    )
+    primitive_receipts = {
+        primitive: "receipt"
+        for primitive in _FUTURE_MUTATION_PRIMITIVES | {
+            TargetPrimitive.PERSISTENCE,
+            TargetPrimitive.CANCELLATION_SETTLEMENT,
+            TargetPrimitive.JOURNAL_DELIVERY,
+            TargetPrimitive.APPROVAL,
+            TargetPrimitive.DURABLE_FENCING,
+        }
+    }
+
+    async def started_scope(
+        _process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> tuple[
+        rooted_worker_module.RootWitness,
+        sandbox_commit_module.SandboxProfileReceipt,
+        SandboxSessionId,
+        Mapping[TargetPrimitive, str],
+        sandbox_commit_module._RuntimeAttestation,
+    ]:
+        """Return a real root identity without launching a native worker."""
+        return (
+            active_witness,
+            receipt,
+            session,
+            primitive_receipts,
+            attestation,
+        )
+
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "start",
+        started_scope,
+    )
+
+    async def exercise_after_start() -> None:
+        """Require the captured host binding before active worker effects."""
+        scope = await active_runtime.resolve(
+            ScopeSelection(ContextKind.SANDBOX)
+        )
+        parked = tmp_path / "parked-after-start"
+        active_root.rename(parked)
+        active_root.mkdir()
+        with pytest.raises(TargetInspectionError) as stale_root:
+            await active_runtime._require_scope(scope)
+        assert stale_root.value.code is TargetErrorCode.WITNESS_STALE
+
+    run(exercise_after_start())
+
+
+def test_patch_phase_10_reaps_startup_child_after_host_root_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reap a started child when its host root changes before publication."""
+    root = tmp_path / "view"
+    namespace = tmp_path / "namespace"
+    root.mkdir()
+    namespace.mkdir()
+    runtime = _runtime(root, namespace)
+    root_witness = rooted_worker_module.capture_rooted_root(root)
+    receipt = sandbox_commit_module.SandboxProfileReceipt("receipt")
+    session = SandboxSessionId("session-" + "s" * 16)
+    attestation = sandbox_commit_module._RuntimeAttestation(
+        "runtime", "policy", "child", "canary"
+    )
+    primitive_receipts = {
+        primitive: "receipt"
+        for primitive in _FUTURE_MUTATION_PRIMITIVES | {
+            TargetPrimitive.PERSISTENCE,
+            TargetPrimitive.CANCELLATION_SETTLEMENT,
+            TargetPrimitive.JOURNAL_DELIVERY,
+            TargetPrimitive.APPROVAL,
+            TargetPrimitive.DURABLE_FENCING,
+        }
+    }
+    start_entered = Event()
+    release_start = Event()
+    close_calls = 0
+    original_close = sandbox_commit_module._SandboxRuntimeProcess.close
+
+    async def delayed_start(
+        _process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> tuple[
+        rooted_worker_module.RootWitness,
+        sandbox_commit_module.SandboxProfileReceipt,
+        SandboxSessionId,
+        Mapping[TargetPrimitive, str],
+        sandbox_commit_module._RuntimeAttestation,
+    ]:
+        """Pause a selected child after startup until the host swaps roots."""
+        start_entered.set()
+        await release_start.wait()
+        return (
+            root_witness,
+            receipt,
+            session,
+            primitive_receipts,
+            attestation,
+        )
+
+    async def tracked_close(
+        process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> None:
+        """Record the required cleanup while retaining the real reap path."""
+        nonlocal close_calls
+        close_calls += 1
+        await original_close(process)
+
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "start",
+        delayed_start,
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "close",
+        tracked_close,
+    )
+
+    async def exercise() -> None:
+        """Swap the root during startup and retain no live scope or receipt."""
+        resolving = create_task(
+            runtime.resolve(ScopeSelection(ContextKind.SANDBOX))
+        )
+        await start_entered.wait()
+        parked = tmp_path / "parked-during-startup"
+        root.rename(parked)
+        root.mkdir()
+        release_start.set()
+        with pytest.raises(TargetInspectionError) as stale_root:
+            await resolving
+        assert stale_root.value.code is TargetErrorCode.WITNESS_STALE
+        assert close_calls == 1
+        assert runtime._process._closed
+        assert runtime._scope is None
+        assert runtime._receipt is None
+        assert runtime._receipt_guard is None
+        assert runtime._endpoint is None
+
+    run(exercise())
+
+
+@pytest.mark.parametrize(
+    "cleanup_error",
+    (RuntimeError("reap failed"), CancelledError()),
+    ids=("cleanup-failure", "cleanup-cancellation"),
+)
+def test_patch_phase_10_startup_swap_preserves_primary_cleanup_semantics(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    cleanup_error: BaseException,
+) -> None:
+    """Preserve stale identity failure unless cleanup itself is cancelled."""
+    root = tmp_path / "view"
+    namespace = tmp_path / "namespace"
+    root.mkdir()
+    namespace.mkdir()
+    runtime = _runtime(root, namespace)
+    root_witness = rooted_worker_module.capture_rooted_root(root)
+    receipt = sandbox_commit_module.SandboxProfileReceipt("receipt")
+    session = SandboxSessionId("session-" + "p" * 16)
+    attestation = sandbox_commit_module._RuntimeAttestation(
+        "runtime", "policy", "child", "canary"
+    )
+    primitive_receipts = {
+        primitive: "receipt"
+        for primitive in _FUTURE_MUTATION_PRIMITIVES | {
+            TargetPrimitive.PERSISTENCE,
+            TargetPrimitive.CANCELLATION_SETTLEMENT,
+            TargetPrimitive.JOURNAL_DELIVERY,
+            TargetPrimitive.APPROVAL,
+            TargetPrimitive.DURABLE_FENCING,
+        }
+    }
+
+    async def started_then_swapped(
+        _process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> tuple[
+        rooted_worker_module.RootWitness,
+        sandbox_commit_module.SandboxProfileReceipt,
+        SandboxSessionId,
+        Mapping[TargetPrimitive, str],
+        sandbox_commit_module._RuntimeAttestation,
+    ]:
+        """Return a started child only after replacing its host root."""
+        parked = tmp_path / "parked-during-cleanup"
+        root.rename(parked)
+        root.mkdir()
+        return (
+            root_witness,
+            receipt,
+            session,
+            primitive_receipts,
+            attestation,
+        )
+
+    async def failed_close(
+        _process: sandbox_commit_module._SandboxRuntimeProcess,
+    ) -> None:
+        """Expose cleanup failure after the stale root is detected."""
+        raise cleanup_error
+
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "start",
+        started_then_swapped,
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module._SandboxRuntimeProcess,
+        "close",
+        failed_close,
+    )
+
+    async def exercise() -> None:
+        """Preserve stale truth while allowing cancellation to propagate."""
+        if isinstance(cleanup_error, CancelledError):
+            with pytest.raises(CancelledError):
+                await runtime.resolve(ScopeSelection(ContextKind.SANDBOX))
+        else:
+            with pytest.raises(TargetInspectionError) as stale_root:
+                await runtime.resolve(ScopeSelection(ContextKind.SANDBOX))
+            assert stale_root.value.code is TargetErrorCode.WITNESS_STALE
+            assert getattr(stale_root.value, "__notes__") == [
+                "runtime cleanup after stale host binding failed: RuntimeError"
+            ]
+        assert runtime._scope is None
+        assert runtime._receipt is None
+        assert runtime._receipt_guard is None
+        assert runtime._endpoint is None
 
     run(exercise())
 
