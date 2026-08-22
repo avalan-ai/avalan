@@ -1657,6 +1657,7 @@ def test_patch_phase_7_local_commit_private_boundary_rejections(
             raise OSError("Seatbelt unavailable")
 
         assert scope.root_witness is not None
+        assert scope._host_root_binding is not None
         with monkeypatch.context() as patcher:
             patcher.setattr(
                 local_commit_module,
@@ -1665,7 +1666,10 @@ def test_patch_phase_7_local_commit_private_boundary_rejections(
             )
             with pytest.raises(TargetInspectionError) as unavailable:
                 await local_commit_module._commit_in_seatbelt(
-                    command, profile, scope.root_witness
+                    command,
+                    profile,
+                    scope.root_witness,
+                    scope._host_root_binding,
                 )
         assert unavailable.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
 
@@ -1870,6 +1874,278 @@ def test_patch_phase_7_linux_descriptor_lookup_failure_is_witness_stale(
     assert unavailable.value.code is TargetErrorCode.WITNESS_STALE
 
 
+def test_patch_phase_7_host_mount_binding_requires_identity_and_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Keep host barrier revalidation local to one root identity and mount."""
+    workspace = tmp_path / "workspace"
+    workspace.mkdir()
+    status = workspace.stat()
+    expected = target_module.FileIdentity(status.st_dev, status.st_ino)
+    observed_bindings = iter(
+        (
+            "host-linux-mount-42",
+            "host-linux-mount-42",
+            "host-linux-mount-43",
+        )
+    )
+
+    def observed_mount_binding(_descriptor: int) -> str:
+        """Return one controlled local mount binding for each observation."""
+        return next(observed_bindings)
+
+    def topology_must_not_be_recomputed(*_arguments: object) -> str:
+        """Reject a redundant cross-namespace topology recapture."""
+        pytest.fail("host barrier must use its retained local mount binding")
+
+    monkeypatch.setattr(
+        rooted_worker_module,
+        "_namespace_mount_binding",
+        observed_mount_binding,
+    )
+    monkeypatch.setattr(
+        rooted_worker_module, "_root_mount_id", topology_must_not_be_recomputed
+    )
+    binding = rooted_worker_module.capture_rooted_mount_binding(
+        workspace, expected
+    )
+    assert binding == "host-linux-mount-42"
+    rooted_worker_module.validate_rooted_mount_binding(
+        workspace, expected, binding
+    )
+    with pytest.raises(TargetInspectionError) as changed_binding:
+        rooted_worker_module.validate_rooted_mount_binding(
+            workspace, expected, binding
+        )
+    assert changed_binding.value.code is TargetErrorCode.WITNESS_STALE
+    moved_workspace = tmp_path / "moved-workspace"
+    workspace.rename(moved_workspace)
+    workspace.mkdir()
+    with pytest.raises(TargetInspectionError) as replaced_path:
+        rooted_worker_module.validate_rooted_mount_binding(
+            workspace, expected, binding
+        )
+    assert replaced_path.value.code is TargetErrorCode.WITNESS_STALE
+
+
+def test_patch_phase_7_scope_rejects_host_mount_swap_before_worker_returns(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a same-inode host mount swap during scope resolution."""
+    profile = _profile(tmp_path)
+    status = tmp_path.stat()
+    witness = rooted_worker_module.RootWitness(
+        target_module.FileIdentity(status.st_dev, status.st_ino),
+        profile.identity.mount_id,
+        profile.identity.filesystem_id,
+    )
+    events: list[str] = []
+    current_binding = "host-mount-before"
+
+    def host_mount_binding(_descriptor: int) -> str:
+        """Return the controlled host-local mount observation."""
+        events.append(current_binding)
+        return current_binding
+
+    async def swapped_worker_root(
+        observed_profile: LocalTargetProfile,
+    ) -> rooted_worker_module.RootWitness:
+        """Return the same root inode after changing its host mount binding."""
+        nonlocal current_binding
+        assert observed_profile is profile
+        events.append("worker-root")
+        current_binding = "host-mount-after"
+        return witness
+
+    async def inert_probes(
+        observed_profile: LocalTargetProfile,
+        observed_witness: rooted_worker_module.RootWitness,
+    ) -> tuple[target_module.PrimitiveProbe, ...]:
+        """Avoid native mutation probing after the controlled swap."""
+        assert observed_profile is profile
+        assert observed_witness is witness
+        return ()
+
+    monkeypatch.setattr(
+        target_module, "_namespace_mount_binding", host_mount_binding
+    )
+    monkeypatch.setattr(
+        target_module, "_worker_root_witness", swapped_worker_root
+    )
+    monkeypatch.setattr(
+        target_module, "_mutation_primitive_receipts", inert_probes
+    )
+    with pytest.raises(TargetInspectionError) as stale:
+        run(
+            LocalScopeResolver(profile).resolve(
+                ScopeSelection(ContextKind.LOCAL)
+            )
+        )
+    assert stale.value.code is TargetErrorCode.WITNESS_STALE
+    assert events == [
+        "host-mount-before",
+        "worker-root",
+        "host-mount-after",
+    ]
+
+
+def test_patch_phase_7_commit_revalidates_retained_scope_host_binding(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a host mount swap after scope resolution before child launch."""
+    profile = _profile(tmp_path)
+    status = tmp_path.stat()
+    witness = rooted_worker_module.RootWitness(
+        target_module.FileIdentity(status.st_dev, status.st_ino),
+        profile.identity.mount_id,
+        profile.identity.filesystem_id,
+    )
+    current_binding = "host-mount-before"
+
+    def host_mount_binding(_descriptor: int) -> str:
+        """Return the current controlled host-local mount binding."""
+        return current_binding
+
+    async def fixed_worker_root(
+        observed_profile: LocalTargetProfile,
+    ) -> rooted_worker_module.RootWitness:
+        """Return the fixed worker witness without spawning a test child."""
+        assert observed_profile is profile
+        return witness
+
+    async def inert_probes(
+        observed_profile: LocalTargetProfile,
+        observed_witness: rooted_worker_module.RootWitness,
+    ) -> tuple[target_module.PrimitiveProbe, ...]:
+        """Avoid native mutation probing in the retained-binding test."""
+        assert observed_profile is profile
+        assert observed_witness is witness
+        return ()
+
+    async def worker_must_not_start(
+        *_arguments: object, **_keywords: object
+    ) -> object:
+        """Reject a worker launch after retained-binding revalidation fails."""
+        pytest.fail("stale scope binding must fail before worker launch")
+
+    monkeypatch.setattr(
+        target_module, "_namespace_mount_binding", host_mount_binding
+    )
+    monkeypatch.setattr(
+        target_module, "_worker_root_witness", fixed_worker_root
+    )
+    monkeypatch.setattr(
+        target_module, "_mutation_primitive_receipts", inert_probes
+    )
+    scope = run(
+        LocalScopeResolver(profile).resolve(ScopeSelection(ContextKind.LOCAL))
+    )
+    assert scope.root_witness is witness
+    assert scope._host_root_binding is not None
+    target = LocalCommitTarget(profile)
+    with pytest.raises(TargetInspectionError) as untrusted_scope:
+        target._require_scope(replace(scope, _host_root_binding=None))
+    assert untrusted_scope.value.code is TargetErrorCode.WITNESS_STALE
+    current_binding = "host-mount-after"
+    with pytest.raises(TargetInspectionError) as stale_scope:
+        target._require_scope(scope)
+    assert stale_scope.value.code is TargetErrorCode.WITNESS_STALE
+    monkeypatch.setattr(
+        local_commit_module, "create_subprocess_exec", worker_must_not_start
+    )
+    with pytest.raises(TargetInspectionError) as stale_commit:
+        run(
+            local_commit_module._commit_in_seatbelt(
+                cast(SealedCommitCommand, object()),
+                profile,
+                witness,
+                scope._host_root_binding,
+            )
+        )
+    assert stale_commit.value.code is TargetErrorCode.WITNESS_STALE
+
+
+def test_patch_phase_7_host_root_binding_observation_errors_fail_closed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject malformed, unreadable, and uncloseable host observations."""
+    profile = _profile(tmp_path)
+    status = tmp_path.stat()
+    identity = target_module.FileIdentity(status.st_dev, status.st_ino)
+    binding = target_module._HostRootBinding(identity, "host-mount")
+
+    def descriptor(_path: Path) -> int:
+        """Return one controlled descriptor for host-binding observations."""
+        return 7
+
+    def observed_status(_descriptor: int) -> object:
+        """Return the configured root status for a controlled descriptor."""
+        return status
+
+    def unavailable_mount(_descriptor: int) -> str:
+        """Fail one host-local mount-binding observation."""
+        raise OSError("mount binding unavailable")
+
+    def successful_mount(_descriptor: int) -> str:
+        """Return the retained host-local mount binding."""
+        return binding.mount_binding
+
+    def successful_close(_descriptor: int) -> None:
+        """Close one controlled descriptor without an observation error."""
+
+    def unavailable_close(_descriptor: int) -> None:
+        """Fail one controlled descriptor close observation."""
+        raise OSError("descriptor close unavailable")
+
+    with pytest.raises(TargetInspectionError) as malformed:
+        target_module._HostRootBinding(identity, "")
+    assert malformed.value.code is TargetErrorCode.WITNESS_STALE
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(target_module, "_open_directory", descriptor)
+        patcher.setattr(target_module, "fstat", observed_status)
+        patcher.setattr(
+            target_module, "_namespace_mount_binding", unavailable_mount
+        )
+        patcher.setattr(target_module, "close", successful_close)
+        with pytest.raises(TargetInspectionError) as unavailable_capture:
+            target_module._capture_host_root_binding(profile.root)
+    assert unavailable_capture.value.code is TargetErrorCode.WITNESS_STALE
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(target_module, "_open_directory", descriptor)
+        patcher.setattr(target_module, "fstat", observed_status)
+        patcher.setattr(
+            target_module, "_namespace_mount_binding", successful_mount
+        )
+        patcher.setattr(target_module, "close", unavailable_close)
+        with pytest.raises(TargetInspectionError) as uncloseable_capture:
+            target_module._capture_host_root_binding(profile.root)
+    assert uncloseable_capture.value.code is TargetErrorCode.WITNESS_STALE
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(target_module, "_open_directory", descriptor)
+        patcher.setattr(target_module, "fstat", observed_status)
+        patcher.setattr(
+            target_module, "_namespace_mount_binding", unavailable_mount
+        )
+        patcher.setattr(target_module, "close", successful_close)
+        with pytest.raises(TargetInspectionError) as unavailable_validation:
+            target_module._validate_host_root_binding(profile.root, binding)
+    assert unavailable_validation.value.code is TargetErrorCode.WITNESS_STALE
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(target_module, "_open_directory", descriptor)
+        patcher.setattr(target_module, "fstat", observed_status)
+        patcher.setattr(
+            target_module, "_namespace_mount_binding", successful_mount
+        )
+        patcher.setattr(target_module, "close", unavailable_close)
+        with pytest.raises(TargetInspectionError) as uncloseable_validation:
+            target_module._validate_host_root_binding(profile.root, binding)
+    assert uncloseable_validation.value.code is TargetErrorCode.WITNESS_STALE
+
+
 def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -1922,8 +2198,12 @@ def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
             _command: SealedCommitCommand,
             _profile: LocalTargetProfile,
             _witness: target_module.RootWitness,
+            _host_root_binding: target_module._HostRootBinding,
         ) -> WorkerReport:
             """Raise a native failure before a child report exists."""
+            assert isinstance(
+                _host_root_binding, target_module._HostRootBinding
+            )
             raise OSError("worker unavailable")
 
         with monkeypatch.context() as patcher:
@@ -2513,6 +2793,7 @@ def test_patch_phase_7_local_worker_micro_rejections(
         await async_sleep(10)
 
     assert scope.root_witness is not None
+    assert scope._host_root_binding is not None
     with monkeypatch.context() as patcher:
         patcher.setattr(
             local_commit_module, "create_subprocess_exec", cancelled_subprocess
@@ -2523,7 +2804,10 @@ def test_patch_phase_7_local_worker_micro_rejections(
         with pytest.raises(CancelledError):
             run(
                 local_commit_module._commit_in_seatbelt(
-                    command, profile, scope.root_witness
+                    command,
+                    profile,
+                    scope.root_witness,
+                    scope._host_root_binding,
                 )
             )
 
@@ -3098,6 +3382,7 @@ def test_patch_phase_7_failed_relay_still_removes_child_markers(
             {},
         )
         assert scope.root_witness is not None
+        assert scope._host_root_binding is not None
         command = SealedCommitCommand(
             sealed,
             CommitLease(
@@ -3109,7 +3394,10 @@ def test_patch_phase_7_failed_relay_still_removes_child_markers(
         )
         with pytest.raises(TargetInspectionError) as error:
             await local_commit_module._commit_in_seatbelt(
-                command, profile, scope.root_witness
+                command,
+                profile,
+                scope.root_witness,
+                scope._host_root_binding,
             )
         assert error.value.code is TargetErrorCode.WITNESS_STALE
 

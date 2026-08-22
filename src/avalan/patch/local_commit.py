@@ -77,8 +77,6 @@ from avalan.patch.rooted_worker import (
     _ArtifactUncertainError,
     _failed_report,
     _steps,
-    capture_rooted_root_binding,
-    validate_rooted_root_binding,
 )
 from avalan.patch.rooted_worker import (
     _commit_rooted as _commit_rooted_neutral,
@@ -94,10 +92,12 @@ from avalan.patch.target import (
     TargetHandshake,
     TargetInspectionError,
     _filesystem_id,
+    _HostRootBinding,
     _is_local_mutation_test_platform,
     _open_directory,
     _root_mount_id,
     _seatbelt_string,
+    _validate_host_root_binding,
     _worker_sandbox_command,
     _worker_seatbelt_profile,
 )
@@ -270,10 +270,14 @@ class LocalCommitTarget:
             scope.identity != self.profile.identity
             or scope.root_witness is None
             or scope.worker is None
+            or scope._host_root_binding is None
             or scope._worker_authorization
             is not self.profile._worker_authorization
         ):
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        _validate_host_root_binding(
+            self.profile.root, scope._host_root_binding
+        )
 
     async def _commit(
         self, scope: ResolvedMutationScope, command: SealedCommitCommand
@@ -284,8 +288,12 @@ class LocalCommitTarget:
             if command.plan.binding.target != self.profile.identity:
                 raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
             assert scope.root_witness is not None
+            assert scope._host_root_binding is not None
             return await _commit_in_seatbelt(
-                command, self.profile, scope.root_witness
+                command,
+                self.profile,
+                scope.root_witness,
+                scope._host_root_binding,
             )
         except TargetInspectionError:
             return _failed_report(command, CommitStepState.NOT_COMMITTED)
@@ -297,18 +305,15 @@ async def _commit_in_seatbelt(
     command: SealedCommitCommand,
     profile: LocalTargetProfile,
     witness: RootWitness,
+    host_root_binding: _HostRootBinding,
 ) -> WorkerReport:
     """Execute one authenticated command in the selected native sandbox."""
+    _validate_host_root_binding(profile.root, host_root_binding)
     namespace = _commit_namespace(profile, witness)
-    host_root, host_mount_binding = capture_rooted_root_binding(
-        profile.root._path
-    )
 
     def validate_host_root() -> None:
         """Require the dispatch root to stay bound before a child effect."""
-        validate_rooted_root_binding(
-            profile.root._path, host_root, host_mount_binding
-        )
+        _validate_host_root_binding(profile.root, host_root_binding)
 
     token = token_bytes(32)
     marker = namespace / (

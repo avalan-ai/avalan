@@ -155,6 +155,16 @@ def capture_rooted_root_binding(path: Path) -> tuple[RootWitness, str]:
         close(descriptor)
 
 
+def capture_rooted_mount_binding(path: Path, identity: FileIdentity) -> str:
+    """Capture a local mount binding after authenticating its root identity."""
+    descriptor = _open_directory(path)
+    try:
+        _validate_rooted_identity(descriptor, identity)
+        return _namespace_mount_binding(descriptor)
+    finally:
+        close(descriptor)
+
+
 def probe_rooted_metadata(
     workspace: Path,
     root: RootWitness,
@@ -238,6 +248,13 @@ def _validate_rooted_witness(descriptor: int, expected: RootWitness) -> None:
         raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
 
 
+def _validate_rooted_identity(descriptor: int, expected: FileIdentity) -> None:
+    """Require a retained descriptor to retain one root file identity."""
+    status = fstat(descriptor)
+    if FileIdentity(status.st_dev, status.st_ino) != expected:
+        raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+
 def _validate_rooted_mount_binding(
     descriptor: int, expected: str | None
 ) -> None:
@@ -256,6 +273,18 @@ def validate_rooted_root_binding(
     descriptor = _open_directory(path)
     try:
         _validate_rooted_witness(descriptor, root)
+        _validate_rooted_mount_binding(descriptor, mount_binding)
+    finally:
+        close(descriptor)
+
+
+def validate_rooted_mount_binding(
+    path: Path, identity: FileIdentity, mount_binding: str
+) -> None:
+    """Revalidate one root identity and its process-local mount binding."""
+    descriptor = _open_directory(path)
+    try:
+        _validate_rooted_identity(descriptor, identity)
         _validate_rooted_mount_binding(descriptor, mount_binding)
     finally:
         close(descriptor)
