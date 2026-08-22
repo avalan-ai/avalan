@@ -2169,7 +2169,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "1e16bb57555a070d266f76bded4ab5553d82db2abbae412d7301829dc6bfcd14"
+        "source_sha256": "dc6960e98a7b48d032ed0c7b678498c2cef67c60a1d703f634b0a49b8458e309"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -3221,6 +3221,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "207be3bcea5e70c292709efc7134c2d535fcc5e60dba54fef3bfc2eaf0d2d086",
-  "record_sha256": "a7a7c75cddb967856691ba43df0560a728cf1fe35bc2b6d5ec44497707c8aece"
+  "inventory_sha256": "368cee85b0b49caf9e146ea8591e79210036a776a4753274b564b9c9d93cac4d",
+  "record_sha256": "4ee1bb993268857e4acecd2ac7812f8ec0e51383cac64df91fe7bde3f6a6f6fa"
 }
