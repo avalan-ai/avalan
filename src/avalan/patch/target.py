@@ -817,6 +817,9 @@ class ResolvedMutationScope:
     worker: EphemeralWorkerWitness | None = None
     _worker_authorization: _WorkerAuthorization | None = None
     probes: tuple[PrimitiveProbe, ...] = ()
+    _host_root_binding: "_HostRootBinding | None" = field(
+        default=None, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Require immutable inspection authority and primitive witnesses."""
@@ -838,6 +841,8 @@ class ResolvedMutationScope:
             )
             or type(self.probes) is not tuple
             or any(type(item) is not PrimitiveProbe for item in self.probes)
+            or self._host_root_binding is not None
+            and not isinstance(self._host_root_binding, _HostRootBinding)
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
 
@@ -872,10 +877,12 @@ class LocalScopeResolver:
         await sleep(0)
         if selection.context_kind is not ContextKind.LOCAL:
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+        host_root_binding = _capture_host_root_binding(self.profile.root)
         witness = await _worker_root_witness(self.profile)
         if (
             witness.filesystem_id != self.profile.identity.filesystem_id
             or witness.mount_id != self.profile.identity.mount_id
+            or witness.identity != host_root_binding.identity
         ):
             raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
         probes = await _mutation_primitive_receipts(self.profile, witness)
@@ -905,6 +912,7 @@ class LocalScopeResolver:
             _fence_id(self.profile.identity, witness),
         )
         await _test_precommit_checkpoint("lifecycle.scope_bound")
+        _validate_host_root_binding(self.profile.root, host_root_binding)
         return ResolvedMutationScope(
             ContextKind.LOCAL,
             self.profile.identity,
@@ -925,6 +933,7 @@ class LocalScopeResolver:
             worker,
             self.profile._worker_authorization,
             probes,
+            host_root_binding,
         )
 
     async def rebind_ephemeral(
@@ -935,10 +944,14 @@ class LocalScopeResolver:
         if (
             scope.identity != self.profile.identity
             or scope.root_witness is None
+            or scope._host_root_binding is None
             or scope._worker_authorization
             is not self.profile._worker_authorization
         ):
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        _validate_host_root_binding(
+            self.profile.root, scope._host_root_binding
+        )
         worker = EphemeralWorkerWitness(
             self.profile.worker_policy.channel_id,
             self.profile.worker_policy.worker_instance_id + "-rebound",
@@ -998,6 +1011,62 @@ class FileIdentity:
     def opaque(self) -> str:
         """Return a stable opaque planner projection of this identity."""
         return sha256(f"{self.device}:{self.inode}".encode()).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
+class _HostRootBinding:
+    """Retain one host-local mount observation for a trusted root."""
+
+    identity: FileIdentity
+    mount_binding: str
+
+    def __post_init__(self) -> None:
+        """Reject malformed local binding observations."""
+        if (
+            not isinstance(self.identity, FileIdentity)
+            or type(self.mount_binding) is not str
+            or not self.mount_binding
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+
+
+def _capture_host_root_binding(root: TrustedLocalRoot) -> _HostRootBinding:
+    """Capture one host-local identity and mount binding for a trusted root."""
+    descriptor = _open_directory(root._path)
+    try:
+        status = fstat(descriptor)
+        return _HostRootBinding(
+            FileIdentity(status.st_dev, status.st_ino),
+            _namespace_mount_binding(descriptor),
+        )
+    except OSError as exc:
+        raise TargetInspectionError(TargetErrorCode.WITNESS_STALE) from exc
+    finally:
+        try:
+            close(descriptor)
+        except OSError as exc:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE) from exc
+
+
+def _validate_host_root_binding(
+    root: TrustedLocalRoot, expected: _HostRootBinding
+) -> None:
+    """Require a trusted root to retain one host-local identity and mount."""
+    descriptor = _open_directory(root._path)
+    try:
+        status = fstat(descriptor)
+        if (
+            FileIdentity(status.st_dev, status.st_ino) != expected.identity
+            or _namespace_mount_binding(descriptor) != expected.mount_binding
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+    except OSError as exc:
+        raise TargetInspectionError(TargetErrorCode.WITNESS_STALE) from exc
+    finally:
+        try:
+            close(descriptor)
+        except OSError as exc:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE) from exc
 
 
 @dataclass(frozen=True, slots=True)
