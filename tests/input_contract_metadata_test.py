@@ -174,6 +174,14 @@ def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
     assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
     assert "make test-pgsql" not in workflow
     assert "run: make test coverage" in coverage_workflow
+    assert "sudo apt-get install --yes bubblewrap libacl1" in coverage_workflow
+    assert (
+        "kernel.apparmor_restrict_unprivileged_userns=0" in coverage_workflow
+    )
+    assert "kernel.unprivileged_userns_clone=1" in coverage_workflow
+    assert "bwrap --die-with-parent --unshare-user --uid 0 --gid 0" in (
+        coverage_workflow
+    )
     assert "run: make test-conversation-current-exact" not in coverage_workflow
     assert "CONVERSATION_PHASE" not in coverage_workflow
     assert "sudo systemctl start postgresql.service" in coverage_workflow
