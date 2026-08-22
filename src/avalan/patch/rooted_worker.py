@@ -710,7 +710,12 @@ def _is_contained(root_fd: int, descriptor: int) -> bool:
 def _descriptor_path(descriptor: int) -> Path:
     """Return the kernel path for one retained platform descriptor."""
     if sys_platform == "linux":
-        value = readlink(f"/proc/self/fd/{descriptor}")
+        try:
+            value = readlink(f"/proc/self/fd/{descriptor}")
+        except OSError as error:
+            raise TargetInspectionError(
+                TargetErrorCode.WITNESS_STALE
+            ) from error
         if not value.startswith("/") or value.endswith(" (deleted)"):
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         return Path(value)

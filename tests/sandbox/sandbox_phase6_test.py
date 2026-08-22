@@ -210,6 +210,17 @@ class SandboxPhase6Test(TestCase):
             self.assertTrue(
                 _contains_triplet(argv, "--ro-bind", "/bin", "/bin")
             )
+            for (
+                runtime_root
+            ) in backend_module._bubblewrap_runtime_read_roots():
+                self.assertTrue(
+                    _contains_triplet(
+                        argv,
+                        "--ro-bind",
+                        runtime_root,
+                        runtime_root,
+                    )
+                )
             self.assertTrue(
                 _contains_triplet(
                     argv,

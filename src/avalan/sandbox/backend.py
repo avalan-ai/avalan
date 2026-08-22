@@ -65,6 +65,12 @@ _SEATBELT_SYSTEM_MACH_LOOKUP_SERVICES = (
     "com.apple.system.notification_center",
     "com.apple.system.opendirectoryd.libinfo",
 )
+_BUBBLEWRAP_RUNTIME_READ_ROOTS = (
+    "/lib",
+    "/lib64",
+    "/usr/lib",
+    "/usr/lib64",
+)
 
 try:
     from resource import RLIMIT_NPROC as _IMPORTED_RLIMIT_NPROC
@@ -1751,7 +1757,8 @@ def generate_bubblewrap_arguments(
                 "bubblewrap network allowlists are unsupported"
             )
     for path in _ordered_unique(
-        tuple(profile.executable_search_roots)
+        _bubblewrap_runtime_read_roots()
+        + tuple(profile.executable_search_roots)
         + tuple(profile.trusted_executables)
         + tuple(profile.read_roots)
     ):
@@ -1771,6 +1778,13 @@ def generate_bubblewrap_arguments(
     args.extend(("--chdir", plan.request.cwd, "--"))
     args.extend(plan.request.argv)
     return tuple(args)
+
+
+def _bubblewrap_runtime_read_roots() -> tuple[str, ...]:
+    """Return system library roots needed by trusted ELF files."""
+    return tuple(
+        path for path in _BUBBLEWRAP_RUNTIME_READ_ROOTS if Path(path).is_dir()
+    )
 
 
 def sandbox_backend_capability_profiles(

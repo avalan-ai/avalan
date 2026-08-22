@@ -535,7 +535,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5f2209bf8194c653952b05b2dde177775400f73bb7806b5f693924fcccef68a5"
+      "source_sha256": "5a567b5f0993323deac2f8c9cc37ed1dce7c7e131210b92559e56945485176fc"
     },
     {
       "id": "PATCH-TS-023",
@@ -589,7 +589,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "242af495b9f840d8fc5f7c284493fdf54558eaf37f29c764665ffc773c14896b"
+      "source_sha256": "7c97788cbb7161a0d5c79c6b6b7aa283516232d8be347b0f91935ac88d26c397"
     },
     {
       "id": "PATCH-TS-029",
@@ -598,7 +598,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5cbbdc078d6d2f7772acfb524128d7a3422653cc7b56fbe0ef8b533959c10502"
+      "source_sha256": "e6bae23c40e41cc742f18af84e69698470c53c971c9d12600616767a739ef2e8"
     },
     {
       "id": "PATCH-TS-030",
@@ -936,7 +936,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "22a9857b329e7a8180649f0d88e53412f4aa1bec580f9db53705a51d57ba6300"
+      "source_sha256": "60079fb2f270618d9d31e47aea2aad19ca9cff0aaf61bf47459d57c2b6788fae"
     },
     {
       "id": "PATCH-TS-067",
@@ -972,7 +972,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a60d950407a10366df4fbea6a560c24e4438b77858c8e9f8c94d9d42f0e4eb63"
+      "source_sha256": "fad9a1f96815ee5d43ef242510e69956b6598ee28c51b4829e4afe468076ed30"
     },
     {
       "id": "PATCH-TS-071",
@@ -1027,7 +1027,25 @@
         "_run"
       ],
       "source_sha256": "662fed21ea03039620433773095a3a7f30a1a3ab161c594f4486b753af5ac771"
+    },
+    {
+      "id": "PATCH-TS-077",
+      "path": "src/avalan/sandbox/backend.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "070c60d41e37c73a9e47d70b4dcd55a2cc9c38d626ca26f73a960c5dcd594a93"
+    },
+    {
+      "id": "PATCH-TS-078",
+      "path": "tests/sandbox/sandbox_phase6_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9ce7f6fb1bea2878b68dc566abecffce1b7aeadd605a9bb3190b0a64fddbef5e"
     }
   ],
-  "manifest_sha256": "c344315c84eb8a64d04793125d71522f0d9f8a06f1439bd69094853dabad0074"
+  "manifest_sha256": "cc7d7c688a45aa95ca32435b4dffbb91ea6ddc72ddd81977dd9e4b81eb3b3f70"
 }

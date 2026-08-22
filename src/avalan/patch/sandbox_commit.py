@@ -218,7 +218,7 @@ _PROCESS_CLOSE_SECONDS = 0.25
 _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "e67237d3caca0e1302e3eb1989f07ef3db5fad92954a069a1312e5871bc4292d"
+    "648a34c28d5457b15900e892d22e644c82a95cdb23602d7a2e94d4e137fcf7f5"
 )
 _base_candidate = Path(base_prefix) / "bin" / "python3"
 base_executable = str(

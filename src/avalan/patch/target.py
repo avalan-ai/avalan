@@ -2744,7 +2744,7 @@ def _linux_restore_acl(descriptor: int, baseline: bytes | None) -> None:
     if acl == _LINUX_ACL_FFI.NULL:
         raise OSError("ACL restore is unavailable")
     try:
-        _linux_set_acl(descriptor, acl)
+        _set_acl(descriptor, acl)
     finally:
         libc.acl_free(acl)
 
