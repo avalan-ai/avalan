@@ -1350,7 +1350,7 @@ _SEATBELT_SYSTEM_MACH_LOOKUP_SERVICES = (
     "com.apple.system.notification_center",
     "com.apple.system.opendirectoryd.libinfo",
 )
-_WORKER_BOOTSTRAP = """import sys
+_WORKER_RUNTIME_BOOTSTRAP = """import sys
 from importlib.util import module_from_spec, spec_from_file_location
 from types import ModuleType
 
@@ -1379,6 +1379,9 @@ sys.modules["avalan"] = avalan
 patch = ModuleType("avalan.patch")
 patch.__path__ = [source_root + "/avalan/patch"]
 sys.modules["avalan.patch"] = patch
+"""
+
+_WORKER_BOOTSTRAP = _WORKER_RUNTIME_BOOTSTRAP + """
 planner = ModuleType("avalan.patch.planner")
 class _PlannerUnavailable:
     def __init__(self, *args, **kwargs):
@@ -1480,9 +1483,7 @@ async def _worker_request(
         "-c",
         "import sys\nsys.path.append(sys.argv[4])\n" + _WORKER_BOOTSTRAP,
         str(Path(__file__).resolve().parents[2]),
-        str(Path(cryptography_file).resolve().parent),
-        str(_cffi_backend_runtime_path()),
-        str(Path(cffi_file).resolve().parents[1]),
+        *(str(path) for path in _worker_runtime_paths()),
     )
     try:
         command, environment = _worker_sandbox_command(
@@ -1691,6 +1692,17 @@ def _cffi_backend_runtime_path() -> Path:
     if specification is None or specification.origin is None:
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
     return Path(specification.origin).resolve()
+
+
+def _worker_runtime_paths() -> tuple[Path, Path, Path]:
+    """Return the exact sealed runtime paths required by patch workers."""
+    if cryptography_file is None:
+        raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    return (
+        Path(cryptography_file).resolve().parent,
+        _cffi_backend_runtime_path(),
+        Path(cffi_file).resolve().parents[1],
+    )
 
 
 def _worker_seatbelt_profile(

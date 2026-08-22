@@ -83,6 +83,7 @@ from avalan.patch.rooted_worker import (
 )
 from avalan.patch.target import (
     _FUTURE_MUTATION_PRIMITIVES,
+    _WORKER_RUNTIME_BOOTSTRAP,
     _WORKER_TOKEN_ENV,
     FileIdentity,
     LocalTargetProfile,
@@ -96,6 +97,7 @@ from avalan.patch.target import (
     _open_directory,
     _seatbelt_string,
     _validate_host_root_binding,
+    _worker_runtime_paths,
     _worker_sandbox_command,
     _worker_seatbelt_profile,
 )
@@ -155,6 +157,20 @@ _SEATBELT_WORKER_SESSION: tuple[str, str, bytes] | None = None
 _SEATBELT_WORKER_SEQUENCE = 0
 SeatbeltPlanBinding = NewType("SeatbeltPlanBinding", str)
 SeatbeltRequestBinding = NewType("SeatbeltRequestBinding", str)
+
+_COMMIT_WORKER_BOOTSTRAP = _WORKER_RUNTIME_BOOTSTRAP + """
+model = ModuleType("avalan.model")
+model.__path__ = [source_root + "/avalan/model"]
+sys.modules["avalan.model"] = model
+stream = ModuleType("avalan.model.stream")
+class _ModelStreamUnavailable:
+    def __init__(self, *args, **kwargs):
+        raise RuntimeError("model stream projection is unavailable in worker")
+stream.CanonicalStreamItem = _ModelStreamUnavailable
+stream.StreamItemKind = _ModelStreamUnavailable
+stream.TextGenerationNonStreamToolCall = _ModelStreamUnavailable
+sys.modules["avalan.model.stream"] = stream
+"""
 
 
 class _SeatbeltCommitPayload(TypedDict):
@@ -346,16 +362,22 @@ async def _commit_in_seatbelt(
         },
         separators=(",", ":"),
     ).encode()
+    cryptography_root, cffi_backend, cffi_root = _worker_runtime_paths()
     worker_argv = (
         executable,
         "-I",
+        "-S",
         "-c",
         (
-            "import sys\nsys.path.append(sys.argv[1])\n"
-            "from avalan.patch.local_commit import _seatbelt_worker_main\n"
+            "import sys\nsys.path.append(sys.argv[4])\n"
+            + _COMMIT_WORKER_BOOTSTRAP
+            + "from avalan.patch.local_commit import _seatbelt_worker_main\n"
             "raise SystemExit(_seatbelt_worker_main())"
         ),
         str(Path(__file__).resolve().parents[2]),
+        str(cryptography_root),
+        str(cffi_backend),
+        str(cffi_root),
     )
     try:
         process_command, environment = _worker_sandbox_command(
