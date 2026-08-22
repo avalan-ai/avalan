@@ -196,7 +196,7 @@
       "path": "src/avalan/patch/local_commit.py",
       "symbol": "LocalCommitTarget",
       "artifact_class": "patch_local_commit",
-      "source_sha256": "05f8529a86531e4c37a6c0ba3a2ceea435c77d2663e81046f59a57191ddd2525"
+      "source_sha256": "509d22ad954b0fcf67c590ceb5b609b95f22b4f0db6820dda3e173d4a60581f2"
     },
     {
       "id": "PATCH-SYM-029",
@@ -283,5 +283,5 @@
       "source_sha256": "79f7d7206a58d30b63becd6e7926df080e5b0db948a53c8a099450f823775952"
     }
   ],
-  "inventory_sha256": "5aae51a9eeecc57156b22c09007ab438315e21f1cce418a474c9fae7e6a8f79d"
+  "inventory_sha256": "1464590fe31fe9fdfad00d1d399b2c6b6a84fedc0c82688d50e54fe388583f5f"
 }

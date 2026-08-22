@@ -41,6 +41,7 @@ from sys import executable
 from sys import platform as runtime_platform
 from threading import Event, Thread
 from time import sleep
+from types import SimpleNamespace
 from typing import Callable, Protocol, cast
 
 import pytest
@@ -1243,12 +1244,19 @@ def test_patch_phase_7_barrier_helpers_reject_malformed_and_replayed_messages(
         encoding="utf-8",
     )
     with pytest.raises(TargetInspectionError) as malformed:
-        local_commit_module._read_barrier_message(marker, token)
+        local_commit_module._read_barrier_message(
+            marker,
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
     assert malformed.value.code is TargetErrorCode.WITNESS_STALE
 
     async def replay() -> None:
         local_commit_module._write_barrier_message(
-            marker, "1:artifact.stage", token
+            marker,
+            "1:artifact.stage",
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
         )
         relay = create_task(
             local_commit_module._relay_seatbelt_barriers(
@@ -1262,27 +1270,113 @@ def test_patch_phase_7_barrier_helpers_reject_malformed_and_replayed_messages(
             expected = str(sequence) + ":" + stage
             for _ in range(2_000):
                 if (
-                    local_commit_module._read_barrier_message(release, token)
+                    local_commit_module._read_barrier_message(
+                        release,
+                        token,
+                        local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+                    )
                     == expected
                 ):
                     break
                 await async_sleep(0.001)
             assert (
-                local_commit_module._read_barrier_message(release, token)
+                local_commit_module._read_barrier_message(
+                    release,
+                    token,
+                    local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+                )
                 == expected
             )
             if sequence == 1:
                 local_commit_module._write_barrier_message(
-                    marker, "2:target.stage_artifact", token
+                    marker,
+                    "2:target.stage_artifact",
+                    token,
+                    local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
                 )
         local_commit_module._write_barrier_message(
-            marker, "1:artifact.stage", token
+            marker,
+            "1:artifact.stage",
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
         )
         with pytest.raises(TargetInspectionError) as replayed:
             await relay
         assert replayed.value.code is TargetErrorCode.WITNESS_STALE
 
     run(replay())
+
+
+def test_patch_phase_7_relay_direction_binds_failure_replies(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bind target and operating-system failures to parent releases."""
+    token = bytes(range(32))
+
+    async def direct_thread(
+        function: _ThreadFunction, *arguments: object
+    ) -> object:
+        """Run one bounded relay helper in the current test task."""
+        return function(*arguments)
+
+    async def cancelled_sleep(value: float) -> None:
+        """Stop after the relay publishes its first failure release."""
+        del value
+        raise CancelledError
+
+    def target_failure(stage: str) -> None:
+        """Fail one parent boundary with a fixed target error."""
+        assert stage == "artifact.stage"
+        raise TargetInspectionError(TargetErrorCode.METADATA_DENIED)
+
+    def os_failure(stage: str) -> None:
+        """Fail one parent boundary with a fixed operating-system error."""
+        assert stage == "artifact.stage"
+        raise OSError(17, "injected relay failure")
+
+    async def exercise(
+        label: str, failure: Callable[[str], None], expected: str
+    ) -> None:
+        """Assert one parent failure reply has the release direction key."""
+        marker = tmp_path / (label + "-marker")
+        release = tmp_path / (label + "-release")
+        local_commit_module._write_barrier_message(
+            marker,
+            "1:artifact.stage",
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
+        with monkeypatch.context() as patcher:
+            patcher.setattr(local_commit_module, "to_thread", direct_thread)
+            patcher.setattr(local_commit_module, "sleep", cancelled_sleep)
+            patcher.setattr(local_commit_module, "_commit_barrier", failure)
+            with pytest.raises(CancelledError):
+                await local_commit_module._relay_seatbelt_barriers(
+                    marker, release, token
+                )
+        assert (
+            local_commit_module._read_barrier_message(
+                release,
+                token,
+                local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+            )
+            == expected
+        )
+
+    async def failures() -> None:
+        """Exercise the two parent-owned failure encodings."""
+        await exercise(
+            "target",
+            target_failure,
+            "failure:target:patch.metadata_denied:1:artifact.stage",
+        )
+        await exercise(
+            "os",
+            os_failure,
+            "failure:os:17:1:artifact.stage",
+        )
+
+    run(failures())
 
 
 def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
@@ -1312,15 +1406,25 @@ def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
 
     marker, release = configure("success")
     local_commit_module._write_barrier_message(
-        release, "1:artifact.stage", token
+        release,
+        "1:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
     )
     local_commit_module._commit_barrier("artifact.stage")
     assert (
-        local_commit_module._read_barrier_message(marker, token)
+        local_commit_module._read_barrier_message(
+            marker,
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
         == "1:artifact.stage"
     )
     local_commit_module._write_barrier_message(
-        release, "2:target.stage_artifact", token
+        release,
+        "2:target.stage_artifact",
+        token,
+        local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
     )
     local_commit_module._commit_barrier("target.stage_artifact")
 
@@ -1339,13 +1443,21 @@ def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
     )
     for index, (outcome, error_type) in enumerate(outcomes):
         _, release = configure("failure-" + str(index))
-        local_commit_module._write_barrier_message(release, outcome, token)
+        local_commit_module._write_barrier_message(
+            release,
+            outcome,
+            token,
+            local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+        )
         with pytest.raises(error_type):
             local_commit_module._commit_barrier("artifact.stage")
 
     _, release = configure("invalid-target")
     local_commit_module._write_barrier_message(
-        release, "failure:target:not-a-code:1:artifact.stage", token
+        release,
+        "failure:target:not-a-code:1:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
     )
     with pytest.raises(TargetInspectionError) as invalid_target:
         local_commit_module._commit_barrier("artifact.stage")
@@ -1379,7 +1491,11 @@ def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
     malformed = tmp_path / "malformed-marker"
     malformed.write_text("{}", encoding="utf-8")
     with pytest.raises(TargetInspectionError):
-        local_commit_module._read_barrier_message(malformed, token)
+        local_commit_module._read_barrier_message(
+            malformed,
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
 
 
 def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
@@ -1413,7 +1529,10 @@ def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
 
     marker, _ = configure("initial-replay")
     local_commit_module._write_barrier_message(
-        marker, "1:artifact.stage", token
+        marker,
+        "1:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
     )
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_barrier("artifact.stage")
@@ -1433,7 +1552,10 @@ def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
 
     marker, release = configure("wrong-continuation")
     local_commit_module._write_barrier_message(
-        marker, "2:artifact.stage", token
+        marker,
+        "2:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
     )
     session = (str(marker), str(release), token)
     monkeypatch.setattr(
@@ -1444,7 +1566,12 @@ def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
         local_commit_module._commit_barrier("artifact.stage")
 
     _, release = configure("malformed-release")
-    local_commit_module._write_barrier_message(release, "malformed", token)
+    local_commit_module._write_barrier_message(
+        release,
+        "malformed",
+        token,
+        local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+    )
     ticks = iter((0.0, 0.0, 3.0))
     monkeypatch.setattr(local_commit_module, "monotonic", lambda: next(ticks))
     with pytest.raises(TargetInspectionError):
@@ -1458,6 +1585,84 @@ def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
     )
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_barrier("artifact.stage")
+
+
+def test_patch_phase_7_worker_barrier_rejects_marker_copied_as_release(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Reject a child marker replayed as a parent release before effects."""
+    token = bytes(range(32))
+    marker = tmp_path / "marker"
+    release = tmp_path / "release"
+    monkeypatch.setenv(local_commit_module._SEATBELT_BARRIER_ENV, str(marker))
+    monkeypatch.setenv(local_commit_module._SEATBELT_RELEASE_ENV, str(release))
+    monkeypatch.setenv(_WORKER_TOKEN_ENV, token.hex())
+    monkeypatch.setattr(local_commit_module, "_SEATBELT_WORKER_SESSION", None)
+    monkeypatch.setattr(local_commit_module, "_SEATBELT_WORKER_SEQUENCE", 0)
+    original_write = local_commit_module._write_barrier_message
+
+    def copy_child_marker(
+        path: Path, value: str, active_token: bytes, direction: bytes
+    ) -> None:
+        """Replay the exact just-published child marker into release path."""
+        original_write(path, value, active_token, direction)
+        if path == marker:
+            release.write_bytes(marker.read_bytes())
+
+    monkeypatch.setattr(
+        local_commit_module, "_write_barrier_message", copy_child_marker
+    )
+    effects: list[str] = []
+
+    def wait_for_release_then_effect() -> None:
+        """Record an effect only after an authenticated parent release."""
+        local_commit_module._commit_barrier("artifact.stage")
+        effects.append("after-release")
+
+    with pytest.raises(TargetInspectionError) as copied:
+        wait_for_release_then_effect()
+    assert copied.value.code is TargetErrorCode.WITNESS_STALE
+    assert effects == []
+    assert (
+        local_commit_module._read_barrier_message(
+            marker,
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+        )
+        == "1:artifact.stage"
+    )
+    with pytest.raises(TargetInspectionError) as wrong_direction:
+        local_commit_module._read_barrier_message(
+            release,
+            token,
+            local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+        )
+    assert wrong_direction.value.code is TargetErrorCode.WITNESS_STALE
+    envelope = loads(marker.read_bytes())
+    assert (
+        envelope["mac"]
+        == digest(
+            digest(
+                token,
+                local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
+                "sha256",
+            ),
+            b"1:artifact.stage",
+            "sha256",
+        ).hex()
+    )
+    assert (
+        envelope["mac"]
+        != digest(
+            digest(
+                token,
+                local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+                "sha256",
+            ),
+            b"1:artifact.stage",
+            "sha256",
+        ).hex()
+    )
 
 
 def test_patch_phase_7_seatbelt_protocol_validates_bound_worker_journals(
@@ -1753,7 +1958,7 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
     assert scope._host_root_binding is not None
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_namespace(
-            replace(profile, commit_namespace=None), scope._host_root_binding
+            replace(profile, commit_namespace=None)
         )
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_rooted(
@@ -1857,50 +2062,56 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
         close(parent_fd)
 
 
-def test_patch_phase_7_commit_namespace_uses_host_binding_not_child_topology(
+def test_patch_phase_7_commit_namespace_is_private_without_cross_mount_device(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Accept the private namespace from the retained host binding only."""
+    """Accept a private namespace without comparing separate mount devices."""
     profile = _profile(tmp_path)
-    binding = target_module._capture_host_root_binding(profile.root)
     namespace = profile.commit_namespace
     assert namespace is not None
 
-    def unexpected_child_topology(_descriptor: int, _status: object) -> str:
-        """Reject the obsolete child-topology comparison if it is restored."""
-        raise AssertionError("private namespace reread child topology")
+    actual_fstat = fstat
 
-    monkeypatch.setattr(
-        local_commit_module,
-        "_root_mount_id",
-        unexpected_child_topology,
-        raising=False,
-    )
-    assert local_commit_module._commit_namespace(profile, binding) == namespace
+    def cross_mount_status(descriptor: int) -> SimpleNamespace:
+        """Model the private directory from a distinct mount device."""
+        status = actual_fstat(descriptor)
+        return SimpleNamespace(
+            st_dev=status.st_dev + 1,
+            st_mode=status.st_mode,
+            st_uid=status.st_uid,
+        )
 
-    wrong_device = target_module._HostRootBinding(
-        target_module.FileIdentity(
-            binding.identity.device + 1, binding.identity.inode
-        ),
-        binding.mount_binding,
-    )
-    with pytest.raises(TargetInspectionError) as foreign_filesystem:
-        local_commit_module._commit_namespace(profile, wrong_device)
-    assert (
-        foreign_filesystem.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
-    )
+    monkeypatch.setattr("avalan.patch.local_commit.fstat", cross_mount_status)
+    assert local_commit_module._commit_namespace(profile) == namespace
+    monkeypatch.setattr("avalan.patch.local_commit.fstat", actual_fstat)
 
     mode = namespace.stat().st_mode
     namespace.chmod(mode | 0o077)
     try:
         with pytest.raises(TargetInspectionError) as public_namespace:
-            local_commit_module._commit_namespace(profile, binding)
+            local_commit_module._commit_namespace(profile)
         assert (
             public_namespace.value.code
             is TargetErrorCode.CAPABILITY_UNAVAILABLE
         )
     finally:
         namespace.chmod(mode)
+
+    def foreign_owner(descriptor: int) -> SimpleNamespace:
+        """Model a private-mode directory owned by another local user."""
+        status = actual_fstat(descriptor)
+        return SimpleNamespace(
+            st_dev=status.st_dev,
+            st_mode=status.st_mode,
+            st_uid=status.st_uid + 1,
+        )
+
+    monkeypatch.setattr("avalan.patch.local_commit.fstat", foreign_owner)
+    with pytest.raises(TargetInspectionError) as unowned_namespace:
+        local_commit_module._commit_namespace(profile)
+    assert (
+        unowned_namespace.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    )
 
 
 def test_patch_phase_7_linux_descriptor_lookup_failure_is_witness_stale(
@@ -2861,7 +3072,10 @@ def test_patch_phase_7_local_worker_micro_rejections(
     marker = tmp_path / "relay-marker"
     release = tmp_path / "relay-release"
     local_commit_module._write_barrier_message(
-        marker, "1:artifact.stage", token
+        marker,
+        "1:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
     )
 
     async def direct_thread(
@@ -2893,7 +3107,11 @@ def test_patch_phase_7_local_worker_micro_rejections(
                 )
             )
     assert (
-        local_commit_module._read_barrier_message(release, token)
+        local_commit_module._read_barrier_message(
+            release,
+            token,
+            local_commit_module._SEATBELT_PARENT_TO_CHILD_DOMAIN,
+        )
         == "failure:artifact_unknown:0:1:artifact.stage"
     )
 
@@ -2915,7 +3133,10 @@ def test_patch_phase_7_local_worker_micro_rejections(
         patcher.setattr(Path, "unlink", absent_cleanup)
         with pytest.raises(OSError):
             local_commit_module._write_barrier_message(
-                marker_path, "1:artifact.stage", token
+                marker_path,
+                "1:artifact.stage",
+                token,
+                local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
             )
     assert temporary_path.exists()
     temporary_path.unlink()
@@ -3102,7 +3323,10 @@ def test_patch_phase_7_final_local_commit_failure_branches(
     token = bytes(range(32))
     skipped_marker = tmp_path / "skipped-marker"
     local_commit_module._write_barrier_message(
-        skipped_marker, "2:artifact.stage", token
+        skipped_marker,
+        "2:artifact.stage",
+        token,
+        local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
     )
     with monkeypatch.context() as patcher:
         patcher.setattr(local_commit_module, "to_thread", direct_thread)
@@ -3369,7 +3593,10 @@ def test_patch_phase_7_barrier_message_failure_removes_temporary_file(
             raise AssertionError(failure)
     with pytest.raises(OSError):
         local_commit_module._write_barrier_message(
-            marker, "1:artifact.stage", token
+            marker,
+            "1:artifact.stage",
+            token,
+            local_commit_module._SEATBELT_CHILD_TO_PARENT_DOMAIN,
         )
     assert not temporary.exists()
     assert not marker.exists()
