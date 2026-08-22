@@ -1498,6 +1498,56 @@ def test_patch_phase_7_worker_barrier_authenticates_success_and_failures(
         )
 
 
+def test_patch_phase_7_commit_worker_bootstrap_excludes_public_runtime() -> (
+    None
+):
+    """Import the commit worker without the public package runtime."""
+    cryptography_root, cffi_backend, cffi_root = (
+        target_module._worker_runtime_paths()
+    )
+    source_root = Path(local_commit_module.__file__).resolve().parents[2]
+    script = (
+        "import sys\nsys.path.append(sys.argv[4])\n"
+        + local_commit_module._COMMIT_WORKER_BOOTSTRAP
+        + 'sys.modules["httpx"] = None\n'
+        "from avalan.patch import local_commit\n"
+        'assert not hasattr(sys.modules["avalan"], '
+        '"config"), "public runtime"\n'
+        'assert sys.modules["httpx"] is None, "httpx"\n'
+        "print(local_commit.__name__)\n"
+    )
+    result = run_process(
+        (
+            executable,
+            "-I",
+            "-S",
+            "-c",
+            script,
+            str(source_root),
+            str(cryptography_root),
+            str(cffi_backend),
+            str(cffi_root),
+        ),
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert result.returncode == 0, result.stderr
+    assert result.stdout == "avalan.patch.local_commit\n"
+
+
+def test_patch_phase_7_worker_runtime_paths_fail_closed_without_crypto(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a commit worker when its sealed crypto runtime is absent."""
+    monkeypatch.setattr(target_module, "cryptography_file", None)
+
+    with pytest.raises(TargetInspectionError) as rejected:
+        target_module._worker_runtime_paths()
+
+    assert rejected.value.code is TargetErrorCode.WORKER_UNAVAILABLE
+
+
 def test_patch_phase_7_worker_barrier_rejects_invalid_continuations(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
