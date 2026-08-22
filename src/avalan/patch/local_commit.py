@@ -77,6 +77,8 @@ from avalan.patch.rooted_worker import (
     _ArtifactUncertainError,
     _failed_report,
     _steps,
+    capture_rooted_root_binding,
+    validate_rooted_root_binding,
 )
 from avalan.patch.rooted_worker import (
     _commit_rooted as _commit_rooted_neutral,
@@ -298,6 +300,16 @@ async def _commit_in_seatbelt(
 ) -> WorkerReport:
     """Execute one authenticated command in the selected native sandbox."""
     namespace = _commit_namespace(profile, witness)
+    host_root, host_mount_binding = capture_rooted_root_binding(
+        profile.root._path
+    )
+
+    def validate_host_root() -> None:
+        """Require the dispatch root to stay bound before a child effect."""
+        validate_rooted_root_binding(
+            profile.root._path, host_root, host_mount_binding
+        )
+
     token = token_bytes(32)
     marker = namespace / (
         ".avalan-patch-barrier-" + sha256(token).hexdigest()[:32]
@@ -365,7 +377,9 @@ async def _commit_in_seatbelt(
         raise TargetInspectionError(
             TargetErrorCode.CAPABILITY_UNAVAILABLE
         ) from exc
-    relay = create_task(_relay_seatbelt_barriers(marker, release, token))
+    relay = create_task(
+        _relay_seatbelt_barriers(marker, release, token, validate_host_root)
+    )
     relay_error: BaseException | None = None
     try:
         response_bytes, error_bytes = await process.communicate(message)
@@ -393,7 +407,10 @@ async def _commit_in_seatbelt(
 
 
 async def _relay_seatbelt_barriers(
-    marker: Path, release: Path, token: bytes
+    marker: Path,
+    release: Path,
+    token: bytes,
+    root_binding_check: Callable[[], None] | None = None,
 ) -> None:
     """Forward authenticated fixed worker boundaries to local test hooks."""
     last_sequence = 0
@@ -415,6 +432,8 @@ async def _relay_seatbelt_barriers(
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         try:
             await to_thread(_commit_barrier, stage)
+            if root_binding_check is not None:
+                await to_thread(root_binding_check)
         except _ArtifactUncertainError:
             await to_thread(
                 _write_barrier_message,

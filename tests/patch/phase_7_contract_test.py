@@ -1107,17 +1107,15 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         def acl_init(self, count: int) -> object:
             """Report unavailable empty ACL initialization."""
             del count
-            return target_module._METADATA_FFI.NULL
+            return acl_ffi.NULL
 
         def acl_from_text(self, value: bytes) -> object:
             """Report unavailable native ACL parsing."""
             del value
-            return target_module._METADATA_FFI.NULL
+            return acl_ffi.NULL
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(
-            target_module, "_METADATA_LIBC", AclInitializationFailure()
-        )
+        patcher.setattr(target_module, acl_libc, AclInitializationFailure())
         with pytest.raises(OSError):
             target_module._probe_acl()
         with pytest.raises(OSError):
@@ -1131,7 +1129,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         def acl_init(self, count: int) -> object:
             """Return a synthetic non-null ACL handle."""
             del count
-            return target_module._METADATA_FFI.cast("void *", 1)
+            return acl_ffi.cast("void *", 1)
 
         def acl_create_entry(self, pointer: object, entry: object) -> int:
             """Fail the first ACL entry construction step."""
@@ -1144,9 +1142,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             return 0
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(
-            target_module, "_METADATA_LIBC", AclConstructionFailure()
-        )
+        patcher.setattr(target_module, acl_libc, AclConstructionFailure())
         with pytest.raises(OSError):
             target_module._probe_acl()
 
@@ -1177,12 +1173,17 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             del arguments
             return self._flags
 
+        def ioctl(self, *arguments: object) -> int:
+            """Return the configured Linux flags restore result."""
+            del arguments
+            return self._flags
+
     with monkeypatch.context() as patcher:
         patcher.setattr(
             target_module, "_capture_protected_metadata", lambda _fd: current
         )
         patcher.setattr(
-            target_module, "_METADATA_LIBC", MetadataRestoreFailure(-1, 0, 0)
+            target_module, metadata_libc, MetadataRestoreFailure(-1, 0, 0)
         )
         with pytest.raises(OSError):
             target_module._restore_protected_metadata(0, desired)
@@ -1197,7 +1198,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
             lambda _fd: desired,
         )
         patcher.setattr(
-            target_module, "_METADATA_LIBC", MetadataRestoreFailure(0, -1, 0)
+            target_module, metadata_libc, MetadataRestoreFailure(0, -1, 0)
         )
         with pytest.raises(OSError):
             target_module._restore_protected_metadata(0, desired_xattr)
@@ -1210,7 +1211,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         )
         patcher.setattr(target_module, "_restore_acl", lambda _fd, _acl: None)
         patcher.setattr(
-            target_module, "_METADATA_LIBC", MetadataRestoreFailure(0, 0, -1)
+            target_module, metadata_libc, MetadataRestoreFailure(0, 0, -1)
         )
         with pytest.raises(OSError):
             target_module._restore_protected_metadata(0, desired)
@@ -1224,7 +1225,7 @@ def test_patch_phase_7_native_metadata_helpers_reject_malformed_results(
         )
         patcher.setattr(target_module, "_restore_acl", lambda _fd, _acl: None)
         patcher.setattr(
-            target_module, "_METADATA_LIBC", MetadataRestoreFailure(0, 0, 0)
+            target_module, metadata_libc, MetadataRestoreFailure(0, 0, 0)
         )
         with pytest.raises(OSError):
             target_module._restore_protected_metadata(0, desired)
@@ -1851,6 +1852,24 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
         close(parent_fd)
 
 
+def test_patch_phase_7_linux_descriptor_lookup_failure_is_witness_stale(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Normalize unavailable Linux descriptor links to a stale witness."""
+
+    def unavailable_descriptor(_path: str) -> str:
+        """Fail one Linux descriptor-link lookup before path parsing."""
+        raise FileNotFoundError
+
+    monkeypatch.setattr(rooted_worker_module, "sys_platform", "linux")
+    monkeypatch.setattr(
+        rooted_worker_module, "readlink", unavailable_descriptor
+    )
+    with pytest.raises(TargetInspectionError) as unavailable:
+        rooted_worker_module._descriptor_path(-1)
+    assert unavailable.value.code is TargetErrorCode.WITNESS_STALE
+
+
 def test_patch_phase_7_local_worker_protocol_and_rooted_error_reports(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -2232,7 +2251,12 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
             return 0
 
     with monkeypatch.context() as patcher:
-        patcher.setattr(rooted_worker_module, "_LIBC", EmptyDescriptorPath())
+        if runtime_platform.startswith("linux"):
+            patcher.setattr(rooted_worker_module, "readlink", lambda _path: "")
+        else:
+            patcher.setattr(
+                rooted_worker_module, "_LIBC", EmptyDescriptorPath()
+            )
         with pytest.raises(TargetInspectionError):
             rooted_worker_module._descriptor_path(0)
 
@@ -2478,9 +2502,14 @@ def test_patch_phase_7_local_worker_micro_rejections(
         del arguments, keywords
         return CancelledProcess()
 
-    async def idle_relay(marker: Path, release: Path, value: bytes) -> None:
+    async def idle_relay(
+        marker: Path,
+        release: Path,
+        value: bytes,
+        root_binding_check: Callable[[], None],
+    ) -> None:
         """Wait until parent cleanup cancels the private barrier relay."""
-        del marker, release, value
+        del marker, release, value, root_binding_check
         await async_sleep(10)
 
     assert scope.root_witness is not None
@@ -3032,9 +3061,14 @@ def test_patch_phase_7_failed_relay_still_removes_child_markers(
             await async_sleep(0)
             return b"", b""
 
-    async def failed_relay(marker: Path, release: Path, token: bytes) -> None:
+    async def failed_relay(
+        marker: Path,
+        release: Path,
+        token: bytes,
+        root_binding_check: Callable[[], None],
+    ) -> None:
         """Raise one non-cancellation relay failure after child startup."""
-        del marker, release, token
+        del marker, release, token, root_binding_check
         raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
 
     async def fake_subprocess(
@@ -3784,24 +3818,19 @@ def test_patch_phase_7_preserves_native_protected_metadata(
     source.write_bytes(b"before\n")
     descriptor = open_fd(source, O_RDONLY)
     try:
-        assert (
-            target_module._METADATA_LIBC.fsetxattr(
-                descriptor,
-                b"user.avalan.phase7",
-                target_module._METADATA_FFI.new("char[]", b"retained"),
-                len(b"retained"),
-                0,
-                0,
-            )
-            == 0
+        target_module._set_xattr(
+            descriptor, b"user.avalan.phase7", b"retained"
         )
         before = target_module._capture_protected_metadata(descriptor)
+        native_flags = target_module._capture_native_flags(descriptor)
     finally:
         close(descriptor)
-    native_flags = getattr(source.stat(), "st_flags", None)
-    assert isinstance(native_flags, int)
+    assert type(native_flags) is int
     assert before.flags == native_flags
-    assert before.acl is None
+    if runtime_platform.startswith("linux"):
+        assert isinstance(before.acl, bytes)
+    else:
+        assert before.acl is None
     assert (b"user.avalan.phase7", b"retained") in before.xattrs
     profile = _profile(tmp_path)
 
@@ -3851,16 +3880,8 @@ def test_patch_phase_7_preserves_native_protected_metadata(
         source.write_bytes(b"before\n")
         descriptor = open_fd(source, O_RDONLY)
         try:
-            assert (
-                target_module._METADATA_LIBC.fsetxattr(
-                    descriptor,
-                    b"user.avalan.phase7",
-                    target_module._METADATA_FFI.new("char[]", b"retained"),
-                    len(b"retained"),
-                    0,
-                    0,
-                )
-                == 0
+            target_module._set_xattr(
+                descriptor, b"user.avalan.phase7", b"retained"
             )
         finally:
             close(descriptor)

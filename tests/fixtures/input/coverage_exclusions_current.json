@@ -209,12 +209,12 @@
     },
     {
       "path": "src/avalan/sandbox/backend.py",
-      "line": 646,
+      "line": 652,
       "text": "        raise NotImplementedError  # pragma: no cover"
     },
     {
       "path": "src/avalan/sandbox/backend.py",
-      "line": 653,
+      "line": 659,
       "text": "        raise NotImplementedError  # pragma: no cover"
     },
     {
@@ -1453,8 +1453,8 @@
       151
     ],
     "src/avalan/sandbox/backend.py": [
-      646,
-      653
+      652,
+      659
     ],
     "src/avalan/sdk.py": [
       236,
@@ -2843,5 +2843,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "1e6602769c8b86439db81427509271c53eb75dd4262daab61b5962d38fbe89b4"
+  "snapshot_sha256": "bd203425919b931884594501fb1f56e9c0c72812fcfc086000126be1dee37805"
 }
