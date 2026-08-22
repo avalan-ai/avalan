@@ -921,6 +921,45 @@ def _bubblewrap_parent_directories(
     return tuple(sorted(directories, key=lambda item: (item.count("/"), item)))
 
 
+def _canary_child_process_identity(
+    backend: SandboxBackend,
+    session_id: SandboxSessionId,
+    host_process_pid: int,
+    canary_pid: object,
+) -> str:
+    """Bind an authenticated canary PID in its selected PID namespace."""
+    if (
+        type(host_process_pid) is not int
+        or host_process_pid <= 0
+        or type(canary_pid) is not int
+        or canary_pid <= 0
+    ):
+        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    match backend:
+        case SandboxBackend.SEATBELT:
+            if canary_pid != host_process_pid:
+                raise TargetInspectionError(
+                    TargetErrorCode.CAPABILITY_UNAVAILABLE
+                )
+            payload = session_id + "\x00" + str(host_process_pid)
+        case SandboxBackend.BUBBLEWRAP:
+            # Bubblewrap retains PID 1 as the namespace reaper for its worker.
+            if canary_pid != 2:
+                raise TargetInspectionError(
+                    TargetErrorCode.CAPABILITY_UNAVAILABLE
+                )
+            payload = (
+                session_id
+                + "\x00"
+                + str(host_process_pid)
+                + "\x00"
+                + str(canary_pid)
+            )
+        case _:
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    return sha256(payload.encode()).hexdigest()
+
+
 @dataclass(frozen=True, slots=True)
 class _RuntimeAttestation:
     """Bind the exact emitted sandbox and live child canary evidence."""
@@ -1122,7 +1161,6 @@ class _SandboxRuntimeProcess:
                 if (
                     set(canary)
                     != {"pid", "outside_read_denied", "metadata_probe"}
-                    or canary["pid"] != process.pid
                     or canary["outside_read_denied"] is not True
                     or not isinstance(canary["metadata_probe"], str)
                     or not _is_sha256_digest(canary["metadata_probe"])
@@ -1130,12 +1168,13 @@ class _SandboxRuntimeProcess:
                     raise TargetInspectionError(
                         TargetErrorCode.CAPABILITY_UNAVAILABLE
                     )
+                child_process_identity = _canary_child_process_identity(
+                    backend, session_id, process.pid, canary["pid"]
+                )
                 attestation = _RuntimeAttestation(
                     _runtime_command_digest(command),
                     _backend_policy_digest(backend, command),
-                    sha256(
-                        (session_id + "\x00" + str(process.pid)).encode()
-                    ).hexdigest(),
+                    child_process_identity,
                     sha256(
                         dumps(
                             canary, separators=(",", ":"), sort_keys=True

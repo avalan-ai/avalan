@@ -4034,6 +4034,51 @@ def test_patch_phase_10_bubblewrap_uses_a_distinct_runtime_view(
     )
 
 
+def test_patch_phase_10_binds_canary_pid_in_selected_namespace() -> None:
+    """Bind authenticated child PIDs without conflating PID namespaces."""
+    session_id = SandboxSessionId("sandbox-session")
+    seatbelt = sandbox_commit_module._canary_child_process_identity(
+        SandboxBackend.SEATBELT, session_id, 47, 47
+    )
+    assert (
+        seatbelt == sha256((session_id + "\x00" + "47").encode()).hexdigest()
+    )
+    bubblewrap = sandbox_commit_module._canary_child_process_identity(
+        SandboxBackend.BUBBLEWRAP, session_id, 47, 2
+    )
+    bubblewrap_payload = session_id + "\x00" + "47" + "\x00" + "2"
+    assert bubblewrap == sha256(bubblewrap_payload.encode()).hexdigest()
+    other_host = sandbox_commit_module._canary_child_process_identity(
+        SandboxBackend.BUBBLEWRAP, session_id, 48, 2
+    )
+    other_host_payload = session_id + "\x00" + "48" + "\x00" + "2"
+    assert other_host == sha256(other_host_payload.encode()).hexdigest()
+    assert other_host != bubblewrap
+    invalid: tuple[tuple[SandboxBackend, object], ...] = (
+        (SandboxBackend.SEATBELT, 1),
+        (SandboxBackend.BUBBLEWRAP, 1),
+        (SandboxBackend.BUBBLEWRAP, 3),
+        (SandboxBackend.BUBBLEWRAP, 0),
+        (SandboxBackend.BUBBLEWRAP, True),
+        (SandboxBackend.BUBBLEWRAP, "2"),
+    )
+    for backend, child_pid in invalid:
+        with pytest.raises(TargetInspectionError) as rejected:
+            sandbox_commit_module._canary_child_process_identity(
+                backend, session_id, 47, child_pid
+            )
+        assert rejected.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    for backend, host_pid, child_pid in (
+        (SandboxBackend.SEATBELT, 0, 1),
+        (cast(SandboxBackend, object()), 47, 1),
+    ):
+        with pytest.raises(TargetInspectionError) as rejected:
+            sandbox_commit_module._canary_child_process_identity(
+                backend, session_id, host_pid, child_pid
+            )
+        assert rejected.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+
+
 def test_patch_phase_10_requires_worker_reaping_before_domain_reuse(
     tmp_path: Path,
 ) -> None:
