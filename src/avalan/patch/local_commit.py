@@ -91,11 +91,9 @@ from avalan.patch.target import (
     TargetErrorCode,
     TargetHandshake,
     TargetInspectionError,
-    _filesystem_id,
     _HostRootBinding,
     _is_local_mutation_test_platform,
     _open_directory,
-    _root_mount_id,
     _seatbelt_string,
     _validate_host_root_binding,
     _worker_sandbox_command,
@@ -309,7 +307,7 @@ async def _commit_in_seatbelt(
 ) -> WorkerReport:
     """Execute one authenticated command in the selected native sandbox."""
     _validate_host_root_binding(profile.root, host_root_binding)
-    namespace = _commit_namespace(profile, witness)
+    namespace = _commit_namespace(profile, host_root_binding)
 
     def validate_host_root() -> None:
         """Require the dispatch root to stay bound before a child effect."""
@@ -573,29 +571,22 @@ def _write_barrier_message(path: Path, value: str, token: bytes) -> None:
 
 
 def _commit_namespace(
-    profile: LocalTargetProfile, witness: RootWitness
+    profile: LocalTargetProfile, host_root_binding: _HostRootBinding
 ) -> Path:
     """Require one configured private namespace on the rooted filesystem."""
     namespace = profile.commit_namespace
     if namespace is None:
         raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
     descriptor = _open_directory(namespace)
-    root_descriptor = _open_directory(profile.root._path)
     try:
         status = fstat(descriptor)
-        root_status = fstat(root_descriptor)
         if (
-            status.st_dev != witness.identity.device
-            or _filesystem_id(descriptor) != witness.filesystem_id
-            or _root_mount_id(descriptor, status) != witness.mount_id
+            status.st_dev != host_root_binding.identity.device
             or status.st_mode & 0o077
             or status.st_uid != getuid()
-            or root_status.st_dev != witness.identity.device
-            or root_status.st_ino != witness.identity.inode
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
     finally:
-        close(root_descriptor)
         close(descriptor)
     return namespace
 

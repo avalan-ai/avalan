@@ -1750,9 +1750,10 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
 
     command, scope = run(command_and_scope())
     assert scope.root_witness is not None
+    assert scope._host_root_binding is not None
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_namespace(
-            replace(profile, commit_namespace=None), scope.root_witness
+            replace(profile, commit_namespace=None), scope._host_root_binding
         )
     with pytest.raises(TargetInspectionError):
         local_commit_module._commit_rooted(
@@ -1854,6 +1855,52 @@ def test_patch_phase_7_local_commit_helper_rejections_are_fail_closed(
                 )
     finally:
         close(parent_fd)
+
+
+def test_patch_phase_7_commit_namespace_uses_host_binding_not_child_topology(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Accept the private namespace from the retained host binding only."""
+    profile = _profile(tmp_path)
+    binding = target_module._capture_host_root_binding(profile.root)
+    namespace = profile.commit_namespace
+    assert namespace is not None
+
+    def unexpected_child_topology(_descriptor: int, _status: object) -> str:
+        """Reject the obsolete child-topology comparison if it is restored."""
+        raise AssertionError("private namespace reread child topology")
+
+    monkeypatch.setattr(
+        local_commit_module,
+        "_root_mount_id",
+        unexpected_child_topology,
+        raising=False,
+    )
+    assert local_commit_module._commit_namespace(profile, binding) == namespace
+
+    wrong_device = target_module._HostRootBinding(
+        target_module.FileIdentity(
+            binding.identity.device + 1, binding.identity.inode
+        ),
+        binding.mount_binding,
+    )
+    with pytest.raises(TargetInspectionError) as foreign_filesystem:
+        local_commit_module._commit_namespace(profile, wrong_device)
+    assert (
+        foreign_filesystem.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    )
+
+    mode = namespace.stat().st_mode
+    namespace.chmod(mode | 0o077)
+    try:
+        with pytest.raises(TargetInspectionError) as public_namespace:
+            local_commit_module._commit_namespace(profile, binding)
+        assert (
+            public_namespace.value.code
+            is TargetErrorCode.CAPABILITY_UNAVAILABLE
+        )
+    finally:
+        namespace.chmod(mode)
 
 
 def test_patch_phase_7_linux_descriptor_lookup_failure_is_witness_stale(
@@ -5309,7 +5356,7 @@ def test_patch_phase_7_rejects_ancestor_link_before_native_commit(
 def test_patch_phase_7_rejects_remounted_root_before_native_commit(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Reject a changed filesystem witness before attempting any update."""
+    """Reject a changed host root binding before attempting any update."""
     path = tmp_path / "note.txt"
     path.write_bytes(b"before\n")
     profile = _profile(tmp_path)
@@ -5335,11 +5382,14 @@ def test_patch_phase_7_rejects_remounted_root_before_native_commit(
             ),
             {"note.txt": b"before\n"},
         )
+        worker = await target.worker(scope)
         monkeypatch.setattr(
-            local_commit_module, "_filesystem_id", lambda descriptor: "other"
+            target_module,
+            "_namespace_mount_binding",
+            lambda _descriptor: "other",
         )
         report = await _test_commit(
-            await target.worker(scope),
+            worker,
             SealedCommitCommand(
                 sealed,
                 CommitLease(
