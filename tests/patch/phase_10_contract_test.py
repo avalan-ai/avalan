@@ -290,7 +290,9 @@ def _limits() -> PatchLimits:
         ByteSize(65_536),
         DurationTicks(10),
         DurationTicks(10),
-        DurationTicks(10),
+        # The authenticated native final-effect handshake spans several
+        # request/response fences, unlike deterministic in-process checks.
+        DurationTicks(1_000),
     )
 
 
