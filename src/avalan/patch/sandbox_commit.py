@@ -159,6 +159,8 @@ from avalan.patch.policy import (
 from avalan.patch.rooted_worker import (
     _artifacts,
     _steps,
+    capture_rooted_root_binding,
+    validate_rooted_root_binding,
 )
 from avalan.patch.sandbox_wire import canonical_sandbox_plan_bytes
 from avalan.patch.target import (
@@ -1809,6 +1811,8 @@ class SandboxPatchRuntime:
 
     profile: SandboxRuntimeProfile
     _profile_guard: SandboxRuntimeProfile = field(init=False, repr=False)
+    _host_root: RootWitness = field(init=False, repr=False)
+    _host_mount_binding: str = field(init=False, repr=False)
     _process: _SandboxRuntimeProcess = field(init=False, repr=False)
     _scope: ResolvedMutationScope | None = field(
         default=None, init=False, repr=False
@@ -1825,7 +1829,18 @@ class SandboxPatchRuntime:
     def __post_init__(self) -> None:
         """Create the process owner without exposing a child channel."""
         self._profile_guard = replace(self.profile)
+        self._host_root, self._host_mount_binding = (
+            capture_rooted_root_binding(self.profile._workspace_host_root)
+        )
         self._process = _SandboxRuntimeProcess(self.profile)
+
+    def _validate_host_root_binding(self) -> None:
+        """Reject a replaced host workspace before using its child view."""
+        validate_rooted_root_binding(
+            self.profile._workspace_host_root,
+            self._host_root,
+            self._host_mount_binding,
+        )
 
     async def __aenter__(self) -> "SandboxPatchRuntime":
         """Retain this already-selected runtime for its loader lifetime."""
@@ -1852,6 +1867,7 @@ class SandboxPatchRuntime:
                 or self._process.profile != self._profile_guard
             ):
                 raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+            self._validate_host_root_binding()
             if self._scope is not None:
                 return self._scope
             (
@@ -1861,6 +1877,19 @@ class SandboxPatchRuntime:
                 primitive_receipts,
                 attestation,
             ) = await self._process.start()
+            try:
+                self._validate_host_root_binding()
+            except BaseException as stale_error:
+                try:
+                    await self._process.close()
+                except CancelledError:
+                    raise
+                except BaseException as cleanup_error:
+                    stale_error.add_note(
+                        "runtime cleanup after stale host binding failed: "
+                        + type(cleanup_error).__name__
+                    )
+                raise
             if (
                 root.filesystem_id != self.profile.identity.filesystem_id
                 or root.mount_id != self.profile.identity.mount_id
@@ -2022,6 +2051,7 @@ class SandboxPatchRuntime:
                 or scope.root_witness != receipt.root
             ):
                 raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+            self._validate_host_root_binding()
             return receipt
 
 
