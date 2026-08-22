@@ -200,20 +200,20 @@
     ]
   },
   "platform_receipts": {
-    "darwin": "real-seatbelt-tested",
-    "linux": "real-bubblewrap-required"
+    "darwin": "real-seatbelt-verified-github-native",
+    "linux": "real-bubblewrap-verified-github-native"
   },
   "platform_job_claims": {
     "macos-15-python-3.11": {
       "backend": "seatbelt",
-      "claim": "required-real-receipt",
+      "claim": "verified-real-receipt",
       "test": "PATCH-E2E-015"
     },
     "ubuntu-latest-python-3.11": {
       "backend": "bubblewrap",
-      "claim": "required-real-receipt",
+      "claim": "verified-real-receipt",
       "test": "PATCH-E2E-015"
     }
   },
-  "inventory_sha256": "6fd22a38b3df04017171ac574d1882904ce0509649c0591b52a286c069415b82"
+  "inventory_sha256": "d392f520d529b048bd77f2a83462c1cd39c3169a11f82d8d4da9f2e108fc9cfd"
 }

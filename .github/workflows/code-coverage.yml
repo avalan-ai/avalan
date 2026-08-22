@@ -52,10 +52,23 @@ jobs:
             --command="ALTER USER postgres PASSWORD 'postgres';"
           pg_isready --host 127.0.0.1 --port 5432
 
+      - name: Install project dependencies
+        run: poetry sync --all-extras --with test
+
+      - name: Verify native sandbox and type-contract smoke
+        run: |
+          poetry run pytest -q tests/patch/phase_10_contract_test.py \
+            tests/project_metadata_test.py::test_test_workflow_covers_supported_matrix_and_build_gates
+          make typecheck-input-contract INPUT_PHASE=12
+          make typecheck-conversation-contract CONVERSATION_PHASE=11
+          poetry run pytest -q \
+            tests/interaction/rejected_result_type_contract_test.py \
+            tests/interaction/rejected_store_trust_boundary_type_contract_test.py
+
       - name: Run coverage
         env:
           AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
-        run: make test coverage
+        run: make test no-install coverage
 
       - name: Upload coverage report
         if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository

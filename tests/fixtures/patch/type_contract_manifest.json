@@ -1053,8 +1053,17 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d7a8b5d7b466da963be63181d7ccf26d6999b0c4ea30d910118da37fee71c3bf"
+      "source_sha256": "c48ef21b4713e94aa33c74036db3c97bf6ca2288fb674abded44e4266af8d460"
+    },
+    {
+      "id": "PATCH-TS-080",
+      "path": "tests/project_metadata_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_test_workflow_covers_supported_matrix_and_build_gates"
+      ],
+      "source_sha256": "70b22eea5203b9cfed869d45f9e11cb3fcca311ade6a009e68b62bcdd909341e"
     }
   ],
-  "manifest_sha256": "04a2b818939f61b5e86a35fbde3eccde843d0f9507c38cfa00914d41d2c628d1"
+  "manifest_sha256": "831cedd68af1a334436a95b5b72411fd5499909f93d1ef0c91852d604d65bccc"
 }
