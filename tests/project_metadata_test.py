@@ -183,9 +183,16 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
     coverage_workflow = _read_repository_text(
         ".github/workflows/code-coverage.yml"
     )
-    assert "run: make test coverage" in coverage_workflow
+    assert "run: make test no-install coverage" in coverage_workflow
+    assert "run: make test coverage" not in coverage_workflow
+    assert (
+        "tests/project_metadata_test.py::"
+        "test_test_workflow_covers_supported_matrix_and_build_gates"
+        in coverage_workflow
+    )
     assert "run: make test-conversation-current-exact" not in coverage_workflow
-    assert "CONVERSATION_PHASE" not in coverage_workflow
+    assert "make test-conversation-exact" not in coverage_workflow
+    assert "make test-conversation-pgsql-exact" not in coverage_workflow
     assert "sudo systemctl start postgresql.service" in coverage_workflow
     assert (
         "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "

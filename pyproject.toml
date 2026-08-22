@@ -157,7 +157,7 @@ vision = [
   "diffusers>=0.38.0,<0.39.0",
   "imageio>=2.37.0,<3.0.0",
   "imageio-ffmpeg>=0.6.0,<0.7.0",
-  "opencv-python>=4.12.0.88,<5.0.0",
+  "opencv-python-headless==4.12.0.88",
   "pillow>=12.2.0,<13.0",
   "safetensors>=0.8.0rc0,<0.9.0",
   "torchvision>=0.27.1,<0.28.0 ; python_full_version != '3.14.1'",

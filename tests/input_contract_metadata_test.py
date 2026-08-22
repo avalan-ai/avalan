@@ -173,17 +173,55 @@ def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
     assert "run: make test no-install" in workflow
     assert "AVALAN_TASK_TEST_POSTGRESQL_DOCKER" not in workflow
     assert "make test-pgsql" not in workflow
-    assert "run: make test coverage" in coverage_workflow
+    install = (
+        "      - name: Install project dependencies\n"
+        "        run: poetry sync --all-extras --with test\n"
+    )
+    assert install in coverage_workflow
+    assert coverage_workflow.count("poetry sync --all-extras --with test") == 1
+    assert "run: make test no-install coverage" in coverage_workflow
+    assert "run: make test coverage" not in coverage_workflow
     assert "sudo apt-get install --yes bubblewrap libacl1" in coverage_workflow
     assert (
         "kernel.apparmor_restrict_unprivileged_userns=0" in coverage_workflow
     )
+    smoke = (
+        "      - name: Verify native sandbox and type-contract smoke\n"
+        "        run: |\n"
+        "          poetry run pytest -q "
+        "tests/patch/phase_10_contract_test.py \\\n"
+        "            tests/project_metadata_test.py::"
+        "test_test_workflow_covers_supported_matrix_and_build_gates\n"
+        "          make typecheck-input-contract INPUT_PHASE=12\n"
+        "          make typecheck-conversation-contract "
+        "CONVERSATION_PHASE=11\n"
+    )
+    assert smoke in coverage_workflow
+    assert (
+        "tests/interaction/rejected_result_type_contract_test.py"
+        in coverage_workflow
+    )
+    assert (
+        "tests/interaction/rejected_store_trust_boundary_type_contract_test.py"
+        in coverage_workflow
+    )
+    assert coverage_workflow.index(smoke) < coverage_workflow.index(
+        "      - name: Run coverage\n"
+    )
+    assert coverage_workflow.index(install) < coverage_workflow.index(smoke)
     assert "kernel.unprivileged_userns_clone=1" in coverage_workflow
     assert "bwrap --die-with-parent --unshare-user --uid 0 --gid 0" in (
         coverage_workflow
     )
     assert "run: make test-conversation-current-exact" not in coverage_workflow
-    assert "CONVERSATION_PHASE" not in coverage_workflow
+    assert "make test-conversation-exact" not in coverage_workflow
+    assert "make test-conversation-pgsql-exact" not in coverage_workflow
+    pyproject = (_ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    lockfile = (_ROOT / "poetry.lock").read_text(encoding="utf-8")
+    assert '"opencv-python-headless==4.12.0.88",' in pyproject
+    assert '"opencv-python>=4.12.0.88,<5.0.0",' not in pyproject
+    assert '\nname = "opencv-python"\n' not in lockfile
+    assert 'name = "opencv-python-headless"\nversion = "4.12.0.88"' in lockfile
     assert "sudo systemctl start postgresql.service" in coverage_workflow
     assert (
         "AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: "
