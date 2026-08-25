@@ -214,7 +214,7 @@ class GitHistoryPolicyPhase6Test(IsolatedAsyncioTestCase):
                         "--no-stat",
                         "--no-autostash",
                         "--no-rebase-merges",
-                        "--empty=stop",
+                        "--empty=ask",
                         "main",
                         "feature",
                     ),
@@ -927,6 +927,60 @@ class GitHistoryExecutionPhase6Test(IsolatedAsyncioTestCase):
             result.git_result.audit_metadata["git_mutation_scope"],
             "history",
         )
+
+    async def test_rebase_empty_ask_warning_preserves_exit_handling(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as workspace:
+            root = Path(workspace)
+            _write_minimal_git_repo(root / "repo")
+            warning = "warning: --empty=ask is deprecated"
+            success = await _call_tool(
+                _fake_toolset(
+                    root,
+                    _FakeGitExecutor(
+                        stderr=warning,
+                        status=ShellExecutionStatus.COMPLETED,
+                        exit_code=0,
+                    ),
+                ),
+                "git_rebase",
+                upstream="main",
+                confirm_upstream="main",
+                branch="feature",
+            )
+            failure = await _call_tool(
+                _fake_toolset(
+                    root,
+                    _FakeGitExecutor(
+                        stderr=warning + "\nfatal: fixture failure",
+                        status=ShellExecutionStatus.NONZERO_EXIT,
+                        exit_code=128,
+                    ),
+                ),
+                "git_rebase",
+                upstream="main",
+                confirm_upstream="main",
+                branch="feature",
+            )
+
+        self.assertEqual(
+            success.git_result.status,
+            ShellGitExecutionStatus.SUCCESS,
+        )
+        self.assertEqual(success.git_result.error_code, None)
+        self.assertEqual(success.git_result.exit_code, 0)
+        self.assertIn(warning, str(success))
+        self.assertEqual(
+            failure.git_result.status,
+            ShellGitExecutionStatus.FAILED,
+        )
+        self.assertEqual(
+            failure.git_result.error_code,
+            ShellGitExecutionErrorCode.NONZERO_EXIT,
+        )
+        self.assertEqual(failure.git_result.exit_code, 128)
+        self.assertIn(warning, str(failure))
 
 
 @skipIf(_GIT_BINARY is None, "git executable is not available")

@@ -1102,6 +1102,7 @@ def execute_pytest_nodes(
         root,
         (
             "-q",
+            "-s",
             "-r",
             "xXs",
             "-o",

@@ -145,6 +145,74 @@ def test_acceptance_cli_executes_exact_synthetic_node(
     )
 
 
+def test_acceptance_execution_disables_pytest_output_capture(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Run PTY acceptance without pytest descriptor capture."""
+    tests = tmp_path / "tests"
+    tests.mkdir()
+    path = tests / "sample_test.py"
+    path.write_text(
+        "def test_value() -> None:\n    assert True\n",
+        encoding="utf-8",
+    )
+    node = _VERIFIER.AcceptanceNode(
+        id="synthetic",
+        category="unit",
+        lifecycle="active",
+        active_from_phase=0,
+        requirement_ids=("INPUT-N-001",),
+        node_id="tests/sample_test.py::test_value",
+    )
+    calls: list[tuple[str, ...]] = []
+
+    def pytest_result(
+        root: Path,
+        arguments: tuple[str, ...],
+        *,
+        timeout: int,
+    ) -> object:
+        """Record each verifier pytest invocation."""
+        assert root == tmp_path
+        assert timeout > 0
+        calls.append(arguments)
+        if "--collect-only" in arguments:
+            return _VERIFIER.CompletedProcess(
+                arguments,
+                0,
+                stdout="tests/sample_test.py::test_value\n",
+                stderr="",
+            )
+        junit_argument = next(
+            argument
+            for argument in arguments
+            if argument.startswith("--junitxml=")
+        )
+        junit = Path(junit_argument.split("=", 1)[1])
+        junit.write_text(
+            '<testsuite tests="1" failures="0" errors="0" skipped="0">'
+            '<testcase file="tests/sample_test.py" '
+            'classname="tests.sample_test" name="test_value" />'
+            "</testsuite>\n",
+            encoding="utf-8",
+        )
+        return _VERIFIER.CompletedProcess(
+            arguments,
+            0,
+            stdout="1 passed\n",
+            stderr="",
+        )
+
+    monkeypatch.setattr(_VERIFIER, "_pytest", pytest_result)
+
+    assert _VERIFIER._verify_nodes((node,), tmp_path) == (node.node_id,)
+    assert len(calls) == 2
+    collection, execution = calls
+    assert "-s" not in collection
+    assert execution[:4] == ("-q", "-s", "-r", "xXs")
+
+
 def test_pytest_database_handoff_is_explicit_and_validated(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

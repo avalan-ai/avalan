@@ -1,5 +1,6 @@
 """Close defensive Phase 8 agent continuation coverage gaps."""
 
+from asyncio import CancelledError, Event, create_task
 from dataclasses import replace
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -38,6 +39,7 @@ from avalan.agent.execution import (
 from avalan.agent.orchestrator.response.orchestrator_response import (
     OrchestratorResponse,
 )
+from avalan.conversation import security
 from avalan.entities import GenerationSettings, ToolCall
 from avalan.interaction.continuation import (
     PortableConversationCheckpointReference,
@@ -817,3 +819,183 @@ async def test_orchestrator_response_trace_sinks_must_be_async() -> None:
             planned_index=0,
             finish_stream_on_error=False,
         )
+
+
+@pytest.mark.anyio
+async def test_orchestrator_response_awaits_conversation_trace_sinks() -> None:
+    """Await accepted trace sinks before provider and tool flow continues."""
+    base = response_test_module._response()
+    provider_traces: list[object] = []
+    tool_traces: list[object] = []
+
+    async def record_provider_response(trace: object) -> None:
+        """Retain the provider trace only after its await boundary runs."""
+        provider_traces.append(trace)
+
+    async def record_tool_output(trace: object) -> None:
+        """Retain the tool trace only after its await boundary runs."""
+        tool_traces.append(trace)
+
+    base._conversation_trace_sink = SimpleNamespace(
+        record_provider_response=record_provider_response,
+        record_tool_output=record_tool_output,
+    )
+
+    await base._record_conversation_provider_response("output", ())
+    outcome = await base._execute_tool_call_with_lifecycle(
+        ToolCall(id="trace-await", name="coverage", arguments={}),
+        confirm=False,
+        abort_on_reject=False,
+        emit_ready=False,
+        planned_index=0,
+        finish_stream_on_error=False,
+    )
+
+    assert outcome.result is None
+    assert len(provider_traces) == 1
+    assert len(tool_traces) == 1
+
+
+@pytest.mark.anyio
+async def test_interrupt_releases_cancelled_pre_dispatch_task() -> None:
+    """Release a claim after cancellation before durable dispatch begins."""
+    harness = _harness()
+    admission = await _admit(harness)
+    entered = Event()
+
+    async def wait_before_durable_dispatch() -> object:
+        entered.set()
+        await Event().wait()
+        return object()
+
+    with pytest.MonkeyPatch.context() as monkeypatch:
+        monkeypatch.setattr(
+            admission,
+            "_dispatch_once",
+            wait_before_durable_dispatch,
+        )
+        dispatch = create_task(admission.dispatch())
+        await entered.wait()
+        settled = await admission.interrupt_dispatch()
+
+    with pytest.raises(CancelledError):
+        await dispatch
+    assert admission._dispatch_task is None
+    assert (
+        settled
+        is continuation_module.DurableContinuationResumeState.RELEASED
+    )
+    assert harness.store.calls.count("release") == 1
+
+
+@pytest.mark.anyio
+async def test_hardening_rejects_duplicate_validate_plan_admission() -> None:
+    """Reject a second plan-validation admission from one coordinator task."""
+    scope_digest = conversation.AuthorityDigest("a" * 64)
+
+    class Clock:
+        async def now(self) -> datetime:
+            """Return a fixed valid time for the operational key ring."""
+            return datetime(2026, 8, 25, tzinfo=UTC)
+
+    class Maintenance:
+        kind = security.ConversationMaintenanceKind.RETENTION
+
+        async def run(self, *, limit: int) -> int:
+            """Run the inert bounded maintenance cycle."""
+            assert limit == 1
+            return 0
+
+    async def backend_probe() -> security.ConversationBackendHealth:
+        """Report a healthy local conversation backend."""
+        return security.ConversationBackendHealth(
+            migration_ready=True,
+            schema_version=1,
+            application_version=1,
+            outbox_lag=0,
+            maximum_outbox_lag=0,
+        )
+
+    async def capability_probe() -> security.ConversationCapabilityHealth:
+        """Report every configured capability as locally resolvable."""
+        return security.ConversationCapabilityHealth(
+            resolver_available=True,
+            active_profiles=0,
+            resolvable_profiles=0,
+        )
+
+    retention = conversation.RetentionLimits(
+        storage=conversation.StoragePolicy(
+            local=conversation.LocalResponseStorage.PROCESS_LOCAL,
+            upstream=conversation.ProviderLaneStorage.STATELESS,
+        ),
+        upstream_lifetime_status=(
+            conversation.UpstreamLifetimeStatus.NOT_APPLICABLE
+        ),
+    )
+    policy = security.resolve_conversation_policy(
+        security.ConversationHardeningPolicy(
+            default_mode=conversation.ConversationMode.STATELESS,
+            allowed_modes=frozenset({conversation.ConversationMode.STATELESS}),
+            allowed_reasoning_contexts=frozenset(
+                conversation.ReasoningContext
+            ),
+            compaction=security.ConversationCompactionPolicy(
+                allowed_operations=frozenset(conversation.CompactionOperation)
+            ),
+            backend=security.ConversationCheckpointBackend.PROCESS,
+            retention=retention,
+            resources=security.ConversationResourcePolicy(),
+            checkpoint_keys=security.ConversationKeyRotationPolicy(),
+            envelope_keys=security.ConversationKeyRotationPolicy(),
+            capability_profiles=(),
+            telemetry=security.ConversationTelemetryPolicy(),
+        )
+    )
+    key = security.ConversationOperationalKey(
+        key_id="phase-eight-key",
+        revision=1,
+        status=security.ConversationOperationalKeyStatus.ACTIVE,
+        purposes=frozenset(security.ConversationKeyPurpose),
+        key_bytes=b"k" * 32,
+        activated_at=datetime(2026, 8, 25, tzinfo=UTC),
+    )
+    worker = security.ConversationMaintenanceWorker(
+        (Maintenance(),),
+        batch_size=1,
+        interval_seconds=60,
+        shutdown_timeout_seconds=0.1,
+    )
+    readiness = security.ConversationReadinessChecker(
+        backend_probe=backend_probe,
+        key_ring=security.AsyncConversationKeyRing(
+            {scope_digest: (key,)},
+            clock=Clock(),
+        ),
+        authority=scope_digest,
+        workers=(worker,),
+        capability_probe=capability_probe,
+        activation=security.ConversationActivationHealth(
+            expected_digest=conversation.IntegrityDigest("b" * 64),
+            loaded_digest=conversation.IntegrityDigest("b" * 64),
+        ),
+    )
+    hook = security.ConversationHardeningCoordinatorHook(
+        policy=policy,
+        admission=security.FairConversationAdmissionController(
+            policy.resources
+        ),
+        admission_key=security.ConversationAdmissionKey(
+            authority_digest=scope_digest,
+            conversation_digest=conversation.IntegrityDigest("c" * 64),
+        ),
+        readiness=readiness,
+        telemetry=security.BoundedConversationTelemetry(max_events=2),
+    )
+
+    await hook.start()
+    await hook.reach(conversation.CoordinatorAwaitBoundary.VALIDATE_PLAN)
+    with pytest.raises(conversation.ConversationValidationError):
+        await hook.reach(conversation.CoordinatorAwaitBoundary.VALIDATE_PLAN)
+    await hook.reach(conversation.CoordinatorAwaitBoundary.ROLLBACK)
+    await hook.close()

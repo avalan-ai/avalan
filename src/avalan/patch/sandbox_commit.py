@@ -31,10 +31,10 @@ from pathlib import Path
 from secrets import token_bytes
 from shutil import copytree, rmtree
 from stat import S_IEXEC, S_IREAD
-from sys import base_prefix, executable
+from sys import executable
 from tempfile import mkdtemp
 from types import MappingProxyType, TracebackType
-from typing import NewType, TypedDict
+from typing import NewType, Protocol, TypedDict
 
 from cffi import __file__ as cffi_file
 from cryptography import __file__ as cryptography_file
@@ -218,14 +218,19 @@ _PROCESS_CLOSE_SECONDS = 0.25
 _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "b1f77eef4838c2cfb7902d665cd8c7896a30c19f43037a44363130f997ef8fa0"
+    "90964e858393cf90fd0146961f358750e5b758b20fb99abe690309daab602b7f"
 )
-_base_candidate = Path(base_prefix) / "bin" / "python3"
-base_executable = str(
-    (
-        _base_candidate if _base_candidate.is_file() else Path(executable)
-    ).resolve()
-)
+
+
+def _worker_interpreter_path(current_executable: str) -> str:
+    """Return the resolved interpreter that owns the running runtime."""
+    interpreter = Path(current_executable).resolve()
+    if not interpreter.is_file():
+        raise RuntimeError("Python interpreter is unavailable")
+    return str(interpreter)
+
+
+base_executable = _worker_interpreter_path(executable)
 _pycparser_spec = find_spec("pycparser")
 if _pycparser_spec is None or _pycparser_spec.origin is None:
     raise RuntimeError("pycparser package is unavailable")
@@ -259,7 +264,9 @@ class _ImplementationBundle:
     source_digest: str
 
     @classmethod
-    def create(cls, forbidden_root: Path) -> "_ImplementationBundle":
+    def create(
+        cls, forbidden_root: Path, *, include_dependencies: bool = True
+    ) -> "_ImplementationBundle":
         """Copy the installed implementation into a read-only private root."""
         source_root = Path(__file__).resolve().parents[2]
         source_package = source_root / "avalan"
@@ -306,14 +313,15 @@ class _ImplementationBundle:
                 raise TargetInspectionError(
                     TargetErrorCode.CAPABILITY_UNAVAILABLE
                 )
-            copytree(Path(cffi_file).parent, root / "cffi")
-            copytree(Path(cryptography_file).parent, root / "cryptography")
-            copytree(Path(pycparser_file).parent, root / "pycparser")
-            for extension in Path(cffi_file).parent.parent.glob(
-                "_cffi_backend*.so"
-            ):
-                target = root / extension.name
-                target.write_bytes(extension.read_bytes())
+            if include_dependencies:
+                copytree(Path(cffi_file).parent, root / "cffi")
+                copytree(Path(cryptography_file).parent, root / "cryptography")
+                copytree(Path(pycparser_file).parent, root / "pycparser")
+                for extension in Path(cffi_file).parent.parent.glob(
+                    "_cffi_backend*.so"
+                ):
+                    target = root / extension.name
+                    target.write_bytes(extension.read_bytes())
             _lock_implementation_tree(root)
             if _worker_source_digest(root / "avalan") != source_digest:
                 raise TargetInspectionError(
@@ -1498,10 +1506,42 @@ def _command_payload(
     implementation_digest: str,
 ) -> Mapping[str, object]:
     """Encode the complete sealed transaction as closed canonical JSON."""
-    _validate_sealed_plan(command.plan)
     backend = profile.execution_plan.settings.backend
     if type(backend) is not SandboxBackend:
         raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    return _sealed_command_payload(
+        command,
+        profile.identity,
+        profile.cwd,
+        root,
+        {
+            "backend": backend.value,
+            "execution_plan": profile.execution_plan.plan_fingerprint,
+            "workspace_view": profile.workspace_view_root,
+            "private_view": profile.private_view_root,
+            "channel": profile.channel_id,
+            "protocol": profile.identity.protocol_id.value,
+            "implementation": profile.implementation_id,
+            "implementation_digest": implementation_digest,
+            "receipt": receipt,
+            "session": session_id,
+            "context_lifetime": profile.context_lifetime_id,
+            "persistent_lease": profile.identity.persistent_lease_id,
+            "filesystem": profile.identity.filesystem_id,
+            "mount": profile.identity.mount_id,
+        },
+    )
+
+
+def _sealed_command_payload(
+    command: SealedCommitCommand,
+    identity: TargetIdentity,
+    cwd: LogicalPath | None,
+    root: RootWitness,
+    runtime: Mapping[str, object],
+) -> Mapping[str, object]:
+    """Encode one sealed command for an already-selected runtime profile."""
+    _validate_sealed_plan(command.plan)
     plan = command.plan
     canonical = _canonical_fingerprint_bytes(
         plan.binding, plan.candidate, plan.review.expiry
@@ -1559,7 +1599,7 @@ def _command_payload(
         "canonical": b64encode(wire_canonical).decode(),
     }
     return {
-        "schema": "sandbox-patch-command-v1",
+        "schema": binding.context_kind.value + "-patch-command-v1",
         "plan": plan_payload,
         "command": {
             "domain": command.lease.domain_id.value,
@@ -1568,26 +1608,11 @@ def _command_payload(
             "footprint": list(command.footprint.keys),
         },
         "scope": {
-            "target": _identity_payload(profile.identity),
-            "cwd": None if profile.cwd is None else profile.cwd.value,
+            "target": _identity_payload(identity),
+            "cwd": None if cwd is None else cwd.value,
             "root": _root_payload(root),
         },
-        "runtime": {
-            "backend": backend.value,
-            "execution_plan": profile.execution_plan.plan_fingerprint,
-            "workspace_view": profile.workspace_view_root,
-            "private_view": profile.private_view_root,
-            "channel": profile.channel_id,
-            "protocol": profile.identity.protocol_id.value,
-            "implementation": profile.implementation_id,
-            "implementation_digest": implementation_digest,
-            "receipt": receipt,
-            "session": session_id,
-            "context_lifetime": profile.context_lifetime_id,
-            "persistent_lease": profile.identity.persistent_lease_id,
-            "filesystem": profile.identity.filesystem_id,
-            "mount": profile.identity.mount_id,
-        },
+        "runtime": dict(runtime),
     }
 
 
@@ -2055,6 +2080,95 @@ class SandboxPatchRuntime:
             return receipt
 
 
+class _SelectedPatchRuntimeProfile(Protocol):
+    """Expose the identities shared by selected mutation runtimes."""
+
+    @property
+    def identity(self) -> TargetIdentity:
+        """Return the immutable target identity."""
+
+    @property
+    def channel_id(self) -> SandboxChannelId:
+        """Return the authenticated worker channel identity."""
+
+    @property
+    def implementation_id(self) -> SandboxWorkerImplementationId:
+        """Return the immutable worker implementation identity."""
+
+
+class _SelectedPatchRuntimeReceipt(Protocol):
+    """Expose the live witnesses needed for fenced settlement."""
+
+    @property
+    def session_id(self) -> SandboxSessionId:
+        """Return the live worker session identity."""
+
+    @property
+    def root(self) -> RootWitness:
+        """Return the rooted filesystem witness."""
+
+    @property
+    def worker(self) -> EphemeralWorkerWitness:
+        """Return the ephemeral fenced worker witness."""
+
+
+class _SelectedPatchWorkerProcess(Protocol):
+    """Expose only the sealed worker operations shared by runtimes."""
+
+    @property
+    def _implementation_digest_value(self) -> str | None:
+        """Return the live immutable implementation digest."""
+
+    async def commit(
+        self,
+        command: SealedCommitCommand,
+        validator: RootedCommandAuthorityValidator,
+    ) -> WorkerReport:
+        """Commit one already-authorized command."""
+
+
+class _SelectedPatchRuntime(Protocol):
+    """Describe the opaque runtime contract consumed by durable patching."""
+
+    @property
+    def profile(self) -> _SelectedPatchRuntimeProfile:
+        """Return the immutable selected runtime profile."""
+
+    @property
+    def _process(self) -> _SelectedPatchWorkerProcess:
+        """Return the private sealed worker process."""
+
+    async def resolve(
+        self, selection: ScopeSelection
+    ) -> ResolvedMutationScope:
+        """Resolve the selected mutation scope."""
+
+    async def worker(
+        self, scope: ResolvedMutationScope
+    ) -> RootedSandboxCommitWorker:
+        """Return the sealed commit worker."""
+
+    async def close(self) -> None:
+        """Fence the active runtime."""
+
+    async def _require_scope(
+        self, scope: ResolvedMutationScope
+    ) -> _SelectedPatchRuntimeReceipt:
+        """Return the live scope receipt."""
+
+    def _bind_sandbox_endpoint(
+        self, scope: ResolvedMutationScope
+    ) -> "_SandboxEndpoint":
+        """Return the issued private endpoint."""
+
+
+class _SelectedPatchInspectionTarget(Protocol):
+    """Inspect the selected runtime view without commit authority."""
+
+    async def inspect(self, request: InspectionRequest) -> InspectionBatch:
+        """Inspect the bounded request paths."""
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class SandboxScopeResolver:
     """Resolve only a runtime-owned sandbox scope."""
@@ -2104,7 +2218,7 @@ class SandboxCommitTarget:
 class _SandboxEndpoint:
     """Keep the runtime and scope behind the coordinator-private endpoint."""
 
-    runtime: SandboxPatchRuntime
+    runtime: _SelectedPatchRuntime
     scope: ResolvedMutationScope
     _lock: Lock = field(default_factory=Lock, init=False, repr=False)
     _active_request: PatchRequestId | None = field(
@@ -2125,7 +2239,7 @@ class _SandboxEndpoint:
         """Execute one coordinator-owned sealed command."""
         await self.runtime._require_scope(self.scope)
         if (
-            command.plan.binding.context_kind is not ContextKind.SANDBOX
+            command.plan.binding.context_kind is not self.scope.context_kind
             or command.plan.binding.target != self.runtime.profile.identity
             or command.plan.binding.cwd != self.scope.cwd
         ):
@@ -2182,7 +2296,7 @@ class _SandboxEndpoint:
 class _SandboxDurableCommandAuthority(RootedCommandAuthorityValidator):
     """Bind one fieldless worker dispatch to the live durable owner record."""
 
-    runtime: SandboxPatchRuntime
+    runtime: _SelectedPatchRuntime
     scope: ResolvedMutationScope
     lease: DurableCommitLease
     store: DurablePatchStore
@@ -2197,7 +2311,7 @@ class _SandboxDurableCommandAuthority(RootedCommandAuthorityValidator):
             command.lease.request_id != self.lease.request_id
             or command.lease.domain_id != self.lease.domain_id
             or command.lease.fence != self.lease.fence.value
-            or command.plan.binding.context_kind is not ContextKind.SANDBOX
+            or command.plan.binding.context_kind is not self.scope.context_kind
             or command.plan.binding.target != profile.identity
             or command.plan.binding.cwd != self.scope.cwd
             or self.scope.identity != profile.identity
@@ -2308,9 +2422,16 @@ class _SandboxSettlementPort:
     def inspect(
         self, handle: PatchInvocationHandle
     ) -> Future[PatchInvocationOutcome]:
-        """Return the latest durable observation without redispatching."""
-        del handle
-        return self.service._inspect_future()
+        """Return only the exact durable observation for one issued handle."""
+        bound = _bound_invocation_subscription_access(handle, self.service)
+        if (
+            not isinstance(bound, tuple)
+            or len(bound) != 2
+            or type(bound[0]) is not PatchRequestId
+            or type(bound[1]) is not PatchObserverCorrelationId
+        ):
+            return self.service._inspection_error_future()
+        return self.service._inspect_request_future(bound[0], bound[1])
 
     def await_terminal(
         self,
@@ -2353,10 +2474,10 @@ async def _bounded_task_join(
 class SandboxPatchSdkService:
     """Execute the patch lifecycle through one sandbox durable domain."""
 
-    runtime: SandboxPatchRuntime
+    runtime: _SelectedPatchRuntime
     scope: ResolvedMutationScope
     handshake: TargetHandshake
-    inspection: SandboxInspectionTarget
+    inspection: _SelectedPatchInspectionTarget
     store: DurablePatchStore
     policy: TrustedPatchPolicy
     configuration: SandboxPatchServiceConfiguration
@@ -2389,6 +2510,14 @@ class SandboxPatchSdkService:
 
     def _patch_sandbox_endpoint(self) -> object:
         """Return the runtime endpoint for sealed SDK authority issuance."""
+        if self.scope.context_kind is not ContextKind.SANDBOX:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        return self.runtime._bind_sandbox_endpoint(self.scope)
+
+    def _patch_container_endpoint(self) -> object:
+        """Return the container endpoint for sealed SDK authority issuance."""
+        if self.scope.context_kind is not ContextKind.CONTAINER:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         return self.runtime._bind_sandbox_endpoint(self.scope)
 
     async def __aenter__(self) -> "SandboxPatchSdkService":
@@ -2514,7 +2643,7 @@ class SandboxPatchSdkService:
                 request,
                 candidate.request_digest,
                 self.configuration.subject,
-                ContextKind.SANDBOX,
+                self.scope.context_kind,
                 self.runtime.profile.identity,
                 self.scope.cwd,
                 preflight,
@@ -2867,16 +2996,38 @@ class SandboxPatchSdkService:
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
         return self._latest
 
-    def _inspect_future(self) -> Future[PatchInvocationOutcome]:
-        """Return the latest durable read through an exact loop future."""
+    def _inspection_error_future(self) -> Future[PatchInvocationOutcome]:
+        """Return one failed future for an unissued request observation."""
+        future: Future[PatchInvocationOutcome] = (
+            get_running_loop().create_future()
+        )
+        future.set_exception(
+            TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        )
+        return future
+
+    def _inspect_request_future(
+        self,
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+    ) -> Future[PatchInvocationOutcome]:
+        """Return one future for the issued request's durable observation."""
         future: Future[PatchInvocationOutcome] = (
             get_running_loop().create_future()
         )
 
         async def resolve() -> None:
-            """Settle the host future without exposing the reader task."""
+            """Settle the exact request future without exposing the reader."""
             try:
-                value = await self._inspect_latest()
+                access = self._requests.get(request_id)
+                if (
+                    access is None
+                    or access.correlation_id is not correlation_id
+                ):
+                    raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+                value = await self._attached_outcome(
+                    request_id, access.access.identity, correlation_id
+                )
                 if not future.done():
                     future.set_result(value)
             except BaseException as error:
@@ -3262,6 +3413,7 @@ def _result(
     workspace = (
         WorkspaceChange.CHANGED
         if occurrence is RequestedEffectOccurrence.TRUE
+        or artifact in {ArtifactState.STAGED, ArtifactState.LEAKED}
         else (
             WorkspaceChange.UNKNOWN
             if occurrence is RequestedEffectOccurrence.UNKNOWN

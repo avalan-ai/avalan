@@ -644,7 +644,10 @@ def _rooted_sandbox_endpoint(
     channel: RootedSandboxCommitChannel,
 ) -> _RootedSandboxEndpoint:
     """Seal one typed context endpoint before public-worker construction."""
-    if not _PatchAuthorityValidator.sandbox_endpoint_is_issued(channel):
+    if not (
+        _PatchAuthorityValidator.sandbox_endpoint_is_issued(channel)
+        or _PatchAuthorityValidator.container_endpoint_is_issued(channel)
+    ):
         raise CoordinatorError(CoordinatorErrorCode.FENCED)
     endpoint = _RootedSandboxEndpoint(channel)
     _ROOTED_SANDBOX_ENDPOINTS[endpoint] = object()

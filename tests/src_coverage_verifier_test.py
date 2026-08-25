@@ -274,6 +274,11 @@ def test_exact_coverage_rejects_invalid_reports(
         "src/sample.py",
         "tests/changed_test.py",
         "scripts/gate.py",
+        "tests/fixtures/patch/acceptance_manifest.json",
+        "tests/fixtures/patch/baseline_evidence.json",
+        "tests/fixtures/patch/ordinary_fixture.json",
+        "tests/fixtures/patch/phase999_evidence.json",
+        "tests/fixtures/patch/phase11_evidence_copy.json",
         "Makefile",
         "pyproject.toml",
     ),
@@ -304,6 +309,33 @@ def test_report_freshness_binds_every_gate_input(
         _VERIFIER.verify_src_coverage(report, repo_root=root)
 
     _freshen(report, root)
+    assert _VERIFIER.verify_src_coverage(report, repo_root=root).files == (
+        "src/sample.py",
+    )
+
+
+@pytest.mark.parametrize(
+    "relative",
+    (
+        "tests/fixtures/patch/phase7_evidence.json",
+        "tests/fixtures/patch/phase8_evidence.json",
+        "tests/fixtures/patch/phase10_evidence.json",
+        "tests/fixtures/patch/phase_evidence.json",
+        "tests/fixtures/patch/phase11_evidence.json",
+    ),
+)
+def test_report_freshness_excludes_only_fixed_sealed_phase_evidence_outputs(
+    tmp_path: Path,
+    relative: str,
+) -> None:
+    """Allow only fixed sealed outputs after coverage for digest validation."""
+    root, report = _repo(tmp_path)
+    evidence = root / relative
+    evidence.parent.mkdir(parents=True, exist_ok=True)
+    evidence.write_text("{}\n", encoding="utf-8")
+    newer = max(report.stat().st_mtime_ns, evidence.stat().st_mtime_ns) + 1
+    utime(evidence, ns=(newer, newer))
+
     assert _VERIFIER.verify_src_coverage(report, repo_root=root).files == (
         "src/sample.py",
     )

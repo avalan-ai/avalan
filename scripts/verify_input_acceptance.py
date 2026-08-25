@@ -1153,6 +1153,7 @@ def _verify_nodes(
             root,
             (
                 "-q",
+                "-s",
                 "-r",
                 "xXs",
                 "-o",

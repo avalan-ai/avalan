@@ -32,6 +32,7 @@ def _load_script(name: str) -> ModuleType:
 
 
 _GATE = _load_script("run_patch_contract_gate")
+_CONTRACT_GATE = modules["contract_gate"]
 _PLUGIN = _load_script("patch_contract_gate_plugin")
 _ACCEPTANCE = _load_script("verify_patch_acceptance")
 _TYPES = _load_script("verify_patch_types")
@@ -142,7 +143,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
-    assert baseline["phase"] == 10
+    assert baseline["phase"] == 11
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -165,7 +166,7 @@ def test_patch_gate_contract_is_current() -> None:
     }
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 10
+    assert _GATE._PATCH_CURRENT_PHASE == 11
 
 
 @pytest.mark.parametrize(
@@ -441,6 +442,66 @@ def test_patch_fixture_mypy_cache_is_shared_and_removed_on_failure(
     assert len(caches) == 2
     assert caches[0] == caches[1]
     assert not caches[0].exists()
+
+
+def test_patch_acceptance_execution_disables_pytest_output_capture(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Run native worker acceptance without pytest descriptor capture."""
+    root = tmp_path / "repository"
+    test_path = root / "tests" / "sample_test.py"
+    test_path.parent.mkdir(parents=True)
+    test_path.write_text(
+        "def test_value() -> None:\n"
+        "    value = object()\n"
+        "    assert value.__class__ is object\n",
+        encoding="utf-8",
+    )
+    node_id = "tests/sample_test.py::test_value"
+    junit_path = root / "pytest.xml"
+    calls: list[tuple[str, ...]] = []
+
+    def run_pytest(
+        observed_root: Path,
+        arguments: tuple[str, ...],
+        *,
+        timeout: int,
+        inherited_names: tuple[str, ...] = (),
+    ) -> CompletedProcess[str]:
+        assert observed_root == root
+        assert timeout > 0
+        assert inherited_names == ()
+        calls.append(arguments)
+        if "--collect-only" in arguments:
+            return CompletedProcess(
+                arguments, 0, stdout=node_id + "\n", stderr=""
+            )
+        junit_path.write_text(
+            '<testsuite tests="1" failures="0" errors="0" '
+            'skipped="0"><testcase file="tests/sample_test.py" '
+            'classname="tests.sample_test" name="test_value" />'
+            "</testsuite>",
+            encoding="utf-8",
+        )
+        return CompletedProcess(arguments, 0, stdout="1 passed\n", stderr="")
+
+    monkeypatch.setattr(_CONTRACT_GATE, "run_pytest", run_pytest)
+
+    evidence = _CONTRACT_GATE.execute_pytest_nodes(
+        root,
+        (node_id,),
+        junit_path=junit_path,
+    )
+
+    assert evidence.collected == (node_id,)
+    assert evidence.executed == (node_id,)
+    assert len(calls) == 2
+    collection, execution = calls
+    assert "-s" not in collection
+    assert execution[:4] == ("-q", "-s", "-r", "xXs")
+    assert "junit_family=legacy" in execution
+    assert f"--junitxml={junit_path}" in execution
+    assert execution[-1] == node_id
 
 
 def test_patch_gate_subprocess_rejects_dynamic_ignored_artifact_open(

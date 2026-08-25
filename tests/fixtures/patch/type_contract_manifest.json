@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 10,
+  "current_phase": 11,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -336,6 +336,26 @@
       "path": "tests/patch_type_contracts/phase10_positive.py",
       "source_sha256": "c04f157e75e9a58d7e24d3dd8856f92deaa805256e7fc99e6ee964836eb7abeb",
       "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-081",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "path": "tests/patch_type_contracts/phase11_positive.py",
+      "source_sha256": "c6e206f394323822c703baa354d99f5a03dc60ed9bc79d4e85dc4845f969c927",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-082",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 11,
+      "path": "tests/patch_type_contracts/phase11_image_negative.py",
+      "source_sha256": "b6ee93f9adbd256e17adb16ff498caf4c790b3dd1f30d484f9f65fdf5542a14f",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase11_image_negative.py:5:30: error: Incompatible types in assignment (expression has type \"str\", variable has type \"ContainerPatchImage\")  [assignment]"
+      ]
     }
   ],
   "sources": [
@@ -364,7 +384,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a9bf036e9bf108b582f018be6c4184d367387b7bf947ce29b4e0ee17116e4f34"
+      "source_sha256": "a81c68432e51a9bbe8ad578983af2c641b966c1a60229ddab2ee0fa7b7270da5"
     },
     {
       "id": "PATCH-TS-004",
@@ -373,7 +393,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "cadc34febb6590eac6220bcff01015326ffacebb687fe04e3dfcd9109d5e576e"
+      "source_sha256": "f364e705090160332fbf53e703a287929d3dfa5763b9563a91cf60f7ebbf6ac6"
     },
     {
       "id": "PATCH-TS-005",
@@ -382,7 +402,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "723c5b404df31ec64bcdd29ecabc7238b1d180b76bf0667b500a3cd28671671a"
+      "source_sha256": "e6babc580e9148e846bfa3b319c5981df5646ac5e811fa6fc1013cd18577a12a"
     },
     {
       "id": "PATCH-TS-006",
@@ -391,7 +411,7 @@
       "symbols": [
         "_UNMEASURED_FILE_NAMES"
       ],
-      "source_sha256": "0a5c77e6608549d91d09fe2ef196bf8af7f43779600a034fb81014effc3673c0"
+      "source_sha256": "3a9c1928043a1e30d8eba118d96d4b6732409521bad5d4dba3e5930d1887f0b1"
     },
     {
       "id": "PATCH-TS-007",
@@ -409,7 +429,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6c8902b92a12d69c868c7cbe104bceae9f5082e39c29a62591242c103722dd30"
+      "source_sha256": "3e5e4a4ba46913bb8355b080330c5cf2e43a41a0e52dc6599b7abf4e63cf067d"
     },
     {
       "id": "PATCH-TS-009",
@@ -418,7 +438,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "0ed77243ec77aa643707afc431d51565886e860eb5c2e20c7cc74b2ea5cc4b6f"
+      "source_sha256": "9e3801d4384878f332e593b0fdb75ccc5cbfb8a3d8b45693812f3d039f891621"
     },
     {
       "id": "PATCH-TS-010",
@@ -535,7 +555,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1971a2d1df19dbf09ac62dc422abfdb213eb167080b4b0cb1239345ab591c950"
+      "source_sha256": "5855fdbff281f0a7b85db12e3ea6f71491b99899a58d8ce56c49be5b5f33cf3e"
     },
     {
       "id": "PATCH-TS-023",
@@ -571,7 +591,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7dd623facd08ed0c022e98e138b6a6c52fcdfa3661bdc002b723a8aa382f22f3"
+      "source_sha256": "6b8a18fbb562dedb58b868b112409755446173f19abb3e38ac8ac8b8dda7f024"
     },
     {
       "id": "PATCH-TS-027",
@@ -607,7 +627,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "dc7f64a792c3d4dc2b70a14e5510ff1771d2e2e1e0a78ff33afb7af8475b5e29"
+      "source_sha256": "ee8c6edbd7cb2ab071d7ad53e1b59cd78a265602115f79499d2185f041948dbc"
     },
     {
       "id": "PATCH-TS-031",
@@ -798,7 +818,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "20ebb8921a7943878dbfff0b17191a5884b34b5a678c53dcf31d73841c5a12c1"
+      "source_sha256": "8d2892f4f79b7c9c2aae6f5fed4f7dd7817a7ec4997ce492a13fec5830b0f48f"
     },
     {
       "id": "PATCH-TS-052",
@@ -808,7 +828,7 @@
         "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_phase12_provider_transitions"
       ],
-      "source_sha256": "180aaed6a9df0e71538830f8954f6ea67328e41cd8181a06f5d0a816ea8d3a4b"
+      "source_sha256": "4027d68f377d784a689b95eb93649db4127bff17fdf81e51ad136ac8cf663dfe"
     },
     {
       "id": "PATCH-TS-053",
@@ -853,7 +873,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "d85d908840ebb3488fd233ac460c4c31e941429155e9ab69963ff4ae20b51c79"
+      "source_sha256": "e67fc1fc7babc74d5efd512837da2bb7186448e4e42819c3bba881c52c4106f4"
     },
     {
       "id": "PATCH-TS-058",
@@ -909,7 +929,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "80836ff92c8459ba5d5d38a18719a37f3138f251584778923093544509446e7f"
+      "source_sha256": "fb25853d98bbc0a01d1ab1c63569bd1b12ae27b7ab0239680a9a702e05f40b45"
     },
     {
       "id": "PATCH-TS-064",
@@ -936,7 +956,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "cf2801c8fe6fb28c0e7bf2f5e33e44d03bbb7bd0a6e52fcf6cc5ba0c31bd3a13"
+      "source_sha256": "8c4ff81ca9c2493341a0d69ce3a73d3cff0032522a5d32457c08531cc687acb4"
     },
     {
       "id": "PATCH-TS-067",
@@ -945,7 +965,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "fdebb841899f2f70a03d1b71bf247f5bd37d4bbd1c1c95148010f90da3c10b8e"
+      "source_sha256": "8c6d54383a59bf7c517f223d847e81d907c212cffd7ca376fbf82bdc879bf666"
     },
     {
       "id": "PATCH-TS-068",
@@ -954,7 +974,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "20927e5bd5b51bd3875f6ad9c63793eca64fec701484b2b0dc39e869249654d2"
+      "source_sha256": "055e50c91512688a36d521d1a931a51f401e5b002f2d8c3f947a836daa566973"
     },
     {
       "id": "PATCH-TS-069",
@@ -1063,7 +1083,122 @@
         "test_test_workflow_covers_supported_matrix_and_build_gates"
       ],
       "source_sha256": "70b22eea5203b9cfed869d45f9e11cb3fcca311ade6a009e68b62bcdd909341e"
+    },
+    {
+      "id": "PATCH-TS-081",
+      "path": "src/avalan/patch/container_target.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "fe09d62c59e98397f903e4c022229e733168de90c3d910f93dcfcff4f9f36078"
+    },
+    {
+      "id": "PATCH-TS-082",
+      "path": "tests/patch/phase_11_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_11_requirements"
+      ],
+      "source_sha256": "416b18f0f89d2a2655e3bcd8ef342481a7438f0bfbc2cd5b46b9f0e06572d488"
+    },
+    {
+      "id": "PATCH-TS-083",
+      "path": "tests/patch/context_contract_corpus.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "89ed5555f01c658a9e152a72df24c2f08b32d27f45b05a73a7d780a62da9ddc1"
+    },
+    {
+      "id": "PATCH-TS-084",
+      "path": "scripts/verify_src_coverage.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f73a9d956a497f287cc2b982391e4ed50f95764e49f48e20886e9f3ceb07b0d2"
+    },
+    {
+      "id": "PATCH-TS-085",
+      "path": "tests/conversation/server_stored_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_app",
+        "test_explicit_idempotency_replays_without_provider_redispatch"
+      ],
+      "source_sha256": "7e7767646ea7427f8a0e1d70f4b9acb7376366f1472b447ad132d812ef96d3ef"
+    },
+    {
+      "id": "PATCH-TS-086",
+      "path": "src/avalan/tool/shell/git_policy.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_rebase_argv"
+      ],
+      "source_sha256": "fe8f4dcf55244562eb9b7bd70cc9683d1a485b1732e1a1c699e9b39b449f6759"
+    },
+    {
+      "id": "PATCH-TS-087",
+      "path": "tests/tool/shell/git_phase6_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_history_commands_build_fixed_argv_and_audit_metadata",
+        "test_rebase_empty_ask_warning_preserves_exit_handling"
+      ],
+      "source_sha256": "5e883ad55ba8fda1382e48dab8fe78cab819a73edee7b1354dcf80cfc04ec59c"
+    },
+    {
+      "id": "PATCH-TS-088",
+      "path": "tests/agent/orchestrator_response_convergence_coverage_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_resume_records_failed_model_continuation",
+        "test_cancellation_cleanup_failure_is_attached_to_primary",
+        "test_stream_cleanup_preserves_pending_interaction_failure"
+      ],
+      "source_sha256": "4cb9564dc0f8e9f26f92360007dfc2e8f7f39c32ed5cef97e25343b1156c507a"
+    },
+    {
+      "id": "PATCH-TS-089",
+      "path": "tests/agent/phase8_agent_exact_coverage_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_orchestrator_response_awaits_conversation_trace_sinks",
+        "test_interrupt_releases_cancelled_pre_dispatch_task",
+        "test_hardening_rejects_duplicate_validate_plan_admission"
+      ],
+      "source_sha256": "e9051f0f6a31baec14f8dd7556da3d7e42947750cce8a112e2c6005ac884779b"
+    },
+    {
+      "id": "PATCH-TS-090",
+      "path": "tests/server/a2a_v1_router_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_request_handler_returns_prepared_follow_up_replay",
+        "test_resume_pending_rejects_stale_follow_up"
+      ],
+      "source_sha256": "c8a73b80ee020d92bf0ac6ca37ba40525dfcacc46307efeb0bc081b760c405af"
+    },
+    {
+      "id": "PATCH-TS-091",
+      "path": "scripts/verify_input_acceptance.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_verify_nodes"
+      ],
+      "source_sha256": "6715ba4e8f059874df7c2e91fd6cec0811a7414b2eafc3ac754c8da8a0770a34"
+    },
+    {
+      "id": "PATCH-TS-092",
+      "path": "tests/input_acceptance_verifier_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_acceptance_execution_disables_pytest_output_capture"
+      ],
+      "source_sha256": "4118b8a2e25ee2b120c98532dfd99ed4ef11e6291c96556ed6cff76950c6d6f1"
     }
   ],
-  "manifest_sha256": "831cedd68af1a334436a95b5b72411fd5499909f93d1ef0c91852d604d65bccc"
+  "manifest_sha256": "0493a491e8575c65ee475e52aa6df0cb96cbf6f779663fd95f90d87c5da543a4"
 }

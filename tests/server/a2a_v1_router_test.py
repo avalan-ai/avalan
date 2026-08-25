@@ -2832,6 +2832,57 @@ async def test_a2a_input_helper_negative_branches(
 
 
 @pytest.mark.anyio
+async def test_request_handler_returns_prepared_follow_up_replay() -> None:
+    """Return a prepared replay without delegating the duplicate message."""
+    async def prepare_follow_up(_params: object, _context: object) -> str:
+        """Provide the cached response for one idempotent follow-up."""
+        return "replay"
+
+    handler = a2a_router._A2ARequestHandler(
+        SimpleNamespace(),
+        SimpleNamespace(prepare_follow_up=prepare_follow_up),
+    )
+
+    assert await handler.on_message_send(object(), object()) == "replay"
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize(
+    "state_key",
+    (
+        a2a_router._A2A_REFRESH_STATE_KEY,
+        a2a_router._A2A_RESOLUTION_STATE_KEY,
+    ),
+)
+async def test_resume_pending_rejects_stale_follow_up(
+    state_key: str,
+) -> None:
+    """Reject refresh and resolution follow-ups after pending-state removal."""
+    pending = a2a_router._A2APendingInput(
+        task_id="expired-task",
+        context_id="context",
+        actor=MagicMock(),
+        request=MagicMock(),
+        response=object(),
+        iterator=MagicMock(),
+        translator=MagicMock(),
+        orchestrator=MagicMock(),
+        activated=True,
+        handler=MagicMock(),
+        updater=MagicMock(),
+    )
+    executor = AvalanA2AAgentExecutor(FastAPI())
+    context = SimpleNamespace(
+        call_context=SimpleNamespace(state={state_key: pending})
+    )
+
+    with pytest.raises(Exception, match="Structured input contract result"):
+        await executor._resume_pending(context, object())
+
+    assert executor._pending == {}
+
+
+@pytest.mark.anyio
 async def test_follow_up_rejects_ambiguous_and_stale_inputs(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

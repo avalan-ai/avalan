@@ -24,6 +24,15 @@ _PYTEST_COVERAGE_OPTION_PATTERN = compile_regex(
     IGNORECASE,
 )
 _DYNAMIC_CODE_PATTERN = compile_regex(r"\b(?:exec|compile)\s*\(")
+_PATCH_PHASE_EVIDENCE_OUTPUTS = frozenset(
+    {
+        "tests/fixtures/patch/phase_evidence.json",
+        "tests/fixtures/patch/phase7_evidence.json",
+        "tests/fixtures/patch/phase8_evidence.json",
+        "tests/fixtures/patch/phase10_evidence.json",
+        "tests/fixtures/patch/phase11_evidence.json",
+    }
+)
 
 
 class CoverageVerificationError(RuntimeError):
@@ -276,7 +285,7 @@ def verify_src_coverage(
 
 
 def verify_report_freshness(report: Path, root: Path) -> None:
-    """Bind coverage evidence to the current source, tests, and gate code."""
+    """Bind coverage evidence to current inputs, excluding sealed outputs."""
     if not report.is_file():
         raise CoverageVerificationError(
             f"coverage report does not exist: {report}"
@@ -286,6 +295,7 @@ def verify_report_freshness(report: Path, root: Path) -> None:
         for directory in ("src", "tests", "scripts")
         for path in (root / directory).rglob("*")
         if path.is_file()
+        and not _is_phase_evidence_output(path, root)
         and (
             path.suffix in {".py", ".json"}
             or path.name in {"Makefile", "pyproject.toml"}
@@ -304,6 +314,15 @@ def verify_report_freshness(report: Path, root: Path) -> None:
         raise CoverageVerificationError(
             "coverage report predates current source, tests, or gate scripts"
         )
+
+
+def _is_phase_evidence_output(path: Path, root: Path) -> bool:
+    """Return whether one path is one fixed sealed patch evidence output."""
+    try:
+        relative = path.resolve().relative_to(root.resolve()).as_posix()
+    except ValueError:
+        return False
+    return relative in _PATCH_PHASE_EVIDENCE_OUTPUTS
 
 
 def verify_no_dynamic_coverage_tricks(

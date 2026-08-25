@@ -1,6 +1,7 @@
 """Exercise the dormant patch acceptance-manifest verifier."""
 
 from copy import deepcopy
+from hashlib import sha256
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from pathlib import Path
@@ -108,17 +109,56 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 10
+    assert manifest.current_phase == 11
     assert len(manifest.active_nodes(5)) == 59
 
 
-def test_patch_acceptance_validates_in_progress_phase_evidence() -> None:
-    """Validate required typed fields in the in-progress Phase 10 record."""
+def test_patch_acceptance_validates_authoritative_phase11_evidence() -> None:
+    """Validate the authoritative Phase 11 evidence record."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
     _VERIFIER._validate_phase_evidence(
-        _FIXTURES / "phase10_evidence.json", manifest, _ROOT
+        _FIXTURES / "phase11_evidence.json", manifest, _ROOT
     )
+
+
+def test_patch_acceptance_rejects_stale_phase11_evidence_date(
+    tmp_path: Path,
+) -> None:
+    """Reject a re-signed Phase 11 record with the stale receipt date."""
+    fixtures = tmp_path / "fixtures"
+    _copy_bundle(fixtures)
+    path = fixtures / "phase11_evidence.json"
+    payload = _read(path)
+    payload["recorded_on"] = "2026-08-23"
+    _resign(payload, "record_sha256")
+    _write(path, payload)
+    manifest = _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json")
+
+    with pytest.raises(
+        _VERIFIER.PatchAcceptanceError, match="phase evidence date is invalid"
+    ):
+        _VERIFIER._validate_phase_evidence(path, manifest, _ROOT)
+
+
+def test_patch_acceptance_validates_sealed_phase_artifact_digests() -> None:
+    """Validate sealed phase output hashes apart from coverage freshness."""
+    artifact = _ROOT / "scripts" / "verify_src_coverage.py"
+    artifacts = [
+        {
+            "name": "coverage_freshness_verifier",
+            "path": "scripts/verify_src_coverage.py",
+            "sha256": sha256(artifact.read_bytes()).hexdigest(),
+        }
+    ]
+
+    _VERIFIER._validate_phase_evidence_artifacts(artifacts, _ROOT, True)
+
+    artifacts[0]["sha256"] = "0" * 64
+    with pytest.raises(
+        _VERIFIER.PatchAcceptanceError, match="phase artifact digest drifted"
+    ):
+        _VERIFIER._validate_phase_evidence_artifacts(artifacts, _ROOT, True)
 
 
 def test_patch_acceptance_inherits_only_postgresql_test_dsn(
@@ -144,9 +184,19 @@ def test_patch_acceptance_inherits_only_postgresql_test_dsn(
         )
         observed.append(inherited_names)
 
-    monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
+    def load_contracts(
+        fixture_directory: Path | None = None,
+        *,
+        repo_root: Path | None = None,
+    ) -> object:
+        """Return the already-validated manifest for environment isolation."""
+        del fixture_directory, repo_root
+        return _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
-    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=10)
+    monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
+    monkeypatch.setattr(_VERIFIER, "load_phase0_contracts", load_contracts)
+
+    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=11)
 
     assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
@@ -421,9 +471,14 @@ def test_patch_acceptance_rejects_pending_platform_receipts(
     """Reject a terminal evidence status while platform proof is pending."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase10_evidence.json"
+    path = fixtures / "phase11_evidence.json"
     payload = _read(path)
     payload["status"] = "complete"
+    platform_receipts = payload["platform_receipts"]
+    assert isinstance(platform_receipts, dict)
+    linux_bubblewrap = platform_receipts["linux_bubblewrap"]
+    assert isinstance(linux_bubblewrap, dict)
+    linux_bubblewrap["status"] = "pending"
     _resign(payload, "record_sha256")
     _write(path, payload)
     manifest = _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json")

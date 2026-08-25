@@ -50,3 +50,9 @@ class _PatchAuthorityValidator:
         """Return whether an endpoint belongs to an issued SDK capability."""
         del endpoint
         return False
+
+    @staticmethod
+    def container_endpoint_is_issued(endpoint: object) -> bool:
+        """Return whether a container endpoint has sealed SDK authority."""
+        del endpoint
+        return False

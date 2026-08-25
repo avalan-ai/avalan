@@ -1,7 +1,7 @@
 """Exercise the authenticated durable Avalan Responses boundary."""
 
 from asyncio import create_task, gather, run, sleep, to_thread
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from hashlib import sha256
@@ -539,12 +539,12 @@ def _stored_orchestrate(
     return dispatch
 
 
-def _client(
+def _app(
     monkeypatch: pytest.MonkeyPatch,
     *,
     configuration: ServedResponsesConfiguration | None,
     dispatches: list[str] | None = None,
-) -> TestClient:
+) -> FastAPI:
     """Return the real FastAPI validation and route boundary."""
     observed = dispatches if dispatches is not None else []
     monkeypatch.setattr(
@@ -561,7 +561,23 @@ def _client(
         responses_router._server_output_redaction_settings
     ] = lambda: ServerOutputRedactionSettings()
     configure_served_responses(app, configuration)
-    return TestClient(app)
+    return app
+
+
+def _client(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    configuration: ServedResponsesConfiguration | None,
+    dispatches: list[str] | None = None,
+) -> TestClient:
+    """Return the real FastAPI validation and route boundary."""
+    return TestClient(
+        _app(
+            monkeypatch,
+            configuration=configuration,
+            dispatches=dispatches,
+        )
+    )
 
 
 _INPUT_ITEMS: tuple[dict[str, object], ...] = (
@@ -1252,14 +1268,15 @@ def test_stored_create_continue_retrieve_delete_and_expiry(
     assert expired_get.status_code == 404
 
 
-def test_explicit_idempotency_replays_without_provider_redispatch(
+@pytest.mark.anyio
+async def test_explicit_idempotency_replays_without_provider_redispatch(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Replay lost responses and conflict changed requests under one key."""
     store = conversation.InMemoryConversationStore()
     clock = _MutableClock()
     provider_controller = conversation.DeterministicFaultController()
-    client = _client(
+    app = _app(
         monkeypatch,
         configuration=_configuration(
             store,
@@ -1268,7 +1285,7 @@ def test_explicit_idempotency_replays_without_provider_redispatch(
         ),
     )
     headers = {"Authorization": "Bearer owner"}
-    payload: dict[str, object] = {
+    payload: Mapping[str, object] = {
         "input": "retry-safe",
         "store": True,
         "extensions": {
@@ -1282,35 +1299,31 @@ def test_explicit_idempotency_replays_without_provider_redispatch(
         },
     }
 
-    first = client.post("/responses", headers=headers, json=payload)
-    assert first.status_code == 200, first.text
+    async with AsyncClient(
+        transport=ASGITransport(app=app),
+        base_url="http://served.test",
+    ) as client:
+        first = await client.post("/responses", headers=headers, json=payload)
+        assert first.status_code == 200, first.text
 
-    async def retry_concurrently() -> tuple[Any, Any]:
-        retries = await gather(
-            to_thread(
-                client.post, "/responses", headers=headers, json=payload
-            ),
-            to_thread(
-                client.post, "/responses", headers=headers, json=payload
-            ),
+        retry_one, retry_two = await gather(
+            client.post("/responses", headers=headers, json=payload),
+            client.post("/responses", headers=headers, json=payload),
         )
-        return retries[0], retries[1]
+        retry_responses = (retry_one, retry_two)
+        for retry in retry_responses:
+            assert retry.status_code == 200, retry.text
+            assert retry.json() == first.json()
+        assert provider_controller.visited.count("provider:dispatch") == 1
 
-    retry_one, retry_two = run(retry_concurrently())
-    retry_responses = (retry_one, retry_two)
-    for retry in retry_responses:
-        assert retry.status_code == 200, retry.text
-        assert retry.json() == first.json()
-    assert provider_controller.visited.count("provider:dispatch") == 1
-
-    changed = client.post(
-        "/responses",
-        headers=headers,
-        json={**payload, "input": "changed"},
-    )
-    assert changed.status_code == 409
-    assert changed.json()["error"]["code"] == "conversation_conflict"
-    assert provider_controller.visited.count("provider:dispatch") == 1
+        changed = await client.post(
+            "/responses",
+            headers=headers,
+            json={**payload, "input": "changed"},
+        )
+        assert changed.status_code == 409
+        assert changed.json()["error"]["code"] == "conversation_conflict"
+        assert provider_controller.visited.count("provider:dispatch") == 1
 
 
 @pytest.mark.anyio

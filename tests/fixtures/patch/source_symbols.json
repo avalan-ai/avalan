@@ -161,7 +161,7 @@
       "path": "src/avalan/patch/target.py",
       "symbol": "LocalInspectionTarget",
       "artifact_class": "patch_target",
-      "source_sha256": "1971a2d1df19dbf09ac62dc422abfdb213eb167080b4b0cb1239345ab591c950"
+      "source_sha256": "5855fdbff281f0a7b85db12e3ea6f71491b99899a58d8ce56c49be5b5f33cf3e"
     },
     {
       "id": "PATCH-SYM-024",
@@ -189,7 +189,7 @@
       "path": "src/avalan/patch/coordinator.py",
       "symbol": "InMemoryPatchCoordinator",
       "artifact_class": "patch_coordinator",
-      "source_sha256": "7dd623facd08ed0c022e98e138b6a6c52fcdfa3661bdc002b723a8aa382f22f3"
+      "source_sha256": "6b8a18fbb562dedb58b868b112409755446173f19abb3e38ac8ac8b8dda7f024"
     },
     {
       "id": "PATCH-SYM-028",
@@ -210,7 +210,7 @@
       "path": "src/avalan/patch/durable_coordinator.py",
       "symbol": "DurablePatchTestHost",
       "artifact_class": "patch_durable_host",
-      "source_sha256": "dc7f64a792c3d4dc2b70a14e5510ff1771d2e2e1e0a78ff33afb7af8475b5e29"
+      "source_sha256": "ee8c6edbd7cb2ab071d7ad53e1b59cd78a265602115f79499d2185f041948dbc"
     },
     {
       "id": "PATCH-SYM-031",
@@ -259,21 +259,21 @@
       "path": "src/avalan/patch/toolset.py",
       "symbol": "PatchToolSet",
       "artifact_class": "patch_toolset",
-      "source_sha256": "d85d908840ebb3488fd233ac460c4c31e941429155e9ab69963ff4ae20b51c79"
+      "source_sha256": "e67fc1fc7babc74d5efd512837da2bb7186448e4e42819c3bba881c52c4106f4"
     },
     {
       "id": "PATCH-SYM-038",
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "cf2801c8fe6fb28c0e7bf2f5e33e44d03bbb7bd0a6e52fcf6cc5ba0c31bd3a13"
+      "source_sha256": "8c4ff81ca9c2493341a0d69ce3a73d3cff0032522a5d32457c08531cc687acb4"
     },
     {
       "id": "PATCH-SYM-039",
       "path": "src/avalan/patch/sandbox_worker.py",
       "symbol": "main",
       "artifact_class": "patch_sandbox_worker",
-      "source_sha256": "20927e5bd5b51bd3875f6ad9c63793eca64fec701484b2b0dc39e869249654d2"
+      "source_sha256": "055e50c91512688a36d521d1a931a51f401e5b002f2d8c3f947a836daa566973"
     },
     {
       "id": "PATCH-SYM-040",
@@ -281,7 +281,14 @@
       "symbol": "RootedMutationCommand",
       "artifact_class": "patch_rooted_worker",
       "source_sha256": "79f7d7206a58d30b63becd6e7926df080e5b0db948a53c8a099450f823775952"
+    },
+    {
+      "id": "PATCH-SYM-041",
+      "path": "src/avalan/patch/container_target.py",
+      "symbol": "ContainerPatchTarget",
+      "artifact_class": "patch_container_target",
+      "source_sha256": "fe09d62c59e98397f903e4c022229e733168de90c3d910f93dcfcff4f9f36078"
     }
   ],
-  "inventory_sha256": "78649e3f7cc735e44a078372b90b7fa15bfe26b858d6caea8a4b5bd23689d360"
+  "inventory_sha256": "57c3fe8d0a3c704df2108f42b0e81134d3f1f1d81b6d61d29b20c204eb270088"
 }

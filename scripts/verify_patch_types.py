@@ -37,7 +37,7 @@ from tempfile import TemporaryDirectory
 from contract_gate import StrictJsonError, canonical_sha256, strict_json_path
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 10
+_CURRENT_PHASE = 11
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
 _PROHIBITED_SOURCE_PATTERN = compile_regex(
