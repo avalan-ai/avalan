@@ -37,19 +37,19 @@
     {
       "id": "PATCH-TARGET-CONTAINER",
       "context": "container",
-      "platform": "portable",
-      "filesystem": "unproven",
+      "platform": "linux",
+      "filesystem": "rooted-docker-volume",
       "lifecycle": "active",
-      "active_from_phase": 0,
-      "advertised": false,
-      "mutation_worker_protocol": "none",
-      "metadata_profile": "none",
-      "primitive": "none",
-      "lease": "none",
-      "coordinator": "none",
-      "persistence": "none",
-      "evidence_node_id": "tests/patch_phase0_contract_test.py::test_phase0_target_factory_corpus_requires_each_context"
+      "active_from_phase": 11,
+      "advertised": true,
+      "mutation_worker_protocol": "authenticated-versioned-stdio",
+      "metadata_profile": "bytes-bom-newline-posix-mode",
+      "primitive": "nofollow-stage-no-replace",
+      "lease": "persistent-docker-volume-fence",
+      "coordinator": "shared-durable-store",
+      "persistence": "volume-backed-same-context",
+      "evidence_node_id": "tests/patch/phase_11_contract_test.py::test_patch_phase_11_requirements"
     }
   ],
-  "manifest_sha256": "a1a9b6b21527284ea2096d36748ddeae5698771062af076a042f55b948c83b7d"
+  "manifest_sha256": "3b41bdeb75ee79f3ecc42e4cc5d759389d544569e5927d5ce463fe6b3a9ea009"
 }

@@ -456,7 +456,7 @@ _PHASE11_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase11.json"
 )
 _PHASE11_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "dac171d752f887957a9c02db7e1eac2cc83e47145b5fd65486a3aa666b5f787e"
+    "f46d632fc85b254deb9e256dd29e84b1fd26c673f7709663352f7c0866ee6829"
 )
 _PHASE12_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase12.json"

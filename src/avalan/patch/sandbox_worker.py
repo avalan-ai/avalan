@@ -413,7 +413,10 @@ def _mutation_command(
     """Decode and validate the complete canonical mutation transaction."""
     if set(value) != {"schema", "plan", "command", "scope", "runtime"}:
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
-    if value["schema"] != "sandbox-patch-command-v1":
+    expected_context = (
+        "container" if config["backend"] == "container" else "sandbox"
+    )
+    if value["schema"] != expected_context + "-patch-command-v1":
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
     plan = _mapping(
         value["plan"],
@@ -500,7 +503,7 @@ def _mutation_command(
         or scope["root"] != _root_payload(root)
         or scope["cwd"] != plan["cwd"]
         or scope["cwd"] != config["cwd"]
-        or plan["context"] != "sandbox"
+        or plan["context"] != expected_context
         or command["domain"] != target["domain"]
         or command["request"] != request["id"]
         or type(command["fence"]) is not int

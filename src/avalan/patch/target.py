@@ -187,6 +187,20 @@ _LINUX_FFI.cdef("""
 _LINUX_LIBC = _LINUX_FFI.dlopen(None)
 _LINUX_AT_EMPTY_PATH = 0x1000
 _LINUX_STATX_MNT_ID = 0x00001000
+_LINUX_NAMESPACE_ROOTS = frozenset(
+    (
+        "cgroup",
+        "ipc",
+        "mnt",
+        "net",
+        "pid",
+        "pid_for_children",
+        "time",
+        "time_for_children",
+        "user",
+        "uts",
+    )
+)
 
 _LINUX_METADATA_FFI = FFI()
 _LINUX_METADATA_FFI.cdef("""
@@ -1173,7 +1187,11 @@ class InspectionRequest:
             not self.paths
             or len(set(self.paths)) != len(self.paths)
             or self.scope.context_kind
-            not in {ContextKind.LOCAL, ContextKind.SANDBOX}
+            not in {
+                ContextKind.LOCAL,
+                ContextKind.SANDBOX,
+                ContextKind.CONTAINER,
+            }
         ):
             raise TargetInspectionError(TargetErrorCode.PATH_DENIED)
 
@@ -3321,7 +3339,7 @@ def _linux_mount_record(value: str) -> _LinuxMountRecord:
     mount_id = _linux_decimal(fields[0])
     _linux_nonnegative_decimal(fields[1])
     major_minor = _linux_major_minor(fields[2])
-    _linux_mount_path(fields[3])
+    _linux_mount_root(fields[3])
     _linux_mount_path(fields[4])
     mount_options = _linux_mount_options(fields[5])
     for optional in fields[6:separator]:
@@ -3390,6 +3408,21 @@ def _linux_mount_path(value: str) -> None:
     """Validate one escaped absolute mount path while retaining no path."""
     if not value.startswith("/") or not _linux_escaped_field(value):
         raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+
+
+def _linux_mount_root(value: str) -> None:
+    """Validate one mount root without retaining its host-specific value."""
+    if value.startswith("/"):
+        _linux_mount_path(value)
+        return
+    namespace, separator, identifier = value.partition(":[")
+    if (
+        not separator
+        or namespace not in _LINUX_NAMESPACE_ROOTS
+        or not identifier.endswith("]")
+    ):
+        raise TargetInspectionError(TargetErrorCode.MOUNT_DENIED)
+    _linux_decimal(identifier[:-1])
 
 
 def _linux_mount_source(value: str) -> bool:

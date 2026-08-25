@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 10,
+  "current_phase": 11,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -980,7 +980,7 @@
     {
       "id": "PATCH-A-111",
       "category": "context_conformance",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 11,
       "requirement_ids": [
         "PATCH-R-0480",
@@ -2845,5 +2845,5 @@
       "evidence_class": "public"
     }
   ],
-  "manifest_sha256": "bcf030d2cf56b5f31d5daa3d3be783ee9a79c70360fa6467ba09cff1df485b54"
+  "manifest_sha256": "94ff539741cc6eb5da243a18c4a19c2884e2e760797532513af3b45ab1b21795"
 }

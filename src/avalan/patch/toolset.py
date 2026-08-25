@@ -80,7 +80,12 @@ from avalan.patch.parser import (
     RawToolCallId,
 )
 from avalan.patch.policy import TrustedPatchPolicy
-from avalan.patch.target import ResolvedMutationScope, TargetHandshake
+from avalan.patch.target import (
+    ResolvedMutationScope,
+    TargetErrorCode,
+    TargetHandshake,
+    TargetInspectionError,
+)
 from avalan.tool import Tool, ToolSet
 from avalan.tool.display import (
     patch_tool_call_display_projection,
@@ -496,6 +501,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
         snapshot: object
         capability: object | None = None
         sandbox_endpoint: object | None = None
+        container_endpoint: object | None = None
         active: bool = True
 
     @dataclass(frozen=True, slots=True)
@@ -734,6 +740,15 @@ def _seal_patch_authority() -> tuple[object, ...]:
             for issue in capabilities
         )
 
+    def container_endpoint_is_issued(endpoint: object) -> bool:
+        """Read whether one endpoint belongs to an active SDK capability."""
+        return any(
+            issue.container_endpoint is endpoint
+            and issue.capability is not None
+            and sealed_capability_is_issued(issue.capability, issue.service)
+            for issue in capabilities
+        )
+
     def sealed_registration_is_issued(
         registration: object,
         owner: object,
@@ -784,6 +799,9 @@ def _seal_patch_authority() -> tuple[object, ...]:
     authority_validator.loader_is_issued = staticmethod(loader_is_issued)
     authority_validator.sandbox_endpoint_is_issued = staticmethod(
         sandbox_endpoint_is_issued
+    )
+    authority_validator.container_endpoint_is_issued = staticmethod(
+        container_endpoint_is_issued
     )
 
     def reserve(service: object, snapshot: object) -> _Reservation:
@@ -875,6 +893,16 @@ def _seal_patch_authority() -> tuple[object, ...]:
             if not callable(endpoint_factory):
                 raise PatchToolError("sandbox endpoint is unavailable")
             issue.sandbox_endpoint = endpoint_factory()
+        if (
+            type(issue.snapshot) is PatchCapabilitySnapshot
+            and issue.snapshot.context_kind is ContextKind.CONTAINER
+        ):
+            endpoint_factory = getattr(
+                issue.service, "_patch_container_endpoint", None
+            )
+            if not callable(endpoint_factory):
+                raise PatchToolError("container endpoint is unavailable")
+            issue.container_endpoint = endpoint_factory()
 
     def revoke(marker: object, owner: object) -> None:
         """Remove an issuance that failed before construction completed."""
@@ -942,35 +970,53 @@ def _seal_patch_authority() -> tuple[object, ...]:
         if not (self._profile.enabled and self._profile.authenticated):
             raise PatchToolError("patch activation requires local test host")
         binding = await self._binder.bind()
-        if binding.scope.context_kind is ContextKind.SANDBOX:
-            from avalan.patch.sandbox_commit import SandboxPatchRuntimeBinder
-
-            if type(self._binder) is not SandboxPatchRuntimeBinder:
-                raise PatchToolError(
-                    "sandbox patch activation requires selected runtime"
-                )
-        snapshot = _snapshot_for_binding(binding)
-        reservation = reserve(binding.service, snapshot)
-        context_token = active_reservation.set(reservation)
         try:
-            toolset = (
-                PatchToolSet(
-                    binding.service,
-                    snapshot,
-                    owned_resources=binding.owned_resources,
+            if binding.scope.context_kind is ContextKind.SANDBOX:
+                from avalan.patch.sandbox_commit import (
+                    SandboxPatchRuntimeBinder,
                 )
-                if binding.owned_resources
-                else PatchToolSet(binding.service, snapshot)
+
+                if type(self._binder) is not SandboxPatchRuntimeBinder:
+                    raise PatchToolError(
+                        "sandbox patch activation requires selected runtime"
+                    )
+            if binding.scope.context_kind is ContextKind.CONTAINER:
+                from avalan.patch.container_target import (
+                    ContainerPatchRuntimeBinder,
+                )
+
+                if type(self._binder) is not ContainerPatchRuntimeBinder:
+                    raise PatchToolError(
+                        "container patch activation requires selected runtime"
+                    )
+            snapshot = _snapshot_for_binding(binding)
+            reservation = reserve(binding.service, snapshot)
+            context_token = active_reservation.set(reservation)
+            try:
+                toolset = (
+                    PatchToolSet(
+                        binding.service,
+                        snapshot,
+                        owned_resources=binding.owned_resources,
+                    )
+                    if binding.owned_resources
+                    else PatchToolSet(binding.service, snapshot)
+                )
+            finally:
+                active_reservation.reset(context_token)
+                discard(reservation)
+            manager = ToolManager.create_instance(
+                available_toolsets=(*ordinary_toolsets, toolset),
+                enable_tools=enable_tools,
+                settings=settings,
             )
-        finally:
-            active_reservation.reset(context_token)
-            discard(reservation)
-        manager = ToolManager.create_instance(
-            available_toolsets=(*ordinary_toolsets, toolset),
-            enable_tools=enable_tools,
-            settings=settings,
-        )
-        return PatchToolManagerBundle(manager, toolset)
+            return PatchToolManagerBundle(manager, toolset)
+        except BaseException as error:
+            for resource in reversed(binding.owned_resources):
+                await resource.__aexit__(
+                    type(error), error, error.__traceback__
+                )
+            raise
 
     def capability_post_init(self: "PatchInvocationCapability") -> None:
         """Require one exact loader-issued capability marker."""
@@ -2109,6 +2155,23 @@ class PatchSdkHost:
             )
         except CancelledError:
             raise
+        except TargetInspectionError as error:
+            if error.code is TargetErrorCode.WITNESS_STALE:
+                try:
+                    outcome = await self._reconcile_after_dispatch(
+                        handle, error
+                    )
+                except TargetInspectionError as reconciliation_error:
+                    if (
+                        reconciliation_error.code
+                        is TargetErrorCode.WITNESS_STALE
+                    ):
+                        raise PatchToolError(
+                            "patch SDK request identity is invalid"
+                        ) from error
+                    raise
+            else:
+                outcome = await self._reconcile_after_dispatch(handle, error)
         except Exception as error:
             outcome = await self._reconcile_after_dispatch(handle, error)
         _bound_bind_invocation(handle, outcome)
@@ -2225,7 +2288,6 @@ class PatchSdkHost:
         error: Exception,
     ) -> PatchInvocationOutcome:
         """Recover service truth rather than fabricate a zero-write result."""
-        del error
         try:
             outcome = await _await_settlement_future(
                 self._service.settlement.inspect(handle),
@@ -2233,6 +2295,16 @@ class PatchSdkHost:
             )
         except CancelledError:
             raise
+        except TargetInspectionError as reconciliation_error:
+            if (
+                isinstance(error, TargetInspectionError)
+                and error.code is TargetErrorCode.WITNESS_STALE
+                and reconciliation_error.code is TargetErrorCode.WITNESS_STALE
+            ):
+                raise
+            raise PatchToolError(
+                "patch dispatch requires host reconciliation"
+            ) from reconciliation_error
         except Exception as reconciliation_error:
             raise PatchToolError(
                 "patch dispatch requires host reconciliation"
@@ -2372,7 +2444,11 @@ def _snapshot_for_binding(
     """Intersect frozen target and policy authority without target I/O."""
     if (
         binding.scope.context_kind
-        not in {ContextKind.LOCAL, ContextKind.SANDBOX}
+        not in {
+            ContextKind.LOCAL,
+            ContextKind.SANDBOX,
+            ContextKind.CONTAINER,
+        }
         or binding.handshake.identity != binding.scope.identity
         or binding.handshake.identity.policy_revision
         != binding.policy.revision.value

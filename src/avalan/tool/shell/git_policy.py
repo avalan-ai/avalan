@@ -4346,7 +4346,10 @@ def _rebase_argv(
             "--no-stat",
             "--no-autostash",
             "--no-rebase-merges",
-            "--empty=stop",
+            # ``stop`` is unavailable in Git 2.43; ``ask`` stops safely for
+            # the same explicit user decision and remains supported by newer
+            # Git versions.
+            "--empty=ask",
             upstream,
         )
     )

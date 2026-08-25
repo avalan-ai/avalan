@@ -143,7 +143,7 @@ jobs:
           make lint
           make typecheck-input-contract INPUT_PHASE=5
           poetry run python scripts/verify_patch_types.py \
-            --through-phase 10 --include-planned
+            --through-phase 11 --include-planned
 
       - name: Start PostgreSQL
         if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'

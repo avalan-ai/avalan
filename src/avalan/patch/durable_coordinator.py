@@ -189,13 +189,22 @@ class DurablePatchReconciler:
             artifacts,
             now,
         )
-        terminal = await self._store.settle(
-            lease,
-            journal.cursor,
-            result,
-            correlation_id,
-            now,
-        )
+        try:
+            terminal = await self._store.settle(
+                lease,
+                journal.cursor,
+                result,
+                correlation_id,
+                now,
+            )
+        except DurableStoreError as error:
+            if (
+                error.code is DurableStoreErrorCode.JOURNAL_INCOMPLETE
+                and pending is not None
+            ):
+                refreshed = await self._store.inspect(access)
+                return await self._suspend(refreshed, lease, pending, now)
+            raise
         return terminal.result
 
     async def _suspend(

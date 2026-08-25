@@ -388,6 +388,59 @@ class OrchestratorResponseIterationCoverageTest(IsolatedAsyncioTestCase):
         finalize.assert_awaited_once_with(StreamItemKind.STREAM_CANCELLED)
         finish.assert_called_once_with(StreamItemKind.STREAM_CANCELLED)
 
+    async def test_cancellation_cleanup_failure_is_attached_to_primary(
+        self,
+    ) -> None:
+        """Preserve cancellation while retaining its failed cleanup detail."""
+        response = _response()
+        primary = CancelledError()
+
+        with patch.object(
+            response,
+            "_converge_stream_cancellation",
+            AsyncMock(side_effect=RuntimeError("cleanup failed")),
+        ):
+            await response._settle_cancellation_failure(primary)
+
+        self.assertEqual(
+            primary.__notes__,
+            ["post-provider cleanup failure: RuntimeError: cleanup failed"],
+        )
+
+    async def test_stream_cleanup_preserves_pending_interaction_failure(
+        self,
+    ) -> None:
+        """Retain an interaction error after later cleanup runs."""
+        response = _response()
+        interaction = AsyncMock(
+            side_effect=RuntimeError("interaction cancel failed")
+        )
+
+        with (
+            patch.object(response, "_cancel_pending_tool_batch", AsyncMock()),
+            patch.object(response, "_cancel_provider_response", AsyncMock()),
+            patch.object(response, "_cancel_pending_interaction", interaction),
+            patch.object(
+                response,
+                "_finalize_execution",
+                AsyncMock(),
+            ) as finalize,
+            patch.object(
+                response,
+                "_discard_untrusted_response_tool_call_batch",
+            ),
+            patch.object(response, "_finish_canonical_stream") as finish,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "interaction cancel failed",
+            ):
+                await response._run_stream_cancellation_cleanup()
+
+        interaction.assert_awaited_once_with()
+        finalize.assert_awaited_once_with(StreamItemKind.STREAM_CANCELLED)
+        finish.assert_called_once_with(StreamItemKind.STREAM_CANCELLED)
+
     async def test_completed_tool_outcome_records_execution_messages(
         self,
     ) -> None:
@@ -1175,6 +1228,87 @@ class OrchestratorResponseInteractionCoverageTest(IsolatedAsyncioTestCase):
         self.assertEqual(
             append.call_args_list[-1].args,
             (StreamItemKind.MODEL_CONTINUATION_CANCELLED, "model-turn"),
+        )
+
+    async def test_resume_records_failed_model_continuation(self) -> None:
+        """Record terminal failure when an attached continuation cannot run."""
+        response = _response()
+        call = _task_input_call()
+        request = MagicMock(spec=InputRequest)
+        result = MagicMock(spec=InputModelResult)
+        correlated = MagicMock()
+        correlated.local_message.return_value = Message(
+            role=MessageRole.TOOL,
+            content="decision",
+        )
+        capability = MagicMock(spec=ModelCapabilityCatalog)
+        capability.project_result.return_value = correlated
+        execution = MagicMock(spec=AgentExecution)
+        execution.record_interaction_result = AsyncMock(return_value=True)
+        execution.messages = (Message(role=MessageRole.USER, content="hello"),)
+        response._capability_catalog = capability
+        response._execution = execution
+        child = ModelCallContext(
+            specification=response._operation.specification,
+            input=response._input,
+            execution_origin=SimpleNamespace(model_call_id="model-turn"),
+        )
+        append = MagicMock(return_value=object())
+        failure = RuntimeError("continuation failed")
+
+        with (
+            patch.object(response, "_new_tool_context", return_value=None),
+            patch.object(
+                response,
+                "_make_child_context",
+                AsyncMock(return_value=child),
+            ),
+            patch.object(
+                response,
+                "_append_canonical_model_continuation",
+                append,
+            ),
+            patch.object(
+                response,
+                "_trigger_canonical_observability_event",
+                AsyncMock(),
+            ),
+            patch.object(
+                response,
+                "_await_with_session_cancellation",
+                AsyncMock(side_effect=failure),
+            ),
+            patch.object(
+                response,
+                "_finalize_execution",
+                AsyncMock(),
+            ) as finalize,
+            patch.object(response, "_finish_canonical_stream") as finish,
+        ):
+            with self.assertRaisesRegex(RuntimeError, "continuation failed"):
+                await response._resume_after_task_input(
+                    call,
+                    request,
+                    result,
+                    assistant_text="preface",
+                )
+
+        self.assertEqual(append.call_count, 2)
+        self.assertEqual(
+            append.call_args_list[-1].args,
+            (StreamItemKind.MODEL_CONTINUATION_ERROR, "model-turn"),
+        )
+        self.assertEqual(
+            append.call_args_list[-1].kwargs["data"],
+            {"error_type": "RuntimeError", "message": "continuation failed"},
+        )
+        finalize.assert_awaited_once_with(StreamItemKind.STREAM_ERRORED)
+        finish.assert_called_once_with(
+            StreamItemKind.STREAM_ERRORED,
+            data={
+                "error_type": "RuntimeError",
+                "message": "continuation failed",
+            },
         )
 
     async def test_unpublished_interaction_needs_no_canonical_cancel(

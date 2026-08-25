@@ -36,6 +36,12 @@ from uuid import uuid4
 
 import pytest
 from cffi import FFI
+from context_contract_corpus import (
+    SHARED_CONTEXT_CORPUS,
+    ContextCorpusCase,
+    read_context_corpus_tree,
+    write_context_corpus_tree,
+)
 
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
@@ -480,116 +486,6 @@ def _agent_tool_settings(
     )
 
 
-@dataclass(frozen=True, slots=True)
-class _SandboxCorpusCase:
-    """Bind one inherited local contract case to sandbox execution."""
-
-    case_id: str
-    source_contract: str
-    category: str
-    operation: OperationType
-    arguments: dict[str, object]
-    initial_files: tuple[tuple[str, bytes], ...]
-    expected_files: tuple[tuple[str, bytes], ...]
-    expected_status: PatchStatus
-    replace_root: bool = False
-    inspection_only: bool = False
-    expected_error: bool = False
-
-
-_SANDBOX_SHARED_CORPUS = (
-    _SandboxCorpusCase(
-        "P4-nested-exact-match",
-        "phase_4_contract_test.py",
-        "semantic",
-        OperationType.EDIT,
-        {
-            "path": "nested/note.txt",
-            "edits": [{"old_text": "before", "new_text": "after"}],
-        },
-        (("nested/note.txt", b"before\n"),),
-        (("nested/note.txt", b"before\n"),),
-        PatchStatus.COMMITTED,
-        inspection_only=True,
-    ),
-    _SandboxCorpusCase(
-        "P4-missing-match-fault",
-        "phase_4_contract_test.py",
-        "fault",
-        OperationType.EDIT,
-        {
-            "path": "note.txt",
-            "edits": [{"old_text": "absent", "new_text": "after"}],
-        },
-        (("note.txt", b"before\n"),),
-        (("note.txt", b"before\n"),),
-        PatchStatus.REJECTED,
-        expected_error=True,
-    ),
-    _SandboxCorpusCase(
-        "P4-root-replacement-race",
-        "phase_4_contract_test.py",
-        "race",
-        OperationType.EDIT,
-        {
-            "path": "note.txt",
-            "edits": [{"old_text": "before", "new_text": "after"}],
-        },
-        (("note.txt", b"before\n"),),
-        (("note.txt", b"before\n"),),
-        PatchStatus.STALE,
-        replace_root=True,
-    ),
-    _SandboxCorpusCase(
-        "P7-operation-matrix",
-        "phase_7_contract_test.py",
-        "operation_matrix",
-        OperationType.APPLY,
-        {
-            "patch": "\n".join(
-                (
-                    "*** Begin Patch v1",
-                    "*** Add File: created.txt",
-                    "+created",
-                    "*** Delete File: deleted.txt",
-                    "*** Update File: source.txt",
-                    "*** Move to: moved.txt",
-                    "*** Update File: note.txt",
-                    "@@",
-                    "-before",
-                    "+after",
-                    "*** End Patch",
-                )
-            )
-        },
-        (
-            ("deleted.txt", b"deleted\n"),
-            ("note.txt", b"before\n"),
-            ("source.txt", b"source\n"),
-        ),
-        (
-            ("created.txt", b"created\n"),
-            ("moved.txt", b"source\n"),
-            ("note.txt", b"after\n"),
-        ),
-        PatchStatus.COMMITTED,
-    ),
-    _SandboxCorpusCase(
-        "P9-closed-model-projection",
-        "phase_9_contract_test.py",
-        "projection",
-        OperationType.EDIT,
-        {
-            "path": "note.txt",
-            "edits": [{"old_text": "before", "new_text": "after"}],
-        },
-        (("note.txt", b"before\n"),),
-        (("note.txt", b"after\n"),),
-        PatchStatus.COMMITTED,
-    ),
-)
-
-
 def _sandbox_corpus_policy() -> TrustedPatchPolicy:
     """Authorize every shared operation class through one review route."""
     reader = PreauthorizationClass("sandbox-corpus-read")
@@ -643,28 +539,6 @@ def _sandbox_corpus_policy() -> TrustedPatchPolicy:
             PolicyReviewerRole("sandbox-runtime-reviewer"),
             1,
         ),
-    )
-
-
-def _write_corpus_tree(
-    root: Path,
-    files: tuple[tuple[str, bytes], ...],
-) -> None:
-    """Materialize one bounded shared-corpus tree."""
-    for path, value in files:
-        target = root / path
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(value)
-
-
-def _read_corpus_tree(root: Path) -> tuple[tuple[str, bytes], ...]:
-    """Return the complete regular-file tree in stable logical order."""
-    return tuple(
-        sorted(
-            (path.relative_to(root).as_posix(), path.read_bytes())
-            for path in root.rglob("*")
-            if path.is_file()
-        )
     )
 
 
@@ -1304,6 +1178,32 @@ def test_patch_phase_10_requirements(tmp_path: Path) -> None:
     run(exercise())
 
 
+def test_patch_phase_10_worker_keeps_current_interpreter_minor(
+    tmp_path: Path,
+) -> None:
+    """Resolve the active interpreter instead of a generic base symlink."""
+    runtime = tmp_path / "python3.11"
+    runtime.write_bytes(b"runtime")
+    generic = tmp_path / "python3"
+    generic.write_bytes(b"default")
+    wrapper = tmp_path / "venv" / "bin" / "python"
+    wrapper.parent.mkdir(parents=True)
+    wrapper.symlink_to(runtime)
+
+    assert sandbox_commit_module._worker_interpreter_path(str(wrapper)) == str(
+        runtime
+    )
+    assert sandbox_commit_module._worker_interpreter_path(str(wrapper)) != str(
+        generic
+    )
+    with pytest.raises(
+        RuntimeError, match="Python interpreter is unavailable"
+    ):
+        sandbox_commit_module._worker_interpreter_path(
+            str(tmp_path / "missing")
+        )
+
+
 def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -1321,6 +1221,16 @@ def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
     )
     monkeypatch.setattr(target_module, "_linux_mountinfo_bytes", lambda: first)
     topology = target_module._linux_mount_topology(7)
+    namespace_root = (
+        b"43 1 0:43 net:[4026532165] /run/docker/netns/default rw - nsfs "
+        b"nsfs rw\n"
+    )
+    monkeypatch.setattr(
+        target_module,
+        "_linux_mountinfo_bytes",
+        lambda: first + namespace_root,
+    )
+    assert target_module._linux_mount_topology(7) == topology
     monkeypatch.setattr(
         target_module,
         "_linux_mountinfo_bytes",
@@ -1358,6 +1268,30 @@ def test_patch_phase_10_linux_mount_witness_is_descriptor_bound(
     with pytest.raises(TargetInspectionError) as raced:
         target_module._linux_mount_topology(7)
     assert raced.value.code is TargetErrorCode.MOUNT_DENIED
+
+
+def test_patch_phase_10_mount_parser_handles_namespace_pseudo_roots() -> None:
+    """Accept only Linux's canonical namespace pseudo-root grammar."""
+    namespace_record = (
+        "43 1 0:43 net:[4026532165] /run/docker/netns/default rw - nsfs "
+        "nsfs rw"
+    )
+    target_module._linux_mount_record(namespace_record)
+    for root in (
+        "net:[0]",
+        "net:[01]",
+        "net:[4026532165]suffix",
+        "net:[not-a-decimal]",
+        "network:[4026532165]",
+        "net:4026532165",
+    ):
+        with pytest.raises(TargetInspectionError) as malformed:
+            target_module._linux_mount_record(
+                "43 1 0:43 "
+                + root
+                + " /run/docker/netns/default rw - nsfs nsfs rw"
+            )
+        assert malformed.value.code is TargetErrorCode.MOUNT_DENIED
 
 
 def test_patch_phase_10_worker_rejects_changed_linux_namespace_mount_binding(
@@ -1807,6 +1741,330 @@ def test_patch_phase_10_linux_metadata_dispatch_never_uses_darwin_abi(
         ("acl", 7, metadata.acl),
         ("flags", 7, 0),
     ]
+
+
+def test_patch_phase_10_darwin_metadata_dispatch_uses_native_abis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Exercise the Darwin descriptor metadata ABI without Linux helpers."""
+    acl_text = b"user::rw-\ngroup::r--\nother::---\n"
+
+    class DarwinMetadata:
+        """Model the descriptor-scoped Darwin metadata primitives."""
+
+        def __init__(self) -> None:
+            """Retain mutable xattr, ACL, flag, and allocation state."""
+            self.xattrs = {
+                b"user.avalan.first": b"one",
+                b"user.avalan.second": b"two",
+            }
+            self.flags = 0
+            self.freed: list[object] = []
+            self.buffers: list[object] = []
+            self.fail_probe = False
+
+        def flistxattr(
+            self, _descriptor: int, buffer: object, size: int, _options: int
+        ) -> int:
+            """Return or copy the complete descriptor xattr-name list."""
+            names = b"".join(name + b"\x00" for name in sorted(self.xattrs))
+            if buffer != target_module._METADATA_FFI.NULL:
+                target_module._METADATA_FFI.buffer(buffer, size)[:] = names
+            return len(names)
+
+        def fgetxattr(
+            self,
+            _descriptor: int,
+            name: bytes,
+            buffer: object,
+            size: int,
+            _position: int,
+            _options: int,
+        ) -> int:
+            """Return or copy one requested descriptor xattr value."""
+            value = self.xattrs[name]
+            if buffer != target_module._METADATA_FFI.NULL:
+                target_module._METADATA_FFI.buffer(buffer, size)[:] = value
+            return len(value)
+
+        def fsetxattr(
+            self,
+            _descriptor: int,
+            name: bytes,
+            buffer: object,
+            size: int,
+            _position: int,
+            _options: int,
+        ) -> int:
+            """Store one xattr copied from the ABI-provided CFFI buffer."""
+            self.xattrs[name] = bytes(
+                target_module._METADATA_FFI.buffer(buffer, size)
+            )
+            return 0
+
+        def fremovexattr(
+            self, _descriptor: int, name: bytes, _options: int
+        ) -> int:
+            """Remove one descriptor xattr through the native ABI."""
+            del self.xattrs[name]
+            return 0
+
+        def acl_init(self, _entries: int) -> object:
+            """Allocate one non-null ACL handle for a trusted probe."""
+            return target_module._METADATA_FFI.cast("void *", 1)
+
+        def acl_create_entry(self, _acl: object, entry: object) -> int:
+            """Create one ACL entry or force the native cleanup branch."""
+            if self.fail_probe:
+                return -1
+            cast("AclEntryPointer", entry)[0] = (
+                target_module._METADATA_FFI.cast("void *", 2)
+            )
+            return 0
+
+        def acl_set_tag_type(self, _entry: object, _tag: int) -> int:
+            """Accept the selected extended-allow ACL tag."""
+            return 0
+
+        def acl_set_qualifier(self, _entry: object, _qualifier: object) -> int:
+            """Accept the selected opaque ACL qualifier."""
+            return 0
+
+        def acl_set_permset_mask_np(
+            self, _entry: object, _permissions: int
+        ) -> int:
+            """Accept the selected read-data permission mask."""
+            return 0
+
+        def acl_get_fd(self, _descriptor: int) -> object:
+            """Return one descriptor ACL handle."""
+            return target_module._METADATA_FFI.cast("void *", 3)
+
+        def acl_to_text(self, _acl: object, length: object) -> object:
+            """Allocate the exact canonical textual ACL bytes."""
+            buffer = target_module._METADATA_FFI.new("char[]", acl_text)
+            self.buffers.append(buffer)
+            cast("AclLengthPointer", length)[0] = len(acl_text)
+            return buffer
+
+        def acl_from_text(self, value: bytes) -> object:
+            """Recreate only the exact captured ACL baseline."""
+            assert value == acl_text
+            return target_module._METADATA_FFI.cast("void *", 4)
+
+        def acl_set_fd(self, _descriptor: int, _acl: object) -> int:
+            """Apply one already-initialized ACL handle."""
+            return 0
+
+        def acl_free(self, value: object) -> int:
+            """Record every released native ACL allocation."""
+            self.freed.append(value)
+            return 0
+
+        def fchflags(self, _descriptor: int, flags: int) -> int:
+            """Store one descriptor inode-flag word."""
+            self.flags = flags
+            return 0
+
+    class AclEntryPointer(Protocol):
+        """Type one native ACL-entry output pointer."""
+
+        def __setitem__(self, index: int, value: object) -> None:
+            """Assign one ACL entry handle."""
+            ...
+
+    class AclLengthPointer(Protocol):
+        """Type one native ACL text-length output pointer."""
+
+        def __setitem__(self, index: int, value: int) -> None:
+            """Assign one captured ACL byte count."""
+            ...
+
+    native = DarwinMetadata()
+    seatbelt = tmp_path / "sandbox-exec"
+    seatbelt.write_text("", encoding="utf-8")
+    monkeypatch.setattr(target_module, "platform", "darwin")
+    monkeypatch.setattr(target_module, "_METADATA_LIBC", native)
+    monkeypatch.setattr(
+        target_module,
+        "fstat",
+        lambda _descriptor: SimpleNamespace(st_flags=native.flags),
+    )
+    monkeypatch.setattr(target_module, "_SEATBELT_EXECUTABLE", str(seatbelt))
+
+    assert run(target_module._seatbelt_worker_available())
+
+    async def worker_available() -> bool:
+        """Report a selected Seatbelt worker as available."""
+        return True
+
+    monkeypatch.setattr(
+        target_module, "_seatbelt_worker_available", worker_available
+    )
+    assert run(target_module._local_worker_available())
+    assert target_module._capture_xattrs(7) == (
+        (b"user.avalan.first", b"one"),
+        (b"user.avalan.second", b"two"),
+    )
+    target_module._set_xattr(7, b"user.avalan.third", b"three")
+    target_module._remove_xattr(7, b"user.avalan.third")
+    assert target_module._capture_acl(7) == acl_text
+    target_module._set_acl(7, object())
+    target_module._restore_acl(7, None)
+    target_module._restore_acl(7, acl_text)
+    assert target_module._capture_native_flags(7) == 0
+    target_module._set_native_flags(7, 1)
+    assert target_module._capture_native_flags(7) == 1
+    target_module._free_acl(target_module._probe_acl())
+    native.fail_probe = True
+    with pytest.raises(OSError):
+        target_module._probe_acl()
+    monkeypatch.setattr(
+        target_module, "_root_mount_id", lambda _descriptor, _status: "mount"
+    )
+    assert target_module._namespace_mount_binding(7) == "mount"
+    assert native.freed
+
+
+def test_patch_phase_10_darwin_metadata_rejects_native_abi_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject discontinuous Darwin metadata responses at each ABI boundary."""
+    metadata_ffi = target_module._METADATA_FFI
+    null = metadata_ffi.NULL
+    acl = metadata_ffi.cast("void *", 11)
+    released: list[object] = []
+    raw_names = b"unterminated"
+
+    def set_native(**members: object) -> None:
+        """Install exactly the native functions needed for one failure case."""
+        monkeypatch.setattr(
+            target_module, "_METADATA_LIBC", SimpleNamespace(**members)
+        )
+
+    def names_from_native(
+        _descriptor: int,
+        buffer: object,
+        size: int,
+        _options: int,
+    ) -> int:
+        """Return a mutable raw xattr name list through the CFFI buffer."""
+        if buffer != null:
+            metadata_ffi.buffer(buffer, size)[:] = raw_names
+        return len(raw_names)
+
+    def free_acl(value: object) -> int:
+        """Record a released ACL handle after a failed native read."""
+        released.append(value)
+        return 0
+
+    monkeypatch.setattr(target_module, "platform", "darwin")
+
+    set_native(acl_init=lambda _entries: null)
+    with pytest.raises(OSError, match="probe ACL initialization"):
+        target_module._probe_acl()
+
+    set_native(flistxattr=lambda *_arguments: -1)
+    with pytest.raises(OSError, match="attribute list is unavailable"):
+        target_module._capture_xattrs(7)
+
+    set_native(flistxattr=lambda *_arguments: 0)
+    assert target_module._capture_xattrs(7) == ()
+
+    list_lengths = iter((4, 3))
+    set_native(flistxattr=lambda *_arguments: next(list_lengths))
+    with pytest.raises(OSError, match="attribute list changed"):
+        target_module._capture_xattrs(7)
+
+    set_native(flistxattr=names_from_native)
+    with pytest.raises(OSError, match="attribute list is malformed"):
+        target_module._capture_xattrs(7)
+
+    raw_names = b"duplicate\x00duplicate\x00"
+    with pytest.raises(OSError, match="attribute list is malformed"):
+        target_module._capture_xattrs(7)
+
+    raw_names = b"user.avalan\x00"
+    set_native(
+        flistxattr=names_from_native,
+        fgetxattr=lambda *_arguments: -1,
+    )
+    with pytest.raises(OSError, match="attribute value is unavailable"):
+        target_module._capture_xattrs(7)
+
+    def changed_value(
+        _descriptor: int,
+        _name: bytes,
+        buffer: object,
+        _size: int,
+        _position: int,
+        _options: int,
+    ) -> int:
+        """Report a shorter second read for the selected xattr value."""
+        return 3 if buffer != null else 4
+
+    set_native(flistxattr=names_from_native, fgetxattr=changed_value)
+    with pytest.raises(OSError, match="attribute value changed"):
+        target_module._capture_xattrs(7)
+
+    def missing_acl(_descriptor: int) -> object:
+        """Report the Darwin no-ACL errno immediately with its null handle."""
+        metadata_ffi.errno = 2
+        return null
+
+    def unavailable_acl(_descriptor: int) -> object:
+        """Report an unexpected ACL errno immediately with its null handle."""
+        metadata_ffi.errno = 1
+        return null
+
+    set_native(acl_get_fd=missing_acl)
+    assert target_module._capture_acl(7) is None
+    set_native(acl_get_fd=unavailable_acl)
+    with pytest.raises(OSError, match="ACL capture is unavailable"):
+        target_module._capture_acl(7)
+
+    set_native(
+        acl_get_fd=lambda _descriptor: acl,
+        acl_to_text=lambda _acl, _length: null,
+        acl_free=free_acl,
+    )
+    with pytest.raises(OSError, match="ACL text is unavailable"):
+        target_module._capture_acl(7)
+    assert released == [acl]
+
+    set_native(acl_set_fd=lambda _descriptor, _acl: -1)
+    with pytest.raises(OSError, match="ACL set failed"):
+        target_module._set_acl(7, acl)
+
+    set_native(acl_init=lambda _entries: null)
+    with pytest.raises(OSError, match="ACL clear is unavailable"):
+        target_module._restore_acl(7, None)
+
+    set_native(acl_from_text=lambda _value: null)
+    with pytest.raises(OSError, match="ACL restore is unavailable"):
+        target_module._restore_acl(7, b"baseline")
+
+    set_native(fchflags=lambda _descriptor, _flags: -1)
+    with pytest.raises(OSError, match="flags restore failed"):
+        target_module._set_native_flags(7, 1)
+
+    set_native(fchflags=lambda _descriptor, _flags: 0)
+    monkeypatch.setattr(
+        target_module,
+        "fstat",
+        lambda _descriptor: SimpleNamespace(st_flags=0),
+    )
+    with pytest.raises(OSError, match="flags restore did not round trip"):
+        target_module._set_native_flags(7, 1)
+
+    set_native(fsetxattr=lambda *_arguments: -1)
+    with pytest.raises(OSError, match="attribute restore failed"):
+        target_module._set_xattr(7, b"user.avalan", b"value")
+
+    set_native(fremovexattr=lambda *_arguments: -1)
+    with pytest.raises(OSError, match="attribute removal failed"):
+        target_module._remove_xattr(7, b"user.avalan")
+    metadata_ffi.errno = 0
 
 
 def test_patch_phase_10_linux_metadata_ffi_success_and_failure_paths(
@@ -2530,6 +2788,14 @@ def test_patch_phase_10_linux_acl_loader_fails_closed_at_module_boot(
         run_name="avalan.patch._target_acl_loader_probe",
     )
     assert loaded["_LINUX_ACL_LIBC"] is None
+
+    monkeypatch.setattr(sys, "platform", "darwin")
+    non_linux = run_path(
+        str(Path("src/avalan/patch/target.py").resolve()),
+        run_name="avalan.patch._target_non_linux_acl_loader_probe",
+    )
+    assert non_linux["_LINUX_ACL_LIBRARY"] is None
+    assert non_linux["_LINUX_ACL_LIBC"] is None
 
 
 def test_patch_phase_10_linux_acl_loader_uses_soname_without_discovery(
@@ -3291,19 +3557,19 @@ def test_patch_phase_10_agent_cycle_uses_selected_sandbox_manager(
 
 @pytest.mark.parametrize(
     "case",
-    _SANDBOX_SHARED_CORPUS,
+    SHARED_CONTEXT_CORPUS,
     ids=lambda case: case.case_id,
 )
 def test_patch_phase_10_executes_shared_local_contract_corpus(
     tmp_path: Path,
-    case: _SandboxCorpusCase,
+    case: ContextCorpusCase,
 ) -> None:
     """Execute inherited semantic, race, fault, and projection cases."""
     root = tmp_path / "sandbox-view"
     namespace = tmp_path / "sandbox-private"
     root.mkdir()
     namespace.mkdir()
-    _write_corpus_tree(root, case.initial_files)
+    write_context_corpus_tree(root, case.initial_files)
     clock = _RuntimeClock()
     approvals = ApprovalService(_RuntimeBroker(), clock, RuntimeGrantStore())
     authority = HmacDurableApprovalAuthority.random()
@@ -3369,7 +3635,7 @@ def test_patch_phase_10_executes_shared_local_contract_corpus(
                     )
                     == case.expected_files
                 )
-                assert _read_corpus_tree(root) == case.expected_files
+                assert read_context_corpus_tree(root) == case.expected_files
                 return
             if case.replace_root:
                 parked = tmp_path / "planned-root"
@@ -3378,18 +3644,20 @@ def test_patch_phase_10_executes_shared_local_contract_corpus(
                 (root / "note.txt").write_bytes(b"canary\n")
                 with pytest.raises((PatchToolError, TargetInspectionError)):
                     await host.invoke_json(case.operation, case.arguments)
-                assert _read_corpus_tree(parked) == case.expected_files
-                assert _read_corpus_tree(root) == (("note.txt", b"canary\n"),)
+                assert read_context_corpus_tree(parked) == case.expected_files
+                assert read_context_corpus_tree(root) == (
+                    ("note.txt", b"canary\n"),
+                )
                 return
             if case.expected_error:
                 with pytest.raises(PatchToolError):
                     await host.invoke_json(case.operation, case.arguments)
-                assert _read_corpus_tree(root) == case.expected_files
+                assert read_context_corpus_tree(root) == case.expected_files
                 return
             outcome = await host.invoke_json(case.operation, case.arguments)
             assert isinstance(outcome, PatchResult)
             assert outcome.status is case.expected_status
-            assert _read_corpus_tree(root) == case.expected_files
+            assert read_context_corpus_tree(root) == case.expected_files
             projection = project_model_result(outcome)
             assert set(projection) == {
                 "kind",
@@ -4553,6 +4821,43 @@ def test_patch_phase_10_rooted_worker_wrappers_retain_target_binding(
         is TargetErrorCode.CAPABILITY_UNAVAILABLE
     )
 
+    class DarwinFcntl:
+        """Model the descriptor-only Darwin F_GETPATH primitive."""
+
+        def __init__(self) -> None:
+            """Start with one valid kernel-reported descriptor path."""
+            self.path = "/selected/darwin"
+            self.status = 0
+
+        def fcntl(self, _descriptor: int, command: int, buffer: object) -> int:
+            """Populate the fixed CFFI buffer or reject the native request."""
+            assert command == rooted_worker_module._F_GETPATH
+            if self.status != 0:
+                return self.status
+            encoded = self.path.encode() + b"\x00"
+            rooted_worker_module._CFFI.buffer(
+                buffer, rooted_worker_module._PATH_MAX
+            )[: len(encoded)] = encoded
+            return 0
+
+    darwin_fcntl = DarwinFcntl()
+    monkeypatch.setattr(rooted_worker_module, "sys_platform", "darwin")
+    monkeypatch.setattr(rooted_worker_module, "_LIBC", darwin_fcntl)
+    assert rooted_worker_module._descriptor_path(10) == Path(
+        "/selected/darwin"
+    )
+    darwin_fcntl.path = ""
+    with pytest.raises(TargetInspectionError) as empty_darwin_descriptor:
+        rooted_worker_module._descriptor_path(10)
+    assert empty_darwin_descriptor.value.code is TargetErrorCode.WITNESS_STALE
+    darwin_fcntl.status = -1
+    with pytest.raises(TargetInspectionError) as unavailable_darwin_descriptor:
+        rooted_worker_module._descriptor_path(10)
+    assert (
+        unavailable_darwin_descriptor.value.code
+        is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    )
+
     def fence_failure() -> None:
         """Model the final ownership fence replacement before an effect."""
         raise CoordinatorError(CoordinatorErrorCode.FENCED)
@@ -4858,6 +5163,35 @@ def test_patch_phase_10_sandbox_wire_rejects_invalid_runtime_shapes(
     with pytest.raises(TargetInspectionError) as malformed_response:
         sandbox_commit_module._response_payload(b"{}", b"x" * 32, {})
     assert malformed_response.value.code is TargetErrorCode.WORKER_UNAVAILABLE
+
+
+def test_patch_phase_10_runtime_backend_probe_dispatches_seatbelt(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Dispatch the selected Seatbelt probe without a Linux host dependency."""
+    expected = cast(
+        SandboxBackendProbeResult,
+        SimpleNamespace(backend=SandboxBackend.SEATBELT, available=False),
+    )
+
+    class SeatbeltProbe:
+        """Provide the native Seatbelt boundary for this dispatch test."""
+
+        async def probe(self) -> SandboxBackendProbeResult:
+            """Return the exact selected backend receipt."""
+            return expected
+
+    monkeypatch.setattr(
+        sandbox_commit_module, "SeatbeltSandboxBackend", SeatbeltProbe
+    )
+    assert (
+        run(
+            sandbox_commit_module._runtime_backend_probe(
+                SandboxBackend.SEATBELT
+            )
+        )
+        is expected
+    )
 
 
 def test_patch_phase_10_sdk_rejects_invalid_retransmission_ingress() -> None:
@@ -7695,8 +8029,17 @@ def test_patch_phase_10_sandbox_service_reaps_failures_and_fences_helpers(
             await service.approve(cast(PatchInvocationHandle, object()))
             is result
         )
+        reader_gate = Event()
+
+        async def await_reader() -> None:
+            """Remain pending until service teardown cancels the reader."""
+            await reader_gate.wait()
+
+        reader_task = create_task(await_reader())
+        service._reader_tasks = {reader_task}
         with pytest.raises(RuntimeError, match="runtime close failed"):
             await service.__aexit__(None, None, None)
+        assert reader_task.cancelled()
 
         service.runtime = runtime
         service.scope = cast(ResolvedMutationScope, object())
