@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 11,
+  "current_phase": 12,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -316,7 +316,7 @@
       "lifecycle": "active",
       "active_from_phase": 8,
       "path": "tests/patch_type_contracts/phase8_positive.py",
-      "source_sha256": "34841ea79c4f1103078cf7a88a2c53b196e6138dc20344ef5db98ff3bf4f7bc6",
+      "source_sha256": "436ac6088922b4105fa44fd5a526522c4e18c04b7e1a463f59806c51ad3b18a2",
       "expected_diagnostics": []
     },
     {
@@ -356,6 +356,131 @@
       "expected_diagnostics": [
         "tests/patch_type_contracts/phase11_image_negative.py:5:30: error: Incompatible types in assignment (expression has type \"str\", variable has type \"ContainerPatchImage\")  [assignment]"
       ]
+    },
+    {
+      "id": "PATCH-T-093",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_positive.py",
+      "source_sha256": "eafa889cfdfc2df3fbbac73363844f91e5ea477383c8af68da4bf10035b1fbcf",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-094",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_audience_substitution_negative.py",
+      "source_sha256": "9f6cd468c65ab0e6f624cf7c9ab96f9200ffbf021690406c8f3ff703549e206a",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:28:29: error: Argument 1 to \"project\" of \"ModelProjectionBoundary\" has incompatible type \"AuditProjectionAuthority\"; expected \"ModelProjectionAuthority\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:35:12: error: Incompatible return value type (got \"ModelProjectionDelivery\", expected \"AuditProjectionDelivery\")  [return-value]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:42:5: error: \"ModelProjectionAuthority\" has no attribute \"source\"  [attr-defined]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:47:12: error: Missing positional argument \"item\" in call to \"ModelProjectionDelivery\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:52:5: error: Module has no attribute \"decode_model_projection\"  [attr-defined]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:57:5: error: Unsupported target for indexed assignment (\"ModelProjectionDelivery\")  [index]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:62:5: error: No overload variant of \"asdict\" matches argument type \"ModelProjectionDelivery\"  [call-overload]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:65:1: error: Cannot subclass \"NewType\"  [misc]",
+        "tests/patch_type_contracts/phase12_audience_substitution_negative.py:74:30: error: Argument 1 to \"project\" of \"EventManagerDurableOutboxProjection\" has incompatible type \"DurableOutboxRecord\"; expected \"SequenceNumber\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "PATCH-T-095",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_review_display_positive.py",
+      "source_sha256": "82827a4b6f5b6dce52d954fe38ee3d13feecc6d3dc087d9b895eadec916088ad",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-096",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_review_display_negative.py",
+      "source_sha256": "aeb1cd5e17c1379d7590217d6a266d925b7b9f60d65618a27eb84f313760aa8b",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase12_review_display_negative.py:22:38: error: Argument 2 to \"render_review_plain\" has incompatible type \"ModelProjectionAuthority\"; expected \"ApproverReviewViewAuthority\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_review_display_negative.py:30:12: error: Incompatible return value type (got \"ApproverReviewView\", expected \"ApproverReviewViewAuthority\")  [return-value]",
+        "tests/patch_type_contracts/phase12_review_display_negative.py:38:40: error: Argument 1 to \"create_approver_review_view\" has incompatible type \"ModelProjectionBoundary\"; expected \"ApproverProjectionBoundary\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_review_display_negative.py:38:50: error: Argument 2 to \"create_approver_review_view\" has incompatible type \"ModelProjectionAuthority\"; expected \"ApproverProjectionAuthority\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_review_display_negative.py:46:12: error: Incompatible return value type (got \"bytes\", expected \"str\")  [return-value]"
+      ]
+    },
+    {
+      "id": "PATCH-T-097",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_cli_review_positive.py",
+      "source_sha256": "39289641efc9a25ee1953eba03120d6acdd47254fcfffa9b63bdddca3e456b32",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-098",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_cli_review_negative.py",
+      "source_sha256": "b23666b03272e912d9851175eeb7c107cc90794926d942abc4a9e1e35986b2ee",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase12_cli_review_negative.py:17:51: error: Argument 1 to \"create_local_patch_review_test_profile\" has incompatible type \"PatchSdkHost\"; expected \"PatchCliInvocationReviewBinding\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_cli_review_negative.py:25:60: error: Argument \"preauthorization\" to \"run_local_patch_review\" has incompatible type \"DetachedPatchCliApproval\"; expected \"ExactPatchCliPreauthorization | None\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_cli_review_negative.py:33:46: error: Argument 2 to \"resume_local_patch_review\" has incompatible type \"ExactPatchCliPreauthorization\"; expected \"PatchCliReviewContinuation\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_cli_review_negative.py:38:39: error: Argument 1 to \"PatchCliReviewContinuation\" has incompatible type \"None\"; expected \"Never\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "PATCH-T-099",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_audit_retention_positive.py",
+      "source_sha256": "930c9e0fb3d5975caa188879c2a3b636213a3d1e69a1920b6925c3f0ffcd6062",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-100",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_audit_retention_negative.py",
+      "source_sha256": "87548e2f9bfeda685f3ff14a0f3bb6d79ad7190aca754838ec064fb0430b3259",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:28:29: error: Argument 1 to \"project\" of \"AuditRecordBoundary\" has incompatible type \"MetricsRecordAuthority\"; expected \"AuditRecordAuthority\"  [arg-type]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:35:12: error: Incompatible return value type (got \"MetricsRecordDelivery\", expected \"AuditRecordDelivery\")  [return-value]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:40:12: error: Missing positional argument \"item\" in call to \"AuditRecordDelivery\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:47:5: error: \"AuditRecordAuthority\" has no attribute \"source\"  [attr-defined]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:52:12: error: Missing positional argument \"token\" in call to \"PatchAudienceProjectionSource\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:57:12: error: Missing positional argument \"token\" in call to \"AudienceProjectionAccess\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:62:12: error: Missing positional argument \"token\" in call to \"AudienceRetentionWriter\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:67:12: error: Missing positional argument \"token\" in call to \"AudienceRetentionReadAuthority\"  [call-arg]",
+        "tests/patch_type_contracts/phase12_audit_retention_negative.py:76:31: error: Argument 1 to \"open\" of \"AudienceRetentionService\" has incompatible type \"AudienceRetentionWriter\"; expected \"AudienceRetentionReadAuthority\"  [arg-type]"
+      ]
+    },
+    {
+      "id": "PATCH-T-101",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_diagnostic_association_positive.py",
+      "source_sha256": "8a8dd128ef66011de206efe370d1d1801855bacad4426da29c6b7489d6c80606",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-102",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "path": "tests/patch_type_contracts/phase12_diagnostic_association_negative.py",
+      "source_sha256": "801b0b46f782088728e4827db7fa6174673fc0d230fc7611c974660f7d3b4e43",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase12_diagnostic_association_negative.py:15:12: error: Module has no attribute \"create_diagnostic_association_service\"  [attr-defined]",
+        "tests/patch_type_contracts/phase12_diagnostic_association_negative.py:22:12: error: \"DiagnosticApprovalReceipt\" has no attribute \"approve\"  [attr-defined]",
+        "tests/patch_type_contracts/phase12_diagnostic_association_negative.py:31:52: error: Argument 1 to \"begin_new_patch_request\" of \"RemediationPatchRequester\" has incompatible type \"DiagnosticAssociation\"; expected \"RemediationPatchAuthorization\"  [arg-type]"
+      ]
     }
   ],
   "sources": [
@@ -384,7 +509,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a81c68432e51a9bbe8ad578983af2c641b966c1a60229ddab2ee0fa7b7270da5"
+      "source_sha256": "800d7a0bc35ba5c9a0db4ab8422800387468f8a166ceda12d648db9564eb835f"
     },
     {
       "id": "PATCH-TS-004",
@@ -393,7 +518,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f364e705090160332fbf53e703a287929d3dfa5763b9563a91cf60f7ebbf6ac6"
+      "source_sha256": "049c5a10b943cd0488b614327ccc2392b92ddf2794f64aeb29738409175ad949"
     },
     {
       "id": "PATCH-TS-005",
@@ -402,7 +527,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "e6babc580e9148e846bfa3b319c5981df5646ac5e811fa6fc1013cd18577a12a"
+      "source_sha256": "2e35b3a5994674d133498cf583211381c3e7aa1757fade17523af4b26ad60551"
     },
     {
       "id": "PATCH-TS-006",
@@ -429,7 +554,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "3e5e4a4ba46913bb8355b080330c5cf2e43a41a0e52dc6599b7abf4e63cf067d"
+      "source_sha256": "ed363cc5e5995ad0e5be1d0ea290a926e45fcac3c6e1fbbd0956c61d05ca3e24"
     },
     {
       "id": "PATCH-TS-009",
@@ -438,7 +563,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9e3801d4384878f332e593b0fdb75ccc5cbfb8a3d8b45693812f3d039f891621"
+      "source_sha256": "a3e103ab102f60d89c31274e3d42d72613e16cf88a5c9c75e0dfcbadf7e4460f"
     },
     {
       "id": "PATCH-TS-010",
@@ -492,7 +617,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8524c2d3c4f728e1eac650ea1ecc081ad03eb401cd6257127922e0d4536c15f7"
+      "source_sha256": "b35282fa91c9518731f56e509d24fcb991a47554381674339e14859ba9674e80"
     },
     {
       "id": "PATCH-TS-016",
@@ -510,7 +635,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7701ad9e9094e49f221425314eb76d51cc0042f575c1d7ec938876b9c2750142"
+      "source_sha256": "95183e74819f06dfdfd44cac14a4cfa5dd01fd40dc168007ac0bcb408eb2b5ba"
     },
     {
       "id": "PATCH-TS-018",
@@ -573,7 +698,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f38a9a4cc40485fbc1d46df7a105d6ec44ed9f4ef9e624057eb53b6b767bc6de"
+      "source_sha256": "cfc46e371ad608067befb0fb307a1e64905d056b62e169dbc52001471b54b22f"
     },
     {
       "id": "PATCH-TS-025",
@@ -636,7 +761,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "e6791a69249a8c49e445ebd5edc668b07f9b165fe660daee9bd7e19ecc5f3d83"
+      "source_sha256": "2f2130acc5a6563ed7cde24f7ebd6426db255a8d8f5aec1c97dc7b1721993731"
     },
     {
       "id": "PATCH-TS-032",
@@ -645,7 +770,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "65c5e8bd05d3ab304f6c90c38acb79a7b6701b7e2cc5ee334c15ca3dd414b15f"
+      "source_sha256": "c1b9a22219d0573dbbb383527f7af360619b538b8d974f7406ecb1330b227180"
     },
     {
       "id": "PATCH-TS-033",
@@ -718,7 +843,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "34841ea79c4f1103078cf7a88a2c53b196e6138dc20344ef5db98ff3bf4f7bc6"
+      "source_sha256": "436ac6088922b4105fa44fd5a526522c4e18c04b7e1a463f59806c51ad3b18a2"
     },
     {
       "id": "PATCH-TS-041",
@@ -727,7 +852,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "e3ed3052c77d1ac670d1265a8428714af1ff2284e20a237f6fa557a1c417b4e7"
+      "source_sha256": "bc69cb16030b090cfec7e7866b8fb71642bd6d401d14c888b60b7c13e72ab491"
     },
     {
       "id": "PATCH-TS-042",
@@ -745,7 +870,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "84d94736ee6a77354cd3c056e313b8eabe922fcec6a22ddad03431d927cd9e45"
+      "source_sha256": "40e3582222334bd2045190890f9586229a808231db2a17c335e88959daa27713"
     },
     {
       "id": "PATCH-TS-044",
@@ -873,7 +998,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "e67fc1fc7babc74d5efd512837da2bb7186448e4e42819c3bba881c52c4106f4"
+      "source_sha256": "05f862b0e3634055bc3f29506860df35da27c0728823174538e936583e3cf64d"
     },
     {
       "id": "PATCH-TS-058",
@@ -956,7 +1081,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8c4ff81ca9c2493341a0d69ce3a73d3cff0032522a5d32457c08531cc687acb4"
+      "source_sha256": "d8e8138065ec2463d18785b33b480b7012053ff00d01709bc8cdd7618defb103"
     },
     {
       "id": "PATCH-TS-067",
@@ -1100,7 +1225,7 @@
       "symbols": [
         "test_patch_phase_11_requirements"
       ],
-      "source_sha256": "416b18f0f89d2a2655e3bcd8ef342481a7438f0bfbc2cd5b46b9f0e06572d488"
+      "source_sha256": "04cb60da76831c05c6c4cd0fc3cbbcedd500f39d5f71b78446bd2752f04d5648"
     },
     {
       "id": "PATCH-TS-083",
@@ -1118,7 +1243,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f73a9d956a497f287cc2b982391e4ed50f95764e49f48e20886e9f3ceb07b0d2"
+      "source_sha256": "b13f0eede65af2acf01d50c9af0ca70b938c2114a961bebb3414fbf9675e530a"
     },
     {
       "id": "PATCH-TS-085",
@@ -1198,7 +1323,161 @@
         "test_acceptance_execution_disables_pytest_output_capture"
       ],
       "source_sha256": "4118b8a2e25ee2b120c98532dfd99ed4ef11e6291c96556ed6cff76950c6d6f1"
+    },
+    {
+      "id": "PATCH-TS-093",
+      "path": "src/avalan/patch/projection.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "cf7587da64ff422d2bcb031adab178edd0b2cf080fc59510b68244741c6135e2"
+    },
+    {
+      "id": "PATCH-TS-094",
+      "path": "tests/patch/phase_12_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_12_requirements"
+      ],
+      "source_sha256": "a26f26631f081d47af78566d19ed76bc9cea35345ab47fe3eb9194894ac5b1ae"
+    },
+    {
+      "id": "PATCH-TS-095",
+      "path": "src/avalan/patch/projection_codec.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0bdecf35dac104c62f890236f9ef694e3eeeb063a8ae4462a5e865ffeb92ffae"
+    },
+    {
+      "id": "PATCH-TS-096",
+      "path": "tests/patch/phase_12_event_projection_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "34ba68015e5fad31b2ed30dacf1e8aa675cf8466318e29aa9ce76b05aedd41ca"
+    },
+    {
+      "id": "PATCH-TS-097",
+      "path": "src/avalan/patch/review_display.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f3e1aae1046b0bf3aaabdeaed778f1416acbcf4a115ffa6827e28e7946f8b288"
+    },
+    {
+      "id": "PATCH-TS-098",
+      "path": "tests/patch/phase_12_review_display_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b1b268bb351c782325b7aae4ac786f3f09018d6e42fd125e52a1b6c82f3c9cba"
+    },
+    {
+      "id": "PATCH-TS-099",
+      "path": "src/avalan/patch/review_display_codec.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ff9baa3a7bc32809a03b066a39773d10c0f73051ca1d3cd1acc59ec41a00f69c"
+    },
+    {
+      "id": "PATCH-TS-100",
+      "path": "src/avalan/cli/patch_review.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e70fc1aaccf7c40397ada3e5327b01346b65f598aa9950687cda254e73e3e6f9"
+    },
+    {
+      "id": "PATCH-TS-101",
+      "path": "tests/cli/patch_review_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_cli_binding_is_exact_opaque_and_single_profile_owner"
+      ],
+      "source_sha256": "1e95f0f523f1b95aeb18c602adbbbff379b65014c6438b4f062b82bf8a915665"
+    },
+    {
+      "id": "PATCH-TS-102",
+      "path": "tests/cli/patch_review_pty_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_023_real_pty_review_approve_and_later_read"
+      ],
+      "source_sha256": "575ebe43c80bed7695c549d951bb85e74544328957aada5072183ac3c87a9539"
+    },
+    {
+      "id": "PATCH-TS-103",
+      "path": "src/avalan/patch/audience_projection.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "69a184f853f7224d810d253714257f3019aef6a6dfdb80389fe7018a16dbb510"
+    },
+    {
+      "id": "PATCH-TS-104",
+      "path": "src/avalan/patch/audience_retention.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "255bc002e39da1f80aa83c31575b2624e84b8ff62b4c49ead1dc28cd191f320c"
+    },
+    {
+      "id": "PATCH-TS-105",
+      "path": "tests/patch/phase_12_audience_projection_retention_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_audit_metrics_telemetry_server_truth_and_privacy",
+        "test_default_lower_audiences_coarsen_exact_and_existence_truth",
+        "test_exact_truth_disclosures_are_one_audience_at_a_time",
+        "test_public_error_coarsening_has_no_source_or_state_oracle",
+        "test_projection_durable_history_validation_rejects_malformed_truth",
+        "test_projection_store_malformed_truth_is_bounded_before_delivery",
+        "test_pgsql_audience_retention_read_requires_exact_kind_and_audience",
+        "test_host_reads_store_truth_and_rejects_forged_bindings",
+        "test_retention_uses_manual_clock_and_bounds_failures",
+        "test_retention_read_authority_is_one_shot_without_service_registry",
+        "test_projection_closed_inputs_and_conformance_helpers",
+        "test_retention_writer_authority_and_store_limits_fail_closed",
+        "test_retention_dependency_faults_are_independent_warnings"
+      ],
+      "source_sha256": "f4bf32ddb4c3c341b1b6dbc6a4a7911f7cb24db2d5f1ae0aa82837c69f17ff7f"
+    },
+    {
+      "id": "PATCH-TS-106",
+      "path": "src/avalan/patch/diagnostic_association.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c1fb9cf0146051b9a2ff8abeab0ad2cde264a8be7104678e1128e38a782544c3"
+    },
+    {
+      "id": "PATCH-TS-107",
+      "path": "tests/patch/phase_12_diagnostic_association_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_026_preserves_actual_durable_terminal_bytes",
+        "test_e2e_026_cancel_timeout_own_task_until_completion",
+        "test_receipt_replay_concurrency_and_malformed_tokens_are_fenced",
+        "test_public_delivery_has_no_host_signer_store_or_plan_graph",
+        "test_fixed_token_slots_bound_high_volume_and_reentrant_attempts",
+        "test_fixed_token_slots_reserve_concurrent_and_invalid_transitions",
+        "test_policy_selection_store_access_and_command_rejections",
+        "test_private_failure_fences_are_coarsened_and_owned"
+      ],
+      "source_sha256": "30f9869aabf166f165042620c7bfade9f3fd50ec807659b206b264b7d3c01f8c"
     }
   ],
-  "manifest_sha256": "0493a491e8575c65ee475e52aa6df0cb96cbf6f779663fd95f90d87c5da543a4"
+  "manifest_sha256": "174428d7008fb490479471ed9fa12561aeb60441ed3c0c75e1983ec4df48131a"
 }

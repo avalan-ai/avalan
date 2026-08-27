@@ -149,22 +149,37 @@ _TEST_WORKER_BASE_IMAGE = (
     "2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91"
 )
 _TEST_WORKER_WHEELHOUSE = _FIXTURES / "container_wheels"
+_TEST_CFFI_ARM64_WHEEL = ".".join(
+    (
+        "cffi-2.0.0-cp311-cp311-manylinux2014_aarch64",
+        "manylinux_2_17_aarch64.whl",
+    )
+)
+_TEST_CRYPTOGRAPHY_ARM64_WHEEL = ".".join(
+    (
+        "cryptography-48.0.1-cp311-abi3-manylinux2014_aarch64",
+        "manylinux_2_17_aarch64.whl",
+    )
+)
+_TEST_CRYPTOGRAPHY_X86_64_WHEEL = ".".join(
+    (
+        "cryptography-48.0.1-cp311-abi3-manylinux2014_x86_64",
+        "manylinux_2_17_x86_64.whl",
+    )
+)
 _TEST_WORKER_WHEEL_SHA256 = {
-    (
-        "cffi-2.0.0-cp311-cp311-manylinux2014_aarch64."
-        "manylinux_2_17_aarch64.whl"
-    ): ("730cacb21e1bdff3ce90babf007d0a0917cc3e6492f336c2f0134101e0944f93"),
-    (
-        "cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl"
-    ): ("8941aaadaf67246224cee8c3803777eed332a19d909b47e29c9842ef1e79ac26"),
-    (
-        "cryptography-48.0.1-cp311-abi3-manylinux2014_aarch64."
-        "manylinux_2_17_aarch64.whl"
-    ): ("32143b24adb918f078134e1e230f1eb8cc04886b92c28b5f0041aaf3e5699225"),
-    (
-        "cryptography-48.0.1-cp311-abi3-manylinux2014_x86_64."
-        "manylinux_2_17_x86_64.whl"
-    ): ("f0d27a5696721ef7a672b8c810f6aded391058e0b9486e63e6d93baf765da691"),
+    _TEST_CFFI_ARM64_WHEEL: (
+        "730cacb21e1bdff3ce90babf007d0a0917cc3e6492f336c2f0134101e0944f93"
+    ),
+    "cffi-2.0.0-cp311-cp311-manylinux2014_x86_64.manylinux_2_17_x86_64.whl": (
+        "8941aaadaf67246224cee8c3803777eed332a19d909b47e29c9842ef1e79ac26"
+    ),
+    _TEST_CRYPTOGRAPHY_ARM64_WHEEL: (
+        "32143b24adb918f078134e1e230f1eb8cc04886b92c28b5f0041aaf3e5699225"
+    ),
+    _TEST_CRYPTOGRAPHY_X86_64_WHEEL: (
+        "f0d27a5696721ef7a672b8c810f6aded391058e0b9486e63e6d93baf765da691"
+    ),
     "pycparser-2.23-py3-none-any.whl": (
         "e5c6e8d3fbad53479cab09ac03729e0a9faf2bee3db8208a550daf5af81a5934"
     ),
@@ -493,10 +508,12 @@ def _policy() -> TrustedPatchPolicy:
                         reader,
                     ),
                 ),
-                atomicity_classes=frozenset((
-                    "single_step",
-                    "dependency_ordered",
-                )),
+                atomicity_classes=frozenset(
+                    (
+                        "single_step",
+                        "dependency_ordered",
+                    )
+                ),
             ),
         ),
         _limits(),
@@ -889,10 +906,12 @@ async def _restart_process_from_config(config_path: Path) -> None:
         snapshot = inspected.snapshots[0]
         assert snapshot.bytes_value is not None
         print(
-            dumps({
-                "status": outcome.status.value,
-                "bytes": b64encode(snapshot.bytes_value._value).decode(),
-            }),
+            dumps(
+                {
+                    "status": outcome.status.value,
+                    "bytes": b64encode(snapshot.bytes_value._value).decode(),
+                }
+            ),
             flush=True,
         )
     finally:
@@ -1503,16 +1522,18 @@ def test_patch_phase_11_refuses_foreign_or_partial_owned_volume(
         if command[:3] == ("docker", "volume", "inspect"):
             return dumps([{"Labels": {"avalan.patch.resource": "foreign"}}])
         if command[:2] == ("docker", "inspect"):
-            return dumps([
-                {
-                    "Config": {
-                        "Labels": {
-                            "avalan.patch.resource": resource_digest,
-                            "avalan.patch.owner": owner_receipt,
+            return dumps(
+                [
+                    {
+                        "Config": {
+                            "Labels": {
+                                "avalan.patch.resource": resource_digest,
+                                "avalan.patch.owner": owner_receipt,
+                            }
                         }
                     }
-                }
-            ])
+                ]
+            )
         if command[:3] == ("docker", "rm", "--force"):
             return "guard\n"
         raise AssertionError("foreign volume was attached or removed")
@@ -1656,14 +1677,16 @@ def test_patch_phase_11_owned_volume_defensive_cleanup_paths(
         if command[:2] == ("docker", "run"):
             return "guard\n"
         if command[:2] == ("docker", "inspect"):
-            return dumps([
-                {
-                    "Labels": {
-                        "avalan.patch.resource": resource_digest,
-                        "avalan.patch.owner": owner_receipt,
+            return dumps(
+                [
+                    {
+                        "Labels": {
+                            "avalan.patch.resource": resource_digest,
+                            "avalan.patch.owner": owner_receipt,
+                        }
                     }
-                }
-            ])
+                ]
+            )
         if command[:3] == ("docker", "rm", "--force"):
             return command[-1] + "\n"
         raise AssertionError("unexpected Docker command")
@@ -1708,14 +1731,16 @@ def test_patch_phase_11_owned_volume_defensive_cleanup_paths(
 
             inspection["value"] = None
             await idle._dispose_owned_volume()
-            inspection["value"] = dumps([
-                {
-                    "Labels": {
-                        "avalan.patch.resource": resource_digest,
-                        "avalan.patch.owner": owner_receipt,
+            inspection["value"] = dumps(
+                [
+                    {
+                        "Labels": {
+                            "avalan.patch.resource": resource_digest,
+                            "avalan.patch.owner": owner_receipt,
+                        }
                     }
-                }
-            ])
+                ]
+            )
             removal["value"] = None
             await idle._dispose_owned_volume()
         finally:
@@ -2238,12 +2263,14 @@ def _test_image_target_architecture(value: str) -> str:
 
 async def _test_image() -> str:
     """Build and return the sealed Linux worker image for one E2E."""
-    base = await _CONTAINER._docker_output((
-        "docker",
-        "image",
-        "inspect",
-        _TEST_WORKER_BASE_IMAGE,
-    ))
+    base = await _CONTAINER._docker_output(
+        (
+            "docker",
+            "image",
+            "inspect",
+            _TEST_WORKER_BASE_IMAGE,
+        )
+    )
     assert base is not None
     target_architecture = _test_image_target_architecture(machine())
     image = await _CONTAINER._docker_output(
@@ -2501,18 +2528,20 @@ def _binder(
 def _multi_file_apply(before: str, after: str) -> Mapping[str, object]:
     """Return one real two-file apply transaction with exact preconditions."""
     return {
-        "patch": "\n".join((
-            "*** Begin Patch v1",
-            "*** Update File: note.txt",
-            "@@",
-            "-" + before,
-            "+" + after,
-            "*** Update File: second.txt",
-            "@@",
-            "-second-before",
-            "+second-after",
-            "*** End Patch",
-        ))
+        "patch": "\n".join(
+            (
+                "*** Begin Patch v1",
+                "*** Update File: note.txt",
+                "@@",
+                "-" + before,
+                "+" + after,
+                "*** Update File: second.txt",
+                "@@",
+                "-second-before",
+                "+second-after",
+                "*** End Patch",
+            )
+        )
     }
 
 
@@ -2991,12 +3020,14 @@ def test_patch_phase_11_commits_container_move_with_private_artifact_cleanup(
     )
     configuration = _configuration(clock, authority)
     arguments = {
-        "patch": "\n".join((
-            "*** Begin Patch v1",
-            "*** Update File: source.txt",
-            "*** Move to: moved.txt",
-            "*** End Patch",
-        ))
+        "patch": "\n".join(
+            (
+                "*** Begin Patch v1",
+                "*** Update File: source.txt",
+                "*** Move to: moved.txt",
+                "*** End Patch",
+            )
+        )
     }
 
     async def exercise() -> None:
@@ -3444,11 +3475,13 @@ def test_patch_phase_11_recovers_authenticated_lease_across_process_restart(
             await live.resolve(ScopeSelection(ContextKind.CONTAINER))
             container_id = live._process._container_id
             assert container_id is not None
-            inspected = await _docker_output((
-                "docker",
-                "inspect",
-                container_id,
-            ))
+            inspected = await _docker_output(
+                (
+                    "docker",
+                    "inspect",
+                    container_id,
+                )
+            )
             assert inspected is not None
             assert authority_key.hex() not in inspected
             config.write_text(dumps(second_config), encoding="utf-8")
@@ -3505,11 +3538,13 @@ def test_patch_phase_11_serializes_initial_volume_creation_across_processes(
         )
         try:
             first_config.write_text(
-                dumps({
-                    **base,
-                    "barrier_ready": str(ready),
-                    "barrier_release": str(release),
-                }),
+                dumps(
+                    {
+                        **base,
+                        "barrier_ready": str(ready),
+                        "barrier_release": str(release),
+                    }
+                ),
                 encoding="utf-8",
             )
             first_task = create_task(_run_restart_process(first_config))
@@ -3534,13 +3569,15 @@ def test_patch_phase_11_serializes_initial_volume_creation_across_processes(
                 await _docker_output(("docker", "inspect", guard)) is not None
             )
             assert (
-                await _docker_output((
-                    "docker",
-                    "ps",
-                    "--quiet",
-                    "--filter",
-                    "volume=" + volume,
-                ))
+                await _docker_output(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        "volume=" + volume,
+                    )
+                )
                 == ""
             )
 
@@ -3556,13 +3593,15 @@ def test_patch_phase_11_serializes_initial_volume_creation_across_processes(
                 is None
             )
             assert (
-                await _docker_output((
-                    "docker",
-                    "ps",
-                    "--quiet",
-                    "--filter",
-                    "volume=" + volume,
-                ))
+                await _docker_output(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        "volume=" + volume,
+                    )
+                )
                 == ""
             )
 
@@ -3640,14 +3679,16 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
             assert retired._volume_guard_name is None
 
             config.write_text(
-                dumps({
-                    **base,
-                    "old_text": "after",
-                    "new_text": "final",
-                    "barrier_ready": str(ready),
-                    "barrier_release": str(release),
-                    "barrier_stage": "guard_acquired",
-                }),
+                dumps(
+                    {
+                        **base,
+                        "old_text": "after",
+                        "new_text": "final",
+                        "barrier_ready": str(ready),
+                        "barrier_release": str(release),
+                        "barrier_stage": "guard_acquired",
+                    }
+                ),
                 encoding="utf-8",
             )
             reclaim_task = create_task(_run_restart_process(config))
@@ -3671,13 +3712,15 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
                 await _docker_output(("docker", "inspect", guard)) is not None
             )
             assert (
-                await _docker_output((
-                    "docker",
-                    "ps",
-                    "--quiet",
-                    "--filter",
-                    "volume=" + volume,
-                ))
+                await _docker_output(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        "volume=" + volume,
+                    )
+                )
                 == ""
             )
 
@@ -3693,13 +3736,15 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
                 is None
             )
             assert (
-                await _docker_output((
-                    "docker",
-                    "ps",
-                    "--quiet",
-                    "--filter",
-                    "volume=" + volume,
-                ))
+                await _docker_output(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        "volume=" + volume,
+                    )
+                )
                 == ""
             )
 
@@ -3768,13 +3813,15 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
         reclaim_task = None
         try:
             failed_config.write_text(
-                dumps({
-                    **base,
-                    "startup_failure": "attach",
-                    "barrier_ready": str(failed_ready),
-                    "barrier_release": str(failed_release),
-                    "barrier_stage": "guard_released",
-                }),
+                dumps(
+                    {
+                        **base,
+                        "startup_failure": "attach",
+                        "barrier_ready": str(failed_ready),
+                        "barrier_release": str(failed_release),
+                        "barrier_stage": "guard_released",
+                    }
+                ),
                 encoding="utf-8",
             )
             failed_task = create_task(_run_restart_process(failed_config))
@@ -3793,12 +3840,14 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
                 )
 
             reclaim_config.write_text(
-                dumps({
-                    **base,
-                    "barrier_ready": str(reclaim_ready),
-                    "barrier_release": str(reclaim_release),
-                    "barrier_stage": "guard_acquired",
-                }),
+                dumps(
+                    {
+                        **base,
+                        "barrier_ready": str(reclaim_ready),
+                        "barrier_release": str(reclaim_release),
+                        "barrier_stage": "guard_acquired",
+                    }
+                ),
                 encoding="utf-8",
             )
             reclaim_task = create_task(_run_restart_process(reclaim_config))
@@ -3821,13 +3870,15 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
                 await _docker_output(("docker", "inspect", guard)) is not None
             )
             assert (
-                await _docker_output((
-                    "docker",
-                    "ps",
-                    "--quiet",
-                    "--filter",
-                    "volume=" + volume,
-                ))
+                await _docker_output(
+                    (
+                        "docker",
+                        "ps",
+                        "--quiet",
+                        "--filter",
+                        "volume=" + volume,
+                    )
+                )
                 == ""
             )
 
@@ -3913,32 +3964,36 @@ def test_patch_phase_11_failed_start_cleanup_defers_to_live_volume(
             "avalan_patch_live_", settings.context.identity.persistent_lease_id
         )
         try:
-            await _docker_output((
-                "docker",
-                "volume",
-                "create",
-                "--label",
-                resource_label,
-                "--label",
-                owner_label,
-                volume,
-            ))
-            container_id = await _docker_output((
-                "docker",
-                "run",
-                "--detach",
-                "--name",
-                live,
-                "--network",
-                "none",
-                "--mount",
-                "type=volume,src=" + volume + ",dst=/workspace",
-                image,
-                "python3",
-                "-I",
-                "-c",
-                "from time import sleep;sleep(30)",
-            ))
+            await _docker_output(
+                (
+                    "docker",
+                    "volume",
+                    "create",
+                    "--label",
+                    resource_label,
+                    "--label",
+                    owner_label,
+                    volume,
+                )
+            )
+            container_id = await _docker_output(
+                (
+                    "docker",
+                    "run",
+                    "--detach",
+                    "--name",
+                    live,
+                    "--network",
+                    "none",
+                    "--mount",
+                    "type=volume,src=" + volume + ",dst=/workspace",
+                    image,
+                    "python3",
+                    "-I",
+                    "-c",
+                    "from time import sleep;sleep(30)",
+                )
+            )
             assert container_id is not None
             process._volume_name = volume
             process._volume_resource_digest = resource_digest
@@ -4345,25 +4400,27 @@ def test_patch_phase_11_preserves_container_representation_and_metadata(
             outcome = await bundle.toolset.sdk_host().invoke_json(
                 OperationType.APPLY,
                 {
-                    "patch": "\n".join((
-                        "*** Begin Patch v1",
-                        "*** Update File: bom.txt",
-                        "@@",
-                        "-before",
-                        "+after",
-                        "*** Update File: none.txt",
-                        "@@",
-                        "-before",
-                        "\\ No newline at end of file",
-                        "+after",
-                        "\\ No newline at end of file",
-                        "*** End of File",
-                        "*** Update File: metadata.txt",
-                        "@@",
-                        "-before",
-                        "+after",
-                        "*** End Patch",
-                    ))
+                    "patch": "\n".join(
+                        (
+                            "*** Begin Patch v1",
+                            "*** Update File: bom.txt",
+                            "@@",
+                            "-before",
+                            "+after",
+                            "*** Update File: none.txt",
+                            "@@",
+                            "-before",
+                            "\\ No newline at end of file",
+                            "+after",
+                            "\\ No newline at end of file",
+                            "*** End of File",
+                            "*** Update File: metadata.txt",
+                            "@@",
+                            "-before",
+                            "+after",
+                            "*** End Patch",
+                        )
+                    )
                 },
             )
             assert isinstance(outcome, PatchResult)
@@ -4797,12 +4854,14 @@ def test_patch_phase_11_rejects_destination_race_at_container_fence(
                 bundle.toolset.sdk_host().invoke_json(
                     OperationType.APPLY,
                     {
-                        "patch": "\n".join((
-                            "*** Begin Patch v1",
-                            "*** Add File: created.txt",
-                            "+planned",
-                            "*** End Patch",
-                        ))
+                        "patch": "\n".join(
+                            (
+                                "*** Begin Patch v1",
+                                "*** Add File: created.txt",
+                                "+planned",
+                                "*** End Patch",
+                            )
+                        )
                     },
                 )
             )
@@ -4935,11 +4994,13 @@ def test_patch_phase_11_container_service_has_only_its_sealed_authority(
             volume = process.volume_name
             assert container_id is not None
             assert volume is not None
-            inspected_raw = await _docker_output((
-                "docker",
-                "inspect",
-                container_id,
-            ))
+            inspected_raw = await _docker_output(
+                (
+                    "docker",
+                    "inspect",
+                    container_id,
+                )
+            )
             assert inspected_raw is not None
             inspected = loads(inspected_raw)
             assert isinstance(inspected, list) and len(inspected) == 1

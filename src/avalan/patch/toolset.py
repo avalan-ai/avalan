@@ -30,10 +30,11 @@ from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from enum import StrEnum
+from hashlib import sha256
 from inspect import currentframe
 from json import dumps
 from types import MappingProxyType, TracebackType
-from typing import Any, Protocol, TypeVar, cast, runtime_checkable
+from typing import Any, Never, Protocol, TypeVar, cast, runtime_checkable
 
 from avalan._patch_authority import (
     _PatchAuthorityValidator,
@@ -1448,6 +1449,48 @@ class PatchInvocationHandle:
         raise TypeError("patch invocation handle is not serializable")
 
 
+_PATCH_SDK_REVIEW_ISSUER = object()
+
+
+@dataclass(frozen=True, slots=True, repr=False, init=False)
+class PatchSdkInvocationReview:
+    """Bind one host-issued preapproval review to its pending invocation."""
+
+    _issuer: object
+    _host: "PatchSdkHost"
+    _handle: PatchInvocationHandle
+    _pending: PatchPending
+    _review: bytes
+    _review_digest: bytes
+
+    def __init__(self, issuer: Never) -> None:
+        """Reject construction outside the exact SDK host preparation path."""
+        del issuer
+        raise PatchToolError("patch SDK review is host-issued")
+
+    def __repr__(self) -> str:
+        """Render an opaque preapproval review marker."""
+        return "PatchSdkInvocationReview(<opaque>)"
+
+    def __copy__(self) -> Never:
+        """Reject copies that could detach the host review identity."""
+        raise PatchToolError("patch SDK review cannot be copied")
+
+    def __deepcopy__(self, memo: object) -> Never:
+        """Reject deep copies that could detach review identity."""
+        del memo
+        raise PatchToolError("patch SDK review cannot be copied")
+
+    def __reduce__(self) -> Never:
+        """Reject serializing a live host review binding."""
+        raise PatchToolError("patch SDK review cannot be serialized")
+
+    def __reduce_ex__(self, protocol: int) -> Never:
+        """Reject protocol-specific host-review serialization."""
+        del protocol
+        raise PatchToolError("patch SDK review cannot be serialized")
+
+
 @dataclass(frozen=True, slots=True)
 class PatchCapabilitySnapshot:
     """Store one already-probed immutable public capability inventory."""
@@ -2185,6 +2228,95 @@ class PatchSdkHost:
             Complete privileged review data selected by trusted policy.
         """
         return await self._service.review(self._require_handle())
+
+    async def prepare_approval_review(self) -> PatchSdkInvocationReview:
+        """Seal one exact pending invocation review for an attached approver.
+
+        Returns:
+            Opaque host-issued binding for the current pending request.
+        """
+        handle = self._require_handle()
+        review = await self._service.review(handle)
+        try:
+            review_bytes = dumps(
+                review,
+                allow_nan=False,
+                ensure_ascii=True,
+                separators=(",", ":"),
+                sort_keys=True,
+            ).encode("utf-8")
+        except (TypeError, UnicodeError, ValueError) as error:
+            raise PatchToolError("patch SDK review is invalid") from error
+        outcome = await self.inspect()
+        if type(outcome) is not PatchPending:
+            raise PatchToolError("patch SDK review is not pending")
+        binding = object.__new__(PatchSdkInvocationReview)
+        object.__setattr__(binding, "_issuer", _PATCH_SDK_REVIEW_ISSUER)
+        object.__setattr__(binding, "_host", self)
+        object.__setattr__(binding, "_handle", handle)
+        object.__setattr__(binding, "_pending", outcome)
+        object.__setattr__(binding, "_review", review_bytes)
+        object.__setattr__(
+            binding, "_review_digest", sha256(review_bytes).digest()
+        )
+        return binding
+
+    def _require_approval_review(
+        self,
+        review: PatchSdkInvocationReview,
+        *,
+        require_pending: bool = True,
+    ) -> None:
+        """Reject a review not sealed for the current exact host invocation."""
+        if (
+            type(review) is not PatchSdkInvocationReview
+            or review._issuer is not _PATCH_SDK_REVIEW_ISSUER
+            or review._host is not self
+            or review._handle is not self._require_handle()
+            or sha256(review._review).digest() != review._review_digest
+            or (require_pending and self._pending != review._pending)
+        ):
+            raise PatchToolError("patch SDK review is invalid")
+
+    def validate_approval_review(
+        self, review: PatchSdkInvocationReview
+    ) -> None:
+        """Validate one exact pending review without approving it.
+
+        Args:
+            review: Exact opaque review binding to validate.
+
+        Returns:
+            None after the current host and invocation identity are verified.
+        """
+        self._require_approval_review(review)
+
+    def validate_invocation_review(
+        self, review: PatchSdkInvocationReview
+    ) -> None:
+        """Validate exact host and invocation identity after settlement.
+
+        Args:
+            review: Exact opaque review binding to validate after settlement.
+
+        Returns:
+            None after exact host, handle, and review identity validation.
+        """
+        self._require_approval_review(review, require_pending=False)
+
+    async def approve_review(
+        self, review: PatchSdkInvocationReview
+    ) -> PatchInvocationOutcome:
+        """Approve only the exact host-issued pending review binding.
+
+        Args:
+            review: Exact opaque preapproval review for the current invocation.
+
+        Returns:
+            The terminal or pending outcome for that exact review binding.
+        """
+        self._require_approval_review(review)
+        return await self.approve()
 
     async def approve(self) -> PatchInvocationOutcome:
         """Resolve approval for the exact sealed request.

@@ -1,7 +1,8 @@
 """Exercise Phase 8 encryption, delivery, and response-loss isolation."""
 
-from asyncio import Event, create_task, run
+from asyncio import Event, create_task, run, sleep
 from dataclasses import replace
+from json import loads
 
 import pytest
 from phase_8_store_test import (
@@ -16,9 +17,6 @@ from phase_8_store_test import (
     _result,
 )
 
-from avalan.event import Event as AvalanEvent
-from avalan.event import EventType
-from avalan.event.manager import EventManager
 from avalan.patch import durable_outbox as outbox
 from avalan.patch.domain import (
     Audience,
@@ -383,7 +381,7 @@ def test_outbox_delivery_and_audit_failures_preserve_terminal_truth() -> None:
         failed_delivery = _Delivery(fail_sequence=1)
         failed = await DurableOutboxProjector(
             store, failed_delivery, _Audit()
-        ).project(access, SequenceNumber(0), 10)
+        ).project(access, pending.correlation_id, SequenceNumber(0), 10)
         assert failed.delivery_failed
         assert failed.delivered == 0
         assert await store.inspect(access) == before
@@ -391,7 +389,7 @@ def test_outbox_delivery_and_audit_failures_preserve_terminal_truth() -> None:
         delivery = _Delivery()
         audit = _Audit(fail=True)
         receipt = await DurableOutboxProjector(store, delivery, audit).project(
-            access, SequenceNumber(0), 10
+            access, pending.correlation_id, SequenceNumber(0), 10
         )
         assert not receipt.delivery_failed
         assert receipt.audit_failed
@@ -400,7 +398,7 @@ def test_outbox_delivery_and_audit_failures_preserve_terminal_truth() -> None:
         assert await store.inspect(access) == before
         replay = await DurableOutboxProjector(
             store, _Delivery(), _Audit()
-        ).project(access, SequenceNumber(0), 10)
+        ).project(access, pending.correlation_id, SequenceNumber(0), 10)
         assert replay.records[-1] == terminal.outbox
         assert await store.inspect(access) == before
 
@@ -453,32 +451,38 @@ def test_event_manager_projection_deduplicates_stable_outbox_identity() -> (
         )
         access = DurableRequestAccess(reservation.request_id, identity)
         before = await store.inspect(access)
-        event_manager = EventManager()
-        observed: list[AvalanEvent] = []
-        event_manager.add_listener(
-            observed.append,
-            (EventType.TOOL_PROGRESS,),
+        observed: list[bytes] = []
+        projection = EventManagerDurableOutboxProjection(
+            store,
+            access,
+            terminal.outbox.correlation_id,
         )
-        projection = EventManagerDurableOutboxProjection(event_manager)
+
+        async def observe(progress: bytes) -> None:
+            """Record one canonical store-backed progress delivery."""
+            observed.append(progress)
+
+        projection.add_progress_listener(observe)
         try:
-            await projection.deliver(terminal.outbox)
-            await projection.deliver(terminal.outbox)
-            history = event_manager.history
-            assert len(history) == 1
-            assert history[0].payload is None
+            await projection.project(SequenceNumber(0), 10)
+            await projection.project(terminal.outbox.sequence, 10)
+            await sleep(0)
+            await sleep(0)
             assert len(observed) == 1
-            assert observed[0].payload == {
-                "correlation_id": terminal.outbox.correlation_id.value,
-                "event_id": terminal.outbox.event_id.value,
-                "lifecycle": terminal.outbox.lifecycle.value,
-                "request_id": reservation.request_id.value,
-                "sequence": terminal.outbox.sequence.value,
-            }
+            progress = observed[0]
+            assert type(progress) is bytes
+            parsed = loads(progress.decode("utf-8"))
+            assert parsed["phase"] == "settled"
+            assert parsed["count"] == terminal.outbox.sequence.value
+            assert str(parsed["delivery_id"]).startswith("oid_")
+            assert str(parsed["correlation_id"]).startswith("public_")
+            assert "request_id" not in parsed
+            assert "patch" not in parsed
             assert await store.inspect(access) == before
             events = await store.outbox(access, SequenceNumber(0), 10)
             assert events == (terminal.outbox,)
         finally:
-            await event_manager.aclose()
+            await projection.aclose()
 
     run(scenario())
 
@@ -488,7 +492,9 @@ def test_durable_outbox_rejects_bad_records_and_preserves_interrupts(
 ) -> None:
     """Bound event deduplication and preserve interruption from observers."""
     with pytest.raises(DurableStoreError) as raised:
-        getattr(outbox, "EventManagerDurableOutboxProjection")(object())
+        getattr(outbox, "EventManagerDurableOutboxProjection")(
+            object(), object(), object()
+        )
     assert raised.value.code is DurableStoreErrorCode.LIFECYCLE_CONFLICT
     with pytest.raises(DurableStoreError) as raised:
         DurableOutboxProjectionReceipt((), 1, False, False)
@@ -516,28 +522,36 @@ def test_durable_outbox_rejects_bad_records_and_preserves_interrupts(
             LifecyclePhase.REQUEST_COMPLETED,
             correlation,
         )
-        manager = EventManager()
+
+        class BridgeStore:
+            """Supply the projection's own trusted outbox read surface."""
+
+            async def outbox(
+                self,
+                access: DurableRequestAccess,
+                after: SequenceNumber,
+                limit: int,
+            ) -> tuple[DurableOutboxRecord, ...]:
+                """Return one bounded vector after the trusted cursor."""
+                del access
+                return tuple(
+                    record
+                    for record in (first, second)
+                    if record.sequence.value > after.value
+                )[:limit]
+
         projection = EventManagerDurableOutboxProjection(
-            manager, deduplication_limit=1
+            BridgeStore(),
+            DurableRequestAccess(request_id, _identity("f")),
+            correlation,
         )
-        with pytest.raises(DurableStoreError) as raised:
+        with pytest.raises(AttributeError):
             await getattr(projection, "deliver")(object())
-        assert raised.value.code is DurableStoreErrorCode.LIFECYCLE_CONFLICT
-        original_trigger = manager.trigger
-
-        async def unavailable(event: AvalanEvent) -> None:
-            """Fail one event-manager delivery without retaining identity."""
-            del event
-            raise RuntimeError("event manager unavailable")
-
-        monkeypatch.setattr(manager, "trigger", unavailable)
-        with pytest.raises(RuntimeError):
-            await projection.deliver(first)
-        monkeypatch.setattr(manager, "trigger", original_trigger)
-        await projection.deliver(first)
-        await projection.deliver(second)
-        await projection.deliver(first)
-        assert len(manager.history) == 3
+        await projection.project(SequenceNumber(0), 10)
+        await projection.project(second.sequence, 10)
+        await sleep(0)
+        await sleep(0)
+        assert len(projection._delivered_ids) == 2
 
         class Store:
             """Return one fixed durable event without settlement authority."""
@@ -572,7 +586,7 @@ def test_durable_outbox_rejects_bad_records_and_preserves_interrupts(
         with pytest.raises(DurableStoreError) as raised:
             await getattr(outbox, "DurableOutboxProjector")(
                 Store(), _Delivery(), _Audit()
-            ).project(access, SequenceNumber(0), 0)
+            ).project(access, correlation, SequenceNumber(0), 0)
         assert raised.value.code is DurableStoreErrorCode.LIFECYCLE_CONFLICT
         monkeypatch.setattr(
             outbox, "KeyboardInterrupt", RuntimeError, raising=False
@@ -580,11 +594,13 @@ def test_durable_outbox_rejects_bad_records_and_preserves_interrupts(
         with pytest.raises(RuntimeError):
             await getattr(outbox, "DurableOutboxProjector")(
                 Store(), InterruptingDelivery(), _Audit()
-            ).project(access, SequenceNumber(0), 1)
+            ).project(access, correlation, SequenceNumber(0), 1)
         with pytest.raises(RuntimeError):
             await getattr(outbox, "DurableOutboxProjector")(
                 Store(), _Delivery(), InterruptingAudit()
-            ).project(access, SequenceNumber(0), 1)
+            ).project(access, correlation, SequenceNumber(0), 1)
+
+        await projection.aclose()
 
     run(scenario())
 

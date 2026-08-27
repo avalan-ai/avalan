@@ -143,7 +143,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
-    assert baseline["phase"] == 11
+    assert baseline["phase"] == 12
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -166,7 +166,7 @@ def test_patch_gate_contract_is_current() -> None:
     }
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 11
+    assert _GATE._PATCH_CURRENT_PHASE == 12
 
 
 @pytest.mark.parametrize(

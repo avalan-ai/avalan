@@ -643,6 +643,12 @@ class DurableRetentionKind(str, Enum):
     SEALED_PLAN = "sealed_plan"
     REVIEW_ARTIFACT = "review_artifact"
     PRIVATE_STAGING = "private_staging"
+    CLI_REVIEW = "cli_review"
+    AUDIT_PROJECTION = "audit_projection"
+    METRICS_PROJECTION = "metrics_projection"
+    TELEMETRY_PROJECTION = "telemetry_projection"
+    SERVER_READY_PROJECTION = "server_ready_projection"
+    DIAGNOSTIC_ASSOCIATION = "diagnostic_association"
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -974,6 +980,16 @@ class DurablePatchStore(Protocol):
         now: ExpiryTick,
     ) -> DurableRetentionRecord:
         """Read one authorized unexpired encrypted retention record."""
+
+    async def get_retention_for_audience(
+        self,
+        access: DurableRetentionAccess,
+        retention_id: PatchRetentionRecordId,
+        kind: DurableRetentionKind,
+        audience: Audience,
+        now: ExpiryTick,
+    ) -> DurableRetentionRecord:
+        """Read one exact kind only for its configured audience."""
 
     async def cleanup_retention(
         self, now: ExpiryTick
@@ -1712,6 +1728,43 @@ class InMemoryDurablePatchStore:
         ):
             raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
         if not audiences:
+            raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+        await self._backend.retention_validator.validate(
+            access.request.request_id, retained
+        )
+        return retained
+
+    async def get_retention_for_audience(
+        self,
+        access: DurableRetentionAccess,
+        retention_id: PatchRetentionRecordId,
+        kind: DurableRetentionKind,
+        audience: Audience,
+        now: ExpiryTick,
+    ) -> DurableRetentionRecord:
+        """Return one exact kind only to its authenticated audience."""
+        _require_exact(access, DurableRetentionAccess)
+        _require_exact(retention_id, PatchRetentionRecordId)
+        _require_exact(kind, DurableRetentionKind)
+        _require_exact(audience, Audience)
+        _require_exact(now, ExpiryTick)
+        async with self._backend.lock:
+            record = self._record_for_access(access.request)
+            retained = record.retention.get(retention_id)
+            if retained is None or retained.kind is not kind:
+                raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+            if now.value >= retained.policy.expires_at.value:
+                del record.retention[retention_id]
+                raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+            identity = record.reservation.identity
+        audiences = await self._backend.retention_authorizer.audiences_for(
+            identity, kind
+        )
+        if (
+            type(audiences) is not frozenset
+            or audience not in audiences
+            or any(type(item) is not Audience for item in audiences)
+        ):
             raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
         await self._backend.retention_validator.validate(
             access.request.request_id, retained

@@ -260,6 +260,16 @@ class PatchObserverCorrelationId(_PatchIdentifier):
 
 
 @dataclass(frozen=True, slots=True)
+class PatchPublicCorrelationId(_PatchIdentifier):
+    """Identify one random audience-scoped public correlation."""
+
+    @classmethod
+    def _identifier_prefix(cls) -> str:
+        """Return the public-projection correlation identity prefix."""
+        return "public_"
+
+
+@dataclass(frozen=True, slots=True)
 class LogicalPath:
     """Store one canonical workspace-relative logical path."""
 
@@ -978,21 +988,7 @@ def coarsen_error_code(
 ) -> PatchErrorCode:
     """Project protected source detail to a public-safe stable error code."""
     if audience in {Audience.PUBLIC, Audience.MODEL}:
-        if code in {
-            PatchErrorCode.SOURCE_MISSING,
-            PatchErrorCode.DESTINATION_EXISTS,
-            PatchErrorCode.LINK_DENIED,
-            PatchErrorCode.ALIAS_DENIED,
-            PatchErrorCode.MOUNT_DENIED,
-            PatchErrorCode.SPECIAL_FILE_DENIED,
-        }:
-            return PatchErrorCode.PATH_DENIED
-        if code in {
-            PatchErrorCode.UNSUPPORTED_CONTENT,
-            PatchErrorCode.ENCODING_UNSUPPORTED,
-            PatchErrorCode.REPRESENTATION_UNSUPPORTED,
-        }:
-            return PatchErrorCode.INVALID_REQUEST
+        return PatchErrorCode.PATH_DENIED
     return code
 
 
