@@ -42,7 +42,7 @@ from verify_patch_types import (
     load_manifest as load_patch_type_manifest,
 )
 
-_PATCH_CURRENT_PHASE = 11
+_PATCH_CURRENT_PHASE = 12
 _PATCH_DATABASE_PHASE = 8
 _INPUT_MANIFEST = "tests/fixtures/input/acceptance_manifest.json"
 _CONVERSATION_MANIFEST = (

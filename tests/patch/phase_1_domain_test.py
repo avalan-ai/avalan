@@ -1005,7 +1005,7 @@ def test_patch_phase_1_coarsens_only_public_error_details() -> None:
     )
     assert (
         coarsen_error_code(PatchErrorCode.UNSUPPORTED_CONTENT, Audience.MODEL)
-        is PatchErrorCode.INVALID_REQUEST
+        is PatchErrorCode.PATH_DENIED
     )
     assert (
         coarsen_error_code(PatchErrorCode.SOURCE_MISSING, Audience.AUDIT)

@@ -1144,6 +1144,59 @@ class PgsqlDurablePatchStore(DurablePatchStore):
         )
         return record
 
+    async def get_retention_for_audience(
+        self,
+        access: DurableRetentionAccess,
+        retention_id: PatchRetentionRecordId,
+        kind: DurableRetentionKind,
+        audience: Audience,
+        now: ExpiryTick,
+    ) -> DurableRetentionRecord:
+        """Read one exact kind only for its configured audience."""
+        _require_exact(access, DurableRetentionAccess)
+        _require_exact(retention_id, PatchRetentionRecordId)
+        _require_exact(kind, DurableRetentionKind)
+        _require_exact(audience, Audience)
+        _require_exact(now, ExpiryTick)
+
+        async def execute(
+            cursor: PgsqlCursor,
+        ) -> tuple[DurableRequestIdentity, DurableRetentionRecord]:
+            request_row = await _select_access_for_update(
+                cursor, access.request
+            )
+            await cursor.execute(
+                _SELECT_RETENTION_SQL,
+                (retention_id.value, access.request.request_id.value),
+            )
+            retention_row = await cursor.fetchone()
+            if retention_row is None:
+                raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+            record = _retention_from_row(retention_row)
+            if (
+                record.kind is not kind
+                or now.value >= record.policy.expires_at.value
+            ):
+                raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+            return _identity_from_row(request_row), record
+
+        identity, record = await self._transaction(
+            "patch_durable_get_retention_for_audience", execute
+        )
+        audiences = await self._retention_authorizer.audiences_for(
+            identity, kind
+        )
+        if (
+            type(audiences) is not frozenset
+            or audience not in audiences
+            or any(type(item) is not Audience for item in audiences)
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.RETENTION_DENIED)
+        await self._retention_validator.validate(
+            access.request.request_id, record
+        )
+        return record
+
     async def cleanup_retention(
         self, now: ExpiryTick
     ) -> DurableRetentionCleanup:

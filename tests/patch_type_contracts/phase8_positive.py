@@ -2,7 +2,12 @@
 
 from typing import assert_type
 
-from avalan.patch.domain import PatchPending, PatchResult, SequenceNumber
+from avalan.patch.domain import (
+    PatchObserverCorrelationId,
+    PatchPending,
+    PatchResult,
+    SequenceNumber,
+)
 from avalan.patch.durable_coordinator import DurablePatchTestHost
 from avalan.patch.durable_outbox import (
     DurableOutboxProjectionReceipt,
@@ -42,11 +47,14 @@ async def assert_durable_fault_isolation_types(
     projector: DurableOutboxProjector,
     event_manager_projection: EventManagerDurableOutboxProjection,
     request_access: DurableRequestAccess,
+    correlation_id: PatchObserverCorrelationId,
 ) -> None:
     """Assert dormant encryption and outbox projection retain exact types."""
     assert_type(await cipher.open(encrypted, binding), bytes)
     assert_type(
-        await projector.project(request_access, SequenceNumber(0), 1),
+        await projector.project(
+            request_access, correlation_id, SequenceNumber(0), 1
+        ),
         DurableOutboxProjectionReceipt,
     )
     assert_type(

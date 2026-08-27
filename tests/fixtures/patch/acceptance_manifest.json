@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 11,
+  "current_phase": 12,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -49,7 +49,7 @@
     },
     {
       "id": "PATCH-A-P0-003",
-      "category": "performance",
+      "category": "security",
       "lifecycle": "active",
       "active_from_phase": 0,
       "requirement_ids": [
@@ -1001,7 +1001,7 @@
     {
       "id": "PATCH-A-112",
       "category": "performance",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 12,
       "requirement_ids": [
         "PATCH-R-0593",
@@ -1009,7 +1009,23 @@
         "PATCH-R-0595",
         "PATCH-R-0596",
         "PATCH-R-0597",
-        "PATCH-R-0598",
+        "PATCH-R-0598"
+      ],
+      "node_id": "tests/patch/phase_12_diagnostic_association_test.py::test_policy_selection_store_access_and_command_rejections",
+      "surface": "diagnostic",
+      "context": "local",
+      "platform": "portable",
+      "operation": "associate",
+      "authority": "diagnostic",
+      "commit_boundary": "settlement",
+      "evidence_class": "diagnostic"
+    },
+    {
+      "id": "PATCH-A-112-CLI",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 12,
+      "requirement_ids": [
         "PATCH-R-0781",
         "PATCH-R-0782",
         "PATCH-R-0783",
@@ -1019,14 +1035,14 @@
         "PATCH-R-0787",
         "PATCH-R-0788"
       ],
-      "node_id": "tests/patch/phase_12_contract_test.py::test_patch_phase_12_requirements",
+      "node_id": "tests/cli/patch_review_test.py::test_patch_cli_interactive_actions_and_detached_terminal_resume",
       "surface": "cli",
       "context": "local",
       "platform": "pty",
-      "operation": "display",
-      "authority": "projection",
+      "operation": "review",
+      "authority": "review",
       "commit_boundary": "settlement",
-      "evidence_class": "performance"
+      "evidence_class": "public"
     },
     {
       "id": "PATCH-A-113",
@@ -2845,5 +2861,5 @@
       "evidence_class": "public"
     }
   ],
-  "manifest_sha256": "94ff539741cc6eb5da243a18c4a19c2884e2e760797532513af3b45ab1b21795"
+  "manifest_sha256": "e9792904927689a4703b0add589a45596aaf48d2ae1daa5d2a23078d75e4a593"
 }

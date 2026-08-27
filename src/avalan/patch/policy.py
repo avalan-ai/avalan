@@ -228,6 +228,10 @@ class PolicyDisclosure(str, Enum):
     COMPLETE_REVIEW = "complete_review"
     AUDIT_PATHS = "audit_paths"
     EVENT_METRICS = "event_metrics"
+    AUDIT_EXACT_TRUTH = "audit_exact_truth"
+    METRICS_EXACT_TRUTH = "metrics_exact_truth"
+    TELEMETRY_EXACT_TRUTH = "telemetry_exact_truth"
+    SERVER_EXACT_TRUTH = "server_exact_truth"
     DIAGNOSTIC_ASSOCIATION = "diagnostic_association"
     SDK_HOST = "sdk_host"
 
