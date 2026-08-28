@@ -11,6 +11,7 @@ from asyncio import (
 )
 from asyncio import sleep as async_sleep
 from base64 import b64encode
+from collections.abc import Iterator
 from dataclasses import replace
 from enum import Enum
 from errno import ENOSYS, EXDEV
@@ -30,6 +31,7 @@ from os import (
     link,
     mkfifo,
     symlink,
+    umask,
 )
 from os import open as open_fd
 from pathlib import Path
@@ -203,6 +205,16 @@ _SEMANTIC_PRECOMMIT_CATEGORIES = (
     "timeout",
     "target_capability",
 )
+
+
+@pytest.fixture(autouse=True)
+def _phase_7_file_creation_umask() -> Iterator[None]:
+    """Create ordinary Phase 7 fixture files with their sealed 0644 mode."""
+    previous = umask(0o022)
+    try:
+        yield
+    finally:
+        umask(previous)
 
 
 class _DirectoryUnlink(Protocol):

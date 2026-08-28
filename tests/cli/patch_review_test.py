@@ -2479,6 +2479,49 @@ def test_patch_cli_guard_async_output_failures_close_real_descriptors() -> (
         ):
             session = _output_terminal_session(output_tty, output_tty)
             assert session is not None
+            lost_identity = _TerminalStateGuard(session, None, output_tty)
+            lost_identity.__enter__()
+            with patch.object(
+                patch_review, "ttyname", side_effect=OSError("lost")
+            ):
+                with pytest.raises(
+                    PatchCliReviewError, match="terminal output failed"
+                ):
+                    run(lost_identity.write("bounded truth"))
+            lost_identity._close_duplicates(restore_blocking=False)
+
+            foreground_failure = _TerminalStateGuard(session, None, output_tty)
+            foreground_failure.__enter__()
+            while select((master,), (), (), 0)[0]:
+                read(master, 65536)
+            terminal_error = PatchCliReviewError(
+                "patch CLI terminal is not foreground"
+            )
+            with patch.object(
+                foreground_failure,
+                "require_current",
+                side_effect=terminal_error,
+            ):
+                with pytest.raises(PatchCliReviewError) as raised:
+                    run(foreground_failure.write("bounded truth"))
+            assert raised.value is terminal_error
+            assert select((master,), (), (), 0)[0] == []
+            foreground_failure._close_duplicates(restore_blocking=False)
+
+            failed_os_write = _TerminalStateGuard(session, None, output_tty)
+            failed_os_write.__enter__()
+            while select((master,), (), (), 0)[0]:
+                read(master, 65536)
+            with patch.object(
+                patch_review, "os_write", side_effect=OSError("lost")
+            ):
+                with pytest.raises(
+                    PatchCliReviewError, match="terminal output failed"
+                ):
+                    run(failed_os_write.write("bounded truth"))
+            assert select((master,), (), (), 0)[0] == []
+            failed_os_write._close_duplicates(restore_blocking=False)
+
             failed_write = _TerminalStateGuard(session, None, output_tty)
             failed_write.__enter__()
             close(master)

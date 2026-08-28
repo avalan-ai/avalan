@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 12,
+  "current_phase": 13,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -1047,33 +1047,81 @@
     {
       "id": "PATCH-A-113",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 13,
       "requirement_ids": [
         "PATCH-R-0789",
         "PATCH-R-0790",
         "PATCH-R-0791",
         "PATCH-R-0792",
-        "PATCH-R-0793",
-        "PATCH-R-0794",
-        "PATCH-R-0795",
-        "PATCH-R-0796",
-        "PATCH-R-0797",
-        "PATCH-R-0798",
-        "PATCH-R-0799",
-        "PATCH-R-0800",
-        "PATCH-R-0801",
-        "PATCH-R-0802",
-        "PATCH-R-0803",
-        "PATCH-R-0804",
-        "PATCH-R-0805",
-        "PATCH-R-0806"
+        "PATCH-R-0793"
       ],
       "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "surface": "server",
       "context": "remote",
       "platform": "http",
       "operation": "resume",
+      "authority": "route",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-113-AUTHORITY",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 13,
+      "requirement_ids": [
+        "PATCH-R-0794",
+        "PATCH-R-0795",
+        "PATCH-R-0796",
+        "PATCH-R-0797",
+        "PATCH-R-0798",
+        "PATCH-R-0799",
+        "PATCH-R-0800"
+      ],
+      "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
+      "surface": "server",
+      "context": "remote",
+      "platform": "http",
+      "operation": "authorize",
+      "authority": "route",
+      "commit_boundary": "not_started",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-113-CONTINUATION",
+      "category": "integration",
+      "lifecycle": "active",
+      "active_from_phase": 13,
+      "requirement_ids": [
+        "PATCH-R-0801",
+        "PATCH-R-0802",
+        "PATCH-R-0803",
+        "PATCH-R-0804",
+        "PATCH-R-0805"
+      ],
+      "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
+      "surface": "server",
+      "context": "remote",
+      "platform": "http",
+      "operation": "resume",
+      "authority": "route",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-113-TCP",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 13,
+      "requirement_ids": [
+        "PATCH-R-0806"
+      ],
+      "node_id": "tests/server/patch_remote_sandbox_test.py::test_remote_tcp_runs_selected_sandbox_apply_to_terminal",
+      "surface": "server",
+      "context": "remote",
+      "platform": "http",
+      "operation": "apply",
       "authority": "route",
       "commit_boundary": "settlement",
       "evidence_class": "public"
@@ -2861,5 +2909,5 @@
       "evidence_class": "public"
     }
   ],
-  "manifest_sha256": "e9792904927689a4703b0add589a45596aaf48d2ae1daa5d2a23078d75e4a593"
+  "manifest_sha256": "636715e620235a1e60dd0a2d26255e3c33e8b93b71ea6a56f170fe1887d7bba3"
 }

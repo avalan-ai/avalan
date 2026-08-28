@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 12,
+  "current_phase": 13,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -481,6 +481,27 @@
         "tests/patch_type_contracts/phase12_diagnostic_association_negative.py:22:12: error: \"DiagnosticApprovalReceipt\" has no attribute \"approve\"  [attr-defined]",
         "tests/patch_type_contracts/phase12_diagnostic_association_negative.py:31:52: error: Argument 1 to \"begin_new_patch_request\" of \"RemediationPatchRequester\" has incompatible type \"DiagnosticAssociation\"; expected \"RemediationPatchAuthorization\"  [arg-type]"
       ]
+    },
+    {
+      "id": "PATCH-T-103",
+      "kind": "positive",
+      "lifecycle": "active",
+      "active_from_phase": 13,
+      "path": "tests/patch_type_contracts/phase13_positive.py",
+      "source_sha256": "3c78cbd1fd183b734373d33fb5139d5090a4bdcd2799faaf9bf280946ce45f78",
+      "expected_diagnostics": []
+    },
+    {
+      "id": "PATCH-T-104",
+      "kind": "negative",
+      "lifecycle": "active",
+      "active_from_phase": 13,
+      "path": "tests/patch_type_contracts/phase13_remote_authority_negative.py",
+      "source_sha256": "a52b5045d06ef1575166540622d0a64159966f628e8dc690da80ba1034fe09be",
+      "expected_diagnostics": [
+        "tests/patch_type_contracts/phase13_remote_authority_negative.py:10:5: error: Property \"tenant\" defined in \"RemotePatchAuthority\" is read-only  [misc]",
+        "tests/patch_type_contracts/phase13_remote_authority_negative.py:11:5: error: Property \"capabilities\" defined in \"RemotePatchAuthority\" is read-only  [misc]"
+      ]
     }
   ],
   "sources": [
@@ -509,7 +530,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "800d7a0bc35ba5c9a0db4ab8422800387468f8a166ceda12d648db9564eb835f"
+      "source_sha256": "7b56936d61102dd8642218a2b0ed54f00e0465e0b15955437a6fca563f64e9c0"
     },
     {
       "id": "PATCH-TS-004",
@@ -518,7 +539,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "049c5a10b943cd0488b614327ccc2392b92ddf2794f64aeb29738409175ad949"
+      "source_sha256": "8c22d78d5d50862a92f634006b0b6bac02b860ca03a7f3cdfb5a3a1c206ddac1"
     },
     {
       "id": "PATCH-TS-005",
@@ -527,7 +548,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2e35b3a5994674d133498cf583211381c3e7aa1757fade17523af4b26ad60551"
+      "source_sha256": "a4f67e08295e216bfedcdbd09720b27be0232e5b81865d28df62867e5f0421ee"
     },
     {
       "id": "PATCH-TS-006",
@@ -554,7 +575,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ed363cc5e5995ad0e5be1d0ea290a926e45fcac3c6e1fbbd0956c61d05ca3e24"
+      "source_sha256": "c13c1fadb2d1402ba90604805bd6bf08b3c8d85de6029f35f1cb31c09cde6974"
     },
     {
       "id": "PATCH-TS-009",
@@ -563,7 +584,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a3e103ab102f60d89c31274e3d42d72613e16cf88a5c9c75e0dfcbadf7e4460f"
+      "source_sha256": "5b0ead0cc186e47e7364ea5f12eb7696e109822fdf55fffe8346c5354b0d2f02"
     },
     {
       "id": "PATCH-TS-010",
@@ -743,7 +764,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6c8eb2115814a31f00d6595d20ddf4e90f8d6cb160783030b1d87f6fa62eb7f2"
+      "source_sha256": "d52ff7c99bfee50bf4c42c0b28fc48c5f150fa4a28862cdf74f99b1cb18aa7f0"
     },
     {
       "id": "PATCH-TS-030",
@@ -879,7 +900,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a8cf38ffba85f239c2469fd0f0c27c5fe0165e858f63837abf03b8a1ccc90587"
+      "source_sha256": "0647fc13e326376ac49e4c4d72fba1346720b51a7c5c5067479e812a3cfb1a94"
     },
     {
       "id": "PATCH-TS-045",
@@ -943,7 +964,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "8d2892f4f79b7c9c2aae6f5fed4f7dd7817a7ec4997ce492a13fec5830b0f48f"
+      "source_sha256": "717593f2a7a9f640916ab567c47d5468c30d615eef02ae79f14e4fdaecac4cb0"
     },
     {
       "id": "PATCH-TS-052",
@@ -998,7 +1019,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "05f862b0e3634055bc3f29506860df35da27c0728823174538e936583e3cf64d"
+      "source_sha256": "2fa1b1064526a577def64ba476a8e2324d5c6c65007061462904b73b1e968f2d"
     },
     {
       "id": "PATCH-TS-058",
@@ -1007,7 +1028,7 @@
       "symbols": [
         "_result"
       ],
-      "source_sha256": "a40dad90352b5a7352d2f20ec43a59c264132571e2f891e48bb3d0c8748d195c"
+      "source_sha256": "19e8ddd1326483f81e87ac7504f436163c7808bb20c48931784c158e7ff50a24"
     },
     {
       "id": "PATCH-TS-059",
@@ -1081,7 +1102,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d8e8138065ec2463d18785b33b480b7012053ff00d01709bc8cdd7618defb103"
+      "source_sha256": "f14bc60651b5fb4b20baa4d73ebbf2e74b32bad0155df696c8bdb5d36e6a1261"
     },
     {
       "id": "PATCH-TS-067",
@@ -1243,7 +1264,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b13f0eede65af2acf01d50c9af0ca70b938c2114a961bebb3414fbf9675e530a"
+      "source_sha256": "a789e6d4d383e9394e0dbb8370789ee61ec9a88da1a8ade952811f180c2e2500"
     },
     {
       "id": "PATCH-TS-085",
@@ -1394,7 +1415,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "e70fc1aaccf7c40397ada3e5327b01346b65f598aa9950687cda254e73e3e6f9"
+      "source_sha256": "f742fccfbf89793d8cc53f4149880087361f32eaa341cfcf01d3e436c12bb30f"
     },
     {
       "id": "PATCH-TS-101",
@@ -1403,7 +1424,7 @@
       "symbols": [
         "test_patch_cli_binding_is_exact_opaque_and_single_profile_owner"
       ],
-      "source_sha256": "1e95f0f523f1b95aeb18c602adbbbff379b65014c6438b4f062b82bf8a915665"
+      "source_sha256": "1e35422c35767203cad0e605e8f84f6c74baf2021d076da63ee8e545342afff8"
     },
     {
       "id": "PATCH-TS-102",
@@ -1412,7 +1433,7 @@
       "symbols": [
         "test_patch_e2e_023_real_pty_review_approve_and_later_read"
       ],
-      "source_sha256": "575ebe43c80bed7695c549d951bb85e74544328957aada5072183ac3c87a9539"
+      "source_sha256": "bb4d0da1ba898f50160263cee3bd7496e7aaca9feab7441533ed0e8200374de2"
     },
     {
       "id": "PATCH-TS-103",
@@ -1477,7 +1498,101 @@
         "test_private_failure_fences_are_coarsened_and_owned"
       ],
       "source_sha256": "30f9869aabf166f165042620c7bfade9f3fd50ec807659b206b264b7d3c01f8c"
+    },
+    {
+      "id": "PATCH-TS-108",
+      "path": "src/avalan/server/patch.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "RemotePatchTestServerProfile"
+      ],
+      "source_sha256": "bf297724fea2566605897a211d0c30e43d2bcfbf29fcc9fda52dfa918a93e4b7"
+    },
+    {
+      "id": "PATCH-TS-109",
+      "path": "tests/server/patch_remote_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_remote_patch_routes_are_absent_without_explicit_installation"
+      ],
+      "source_sha256": "ac1ce12470de4d5a209f19d918ccf3619db32619768099fbc3422a7d7e190f34"
+    },
+    {
+      "id": "PATCH-TS-110",
+      "path": "tests/patch_type_contracts/phase13_positive.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "assert_remote_test_server_types"
+      ],
+      "source_sha256": "3c78cbd1fd183b734373d33fb5139d5090a4bdcd2799faaf9bf280946ce45f78"
+    },
+    {
+      "id": "PATCH-TS-111",
+      "path": "tests/patch_type_contracts/phase13_remote_authority_negative.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "reject_remote_authority_mutation"
+      ],
+      "source_sha256": "a52b5045d06ef1575166540622d0a64159966f628e8dc690da80ba1034fe09be"
+    },
+    {
+      "id": "PATCH-TS-112",
+      "path": "tests/server/patch_remote_tcp_fixture.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "app"
+      ],
+      "source_sha256": "148bc101b5fffd60a530f7a04bb03fa4676c6aa1e84a72845f24c08e7d944a51"
+    },
+    {
+      "id": "PATCH-TS-113",
+      "path": "tests/server/patch_remote_sandbox_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_remote_server_runs_selected_sandbox_edit_to_terminal",
+        "test_remote_tcp_runs_selected_sandbox_apply_to_terminal"
+      ],
+      "source_sha256": "dc6b4f694a757937928118b162e5b650a6cbabdb7b2e517aecb116f5acb9ad4a"
+    },
+    {
+      "id": "PATCH-TS-116",
+      "path": "tests/server/patch_remote_sandbox_tcp_fixture.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "app"
+      ],
+      "source_sha256": "acd99889d678cd9af90830ee85acc7b967de77ccf68ed8387af7c8e58dce7996"
+    },
+    {
+      "id": "PATCH-TS-114",
+      "path": "tests/server/patch_remote_pgsql_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_remote_pgsql_selected_sandbox_replays_terminal_after_restart",
+        "test_remote_pgsql_fenced_worker_crash_attaches_same_key_once"
+      ],
+      "source_sha256": "a881e47ad4dd59933bd43bb06cbddf05154f44fccdcbd82d4ece0e952158d8be"
+    },
+    {
+      "id": "PATCH-TS-115",
+      "path": "tests/patch/phase_13_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_13_requirements",
+        "test_patch_phase_13_remote_authority_requirements",
+        "test_patch_phase_13_continuation_requirements"
+      ],
+      "source_sha256": "b9800945e651d2d651ce637febf83511839fe7aed8da03a0d5cf32ebe0612c47"
+    },
+    {
+      "id": "PATCH-TS-117",
+      "path": "tests/container/output_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_write"
+      ],
+      "source_sha256": "99cc1a3f1ea52c1b850479d4ff9b75a6d27a16d78c258361d3d2a1ad5459296c"
     }
   ],
-  "manifest_sha256": "174428d7008fb490479471ed9fa12561aeb60441ed3c0c75e1983ec4df48131a"
+  "manifest_sha256": "27ad6c70ebce506ffb94a736f19d0740a79ea3a561fddacbf2be04ffd6615c05"
 }

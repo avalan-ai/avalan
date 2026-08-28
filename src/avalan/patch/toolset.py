@@ -60,6 +60,7 @@ from avalan.patch.domain import (
     ContextKind,
     DurationTicks,
     OperationType,
+    PatchContextId,
     PatchInvocationOutcome,
     PatchLifecycleEvent,
     PatchLimits,
@@ -67,9 +68,13 @@ from avalan.patch.domain import (
     PatchPending,
     PatchRequestId,
     PatchResult,
+    PatchWorkspaceId,
     coarsen_error_code,
 )
-from avalan.patch.durable_store import DurablePatchStore
+from avalan.patch.durable_store import (
+    DurablePatchStore,
+    DurableRequestIdentity,
+)
 from avalan.patch.parser import (
     PatchInputError,
     PatchInputLimits,
@@ -80,7 +85,18 @@ from avalan.patch.parser import (
     RawProviderProfile,
     RawToolCallId,
 )
-from avalan.patch.policy import TrustedPatchPolicy
+from avalan.patch.policy import (
+    PatchAgentId,
+    PatchPrincipalId,
+    PatchRunId,
+    PatchSessionId,
+    PatchTaskId,
+    PatchTenantId,
+    PolicyDisclosure,
+    PolicyRevision,
+    PolicyRouteId,
+    TrustedPatchPolicy,
+)
 from avalan.patch.target import (
     ResolvedMutationScope,
     TargetErrorCode,
@@ -342,6 +358,27 @@ class PatchSdkService(Protocol):
         """Yield only content-free semantic lifecycle events."""
 
 
+@runtime_checkable
+class RemotePatchSdkService(Protocol):
+    """Accept one server-bound durable invocation identity.
+
+    Normal SDK and model calls cannot select a retransmission tuple. The
+    authenticated local test-server boundary can use this separate protocol
+    after it has reserved the exact durable identity before inspection.
+    """
+
+    async def invoke_remote(
+        self,
+        operation: OperationType,
+        raw_arguments: bytes,
+        capability: "PatchInvocationCapability",
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+        identity: DurableRequestIdentity,
+    ) -> PatchInvocationOutcome:
+        """Invoke one request under a trusted server-owned identity."""
+
+
 @dataclass(frozen=True, slots=True)
 class PatchTestHostProfile:
     """Require the explicit authenticated local profile for activation."""
@@ -418,6 +455,7 @@ class PatchRuntimeBinding:
     persistence: PatchPersistenceBinding
     service: PatchSdkService
     owned_resources: tuple[AbstractAsyncContextManager[object], ...] = ()
+    remote_witness: "RemotePatchRuntimeWitness | None" = None
 
     def __post_init__(self) -> None:
         """Require target, policy, approval, coordinator, and store binding."""
@@ -435,6 +473,58 @@ class PatchRuntimeBinding:
                 not isinstance(item, AbstractAsyncContextManager)
                 or hasattr(item, "__enter__")
                 for item in self.owned_resources
+            )
+            or (
+                self.remote_witness is not None
+                and type(self.remote_witness) is not RemotePatchRuntimeWitness
+            )
+        ):
+            raise PatchToolError("patch runtime handshake is incomplete")
+
+
+@dataclass(frozen=True, slots=True)
+class RemotePatchRuntimeWitness:
+    """Bind the server-visible authority to one selected runtime service."""
+
+    tenant: PatchTenantId
+    principal: PatchPrincipalId
+    run: PatchRunId
+    session: PatchSessionId
+    task: PatchTaskId
+    agent: PatchAgentId
+    execution_scope: str
+    route: PolicyRouteId
+    context: PatchContextId
+    workspace: PatchWorkspaceId
+    policy_revision: PolicyRevision
+    disclosures: frozenset[PolicyDisclosure]
+    approval_route: PolicyRouteId
+    capabilities: frozenset[Capability]
+
+    def __post_init__(self) -> None:
+        """Require every exact runtime and disclosure coordinate."""
+        if (
+            type(self.tenant) is not PatchTenantId
+            or type(self.principal) is not PatchPrincipalId
+            or type(self.run) is not PatchRunId
+            or type(self.session) is not PatchSessionId
+            or type(self.task) is not PatchTaskId
+            or type(self.agent) is not PatchAgentId
+            or not isinstance(self.execution_scope, str)
+            or not self.execution_scope
+            or type(self.route) is not PolicyRouteId
+            or type(self.context) is not PatchContextId
+            or type(self.workspace) is not PatchWorkspaceId
+            or type(self.policy_revision) is not PolicyRevision
+            or type(self.disclosures) is not frozenset
+            or any(
+                type(value) is not PolicyDisclosure
+                for value in self.disclosures
+            )
+            or type(self.approval_route) is not PolicyRouteId
+            or type(self.capabilities) is not frozenset
+            or any(
+                type(value) is not Capability for value in self.capabilities
             )
         ):
             raise PatchToolError("patch runtime handshake is incomplete")
@@ -470,6 +560,7 @@ class PatchToolManagerBundle:
 
     manager: ToolManager
     toolset: "PatchToolSet | None"
+    runtime_binding: PatchRuntimeBinding | None = None
 
 
 def _seal_patch_authority() -> tuple[object, ...]:
@@ -1011,7 +1102,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
                 enable_tools=enable_tools,
                 settings=settings,
             )
-            return PatchToolManagerBundle(manager, toolset)
+            return PatchToolManagerBundle(manager, toolset, binding)
         except BaseException as error:
             for resource in reversed(binding.owned_resources):
                 await resource.__aexit__(
@@ -2088,6 +2179,78 @@ class PatchSdkHost:
             PatchObserverCorrelationId.new(),
         )
 
+    async def invoke_remote_json(
+        self,
+        operation: OperationType,
+        arguments: dict[str, object],
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+        identity: DurableRequestIdentity,
+    ) -> PatchInvocationOutcome:
+        """Invoke canonical input with server-derived durable identity.
+
+        Args:
+            operation: The edit or apply operation to execute.
+            arguments: The operation's complete JSON object.
+            request_id: The server-owned durable request identifier.
+            correlation_id: The server-owned stream correlation identifier.
+            identity: The authenticated durable retransmission identity.
+
+        Returns:
+            The recorded or current durable operation outcome.
+        """
+        try:
+            raw_arguments = dumps(
+                arguments,
+                allow_nan=False,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        except (TypeError, UnicodeError, ValueError) as exc:
+            raise PatchToolError("patch SDK arguments are invalid") from exc
+        return await self.invoke_remote_raw(
+            operation,
+            raw_arguments,
+            request_id,
+            correlation_id,
+            identity,
+        )
+
+    async def invoke_remote_raw(
+        self,
+        operation: OperationType,
+        raw_arguments: bytes,
+        request_id: PatchRequestId,
+        correlation_id: PatchObserverCorrelationId,
+        identity: DurableRequestIdentity,
+    ) -> PatchInvocationOutcome:
+        """Invoke exact bytes with server-bound durable identity.
+
+        Args:
+            operation: The edit or apply operation to execute.
+            raw_arguments: Exact complete UTF-8 JSON request bytes.
+            request_id: The server-owned durable request identifier.
+            correlation_id: The server-owned stream correlation identifier.
+            identity: The authenticated durable retransmission identity.
+
+        Returns:
+            The recorded or current durable operation outcome.
+        """
+        if (
+            type(request_id) is not PatchRequestId
+            or type(correlation_id) is not PatchObserverCorrelationId
+            or type(identity) is not DurableRequestIdentity
+            or not isinstance(self._service, RemotePatchSdkService)
+        ):
+            raise PatchToolError("patch remote invocation is unavailable")
+        return await self._invoke_raw_with_identity(
+            operation,
+            raw_arguments,
+            request_id,
+            correlation_id,
+            identity,
+        )
+
     async def retransmit_json(
         self,
         operation: OperationType,
@@ -2158,6 +2321,7 @@ class PatchSdkHost:
         raw_arguments: bytes,
         request_id: PatchRequestId,
         correlation: PatchObserverCorrelationId,
+        identity: DurableRequestIdentity | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke or attach through one exact trusted durable identity."""
         if operation not in {OperationType.EDIT, OperationType.APPLY}:
@@ -2168,6 +2332,8 @@ class PatchSdkHost:
             type(raw_arguments) is not bytes
             or type(request_id) is not PatchRequestId
             or type(correlation) is not PatchObserverCorrelationId
+            or identity is not None
+            and type(identity) is not DurableRequestIdentity
         ):
             raise PatchToolError("patch SDK request is invalid")
         if not PatchToolSet._valid_raw_ingress(
@@ -2189,13 +2355,27 @@ class PatchSdkHost:
         )
         self._handle = handle
         try:
-            outcome = await self._service.invoke(
-                operation,
-                raw_arguments,
-                self._capability,
-                request_id,
-                correlation,
-            )
+            if identity is None:
+                outcome = await self._service.invoke(
+                    operation,
+                    raw_arguments,
+                    self._capability,
+                    request_id,
+                    correlation,
+                )
+            else:
+                if not isinstance(self._service, RemotePatchSdkService):
+                    raise PatchToolError(
+                        "patch remote invocation is unavailable"
+                    )
+                outcome = await self._service.invoke_remote(
+                    operation,
+                    raw_arguments,
+                    self._capability,
+                    request_id,
+                    correlation,
+                    identity,
+                )
         except CancelledError:
             raise
         except TargetInspectionError as error:

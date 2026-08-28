@@ -12640,7 +12640,7 @@
       "required",
       "normative",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
+      "RemotePatchController",
       "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "Phase 13 implementation record",
       "public"
@@ -12656,7 +12656,7 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
+      "RemotePatchController",
       "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "Phase 13 implementation record",
       "public"
@@ -12672,7 +12672,7 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
+      "RemotePatchController",
       "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "Phase 13 implementation record",
       "public"
@@ -12688,7 +12688,7 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
+      "RemotePatchController",
       "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "Phase 13 implementation record",
       "public"
@@ -12704,7 +12704,7 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
+      "RemotePatchController",
       "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
       "Phase 13 implementation record",
       "public"
@@ -12720,8 +12720,8 @@
       "required",
       "normative",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12736,8 +12736,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12752,8 +12752,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12768,8 +12768,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12784,8 +12784,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12800,8 +12800,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12816,8 +12816,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12832,8 +12832,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12848,8 +12848,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12864,8 +12864,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12880,8 +12880,8 @@
       "required",
       "contract",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12896,8 +12896,8 @@
       "required",
       "normative",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
       "Phase 13 implementation record",
       "public"
     ],
@@ -12912,8 +12912,8 @@
       "required",
       "normative",
       "src/avalan/server/patch.py",
-      "PatchServerRoute",
-      "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+      "RemotePatchController",
+      "tests/server/patch_remote_sandbox_test.py::test_remote_tcp_runs_selected_sandbox_apply_to_terminal",
       "Phase 13 implementation record",
       "public"
     ],
@@ -16294,5 +16294,5 @@
       "golden"
     ]
   ],
-  "catalog_sha256": "95df25d226b0f7390d123edaede246e3ee5a1854c41847e6808845f7195fafd3"
+  "catalog_sha256": "2adba5bbb9f15f34c743c41a141facbee9a75040ac80a57e5b9558d85f021357"
 }

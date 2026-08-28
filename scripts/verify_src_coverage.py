@@ -32,6 +32,7 @@ _PATCH_PHASE_EVIDENCE_OUTPUTS = frozenset(
         "tests/fixtures/patch/phase10_evidence.json",
         "tests/fixtures/patch/phase11_evidence.json",
         "tests/fixtures/patch/phase12_evidence.json",
+        "tests/fixtures/patch/phase13_evidence.json",
     }
 )
 

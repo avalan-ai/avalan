@@ -4410,7 +4410,113 @@
       "review_round": 1,
       "reviewer": "phase12-activation-gateprep",
       "rationale": "Phase 12 activates the local CLI review acceptance node; SDK, server, MCP, and A2A activation remain deferred."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-113",
+        "requirement_ids": [
+          "PATCH-R-0789",
+          "PATCH-R-0790",
+          "PATCH-R-0791",
+          "PATCH-R-0792",
+          "PATCH-R-0793"
+        ],
+        "category": "public_e2e",
+        "surface": "server",
+        "context": "remote",
+        "platform": "http",
+        "operation": "resume",
+        "authority": "route",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 13,
+        "executable_sha256": "97921e82bbb3c7d2c697248e263c1c0464af6c4824ff89a3d21a50fe104d4f8b"
+      },
+      "review_round": 1,
+      "reviewer": "phase13-implementation",
+      "rationale": "Phase 13 activates the isolated authenticated loopback route only after its closed public schemas and server-owned retransmission identities execute."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-113-AUTHORITY",
+        "requirement_ids": [
+          "PATCH-R-0794",
+          "PATCH-R-0795",
+          "PATCH-R-0796",
+          "PATCH-R-0797",
+          "PATCH-R-0798",
+          "PATCH-R-0799",
+          "PATCH-R-0800"
+        ],
+        "category": "security",
+        "surface": "server",
+        "context": "remote",
+        "platform": "http",
+        "operation": "authorize",
+        "authority": "route",
+        "commit_boundary": "not_started",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_remote_authority_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 13,
+        "executable_sha256": "63b32bf267069fed991cebd0fba292286bfeaca109cfeb466a3cb25fb34378fe"
+      },
+      "review_round": 1,
+      "reviewer": "phase13-implementation",
+      "rationale": "Phase 13 binds the full forbidden-field and server-owned remote authority matrix before remote dispatch."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-113-CONTINUATION",
+        "requirement_ids": [
+          "PATCH-R-0801",
+          "PATCH-R-0802",
+          "PATCH-R-0803",
+          "PATCH-R-0804",
+          "PATCH-R-0805"
+        ],
+        "category": "integration",
+        "surface": "server",
+        "context": "remote",
+        "platform": "http",
+        "operation": "resume",
+        "authority": "route",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_13_contract_test.py::test_patch_phase_13_continuation_requirements",
+        "lifecycle": "active",
+        "active_from_phase": 13,
+        "executable_sha256": "ef6efe0d81707ea80562baef392ce1ea2ec3690be82c12b7bf604049741c629d"
+      },
+      "review_round": 5,
+      "reviewer": "phase13-review-turn5",
+      "rationale": "Phase 13 tests authenticated opaque-handle continuation denials over HTTP, including correlation-only and approval-route-only mismatches without a durable-read oracle."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-113-TCP",
+        "requirement_ids": [
+          "PATCH-R-0806"
+        ],
+        "category": "public_e2e",
+        "surface": "server",
+        "context": "remote",
+        "platform": "http",
+        "operation": "apply",
+        "authority": "route",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/server/patch_remote_sandbox_test.py::test_remote_tcp_runs_selected_sandbox_apply_to_terminal",
+        "lifecycle": "active",
+        "active_from_phase": 13,
+        "executable_sha256": "e78808acf75e227e2adc4c1887183e09a2379e14d3f6d7db235015b36547cf45"
+      },
+      "review_round": 5,
+      "reviewer": "phase13-review-turn5",
+      "rationale": "The Phase 13 TCP node executes authenticated patch.apply through the real selected sandbox, then verifies one durable commit, worker binding, settlement, event replay, and later target read."
     }
   ],
-  "history_sha256": "74e559ebe059ee2724701ae7941790e4144fa3c2bcd5ab16af16b40a3ca5750c"
+  "history_sha256": "260ab01e34f230b7b47d383a75f6317a6b0d2a3a9a4ebde40b4579dbe2a99e3d"
 }

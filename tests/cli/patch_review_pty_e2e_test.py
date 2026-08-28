@@ -21,7 +21,7 @@ from pathlib import Path
 from pty import openpty
 from runpy import run_path
 from select import select
-from signal import SIGINT
+from signal import SIGINT, default_int_handler, signal
 from termios import ECHO, ICANON, TIOCSCTTY, tcgetattr
 from time import monotonic
 from typing import Any, cast
@@ -211,6 +211,7 @@ def _child(
     close(slave)
     setsid()
     ioctl(0, TIOCSCTTY, 0)
+    signal(SIGINT, default_int_handler)
     input_stream = fdopen(0, "r", encoding="utf-8", closefd=False)
     output_stream = fdopen(1, "w", encoding="utf-8", closefd=False)
     error_stream = fdopen(2, "w", encoding="utf-8", closefd=False)
