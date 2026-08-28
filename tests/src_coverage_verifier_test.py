@@ -322,6 +322,8 @@ def test_report_freshness_binds_every_gate_input(
         "tests/fixtures/patch/phase10_evidence.json",
         "tests/fixtures/patch/phase_evidence.json",
         "tests/fixtures/patch/phase11_evidence.json",
+        "tests/fixtures/patch/phase12_evidence.json",
+        "tests/fixtures/patch/phase13_evidence.json",
     ),
 )
 def test_report_freshness_excludes_only_fixed_sealed_phase_evidence_outputs(

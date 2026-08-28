@@ -192,6 +192,7 @@ from avalan.patch.toolset import (
     PatchPersistenceBinding,
     PatchRuntimeBinding,
     PatchSettlementPort,
+    RemotePatchRuntimeWitness,
     _bound_invocation_subscription_access,
 )
 from avalan.sandbox import (
@@ -218,7 +219,7 @@ _PROCESS_CLOSE_SECONDS = 0.25
 _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "693a08f4d5ecacfd1f639c08f1929d837be5b6f11d2931c450f2cb873de51d1a"
+    "234bf76bf6f5327e3aa8ecbb60fbe4f4c9ab42a05118da13bb40fdfbd0dc435a"
 )
 
 
@@ -2562,6 +2563,8 @@ class SandboxPatchSdkService:
         capability: PatchInvocationCapability,
         request_id: PatchRequestId,
         correlation_id: "PatchObserverCorrelationId",
+        *,
+        identity: DurableRequestIdentity | None = None,
     ) -> PatchInvocationOutcome:
         """Parse, plan, approve, and durably execute one selected request."""
         del capability
@@ -2572,13 +2575,23 @@ class SandboxPatchSdkService:
             self.configuration.input_limits,
         )
         execution_id = _execution_id_for_request(request_id)
-        identity = DurableRequestIdentity(
+        expected_identity = DurableRequestIdentity(
             self.configuration.subject.tenant,
             self.configuration.subject.principal,
             execution_id,
             self.policy.approval.route,
             RetransmissionKey("sandbox-" + request_id.value),
         )
+        if identity is None:
+            identity = expected_identity
+        elif (
+            type(identity) is not DurableRequestIdentity
+            or identity.tenant_id != expected_identity.tenant_id
+            or identity.principal_id != expected_identity.principal_id
+            or identity.execution_id != expected_identity.execution_id
+            or identity.route_id != expected_identity.route_id
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         access = DurableRequestAccess(request_id, identity)
         reservation = await self.store.reserve(
             identity, canonical.digest, request_id
@@ -2799,6 +2812,34 @@ class SandboxPatchSdkService:
             )
         self._latest = outcome
         return outcome
+
+    async def invoke_remote(
+        self,
+        operation: OperationType,
+        raw_arguments: bytes,
+        capability: PatchInvocationCapability,
+        request_id: PatchRequestId,
+        correlation_id: "PatchObserverCorrelationId",
+        identity: DurableRequestIdentity,
+    ) -> PatchInvocationOutcome:
+        """Invoke only a server-derived retransmission identity.
+
+        The normal ``invoke`` path derives its local SDK retransmission key.
+        This transport-specific path is used exclusively by the authenticated
+        loopback test server after it has reserved the exact durable tuple.
+        It still verifies tenant, principal, execution, and route against the
+        service's trusted runtime configuration before any target inspection.
+        """
+        if type(identity) is not DurableRequestIdentity:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        return await self.invoke(
+            operation,
+            raw_arguments,
+            capability,
+            request_id,
+            correlation_id,
+            identity=identity,
+        )
 
     async def _reap_bound_worker(
         self,
@@ -3633,5 +3674,25 @@ class SandboxPatchRuntimeBinder:
                 )
                 if self.durable_resource is not None
                 else (service,)
+            ),
+            RemotePatchRuntimeWitness(
+                tenant=self.service_factory.configuration.subject.tenant,
+                principal=self.service_factory.configuration.subject.principal,
+                run=self.service_factory.configuration.subject.run,
+                session=self.service_factory.configuration.subject.session,
+                task=self.service_factory.configuration.subject.task,
+                agent=self.service_factory.configuration.subject.agent,
+                execution_scope=scope.identity.domain_id.value,
+                route=self.policy.approval.route,
+                context=scope.identity.context_id,
+                workspace=scope.identity.workspace_id,
+                policy_revision=self.policy.revision,
+                disclosures=frozenset(
+                    disclosure
+                    for rule in self.policy.rules
+                    for disclosure in rule.disclosures
+                ),
+                approval_route=self.policy.approval.route,
+                capabilities=scope.capabilities,
             ),
         )

@@ -55,7 +55,7 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 12
+_CURRENT_PHASE = 13
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
     "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
@@ -78,6 +78,7 @@ _FIXTURE_NAMES = (
     "phase10_evidence.json",
     "phase11_evidence.json",
     "phase12_evidence.json",
+    "phase13_evidence.json",
     "phase7_evidence.json",
     "phase_evidence_index.json",
 )
@@ -1113,7 +1114,7 @@ def load_phase0_contracts(
         root,
     )
     _validate_phase_evidence(
-        fixtures / "phase12_evidence.json", manifest, root
+        fixtures / "phase13_evidence.json", manifest, root
     )
     _validate_phase_evidence_history(
         fixtures / "phase_evidence_index.json",
@@ -3232,7 +3233,11 @@ def _validate_phase_evidence(
     }:
         raise PatchAcceptanceError("phase evidence status is invalid")
     _string(payload.get("scope"), "phase evidence scope")
-    expected_date = {11: "2026-08-25", 12: "2026-08-26"}.get(_CURRENT_PHASE)
+    expected_date = {
+        11: "2026-08-25",
+        12: "2026-08-26",
+        13: "2026-08-27",
+    }.get(_CURRENT_PHASE)
     if (
         expected_date is None
         or _string(payload.get("recorded_on"), "phase evidence date")
@@ -3792,8 +3797,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 821,
-        "planned_requirements": 196,
+        "active_requirements": 839,
+        "planned_requirements": 178,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))

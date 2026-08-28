@@ -1192,8 +1192,9 @@ def _artifact_contract(
 
 def _write(root: Path, relative: str, content: bytes) -> Path:
     path = root / relative
-    path.parent.mkdir(parents=True, exist_ok=True)
+    path.parent.mkdir(mode=0o755, parents=True, exist_ok=True)
     path.write_bytes(content)
+    chmod(path, 0o644)
     return path
 
 

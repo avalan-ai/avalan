@@ -109,28 +109,28 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 12
+    assert manifest.current_phase == 13
     assert len(manifest.active_nodes(5)) == 59
 
 
-def test_patch_acceptance_validates_pending_phase12_evidence() -> None:
-    """Validate the prepared Phase 12 evidence record."""
+def test_patch_acceptance_validates_pending_phase13_evidence() -> None:
+    """Validate the prepared Phase 13 evidence record."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
     _VERIFIER._validate_phase_evidence(
-        _FIXTURES / "phase12_evidence.json", manifest, _ROOT
+        _FIXTURES / "phase13_evidence.json", manifest, _ROOT
     )
 
 
-def test_patch_acceptance_rejects_stale_phase12_evidence_date(
+def test_patch_acceptance_rejects_stale_phase13_evidence_date(
     tmp_path: Path,
 ) -> None:
-    """Reject a re-signed Phase 12 record with the stale receipt date."""
+    """Reject a re-signed Phase 13 record with the stale receipt date."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase12_evidence.json"
+    path = fixtures / "phase13_evidence.json"
     payload = _read(path)
-    payload["recorded_on"] = "2026-08-23"
+    payload["recorded_on"] = "2026-08-26"
     _resign(payload, "record_sha256")
     _write(path, payload)
     manifest = _VERIFIER.load_manifest(fixtures / "acceptance_manifest.json")
@@ -196,7 +196,7 @@ def test_patch_acceptance_inherits_only_postgresql_test_dsn(
     monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
     monkeypatch.setattr(_VERIFIER, "load_phase0_contracts", load_contracts)
 
-    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=12)
+    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=13)
 
     assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
@@ -471,7 +471,7 @@ def test_patch_acceptance_rejects_pending_platform_receipts(
     """Reject a terminal evidence status while platform proof is pending."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase12_evidence.json"
+    path = fixtures / "phase13_evidence.json"
     payload = _read(path)
     payload["status"] = "complete"
     platform_receipts = payload["platform_receipts"]

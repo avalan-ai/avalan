@@ -20,6 +20,7 @@ from dataclasses import dataclass, replace
 from inspect import getclosurevars, signature
 from json import dumps, loads
 from logging import Logger
+from os import umask
 from pathlib import Path
 from runpy import run_path
 from subprocess import run as run_process
@@ -214,6 +215,16 @@ def _phase_nine_target_baseline() -> Iterator[None]:
     _restore_phase_nine_target_baseline()
     yield
     _restore_phase_nine_target_baseline()
+
+
+@pytest.fixture(autouse=True)
+def _phase_nine_file_creation_umask() -> Iterator[None]:
+    """Create ordinary Phase 9 fixture files with their sealed 0644 mode."""
+    previous = umask(0o022)
+    try:
+        yield
+    finally:
+        umask(previous)
 
 
 def _phase_seven_test_host() -> dict[str, object]:

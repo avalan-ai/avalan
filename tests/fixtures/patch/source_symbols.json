@@ -259,14 +259,14 @@
       "path": "src/avalan/patch/toolset.py",
       "symbol": "PatchToolSet",
       "artifact_class": "patch_toolset",
-      "source_sha256": "05f862b0e3634055bc3f29506860df35da27c0728823174538e936583e3cf64d"
+      "source_sha256": "2fa1b1064526a577def64ba476a8e2324d5c6c65007061462904b73b1e968f2d"
     },
     {
       "id": "PATCH-SYM-038",
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "d8e8138065ec2463d18785b33b480b7012053ff00d01709bc8cdd7618defb103"
+      "source_sha256": "f14bc60651b5fb4b20baa4d73ebbf2e74b32bad0155df696c8bdb5d36e6a1261"
     },
     {
       "id": "PATCH-SYM-039",
@@ -288,7 +288,14 @@
       "symbol": "ContainerPatchTarget",
       "artifact_class": "patch_container_target",
       "source_sha256": "fe09d62c59e98397f903e4c022229e733168de90c3d910f93dcfcff4f9f36078"
+    },
+    {
+      "id": "PATCH-SYM-042",
+      "path": "src/avalan/server/patch.py",
+      "symbol": "RemotePatchController",
+      "artifact_class": "patch_test_server",
+      "source_sha256": "bf297724fea2566605897a211d0c30e43d2bcfbf29fcc9fda52dfa918a93e4b7"
     }
   ],
-  "inventory_sha256": "7bd89b8525f99f19b14f43ff6cbf3aafa8b6b727cbfee8f68ace5b526fb339c5"
+  "inventory_sha256": "4ad27d34a9f55e94cf09c2751b648017488ed206e9dde233f135ec80a848d6c0"
 }

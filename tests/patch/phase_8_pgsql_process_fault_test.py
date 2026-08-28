@@ -1,9 +1,9 @@
 """Kill isolated PostgreSQL workers after each Phase 8 durable barrier."""
 
 from asyncio import create_task, gather, run, sleep, to_thread
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from multiprocessing import get_context
-from os import environ
+from os import environ, umask
 from pathlib import Path
 from queue import Empty
 from runpy import run_path
@@ -204,6 +204,16 @@ pytestmark = pytest.mark.skipif(
     _DSN is None,
     reason="AVALAN_TASK_TEST_POSTGRESQL_DSN is not set",
 )
+
+
+@pytest.fixture(autouse=True)
+def _phase_8_file_creation_umask() -> Iterator[None]:
+    """Create ordinary Phase 8 fixture files with their sealed 0644 mode."""
+    previous = umask(0o022)
+    try:
+        yield
+    finally:
+        umask(previous)
 
 
 async def _store(dsn: str, schema: str) -> PgsqlDurablePatchStore:

@@ -1772,7 +1772,14 @@ class _TerminalStateGuard:
             raise PatchCliReviewError(
                 "patch CLI terminal output is unavailable"
             )
-        self.require_current()
+        try:
+            self.require_current()
+        except PatchCliReviewError as error:
+            if not isinstance(error.__cause__, (OSError, ValueError)):
+                raise
+            raise PatchCliReviewError(
+                "patch CLI terminal output failed"
+            ) from error
         _require_terminal_handle(
             self._output_handle,
             self._output_handle.duplicate_descriptor,

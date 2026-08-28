@@ -1297,7 +1297,7 @@
       },
       {
         "path": "src/avalan/cli/patch_review.py",
-        "source_sha256": "e70fc1aaccf7c40397ada3e5327b01346b65f598aa9950687cda254e73e3e6f9"
+        "source_sha256": "f742fccfbf89793d8cc53f4149880087361f32eaa341cfcf01d3e436c12bb30f"
       },
       {
         "path": "src/avalan/cli/stream_coordinator.py",
@@ -2205,7 +2205,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "d8e8138065ec2463d18785b33b480b7012053ff00d01709bc8cdd7618defb103"
+        "source_sha256": "f14bc60651b5fb4b20baa4d73ebbf2e74b32bad0155df696c8bdb5d36e6a1261"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -2221,7 +2221,7 @@
       },
       {
         "path": "src/avalan/patch/toolset.py",
-        "source_sha256": "05f862b0e3634055bc3f29506860df35da27c0728823174538e936583e3cf64d"
+        "source_sha256": "2fa1b1064526a577def64ba476a8e2324d5c6c65007061462904b73b1e968f2d"
       },
       {
         "path": "src/avalan/pgsql.py",
@@ -2290,6 +2290,10 @@
       {
         "path": "src/avalan/server/mcp_tasks.py",
         "source_sha256": "de0946ec1ddeaf9d7b433e9a7251133b9198da985fd2f135cdc1dd87edebb0c8"
+      },
+      {
+        "path": "src/avalan/server/patch.py",
+        "source_sha256": "bf297724fea2566605897a211d0c30e43d2bcfbf29fcc9fda52dfa918a93e4b7"
       },
       {
         "path": "src/avalan/server/remote_container.py",
@@ -3257,6 +3261,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "69fbcebb80eb28ebdbfb60697303b337a7f6eb09dd8f4bf1440711981fe5497f",
-  "record_sha256": "be2b662af2080140fd6d9e320b402642c321785bc9d2835f8ba7d45fa6684de0"
+  "inventory_sha256": "d643ac1e195eb6f25ed98b49c51105a992f01e2ac894557e450b582e49007337",
+  "record_sha256": "3e8196a2e180447d0dfc5ace043b42790abbeb94f22ac761147591ba19fa99db"
 }
