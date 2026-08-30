@@ -205,6 +205,7 @@ class DurablePatchReconciler:
                 refreshed = await self._store.inspect(access)
                 return await self._suspend(refreshed, lease, pending, now)
             raise
+        await self._store.release_terminal_coordination(access)
         return terminal.result
 
     async def _suspend(

@@ -93,6 +93,7 @@ def test_patch_durable_schema_is_isolated_and_constrains_core_truth() -> None:
         "patch_durable_artifact_journal",
         "patch_durable_outbox",
         "patch_durable_retention",
+        "patch_durable_workspace_coordination",
     ):
         assert f'"{table}"' in schema
     for constraint in (
@@ -104,6 +105,9 @@ def test_patch_durable_schema_is_isolated_and_constrains_core_truth() -> None:
         "uq_patch_durable_outbox_request_sequence",
         "uq_patch_durable_outbox_terminal",
         "ck_patch_durable_retention_kind",
+        "uq_patch_durable_workspace_coordination_request",
+        "ck_patch_durable_workspace_coordination_identifiers",
+        "ck_patch_durable_workspace_coordination_digest",
     ):
         assert f'"{constraint}"' in schema
     assert '"ciphertext" BYTEA NOT NULL' in schema

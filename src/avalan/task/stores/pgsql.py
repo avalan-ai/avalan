@@ -160,6 +160,10 @@ _TASK_PGSQL_REVISION_MODULES = (
         "avalan.task.stores.pgsql_migrations.versions."
         "v20260811_0002_patch_worker_reaping"
     ),
+    (
+        "avalan.task.stores.pgsql_migrations.versions."
+        "v20260828_0001_patch_coordination"
+    ),
 )
 _TASK_PGSQL_ALEMBIC_LOCK = Lock()
 

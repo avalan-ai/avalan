@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "phase": 13,
+  "phase": 14,
   "patch_tools": [],
   "public_tool_inventory": [
     "browser",
@@ -178,9 +178,9 @@
       "source_markers": [
         {
           "path": "scripts/verify_src_coverage.py",
-          "line": 112,
+          "line": 113,
           "text": "def verify_src_coverage(",
-          "source_sha256": "a789e6d4d383e9394e0dbb8370789ee61ec9a88da1a8ade952811f180c2e2500"
+          "source_sha256": "b2b6b8371f797f0d5af01acfa151eba39464aabfdf9facde933f6307ed08c6af"
         }
       ]
     },
@@ -208,6 +208,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "d643ac1e195eb6f25ed98b49c51105a992f01e2ac894557e450b582e49007337",
-  "evidence_sha256": "e35aeae984de5fb0d8e6597642638107f891a7673b30da380642027fdc00adb7"
+  "contract_inventory_sha256": "f91413dc4b87e6b023b6f59b82a321b568690a301e1a6103c2f685d6d28bba26",
+  "evidence_sha256": "673199c4641d422941edf6a986a0c00c1cfb10215801bfd535444f30aa47fc86"
 }

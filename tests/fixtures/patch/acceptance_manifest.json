@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 13,
+  "current_phase": 14,
   "nodes": [
     {
       "id": "PATCH-A-P0-001",
@@ -1127,30 +1127,110 @@
       "evidence_class": "public"
     },
     {
-      "id": "PATCH-A-114",
+      "id": "PATCH-A-114-P14-01",
       "category": "public_e2e",
-      "lifecycle": "planned",
+      "lifecycle": "active",
       "active_from_phase": 14,
       "requirement_ids": [
         "PATCH-R-0807",
         "PATCH-R-0808",
         "PATCH-R-0809",
-        "PATCH-R-0810",
+        "PATCH-R-0810"
+      ],
+      "node_id": "tests/server/patch_protocols_test.py::test_mcp_loopback_lifecycle_is_detached_replay_safe_and_private",
+      "surface": "mcp",
+      "context": "remote",
+      "platform": "protocol",
+      "operation": "project",
+      "authority": "protocol",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-02",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0811",
         "PATCH-R-0812",
         "PATCH-R-0813",
         "PATCH-R-0814",
         "PATCH-R-0815",
-        "PATCH-R-0816",
+        "PATCH-R-0816"
+      ],
+      "node_id": "tests/server/patch_protocols_test.py::test_a2a_loopback_restart_preserves_typed_task_correlation",
+      "surface": "a2a",
+      "context": "remote",
+      "platform": "protocol",
+      "operation": "resume",
+      "authority": "protocol",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-03",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0817",
         "PATCH-R-0818",
         "PATCH-R-0819",
         "PATCH-R-0820",
+        "PATCH-R-0823"
+      ],
+      "node_id": "tests/patch/phase_14_flow_task_test.py::test_patch_e2e_033_flow_suspends_dependents_then_reads_once",
+      "surface": "flow",
+      "context": "sandbox",
+      "platform": "native",
+      "operation": "resume",
+      "authority": "workflow",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-04",
+      "category": "crash",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0821",
-        "PATCH-R-0822",
-        "PATCH-R-0823",
+        "PATCH-R-0822"
+      ],
+      "node_id": "tests/patch/phase_14_flow_task_pgsql_test.py::test_patch_e2e_034_pgsql_task_selected_runtime_recovery",
+      "surface": "task",
+      "context": "sandbox",
+      "platform": "postgresql",
+      "operation": "resume",
+      "authority": "workflow",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-05",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0824",
-        "PATCH-R-0825",
+        "PATCH-R-0825"
+      ],
+      "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_e2e_035_coordinates_three_agent_contexts",
+      "surface": "task",
+      "context": "local",
+      "platform": "durable",
+      "operation": "coordinate",
+      "authority": "workflow",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-06",
+      "category": "public_e2e",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0826",
         "PATCH-R-0827",
         "PATCH-R-0828",
@@ -1158,16 +1238,32 @@
         "PATCH-R-0830",
         "PATCH-R-0831",
         "PATCH-R-0832",
-        "PATCH-R-0833",
+        "PATCH-R-0833"
+      ],
+      "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_e2e_036_provider_json_freeform_parity_and_inert_replay",
+      "surface": "sdk",
+      "context": "local",
+      "platform": "portable",
+      "operation": "invoke",
+      "authority": "provider",
+      "commit_boundary": "settlement",
+      "evidence_class": "public"
+    },
+    {
+      "id": "PATCH-A-114-P14-07",
+      "category": "security",
+      "lifecycle": "active",
+      "active_from_phase": 14,
+      "requirement_ids": [
         "PATCH-R-0834",
         "PATCH-R-0835"
       ],
-      "node_id": "tests/patch/phase_14_contract_test.py::test_patch_phase_14_requirements",
-      "surface": "mcp",
-      "context": "remote",
-      "platform": "protocol",
-      "operation": "project",
-      "authority": "protocol",
+      "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_phase_14_provider_rejects_foreign_and_noncurrent_calls",
+      "surface": "sdk",
+      "context": "local",
+      "platform": "portable",
+      "operation": "reject",
+      "authority": "provider",
       "commit_boundary": "settlement",
       "evidence_class": "public"
     },
@@ -2909,5 +3005,5 @@
       "evidence_class": "public"
     }
   ],
-  "manifest_sha256": "636715e620235a1e60dd0a2d26255e3c33e8b93b71ea6a56f170fe1887d7bba3"
+  "manifest_sha256": "0ab7c8e90b37f70229968c6beaed827cb606efa77c79088ac88ea08959bdc81f"
 }

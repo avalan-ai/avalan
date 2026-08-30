@@ -4516,7 +4516,190 @@
       "review_round": 5,
       "reviewer": "phase13-review-turn5",
       "rationale": "The Phase 13 TCP node executes authenticated patch.apply through the real selected sandbox, then verifies one durable commit, worker binding, settlement, event replay, and later target read."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-01",
+        "requirement_ids": [
+          "PATCH-R-0807",
+          "PATCH-R-0808",
+          "PATCH-R-0809",
+          "PATCH-R-0810"
+        ],
+        "category": "public_e2e",
+        "surface": "mcp",
+        "context": "remote",
+        "platform": "protocol",
+        "operation": "project",
+        "authority": "protocol",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/server/patch_protocols_test.py::test_mcp_loopback_lifecycle_is_detached_replay_safe_and_private",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "3b611dfd5a56e2459ca930823e9a0edea661595fda95b5008d409de7e156b4fd"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "MCP loopback activation is split to the exact Phase 14 executable evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-02",
+        "requirement_ids": [
+          "PATCH-R-0811",
+          "PATCH-R-0812",
+          "PATCH-R-0813",
+          "PATCH-R-0814",
+          "PATCH-R-0815",
+          "PATCH-R-0816"
+        ],
+        "category": "public_e2e",
+        "surface": "a2a",
+        "context": "remote",
+        "platform": "protocol",
+        "operation": "resume",
+        "authority": "protocol",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/server/patch_protocols_test.py::test_a2a_loopback_restart_preserves_typed_task_correlation",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "6da75ae095ca96b9bc8cf9615c1883c2aafdf38b7edaf6115cbd78a434fd03d8"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "A2A continuation activation is bound to its exact loopback restart evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-03",
+        "requirement_ids": [
+          "PATCH-R-0817",
+          "PATCH-R-0818",
+          "PATCH-R-0819",
+          "PATCH-R-0820",
+          "PATCH-R-0823"
+        ],
+        "category": "public_e2e",
+        "surface": "flow",
+        "context": "sandbox",
+        "platform": "native",
+        "operation": "resume",
+        "authority": "workflow",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_14_flow_task_test.py::test_patch_e2e_033_flow_suspends_dependents_then_reads_once",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "4976a0d5c90110f88976a4b565343b56cbd604cddf930d2352663f9cf5b358ca"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "Flow activation binds dependent suspension and terminal-only continuation evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-04",
+        "requirement_ids": [
+          "PATCH-R-0821",
+          "PATCH-R-0822"
+        ],
+        "category": "crash",
+        "surface": "task",
+        "context": "sandbox",
+        "platform": "postgresql",
+        "operation": "resume",
+        "authority": "workflow",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_14_flow_task_pgsql_test.py::test_patch_e2e_034_pgsql_task_selected_runtime_recovery",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "a925e6d5ef6da36a753e820500b4f1ad0d5702a494754bc8d22ce87bbefe0c12"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "Task recovery activation binds the selected PostgreSQL crash-restart evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-05",
+        "requirement_ids": [
+          "PATCH-R-0824",
+          "PATCH-R-0825"
+        ],
+        "category": "public_e2e",
+        "surface": "task",
+        "context": "local",
+        "platform": "durable",
+        "operation": "coordinate",
+        "authority": "workflow",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_e2e_035_coordinates_three_agent_contexts",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "62cc463c1eb52429f18df8ff37e99ac710bc4220d67200f104f69ac2c7c22f05"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "Coordination activation is limited to semantic durable evidence and does not claim physical host-bind proof."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-06",
+        "requirement_ids": [
+          "PATCH-R-0826",
+          "PATCH-R-0827",
+          "PATCH-R-0828",
+          "PATCH-R-0829",
+          "PATCH-R-0830",
+          "PATCH-R-0831",
+          "PATCH-R-0832",
+          "PATCH-R-0833"
+        ],
+        "category": "public_e2e",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "invoke",
+        "authority": "provider",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_e2e_036_provider_json_freeform_parity_and_inert_replay",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "9e1bc5289643661c5c740b8b5cc5aa68c2acb9e4a837761c766687085dc4042f"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "Provider activation binds complete buffered input, replay, result injection, and approval continuation evidence."
+    },
+    {
+      "new": {
+        "id": "PATCH-A-114-P14-07",
+        "requirement_ids": [
+          "PATCH-R-0834",
+          "PATCH-R-0835"
+        ],
+        "category": "security",
+        "surface": "sdk",
+        "context": "local",
+        "platform": "portable",
+        "operation": "reject",
+        "authority": "provider",
+        "commit_boundary": "settlement",
+        "evidence_class": "public",
+        "node_id": "tests/patch/phase_14_agent_provider_test.py::test_patch_phase_14_provider_rejects_foreign_and_noncurrent_calls",
+        "lifecycle": "active",
+        "active_from_phase": 14,
+        "executable_sha256": "aac43bdaa0eae127510edf6c7d60c8d7b9b6d25770f549fe34cc876cc3e4e68d"
+      },
+      "review_round": 1,
+      "reviewer": "phase14-final-integration",
+      "rationale": "Provider rejection activation preserves fail-closed current-call authority boundaries."
     }
   ],
-  "history_sha256": "260ab01e34f230b7b47d383a75f6317a6b0d2a3a9a4ebde40b4579dbe2a99e3d"
+  "history_sha256": "9c1d915d04f11d8dc3dce75993a24094d73903ae6af441df438d5d9bb5909cdc"
 }

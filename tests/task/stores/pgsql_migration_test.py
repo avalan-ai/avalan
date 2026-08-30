@@ -720,10 +720,12 @@ class PgsqlMigrationRevisionTest(TestCase):
         )
         self.assertIn('"ix_interaction_branches_scope"', schema)
 
-    def test_patch_worker_revision_is_registered_as_schema_head(self) -> None:
+    def test_patch_coordination_revision_is_registered_as_schema_head(
+        self,
+    ) -> None:
         revision_module = import_module(
             "avalan.task.stores.pgsql_migrations.versions."
-            "v20260811_0002_patch_worker_reaping"
+            "v20260828_0001_patch_coordination"
         )
         fake_op = FakeRevisionOp()
         old_op = getattr(revision_module, "op")
@@ -739,8 +741,8 @@ class PgsqlMigrationRevisionTest(TestCase):
             list(revision_module.TASK_SCHEMA_STATEMENTS),
         )
         schema = "\n".join(task_pgsql_schema_statements())
-        self.assertIn('"worker_binding_digest" TEXT DEFAULT NULL', schema)
-        self.assertIn('"worker_reaped" BOOLEAN NOT NULL DEFAULT FALSE', schema)
+        self.assertIn('"workspace_id" TEXT NOT NULL', schema)
+        self.assertIn('"paths_digest" TEXT NOT NULL', schema)
 
     def test_conversation_revision_extends_aggregated_schema(self) -> None:
         revision_module = import_module(
@@ -802,6 +804,7 @@ class PgsqlMigrationRevisionTest(TestCase):
             "v20260801_0003_conversation_checkpoints",
             "v20260809_0001_patch_durable_store",
             "v20260811_0002_patch_worker_reaping",
+            "v20260828_0001_patch_coordination",
         ):
             with self.subTest(revision=revision):
                 revision_module = import_module(

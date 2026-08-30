@@ -143,7 +143,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
-    assert baseline["phase"] == 13
+    assert baseline["phase"] == 14
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -166,7 +166,7 @@ def test_patch_gate_contract_is_current() -> None:
     }
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 13
+    assert _GATE._PATCH_CURRENT_PHASE == 14
 
 
 @pytest.mark.parametrize(
@@ -656,11 +656,11 @@ def test_baseline_section2_evidence_rejects_source_drift(
         _ACCEPTANCE.load_phase0_contracts(fixtures, repo_root=_ROOT)
 
 
-def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
+def test_gate_uses_prior_phase_receipts_without_reusing_coverage_outputs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Seal one fresh report and reject reuse of stale full-suite artifacts."""
+    """Keep validated prior receipts separate from fresh coverage outputs."""
     source = tmp_path / "source"
     mirror = tmp_path / "mirror"
     source.mkdir()
@@ -673,6 +673,10 @@ def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
     )
     for name in ("coverage.json", "coverage.xml", _GATE._PYTEST_FACTS):
         (source / name).write_text("stale\n", encoding="utf-8")
+    prior = (b"prior-json\n", b"prior-xml\n", b"prior-facts\n")
+    sidecars = tuple(
+        mirror / name for name in _GATE._PHASE_EVIDENCE_SIDECAR_PATHS
+    )
     commands: list[tuple[str, ...]] = []
     stages: list[str] = []
 
@@ -691,6 +695,9 @@ def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
             stages.append("coverage")
             assert facts_path == mirror / _GATE._PYTEST_FACTS
             assert facts_path is not None
+            assert evidence_artifacts == sidecars
+            assert tuple(path.read_bytes() for path in sidecars) == prior
+            assert all(path.stat().st_mode & 0o222 == 0 for path in sidecars)
             (mirror / "coverage.json").write_text("{}\n", encoding="utf-8")
             (mirror / "coverage.xml").write_text(
                 "<coverage/>\n", encoding="utf-8"
@@ -709,6 +716,7 @@ def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
         sealed: tuple[object, ...],
         inventory: object,
         python_ownership: tuple[PurePosixPath, ...],
+        evidence_artifacts: tuple[Path, Path, Path] | None,
     ) -> None:
         assert root == mirror
         assert phase == 0
@@ -717,6 +725,9 @@ def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
         assert isinstance(inventory, _GATE.SealedInputInventory)
         assert inventory.sha256
         assert python_ownership == ()
+        assert evidence_artifacts == sidecars
+        assert tuple(path.read_bytes() for path in sidecars) == prior
+        assert (mirror / "coverage.json").read_text(encoding="utf-8") == "{}\n"
         stages.append("current-contract-verifiers")
 
     monkeypatch.setattr(_GATE, "_run_isolated_command", run_command)
@@ -731,7 +742,9 @@ def test_gate_deletes_stale_artifacts_and_runs_one_coverage_suite(
     )
     monkeypatch.setattr(_GATE, "_validate_patch_phase", lambda *args: None)
 
-    assert _GATE._run_mirrored_gate(source, mirror, 0, database, ()) == 0
+    assert (
+        _GATE._run_mirrored_gate(source, mirror, 0, database, (), prior) == 0
+    )
     coverage_commands = [
         command for command in commands if command[1:3] == ("-m", "pytest")
     ]
@@ -768,10 +781,12 @@ def test_gate_owns_database_before_coverage_until_teardown(
         source: Path,
         phase: int,
         supplied: object,
+        prior_evidence_artifacts: tuple[bytes, bytes, bytes] | None,
     ) -> int:
         assert source == tmp_path
         assert phase == 0
         assert supplied == database
+        assert prior_evidence_artifacts is None
         stages.extend(("coverage", "current-contract-verifiers"))
         return 0
 

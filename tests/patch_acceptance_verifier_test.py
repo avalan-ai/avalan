@@ -109,26 +109,26 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 13
+    assert manifest.current_phase == 14
     assert len(manifest.active_nodes(5)) == 59
 
 
-def test_patch_acceptance_validates_pending_phase13_evidence() -> None:
-    """Validate the prepared Phase 13 evidence record."""
+def test_patch_acceptance_validates_pending_phase14_evidence() -> None:
+    """Validate the prepared Phase 14 evidence record."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
     _VERIFIER._validate_phase_evidence(
-        _FIXTURES / "phase13_evidence.json", manifest, _ROOT
+        _FIXTURES / "phase14_evidence.json", manifest, _ROOT
     )
 
 
-def test_patch_acceptance_rejects_stale_phase13_evidence_date(
+def test_patch_acceptance_rejects_stale_phase14_evidence_date(
     tmp_path: Path,
 ) -> None:
-    """Reject a re-signed Phase 13 record with the stale receipt date."""
+    """Reject a re-signed Phase 14 record with the stale receipt date."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase13_evidence.json"
+    path = fixtures / "phase14_evidence.json"
     payload = _read(path)
     payload["recorded_on"] = "2026-08-26"
     _resign(payload, "record_sha256")
@@ -159,6 +159,101 @@ def test_patch_acceptance_validates_sealed_phase_artifact_digests() -> None:
         _VERIFIER.PatchAcceptanceError, match="phase artifact digest drifted"
     ):
         _VERIFIER._validate_phase_evidence_artifacts(artifacts, _ROOT, True)
+
+
+def test_patch_acceptance_phase_evidence_sidecars_are_exact_and_local(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolve only the fixed same-root receipt-sidecar triple."""
+    root = tmp_path / "root"
+    root.mkdir()
+    sidecars = tuple(
+        root / name for name in _VERIFIER._PHASE_EVIDENCE_SIDECAR_PATHS
+    )
+    for index, path in enumerate(sidecars):
+        path.write_text(f"receipt-{index}\n", encoding="utf-8")
+    for name, path in zip(
+        _VERIFIER._PHASE_EVIDENCE_ARTIFACT_ENVS, sidecars, strict=True
+    ):
+        monkeypatch.setenv(name, str(path))
+
+    assert _VERIFIER._phase_evidence_artifact_paths(root) == sidecars
+    coverage = sidecars[0]
+    artifacts = [
+        {
+            "name": "coverage-json",
+            "path": "coverage.json",
+            "sha256": sha256(coverage.read_bytes()).hexdigest(),
+        }
+    ]
+    _VERIFIER._validate_phase_evidence_artifacts(artifacts, root, True)
+
+    coverage.write_text("tampered\n", encoding="utf-8")
+    with pytest.raises(
+        _VERIFIER.PatchAcceptanceError, match="phase artifact digest drifted"
+    ):
+        _VERIFIER._validate_phase_evidence_artifacts(artifacts, root, True)
+    coverage.unlink()
+    with pytest.raises(
+        _VERIFIER.PatchAcceptanceError,
+        match="phase evidence retained artifact is missing",
+    ):
+        _VERIFIER._phase_evidence_artifact_paths(root)
+
+
+@pytest.mark.parametrize(
+    "paths",
+    (
+        ("partial",),
+        ("foreign",),
+        ("duplicate",),
+        ("unsupported",),
+    ),
+)
+def test_patch_acceptance_rejects_invalid_phase_evidence_sidecar_mapping(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    paths: tuple[str, ...],
+) -> None:
+    """Reject incomplete or noncanonical phase-evidence artifact mappings."""
+    root = tmp_path / "root"
+    root.mkdir()
+    sidecars = tuple(
+        root / name for name in _VERIFIER._PHASE_EVIDENCE_SIDECAR_PATHS
+    )
+    for index, path in enumerate(sidecars):
+        path.write_text(f"receipt-{index}\n", encoding="utf-8")
+    names = _VERIFIER._PHASE_EVIDENCE_ARTIFACT_ENVS
+    match paths[0]:
+        case "partial":
+            for name in names[1:]:
+                monkeypatch.delenv(name, raising=False)
+            monkeypatch.setenv(names[0], str(sidecars[0]))
+            expected = "phase evidence artifact environment is partial"
+        case "foreign":
+            foreign = tmp_path / "foreign.json"
+            foreign.write_text("foreign\n", encoding="utf-8")
+            supplied = (foreign, sidecars[1], sidecars[2])
+            for name, path in zip(names, supplied, strict=True):
+                monkeypatch.setenv(name, str(path))
+            expected = "phase evidence artifact mapping is invalid"
+        case "duplicate":
+            supplied = (sidecars[0], sidecars[0], sidecars[2])
+            for name, path in zip(names, supplied, strict=True):
+                monkeypatch.setenv(name, str(path))
+            expected = "phase evidence artifact mapping is invalid"
+        case "unsupported":
+            unsupported = root / "other.json"
+            unsupported.write_text("unsupported\n", encoding="utf-8")
+            supplied = (unsupported, sidecars[1], sidecars[2])
+            for name, path in zip(names, supplied, strict=True):
+                monkeypatch.setenv(name, str(path))
+            expected = "phase evidence artifact mapping is invalid"
+        case _:
+            raise AssertionError("unexpected mapping case")
+
+    with pytest.raises(_VERIFIER.PatchAcceptanceError, match=expected):
+        _VERIFIER._phase_evidence_artifact_overrides(root)
 
 
 def test_patch_acceptance_inherits_only_postgresql_test_dsn(
@@ -196,7 +291,7 @@ def test_patch_acceptance_inherits_only_postgresql_test_dsn(
     monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
     monkeypatch.setattr(_VERIFIER, "load_phase0_contracts", load_contracts)
 
-    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=13)
+    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=14)
 
     assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
@@ -471,7 +566,7 @@ def test_patch_acceptance_rejects_pending_platform_receipts(
     """Reject a terminal evidence status while platform proof is pending."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase13_evidence.json"
+    path = fixtures / "phase14_evidence.json"
     payload = _read(path)
     payload["status"] = "complete"
     platform_receipts = payload["platform_receipts"]

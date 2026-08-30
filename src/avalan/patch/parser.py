@@ -461,6 +461,11 @@ class PatchRequestParser:
         """Initialize one parser with immutable lexical ceilings."""
         self._limits = limits
 
+    @property
+    def limits(self) -> PatchInputLimits:
+        """Return the immutable limits shared by every parsed ingress."""
+        return self._limits
+
     def parse(self, ingress: RawPatchIngress) -> CanonicalPatchRequest:
         """Parse complete raw input before ordinary mapping construction."""
         _test_precommit_checkpoint("lifecycle.received")

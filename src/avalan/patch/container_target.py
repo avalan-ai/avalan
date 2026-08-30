@@ -145,6 +145,31 @@ class ContainerPersistentLeaseAuthority:
         return digest(self._key, resource_digest.encode(), "sha256").hex()
 
 
+@dataclass(frozen=True, slots=True, repr=False)
+class ContainerSharedRootAuthority:
+    """Carry host-only authority for one selected shared-root test profile."""
+
+    _key: bytes = field(repr=False)
+
+    def __post_init__(self) -> None:
+        """Require one opaque fixed-width host-issued authority value."""
+        if type(self._key) is not bytes or len(self._key) != 32:
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+
+    @classmethod
+    def from_bytes(cls, value: bytes) -> "ContainerSharedRootAuthority":
+        """Wrap one exact authority value issued by the trusted host."""
+        return cls(value)
+
+    def _root_receipt(self, root: Path, resource_digest: str) -> str:
+        """Authenticate one physical root without exporting its path."""
+        return digest(
+            self._key,
+            (str(root) + "\x00" + resource_digest).encode(),
+            "sha256",
+        ).hex()
+
+
 def container_protocol_id(
     version: SandboxWorkerProtocolVersion = _CONTAINER_PROTOCOL,
 ) -> PatchProtocolId:
@@ -208,6 +233,7 @@ class ContainerPatchRuntimeSettings:
     persistent_lease_authority: ContainerPersistentLeaseAuthority
     test_profile: bool = False
     root_subdirectory: LogicalPath | None = None
+    shared_root_authority: ContainerSharedRootAuthority | None = None
 
     def __post_init__(self) -> None:
         """Require the explicit Linux test profile and a trusted seed tree."""
@@ -222,6 +248,12 @@ class ContainerPatchRuntimeSettings:
             or not self.test_profile
             or self.root_subdirectory is not None
             and type(self.root_subdirectory) is not LogicalPath
+            or self.shared_root_authority is not None
+            and (
+                type(self.shared_root_authority)
+                is not ContainerSharedRootAuthority
+                or not _shared_host_root_is_safe(self.seed_root)
+            )
         ):
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
 
@@ -297,6 +329,70 @@ def _persistent_resource_digest(
     settings: ContainerPatchRuntimeSettings,
 ) -> str:
     """Seal the backing resource identity used by one persistent lease."""
+    identity = settings.context.identity
+    values: tuple[str, ...] = (
+        identity.domain_id.value,
+        identity.workspace_id.value,
+        identity.protocol_id.value,
+        identity.filesystem_id,
+        identity.mount_id,
+        identity.persistent_lease_id,
+        identity.implementation_id,
+        settings.execution_plan_fingerprint,
+        (
+            ""
+            if settings.root_subdirectory is None
+            else settings.root_subdirectory.value
+        ),
+    )
+    if settings.shared_root_authority is not None:
+        root = _shared_host_root(settings)
+        values += (
+            "shared-host-root-v1",
+            sha256(str(root).encode()).hexdigest(),
+        )
+    payload = "\x00".join(values)
+    return sha256(payload.encode()).hexdigest()
+
+
+def _shared_host_root_is_safe(root: Path) -> bool:
+    """Return whether one configured root is safe for a selected host bind."""
+    try:
+        return (
+            root.is_absolute()
+            and root.is_dir()
+            and not root.is_symlink()
+            and root.resolve(strict=True).is_dir()
+        )
+    except OSError:
+        return False
+
+
+def _shared_host_root(settings: ContainerPatchRuntimeSettings) -> Path:
+    """Return the exact resolved host root for the privileged test profile."""
+    authority = settings.shared_root_authority
+    if (
+        type(authority) is not ContainerSharedRootAuthority
+        or not settings.test_profile
+        or not _shared_host_root_is_safe(settings.seed_root)
+    ):
+        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    try:
+        root = settings.seed_root.resolve(strict=True)
+    except OSError as error:
+        raise TargetInspectionError(
+            TargetErrorCode.CAPABILITY_UNAVAILABLE
+        ) from error
+    resource_digest = _persistent_resource_digest_without_shared_root(settings)
+    if not authority._root_receipt(root, resource_digest):
+        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    return root
+
+
+def _persistent_resource_digest_without_shared_root(
+    settings: ContainerPatchRuntimeSettings,
+) -> str:
+    """Return the established volume identity before a shared-root binding."""
     identity = settings.context.identity
     payload = "\x00".join(
         (
@@ -419,6 +515,10 @@ class _ContainerRuntimeProcess:
     _volume_attached: bool = field(default=False, init=False)
     _volume_owned: bool = field(default=False, init=False)
     _volume_guard_name: str | None = field(default=None, init=False)
+    _shared_host_root: Path | None = field(default=None, init=False)
+    _shared_host_root_identity: tuple[int, int] | None = field(
+        default=None, init=False
+    )
     _token: bytes | None = field(default=None, init=False)
     _receipt: SandboxProfileReceipt | None = field(default=None, init=False)
     _root: RootWitness | None = field(default=None, init=False)
@@ -435,6 +535,30 @@ class _ContainerRuntimeProcess:
     def volume_name(self) -> str | None:
         """Return the opaque persistent volume name without a host path."""
         return self._volume_name
+
+    def _shared_host_root_identity_for(self, root: Path) -> tuple[int, int]:
+        """Return the host root identity retained across worker dispatches."""
+        try:
+            status = root.stat(follow_symlinks=False)
+        except OSError as error:
+            raise TargetInspectionError(
+                TargetErrorCode.WITNESS_STALE
+            ) from error
+        return status.st_dev, status.st_ino
+
+    def _require_shared_host_root(self) -> None:
+        """Reject a replaced shared host root before worker communication."""
+        root = self._shared_host_root
+        identity = self._shared_host_root_identity
+        if root is None and identity is None:
+            return
+        if (
+            root is None
+            or identity is None
+            or not _shared_host_root_is_safe(root)
+            or self._shared_host_root_identity_for(root) != identity
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
 
     async def _has_local_volume_claim(
         self, volume: str, resource_digest: str, owner_receipt: str
@@ -744,6 +868,11 @@ class _ContainerRuntimeProcess:
             volume_name = _docker_name(
                 "avalan_patch_", context.identity.persistent_lease_id
             )
+            shared_root = (
+                _shared_host_root(self.settings)
+                if self.settings.shared_root_authority is not None
+                else None
+            )
             resource_digest = _persistent_resource_digest(self.settings)
             owner_receipt = _volume_owner_receipt(
                 self.settings.persistent_lease_authority, resource_digest
@@ -805,6 +934,13 @@ class _ContainerRuntimeProcess:
             encoded = b64encode(
                 dumps(config, separators=(",", ":")).encode()
             ).decode()
+            workspace_mount = (
+                "type=bind,src=" + str(shared_root) + ",dst=/workspace"
+                if shared_root is not None
+                else "type=volume,src="
+                + volume_name
+                + ",dst=/workspace,volume-nocopy"
+            )
             create = (
                 "docker",
                 "create",
@@ -825,9 +961,7 @@ class _ContainerRuntimeProcess:
                 "--tmpfs",
                 "/private:rw,nosuid,nodev,noexec,size=16m",
                 "--mount",
-                "type=volume,src="
-                + volume_name
-                + ",dst=/workspace,volume-nocopy",
+                workspace_mount,
                 "--mount",
                 "type=bind,src="
                 + str(bundle.root)
@@ -842,86 +976,105 @@ class _ContainerRuntimeProcess:
                 "/implementation",
             )
             seed_ownership = (
-                "docker",
-                "run",
-                "--rm",
-                "--network",
-                "none",
-                "--read-only",
-                "--cap-drop",
-                "ALL",
-                "--cap-add",
-                "CHOWN",
-                "--security-opt",
-                "no-new-privileges",
-                "--pids-limit",
-                "32",
-                "--memory",
-                "64m",
-                "--tmpfs",
-                "/tmp:rw,nosuid,nodev,noexec,size=1m",
-                "--mount",
-                "type=volume,src=" + volume_name + ",dst=/workspace",
-                self.settings.image.reference,
-                "python3",
-                "-I",
-                "-c",
-                _CONTAINER_SEED_OWNERSHIP_BOOTSTRAP,
+                (
+                    "docker",
+                    "run",
+                    "--rm",
+                    "--network",
+                    "none",
+                    "--read-only",
+                    "--cap-drop",
+                    "ALL",
+                    "--cap-add",
+                    "CHOWN",
+                    "--security-opt",
+                    "no-new-privileges",
+                    "--pids-limit",
+                    "32",
+                    "--memory",
+                    "64m",
+                    "--tmpfs",
+                    "/tmp:rw,nosuid,nodev,noexec,size=1m",
+                    "--mount",
+                    "type=volume,src=" + volume_name + ",dst=/workspace",
+                    self.settings.image.reference,
+                    "python3",
+                    "-I",
+                    "-c",
+                    _CONTAINER_SEED_OWNERSHIP_BOOTSTRAP,
+                )
+                if shared_root is None
+                else ()
             )
             created = False
             try:
-                self._volume_name = volume_name
-                self._volume_resource_digest = resource_digest
-                self._volume_owner_receipt = owner_receipt
-                local_claim = await self._has_local_volume_claim(
-                    volume_name, resource_digest, owner_receipt
-                )
-                guard_name: str | None = None
-                if not local_claim:
-                    guard_name = await self._acquire_volume_guard(
+                if shared_root is not None:
+                    self._shared_host_root = shared_root
+                    self._shared_host_root_identity = (
+                        self._shared_host_root_identity_for(shared_root)
+                    )
+                    self._require_shared_host_root()
+                else:
+                    self._volume_name = volume_name
+                    self._volume_resource_digest = resource_digest
+                    self._volume_owner_receipt = owner_receipt
+                    local_claim = await self._has_local_volume_claim(
                         volume_name, resource_digest, owner_receipt
                     )
-                    self._volume_guard_name = guard_name
-                inspected = await _docker_output(
-                    ("docker", "volume", "inspect", volume_name), False
-                )
-                if inspected is None:
-                    await _docker_output(
-                        (
-                            "docker",
-                            "volume",
-                            "create",
-                            "--label",
-                            _volume_labels(resource_digest, owner_receipt)[0],
-                            "--label",
-                            _volume_labels(resource_digest, owner_receipt)[1],
-                            volume_name,
+                    guard_name: str | None = None
+                    if not local_claim:
+                        guard_name = await self._acquire_volume_guard(
+                            volume_name, resource_digest, owner_receipt
                         )
-                    )
-                    created = True
+                        self._volume_guard_name = guard_name
                     inspected = await _docker_output(
-                        (
-                            "docker",
-                            "volume",
-                            "inspect",
-                            volume_name,
-                        )
+                        ("docker", "volume", "inspect", volume_name), False
                     )
-                    assert inspected is not None
-                if not _owned_volume_matches(
-                    inspected, resource_digest, owner_receipt
-                ):
-                    raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
-                await self._claim_volume(
-                    volume_name,
-                    resource_digest,
-                    owner_receipt,
-                    created=created,
-                    guard_name=guard_name,
-                )
+                    if inspected is None:
+                        await _docker_output(
+                            (
+                                "docker",
+                                "volume",
+                                "create",
+                                "--label",
+                                _volume_labels(resource_digest, owner_receipt)[
+                                    0
+                                ],
+                                "--label",
+                                _volume_labels(resource_digest, owner_receipt)[
+                                    1
+                                ],
+                                volume_name,
+                            )
+                        )
+                        created = True
+                        inspected = await _docker_output(
+                            (
+                                "docker",
+                                "volume",
+                                "inspect",
+                                volume_name,
+                            )
+                        )
+                        assert inspected is not None
+                    if not _owned_volume_matches(
+                        inspected, resource_digest, owner_receipt
+                    ):
+                        raise TargetInspectionError(
+                            TargetErrorCode.WITNESS_STALE
+                        )
+                    await self._claim_volume(
+                        volume_name,
+                        resource_digest,
+                        owner_receipt,
+                        created=created,
+                        guard_name=guard_name,
+                    )
                 container_id = await _docker_output(create)
                 assert container_id is not None
-                if created:
+                if shared_root is not None:
+                    self._require_shared_host_root()
+                elif created:
                     await _docker_output(
                         (
                             "docker",
@@ -948,7 +1101,10 @@ class _ContainerRuntimeProcess:
                     ("docker", "rm", "--force", container_name), False
                 )
                 bundle.close()
-                await self._release_volume_attachment()
+                if shared_root is None:
+                    await self._release_volume_attachment()
+                self._shared_host_root = None
+                self._shared_host_root_identity = None
                 if created:
                     await self._cleanup_new_volume(
                         volume_name, resource_digest, owner_receipt
@@ -1004,10 +1160,12 @@ class _ContainerRuntimeProcess:
                 self._root = _root_from_payload(
                     (await self._request_locked("witness", {})).get("root")
                 )
+                self._require_shared_host_root()
                 return self._root, await self._runtime_receipt_locked()
             except BaseException:
                 await self._reap()
-                await self._release_volume_attachment()
+                if shared_root is None:
+                    await self._release_volume_attachment()
                 if created:
                     await self._cleanup_new_volume(
                         volume_name, resource_digest, owner_receipt
@@ -1174,6 +1332,7 @@ class _ContainerRuntimeProcess:
             or process.returncode is not None
         ):
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+        self._require_shared_host_root()
         if process.stdin is None or process.stdout is None:
             raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
         self._sequence += 1
@@ -1278,6 +1437,8 @@ class _ContainerRuntimeProcess:
             self._implementation_digest_value = None
             self._attestation = None
             self._sequence = 0
+            self._shared_host_root = None
+            self._shared_host_root_identity = None
             bundle = self._bundle
             self._bundle = None
             if process is not None:
@@ -1350,9 +1511,7 @@ async def _docker_output(
             try:
                 if process.returncode is None:
                     process.terminate()
-                await wait_for(
-                    process.wait(), timeout=_PROCESS_REAP_SECONDS
-                )
+                await wait_for(process.wait(), timeout=_PROCESS_REAP_SECONDS)
             except TimeoutError:
                 if process.returncode is None:
                     process.kill()

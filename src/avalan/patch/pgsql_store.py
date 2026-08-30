@@ -6,8 +6,10 @@ mutation route.
 """
 
 from asyncio import CancelledError, sleep
+from base64 import b64decode, b64encode
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
+from hashlib import sha256
 from importlib.util import find_spec
 from typing import TypeVar
 
@@ -52,6 +54,8 @@ from avalan.patch.durable_store import (
     DurableCommitClaim,
     DurableCommitClaimState,
     DurableCommitLease,
+    DurableCoordinationAccess,
+    DurableCoordinationAdmission,
     DurableJournal,
     DurableJournalCursor,
     DurableOutboxRecord,
@@ -61,6 +65,7 @@ from avalan.patch.durable_store import (
     DurablePendingRecord,
     DurablePendingRequest,
     DurablePlanReference,
+    DurableProtocolOrigin,
     DurableRequestAccess,
     DurableRequestIdentity,
     DurableRequestSnapshot,
@@ -82,7 +87,11 @@ from avalan.patch.durable_store import (
     derive_artifact_state,
 )
 from avalan.patch.policy import (
+    PatchAgentId,
     PatchPrincipalId,
+    PatchRunId,
+    PatchSessionId,
+    PatchTaskId,
     PatchTenantId,
     PolicyRouteId,
 )
@@ -318,6 +327,18 @@ class PgsqlDurablePatchStore(DurablePatchStore):
                     selected_request_id, identity, canonical_digest, False
                 )
             row = await _select_identity_for_update(cursor, identity)
+            if row is None:
+                if request_id is not None:
+                    existing_request = await _select_request_for_update(
+                        cursor, request_id
+                    )
+                    if existing_request is not None:
+                        raise DurableStoreError(
+                            DurableStoreErrorCode.IDEMPOTENCY_CONFLICT
+                        )
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
             if _row_str(row, "canonical_digest") != canonical_digest.value:
                 raise DurableStoreError(
                     DurableStoreErrorCode.IDEMPOTENCY_CONFLICT
@@ -330,6 +351,149 @@ class PgsqlDurablePatchStore(DurablePatchStore):
             )
 
         return await self._transaction("patch_durable_reserve", execute)
+
+    async def admit_coordination(
+        self, admission: DurableCoordinationAdmission
+    ) -> None:
+        """Durably serialize one workspace mutation before any plan reads."""
+        _require_exact(admission, DurableCoordinationAdmission)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            request = await _select_reservation_for_update(
+                cursor, admission.access.reservation
+            )
+            if (
+                _row_str(request, "lifecycle")
+                == LifecyclePhase.REQUEST_COMPLETED.value
+            ):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            await cursor.execute(
+                _INSERT_COORDINATION_SQL,
+                _coordination_parameters(admission),
+            )
+            inserted = await cursor.fetchone()
+            if inserted is not None:
+                return
+            await cursor.execute(
+                _SELECT_COORDINATION_FOR_UPDATE_SQL,
+                (admission.access.workspace_id.value,),
+            )
+            existing = await _require_row(cursor)
+            if not _coordination_matches(existing, admission):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+
+        await self._transaction("patch_durable_admit_coordination", execute)
+
+    async def release_coordination(
+        self, access: DurableCoordinationAccess
+    ) -> None:
+        """Release one exact terminal or unplanned workspace owner."""
+        _require_exact(access, DurableCoordinationAccess)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            request = await _select_reservation_for_update(
+                cursor, access.reservation
+            )
+            await cursor.execute(
+                _SELECT_COORDINATION_FOR_UPDATE_SQL,
+                (access.workspace_id.value,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return
+            if not _coordination_access_matches(existing, access):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            if (
+                _row_str(request, "lifecycle")
+                != LifecyclePhase.REQUEST_COMPLETED.value
+                and _row_bytes(request, "plan_payload") is not None
+            ):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            await cursor.execute(
+                _DELETE_COORDINATION_SQL, (access.workspace_id.value,)
+            )
+
+        await self._transaction("patch_durable_release_coordination", execute)
+
+    async def release_terminal_coordination(
+        self, access: DurableRequestAccess
+    ) -> None:
+        """Release the matching admission only after terminal settlement."""
+        _require_exact(access, DurableRequestAccess)
+
+        async def execute(cursor: PgsqlCursor) -> None:
+            request = await _select_request_for_update(
+                cursor, access.request_id
+            )
+            if (
+                _row_str(request, "tenant_id")
+                != access.identity.tenant_id.value
+                or _row_str(request, "principal_id")
+                != access.identity.principal_id.value
+                or _row_str(request, "execution_id")
+                != access.identity.execution_id.value
+                or _row_str(request, "route_id")
+                != access.identity.route_id.value
+                or _row_str(request, "lifecycle")
+                != LifecyclePhase.REQUEST_COMPLETED.value
+            ):
+                raise DurableStoreError(DurableStoreErrorCode.ACCESS_DENIED)
+            await cursor.execute(
+                _SELECT_COORDINATION_BY_REQUEST_FOR_UPDATE_SQL,
+                (access.request_id.value,),
+            )
+            existing = await cursor.fetchone()
+            if existing is None:
+                return
+            if (
+                _row_str(existing, "tenant_id")
+                != access.identity.tenant_id.value
+                or _row_str(existing, "principal_id")
+                != access.identity.principal_id.value
+                or _row_str(existing, "execution_id")
+                != access.identity.execution_id.value
+                or _row_str(existing, "route_id")
+                != access.identity.route_id.value
+            ):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            await cursor.execute(
+                _DELETE_COORDINATION_SQL,
+                (_row_str(existing, "workspace_id"),),
+            )
+
+        await self._transaction(
+            "patch_durable_release_terminal_coordination", execute
+        )
+
+    async def is_coordination_admitted(
+        self, access: DurableCoordinationAccess
+    ) -> bool:
+        """Return whether an admission still owns its workspace."""
+        _require_exact(access, DurableCoordinationAccess)
+
+        async def execute(cursor: PgsqlCursor) -> bool:
+            await _select_reservation_for_update(cursor, access.reservation)
+            await cursor.execute(
+                _SELECT_COORDINATION_SQL, (access.workspace_id.value,)
+            )
+            row = await cursor.fetchone()
+            return row is not None and _coordination_access_matches(
+                row, access
+            )
+
+        return await self._transaction(
+            "patch_durable_is_coordination_admitted", execute
+        )
 
     async def persist_plan(
         self,
@@ -943,6 +1107,10 @@ class PgsqlDurablePatchStore(DurablePatchStore):
                 correlation_id,
             )
             await cursor.execute(
+                _DELETE_COORDINATION_BY_REQUEST_SQL,
+                (lease.request_id.value,),
+            )
+            await cursor.execute(
                 _DELETE_TERMINAL_RETENTION_SQL,
                 (lease.request_id.value,),
             )
@@ -1291,11 +1459,11 @@ def _validate_approval(
 
 
 def _encode_plan(plan: DurablePlanReference) -> bytes:
-    """Encode non-content plan evidence with an exact closed field grammar."""
+    """Encode sealed-plan evidence with an exact closed field grammar."""
     steps = _STEP_SEPARATOR.join(
         f"{item.step_id.value}:{item.lineage_id.value}" for item in plan.steps
     )
-    fields = (
+    fields: tuple[str, ...] = (
         _PLAN_TAG,
         plan.plan_id.value,
         plan.canonical_digest.value,
@@ -1306,16 +1474,37 @@ def _encode_plan(plan: DurablePlanReference) -> bytes:
         plan.domain_id.value,
         steps,
     )
+    if plan.origin is not None:
+        fields += (
+            plan.origin.tenant_id.value,
+            plan.origin.principal_id.value,
+            plan.origin.execution_id.value,
+            plan.origin.run_id.value,
+            plan.origin.session_id.value,
+            plan.origin.task_id.value,
+            plan.origin.agent_id.value,
+            plan.origin.route_id.value,
+            plan.origin.context_id.value,
+            plan.origin.workspace_id.value,
+        )
+    if plan.rehydration:
+        if plan.origin is None:
+            raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+        fields += (b64encode(plan.rehydration).decode("ascii"),)
     if any(_PLAN_SEPARATOR in item or "\n" in item for item in fields):
         raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
     return _PLAN_SEPARATOR.join(fields).encode("ascii")
 
 
 def _decode_plan(payload: bytes) -> DurablePlanReference:
-    """Decode one exact sealed non-content plan reference."""
+    """Decode one exact sealed-plan evidence reference."""
     try:
         fields = payload.decode("ascii").split(_PLAN_SEPARATOR)
-        if len(fields) != 9 or fields[0] != _PLAN_TAG or not fields[8]:
+        if (
+            len(fields) not in {9, 19, 20}
+            or fields[0] != _PLAN_TAG
+            or not fields[8]
+        ):
             raise ValueError
         steps = tuple(
             DurableStepBinding(
@@ -1324,6 +1513,23 @@ def _decode_plan(payload: bytes) -> DurablePlanReference:
             )
             for item in fields[8].split(_STEP_SEPARATOR)
         )
+        origin = None
+        if len(fields) in {19, 20}:
+            origin = DurableProtocolOrigin(
+                PatchTenantId(fields[9]),
+                PatchPrincipalId(fields[10]),
+                PatchExecutionId(fields[11]),
+                PatchRunId(fields[12]),
+                PatchSessionId(fields[13]),
+                PatchTaskId(fields[14]),
+                PatchAgentId(fields[15]),
+                PolicyRouteId(fields[16]),
+                PatchContextId(fields[17]),
+                PatchWorkspaceId(fields[18]),
+            )
+        rehydration = b""
+        if len(fields) == 20:
+            rehydration = b64decode(fields[19].encode("ascii"), validate=True)
         return DurablePlanReference(
             PatchPlanId(fields[1]),
             AlgorithmDigest("sha256", fields[2]),
@@ -1333,6 +1539,8 @@ def _decode_plan(payload: bytes) -> DurablePlanReference:
             PatchWorkspaceId(fields[6]),
             PatchDomainId(fields[7]),
             steps,
+            origin,
+            rehydration,
         )
     except (UnicodeDecodeError, ValueError, IndexError) as error:
         raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH) from error
@@ -1890,13 +2098,102 @@ def _row_bytes(row: PgsqlRow, key: str) -> bytes | None:
     return value
 
 
+def _coordination_parameters(
+    admission: DurableCoordinationAdmission,
+) -> tuple[str, ...]:
+    """Encode one exact content-free workspace admission SQL row."""
+    access = admission.access
+    identity = access.reservation.identity
+    return (
+        access.workspace_id.value,
+        access.domain_id.value,
+        access.reservation.request_id.value,
+        identity.tenant_id.value,
+        identity.principal_id.value,
+        identity.execution_id.value,
+        access.run_id.value,
+        access.session_id.value,
+        access.task_id.value,
+        access.agent_id.value,
+        identity.route_id.value,
+        access.context_id.value,
+        _coordination_paths_digest(admission).value,
+    )
+
+
+def _coordination_paths_digest(
+    admission: DurableCoordinationAdmission,
+) -> AlgorithmDigest:
+    """Hash the immutable logical footprint without storing path content."""
+    payload = "\x1f".join(
+        sorted(path.value for path in admission.paths)
+    ).encode("utf-8")
+    return AlgorithmDigest("sha256", sha256(payload).hexdigest())
+
+
+def _coordination_access_matches(
+    row: PgsqlRow, access: DurableCoordinationAccess
+) -> bool:
+    """Compare a row to all authority facts excluding its sealed footprint."""
+    try:
+        return _coordination_access_parameters(access) == (
+            _row_str(row, "workspace_id"),
+            _row_str(row, "domain_id"),
+            _row_str(row, "request_id"),
+            _row_str(row, "tenant_id"),
+            _row_str(row, "principal_id"),
+            _row_str(row, "execution_id"),
+            _row_str(row, "run_id"),
+            _row_str(row, "session_id"),
+            _row_str(row, "task_id"),
+            _row_str(row, "agent_id"),
+            _row_str(row, "route_id"),
+            _row_str(row, "context_id"),
+        )
+    except DurableStoreError:
+        return False
+
+
+def _coordination_access_parameters(
+    access: DurableCoordinationAccess,
+) -> tuple[str, ...]:
+    """Encode authority fields shared by admission, release, and inspection."""
+    identity = access.reservation.identity
+    return (
+        access.workspace_id.value,
+        access.domain_id.value,
+        access.reservation.request_id.value,
+        identity.tenant_id.value,
+        identity.principal_id.value,
+        identity.execution_id.value,
+        access.run_id.value,
+        access.session_id.value,
+        access.task_id.value,
+        access.agent_id.value,
+        identity.route_id.value,
+        access.context_id.value,
+    )
+
+
+def _coordination_matches(
+    row: PgsqlRow, admission: DurableCoordinationAdmission
+) -> bool:
+    """Compare one SQL coordination row to all originating authority facts."""
+    try:
+        return _coordination_access_matches(row, admission.access) and (
+            _coordination_paths_digest(admission).value
+            == _row_str(row, "paths_digest")
+        )
+    except DurableStoreError:
+        return False
+
+
 _INSERT_RESERVATION_SQL = """
 INSERT INTO "patch_durable_requests" (
     "request_id", "tenant_id", "principal_id", "execution_id", "route_id",
     "retransmission_key", "canonical_digest"
 ) VALUES (%s, %s, %s, %s, %s, %s, %s)
-ON CONFLICT ON CONSTRAINT "uq_patch_durable_requests_retransmission"
-DO NOTHING
+ON CONFLICT DO NOTHING
 RETURNING "request_id"
 """
 
@@ -1916,6 +2213,46 @@ SELECT *
 FROM "patch_durable_requests"
 WHERE "request_id" = %s
 FOR UPDATE
+"""
+
+_INSERT_COORDINATION_SQL = """
+INSERT INTO "patch_durable_workspace_coordination" (
+    "workspace_id", "domain_id", "request_id", "tenant_id", "principal_id",
+    "execution_id", "run_id", "session_id", "task_id", "agent_id",
+    "route_id", "context_id", "paths_digest"
+) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+ON CONFLICT ("workspace_id") DO NOTHING
+RETURNING "workspace_id"
+"""
+
+_SELECT_COORDINATION_FOR_UPDATE_SQL = """
+SELECT *
+FROM "patch_durable_workspace_coordination"
+WHERE "workspace_id" = %s
+FOR UPDATE
+"""
+
+_SELECT_COORDINATION_BY_REQUEST_FOR_UPDATE_SQL = """
+SELECT *
+FROM "patch_durable_workspace_coordination"
+WHERE "request_id" = %s
+FOR UPDATE
+"""
+
+_SELECT_COORDINATION_SQL = """
+SELECT *
+FROM "patch_durable_workspace_coordination"
+WHERE "workspace_id" = %s
+"""
+
+_DELETE_COORDINATION_SQL = """
+DELETE FROM "patch_durable_workspace_coordination"
+WHERE "workspace_id" = %s
+"""
+
+_DELETE_COORDINATION_BY_REQUEST_SQL = """
+DELETE FROM "patch_durable_workspace_coordination"
+WHERE "request_id" = %s
 """
 
 _PERSIST_PLAN_SQL = """

@@ -42,7 +42,7 @@ from verify_patch_types import (
     load_manifest as load_patch_type_manifest,
 )
 
-_PATCH_CURRENT_PHASE = 13
+_PATCH_CURRENT_PHASE = 14
 _PATCH_DATABASE_PHASE = 8
 _INPUT_MANIFEST = "tests/fixtures/input/acceptance_manifest.json"
 _CONVERSATION_MANIFEST = (
@@ -64,6 +64,17 @@ _PHASE_EVIDENCE_ARTIFACT_ENVS = (
     "AVALAN_PATCH_PHASE_EVIDENCE_COVERAGE_XML",
     "AVALAN_PATCH_PHASE_EVIDENCE_PYTEST_FACTS",
 )
+_PHASE_EVIDENCE_ARTIFACT_PATHS = (
+    "coverage.json",
+    "coverage.xml",
+    ".patch-contract-pytest-facts.json",
+)
+_PHASE_EVIDENCE_SIDECAR_PATHS = (
+    ".patch-phase-evidence-coverage.json",
+    ".patch-phase-evidence-coverage.xml",
+    ".patch-phase-evidence-pytest-facts.json",
+)
+_PHASE_EVIDENCE_PATH = "tests/fixtures/patch/phase14_evidence.json"
 _LEGACY_POSTGRESQL_LEASE_ENV = "AVALAN_TASK_TEST_POSTGRESQL_LEASE_SHA256"
 
 
@@ -109,6 +120,11 @@ def run_gate(through_phase: int, *, repo_root: Path | None = None) -> int:
     """Run one fresh full suite and all current contract validators."""
     source_root = (repo_root or repository_root()).resolve()
     preflight(through_phase, repo_root=source_root)
+    prior_evidence_artifacts = (
+        _capture_phase_evidence_artifacts(source_root)
+        if through_phase == _PATCH_CURRENT_PHASE
+        else None
+    )
     _remove_gate_artifacts(source_root, include_reports=True)
     external_database = _external_database(through_phase)
     try:
@@ -117,22 +133,81 @@ def run_gate(through_phase: int, *, repo_root: Path | None = None) -> int:
                 source_root,
                 through_phase,
                 external_database,
+                prior_evidence_artifacts,
             )
         with _owned_postgresql_database() as database:
             return _run_gate_with_database(
                 source_root,
                 through_phase,
                 database,
+                prior_evidence_artifacts,
             )
     except (ContractGateError, OSError):
         _remove_gate_artifacts(source_root, include_reports=True)
         raise
 
 
+def _capture_phase_evidence_artifacts(
+    root: Path,
+) -> tuple[bytes, bytes, bytes] | None:
+    """Copy preflight-validated Phase 14 receipts before fresh cleanup."""
+    payload = strict_json_path(root / _PHASE_EVIDENCE_PATH)
+    if not isinstance(payload, dict):
+        raise PatchContractGateError("Phase 14 evidence is not an object")
+    exact_gate = payload.get("exact_gate")
+    if not isinstance(exact_gate, dict):
+        raise PatchContractGateError("Phase 14 exact-gate evidence is invalid")
+    if exact_gate.get("status") != "complete":
+        return None
+    artifacts = payload.get("artifact_digests")
+    if not isinstance(artifacts, list):
+        raise PatchContractGateError("Phase 14 artifact evidence is invalid")
+    paths = {
+        item.get("path")
+        for item in artifacts
+        if isinstance(item, dict) and isinstance(item.get("path"), str)
+    }
+    if paths != set(_PHASE_EVIDENCE_ARTIFACT_PATHS):
+        raise PatchContractGateError(
+            "Phase 14 retained artifact paths are not the exact gate triple"
+        )
+    sources = tuple(root / name for name in _PHASE_EVIDENCE_ARTIFACT_PATHS)
+    if any(source.is_symlink() or not source.is_file() for source in sources):
+        raise PatchContractGateError("Phase 14 retained artifact is missing")
+    return (
+        sources[0].read_bytes(),
+        sources[1].read_bytes(),
+        sources[2].read_bytes(),
+    )
+
+
+def _materialize_phase_evidence_artifacts(
+    root: Path,
+    payloads: tuple[bytes, bytes, bytes] | None,
+) -> tuple[Path, Path, Path] | None:
+    """Write immutable prior evidence only into this execution mirror."""
+    if payloads is None:
+        return None
+    paths = (
+        root / _PHASE_EVIDENCE_SIDECAR_PATHS[0],
+        root / _PHASE_EVIDENCE_SIDECAR_PATHS[1],
+        root / _PHASE_EVIDENCE_SIDECAR_PATHS[2],
+    )
+    if any(path.exists() or path.is_symlink() for path in paths):
+        raise PatchContractGateError(
+            "Phase 14 evidence sidecar path already exists"
+        )
+    for path, payload in zip(paths, payloads, strict=True):
+        path.write_bytes(payload)
+        path.chmod(0o444)
+    return paths
+
+
 def _run_gate_with_database(
     source_root: Path,
     through_phase: int,
     database: PostgreSQLTestDatabase,
+    prior_evidence_artifacts: tuple[bytes, bytes, bytes] | None = None,
 ) -> int:
     """Keep one internally owned database alive across every gate stage."""
     try:
@@ -144,6 +219,7 @@ def _run_gate_with_database(
                 through_phase,
                 database,
                 python_ownership,
+                prior_evidence_artifacts,
             )
     except (ContractGateError, OSError):
         _remove_gate_artifacts(source_root, include_reports=True)
@@ -156,11 +232,15 @@ def _run_mirrored_gate(
     through_phase: int,
     external_database: PostgreSQLTestDatabase | None,
     python_ownership: tuple[PurePosixPath, ...],
+    prior_evidence_artifacts: tuple[bytes, bytes, bytes] | None = None,
 ) -> int:
     """Run and seal all verification inside one nonignored snapshot."""
     _validate_patch_phase(root, through_phase)
     verify_pytest_module_name_uniqueness(root)
     _remove_gate_artifacts(root, include_reports=True)
+    evidence_artifacts = _materialize_phase_evidence_artifacts(
+        root, prior_evidence_artifacts
+    )
     before = capture_input_inventory(root)
     coverage_commands = exact_coverage_commands()
     facts_path = root / _PYTEST_FACTS
@@ -170,6 +250,7 @@ def _run_mirrored_gate(
         coverage_command,
         external_database,
         facts_path=facts_path,
+        evidence_artifacts=evidence_artifacts,
     )
     if coverage_result != 0:
         _remove_gate_artifacts(root, include_reports=True)
@@ -193,6 +274,7 @@ def _run_mirrored_gate(
         sealed,
         before,
         python_ownership,
+        evidence_artifacts,
     )
     for report in _COVERAGE_REPORTS:
         verify_report_after_inventory(root / report, before)
@@ -217,6 +299,7 @@ def _run_current_contract_verifiers(
     sealed: tuple[SealedArtifact, ...],
     before: SealedInputInventory,
     python_ownership: tuple[PurePosixPath, ...],
+    evidence_artifacts: tuple[Path, Path, Path] | None = None,
 ) -> None:
     """Run every current contract family without another coverage run."""
     input_phase = _current_phase(root, _INPUT_MANIFEST, "structured-input")
@@ -250,6 +333,7 @@ def _run_current_contract_verifiers(
             external_database,
             sealed,
             before,
+            evidence_artifacts=evidence_artifacts,
             python_ownership=python_ownership,
         )
 
@@ -261,6 +345,7 @@ def _run_current_contract_verifiers(
             database_context,
             sealed,
             before,
+            evidence_artifacts=evidence_artifacts,
         )
         return
     with database_context as database:
@@ -270,6 +355,7 @@ def _run_current_contract_verifiers(
             database,
             sealed,
             before,
+            evidence_artifacts=evidence_artifacts,
         )
 
 
@@ -279,6 +365,8 @@ def _run_acceptance_verifiers(
     database: PostgreSQLTestDatabase,
     sealed: tuple[SealedArtifact, ...],
     before: SealedInputInventory,
+    *,
+    evidence_artifacts: tuple[Path, Path, Path] | None = None,
 ) -> None:
     """Run current acceptance validators under one owned database lifetime."""
     input_phase = _current_phase(root, _INPUT_MANIFEST, "structured-input")
@@ -306,7 +394,14 @@ def _run_acceptance_verifiers(
         ),
     )
     for command in commands:
-        _run_checked_command(root, command, database, sealed, before)
+        _run_checked_command(
+            root,
+            command,
+            database,
+            sealed,
+            before,
+            evidence_artifacts=evidence_artifacts,
+        )
 
 
 def _run_checked_command(
@@ -316,6 +411,7 @@ def _run_checked_command(
     sealed: tuple[SealedArtifact, ...],
     before: SealedInputInventory,
     *,
+    evidence_artifacts: tuple[Path, Path, Path] | None = None,
     python_ownership: tuple[PurePosixPath, ...] | None = None,
 ) -> None:
     """Run one verifier and reject any input or report replacement."""
@@ -324,9 +420,13 @@ def _run_checked_command(
         command,
         database,
         evidence_artifacts=(
-            root / "coverage.json",
-            root / "coverage.xml",
-            root / _PYTEST_FACTS,
+            evidence_artifacts
+            if evidence_artifacts is not None
+            else (
+                root / "coverage.json",
+                root / "coverage.xml",
+                root / _PYTEST_FACTS,
+            )
         ),
         python_ownership=python_ownership,
     )

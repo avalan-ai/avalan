@@ -3,12 +3,19 @@
 from dataclasses import dataclass
 from hmac import compare_digest, digest
 from json import dumps
+from pickle import dumps as pickle_dumps
+from pickle import loads as pickle_loads
 from secrets import token_bytes
 
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+
+from avalan.patch.domain import PatchRequestId
 from avalan.patch.durable_store import (
     DurableApproval,
     DurableApprovalVerifier,
     DurablePlanReference,
+    DurableProtocolOrigin,
     DurableRequestIdentity,
     DurableStoreError,
     DurableStoreErrorCode,
@@ -18,7 +25,11 @@ from avalan.patch.policy import (
     ExecutionSubject,
     PlanBoundGrant,
     SealedPlan,
+    seal_plan,
 )
+
+_PLAN_MATERIAL_DOMAIN = b"avalan.patch.phase14.plan-material.v1\0"
+_PLAN_MATERIAL_NONCE_BYTES = 12
 
 
 @dataclass(frozen=True, slots=True, repr=False)
@@ -158,6 +169,91 @@ class PhaseFiveDurableApprovalIssuer:
             ) from None
         return self._authority.issue(identity, plan, grant, sealed_plan)
 
+    def seal_plan_material(
+        self,
+        identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin,
+        plan: SealedPlan,
+    ) -> bytes:
+        """Encrypt one full sealed plan for authenticated restart recovery."""
+        _validate_protocol_plan_material(identity, origin, plan)
+        nonce = token_bytes(_PLAN_MATERIAL_NONCE_BYTES)
+        return nonce + AESGCM(self._material_key()).encrypt(
+            nonce,
+            pickle_dumps(plan, protocol=5),
+            _plan_material_associated_data(identity, origin, plan),
+        )
+
+    def open_plan_material(
+        self,
+        identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin,
+        request_id: PatchRequestId,
+        reference: DurablePlanReference,
+    ) -> SealedPlan:
+        """Restore an authenticated sealed plan only for its exact origin."""
+        if (
+            type(identity) is not DurableRequestIdentity
+            or type(origin) is not DurableProtocolOrigin
+            or type(request_id) is not PatchRequestId
+            or type(reference) is not DurablePlanReference
+            or reference.origin != origin
+            or not reference.rehydration
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+        encrypted = reference.rehydration
+        if len(encrypted) <= _PLAN_MATERIAL_NONCE_BYTES:
+            raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+        try:
+            encoded = AESGCM(self._material_key()).decrypt(
+                encrypted[:_PLAN_MATERIAL_NONCE_BYTES],
+                encrypted[_PLAN_MATERIAL_NONCE_BYTES:],
+                _plan_material_associated_data_for_reference(
+                    identity, origin, request_id, reference
+                ),
+            )
+            saved = pickle_loads(encoded)
+        except (InvalidTag, TypeError, ValueError):
+            raise DurableStoreError(
+                DurableStoreErrorCode.PLAN_MISMATCH
+            ) from None
+        if type(saved) is not SealedPlan:
+            raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+        _validate_protocol_plan_material(identity, origin, saved)
+        try:
+            restored = seal_plan(
+                saved.plan_id,
+                saved.binding,
+                saved.candidate,
+                saved.review.expiry,
+            )
+        except BaseException as error:
+            if isinstance(error, (KeyboardInterrupt, SystemExit)):
+                raise
+            raise DurableStoreError(
+                DurableStoreErrorCode.PLAN_MISMATCH
+            ) from None
+        if (
+            restored != saved
+            or reference.plan_id != restored.plan_id
+            or reference.canonical_digest != restored.binding.request_digest
+            or reference.fingerprint_digest != restored.fingerprint.digest()
+            or reference.review_digest != restored.review.diff.digest
+            or reference.context_id != restored.binding.target.context_id
+            or reference.workspace_id != restored.binding.target.workspace_id
+            or reference.domain_id != restored.binding.target.domain_id
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+        return restored
+
+    def _material_key(self) -> bytes:
+        """Derive a dedicated AEAD key without exposing signing material."""
+        return digest(
+            self._authority._key.key_bytes,
+            _PLAN_MATERIAL_DOMAIN,
+            "sha256",
+        )
+
 
 def _validate_phase_five_binding(
     identity: DurableRequestIdentity,
@@ -189,6 +285,98 @@ def _validate_phase_five_binding(
         or len(grant.reviewers) < sealed_plan.binding.final.approval.quorum
     ):
         raise DurableStoreError(DurableStoreErrorCode.APPROVAL_MISMATCH)
+
+
+def _validate_protocol_plan_material(
+    identity: DurableRequestIdentity,
+    origin: DurableProtocolOrigin,
+    plan: SealedPlan,
+) -> None:
+    """Require a sealed plan to cover the complete protocol authority."""
+    if (
+        type(identity) is not DurableRequestIdentity
+        or type(origin) is not DurableProtocolOrigin
+        or type(plan) is not SealedPlan
+        or not origin.matches(identity)
+        or origin.tenant_id != plan.binding.subject.tenant
+        or origin.principal_id != plan.binding.subject.principal
+        or origin.run_id != plan.binding.subject.run
+        or origin.session_id != plan.binding.subject.session
+        or origin.task_id != plan.binding.subject.task
+        or origin.agent_id != plan.binding.subject.agent
+        or origin.route_id != plan.binding.final.approval.route
+        or origin.context_id != plan.binding.target.context_id
+        or origin.workspace_id != plan.binding.target.workspace_id
+        or identity.execution_id != plan.binding.request.execution_id
+    ):
+        raise DurableStoreError(DurableStoreErrorCode.PLAN_MISMATCH)
+
+
+def _plan_material_associated_data(
+    identity: DurableRequestIdentity,
+    origin: DurableProtocolOrigin,
+    plan: SealedPlan,
+) -> bytes:
+    """Encode every authority and sealed-plan fact covered by the capsule."""
+    return dumps(
+        {
+            "canonical_digest": plan.binding.request_digest.value,
+            "execution": identity.execution_id.value,
+            "origin": (
+                origin.tenant_id.value,
+                origin.principal_id.value,
+                origin.execution_id.value,
+                origin.run_id.value,
+                origin.session_id.value,
+                origin.task_id.value,
+                origin.agent_id.value,
+                origin.route_id.value,
+                origin.context_id.value,
+                origin.workspace_id.value,
+            ),
+            "plan_id": plan.plan_id.value,
+            "request_id": plan.binding.request.request_id.value,
+            "version": 1,
+        },
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
+
+
+def _plan_material_associated_data_for_reference(
+    identity: DurableRequestIdentity,
+    origin: DurableProtocolOrigin,
+    request_id: PatchRequestId,
+    reference: DurablePlanReference,
+) -> bytes:
+    """Encode durable reference facts before opaque material is opened."""
+    return dumps(
+        {
+            "canonical_digest": reference.canonical_digest.value,
+            "execution": identity.execution_id.value,
+            "origin": (
+                origin.tenant_id.value,
+                origin.principal_id.value,
+                origin.execution_id.value,
+                origin.run_id.value,
+                origin.session_id.value,
+                origin.task_id.value,
+                origin.agent_id.value,
+                origin.route_id.value,
+                origin.context_id.value,
+                origin.workspace_id.value,
+            ),
+            "plan_id": reference.plan_id.value,
+            "request_id": request_id.value,
+            "version": 1,
+        },
+        allow_nan=False,
+        ensure_ascii=True,
+        separators=(",", ":"),
+        sort_keys=True,
+    ).encode("ascii")
 
 
 def _canonical_approval_bytes(approval: DurableApproval) -> bytes:
