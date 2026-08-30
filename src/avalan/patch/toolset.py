@@ -73,6 +73,7 @@ from avalan.patch.domain import (
 )
 from avalan.patch.durable_store import (
     DurablePatchStore,
+    DurableProtocolOrigin,
     DurableRequestIdentity,
 )
 from avalan.patch.parser import (
@@ -375,6 +376,7 @@ class RemotePatchSdkService(Protocol):
         request_id: PatchRequestId,
         correlation_id: PatchObserverCorrelationId,
         identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke one request under a trusted server-owned identity."""
 
@@ -2186,6 +2188,7 @@ class PatchSdkHost:
         request_id: PatchRequestId,
         correlation_id: PatchObserverCorrelationId,
         identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke canonical input with server-derived durable identity.
 
@@ -2195,6 +2198,7 @@ class PatchSdkHost:
             request_id: The server-owned durable request identifier.
             correlation_id: The server-owned stream correlation identifier.
             identity: The authenticated durable retransmission identity.
+            origin: The optional full protocol origin bound to the request.
 
         Returns:
             The recorded or current durable operation outcome.
@@ -2214,6 +2218,7 @@ class PatchSdkHost:
             request_id,
             correlation_id,
             identity,
+            origin,
         )
 
     async def invoke_remote_raw(
@@ -2223,6 +2228,7 @@ class PatchSdkHost:
         request_id: PatchRequestId,
         correlation_id: PatchObserverCorrelationId,
         identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke exact bytes with server-bound durable identity.
 
@@ -2232,6 +2238,7 @@ class PatchSdkHost:
             request_id: The server-owned durable request identifier.
             correlation_id: The server-owned stream correlation identifier.
             identity: The authenticated durable retransmission identity.
+            origin: The optional full protocol origin bound to the request.
 
         Returns:
             The recorded or current durable operation outcome.
@@ -2240,6 +2247,8 @@ class PatchSdkHost:
             type(request_id) is not PatchRequestId
             or type(correlation_id) is not PatchObserverCorrelationId
             or type(identity) is not DurableRequestIdentity
+            or origin is not None
+            and type(origin) is not DurableProtocolOrigin
             or not isinstance(self._service, RemotePatchSdkService)
         ):
             raise PatchToolError("patch remote invocation is unavailable")
@@ -2249,6 +2258,7 @@ class PatchSdkHost:
             request_id,
             correlation_id,
             identity,
+            origin,
         )
 
     async def retransmit_json(
@@ -2322,6 +2332,7 @@ class PatchSdkHost:
         request_id: PatchRequestId,
         correlation: PatchObserverCorrelationId,
         identity: DurableRequestIdentity | None = None,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke or attach through one exact trusted durable identity."""
         if operation not in {OperationType.EDIT, OperationType.APPLY}:
@@ -2334,6 +2345,10 @@ class PatchSdkHost:
             or type(correlation) is not PatchObserverCorrelationId
             or identity is not None
             and type(identity) is not DurableRequestIdentity
+            or origin is not None
+            and type(origin) is not DurableProtocolOrigin
+            or origin is not None
+            and (identity is None or not origin.matches(identity))
         ):
             raise PatchToolError("patch SDK request is invalid")
         if not PatchToolSet._valid_raw_ingress(
@@ -2368,14 +2383,25 @@ class PatchSdkHost:
                     raise PatchToolError(
                         "patch remote invocation is unavailable"
                     )
-                outcome = await self._service.invoke_remote(
-                    operation,
-                    raw_arguments,
-                    self._capability,
-                    request_id,
-                    correlation,
-                    identity,
-                )
+                if origin is None:
+                    outcome = await self._service.invoke_remote(
+                        operation,
+                        raw_arguments,
+                        self._capability,
+                        request_id,
+                        correlation,
+                        identity,
+                    )
+                else:
+                    outcome = await self._service.invoke_remote(
+                        operation,
+                        raw_arguments,
+                        self._capability,
+                        request_id,
+                        correlation,
+                        identity,
+                        origin,
+                    )
         except CancelledError:
             raise
         except TargetInspectionError as error:

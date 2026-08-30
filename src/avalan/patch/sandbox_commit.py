@@ -114,8 +114,11 @@ from avalan.patch.durable_store import (
     DurablePendingAccess,
     DurablePendingRequest,
     DurablePlanReference,
+    DurableProtocolOrigin,
     DurableRequestAccess,
     DurableRequestIdentity,
+    DurableRequestSnapshot,
+    DurableReservation,
     DurableStepBinding,
     DurableStoreError,
     DurableWorkerBinding,
@@ -143,6 +146,7 @@ from avalan.patch.planner import (
 from avalan.patch.policy import (
     ApprovalClock,
     ApprovalDecisionState,
+    ApprovalRequirements,
     ApprovalService,
     ExecutionSubject,
     PlanBinding,
@@ -218,8 +222,9 @@ _MAX_MESSAGE_BYTES = 1_048_576
 _PROCESS_CLOSE_SECONDS = 0.25
 _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
+_PROCESS_STARTUP_IO_SECONDS = 10.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "234bf76bf6f5327e3aa8ecbb60fbe4f4c9ab42a05118da13bb40fdfbd0dc435a"
+    "08f03c79c131568eab6ca6a8070a1976b4c288d85bfd1d52ac89d0e2ee8be834"
 )
 
 
@@ -1168,7 +1173,9 @@ class _SandboxRuntimeProcess:
             self._canary_root = canary_root
             self._sequence = 0
             try:
-                canary = await self._request_locked("canary", {})
+                canary = await self._request_locked(
+                    "canary", {}, response_timeout=_PROCESS_STARTUP_IO_SECONDS
+                )
                 if (
                     set(canary)
                     != {"pid", "outside_read_denied", "metadata_probe"}
@@ -1195,7 +1202,9 @@ class _SandboxRuntimeProcess:
                 primitive_receipts = _primitive_receipts(
                     receipt, probe, attestation
                 )
-                root = await self._witness_locked()
+                root = await self._witness_locked(
+                    response_timeout=_PROCESS_STARTUP_IO_SECONDS
+                )
             except BaseException:
                 await self._reap()
                 raise
@@ -1273,9 +1282,13 @@ class _SandboxRuntimeProcess:
                 self._lock.release()
             await self._reap()
 
-    async def _witness_locked(self) -> RootWitness:
+    async def _witness_locked(
+        self, *, response_timeout: float = _PROCESS_IO_SECONDS
+    ) -> RootWitness:
         """Read one rooted witness from the selected child process."""
-        response = await self._request_locked("witness", {})
+        response = await self._request_locked(
+            "witness", {}, response_timeout=response_timeout
+        )
         root = response.get("root")
         return _root_from_payload(root)
 
@@ -1300,8 +1313,11 @@ class _SandboxRuntimeProcess:
         *,
         command: SealedCommitCommand | None = None,
         validator: RootedCommandAuthorityValidator | None = None,
+        response_timeout: float = _PROCESS_IO_SECONDS,
     ) -> Mapping[str, object]:
         """Exchange exactly one replay-resistant message with the child."""
+        if response_timeout <= 0:
+            raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
         process = self._process
         token = self._token
         receipt = self._receipt
@@ -1337,7 +1353,7 @@ class _SandboxRuntimeProcess:
             raise TargetInspectionError(TargetErrorCode.LIMIT_EXCEEDED)
         stdin.write(request_line)
         try:
-            await wait_for(stdin.drain(), timeout=_PROCESS_IO_SECONDS)
+            await wait_for(stdin.drain(), timeout=response_timeout)
         except TimeoutError as exc:
             await self._reap()
             raise TargetInspectionError(
@@ -1346,7 +1362,7 @@ class _SandboxRuntimeProcess:
         while True:
             try:
                 response_line = await wait_for(
-                    stdout.readline(), timeout=_PROCESS_IO_SECONDS
+                    stdout.readline(), timeout=response_timeout
                 )
             except TimeoutError as exc:
                 await self._reap()
@@ -1384,7 +1400,7 @@ class _SandboxRuntimeProcess:
             }
             stdin.write(dumps(permit, separators=(",", ":")).encode() + b"\n")
             try:
-                await wait_for(stdin.drain(), timeout=_PROCESS_IO_SECONDS)
+                await wait_for(stdin.drain(), timeout=response_timeout)
             except TimeoutError as exc:
                 await self._reap()
                 raise TargetInspectionError(
@@ -2364,6 +2380,7 @@ class SandboxPatchServiceConfiguration:
     clock: ApprovalClock
     review_duration: DurationTicks
     lease_duration: DurationTicks
+    execution_id: PatchExecutionId | None = None
     input_limits: PatchInputLimits = PatchInputLimits()
     pending_factory: Callable[
         [PatchObserverCorrelationId, DurationTicks], DurablePendingRequest
@@ -2379,6 +2396,8 @@ class SandboxPatchServiceConfiguration:
             or not callable(getattr(self.clock, "now", None))
             or type(self.review_duration) is not DurationTicks
             or type(self.lease_duration) is not DurationTicks
+            or self.execution_id is not None
+            and type(self.execution_id) is not PatchExecutionId
             or type(self.input_limits) is not PatchInputLimits
             or not callable(self.pending_factory)
         ):
@@ -2504,10 +2523,43 @@ class SandboxPatchSdkService:
     _reader_tasks: set[Task[None]] = field(
         default_factory=set, init=False, repr=False
     )
+    _protocol_claimed: set[PatchRequestId] = field(
+        default_factory=set, init=False, repr=False
+    )
+    _protocol_claim_waiters: dict[PatchRequestId, Future[None]] = field(
+        default_factory=dict, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Create the service-owned durable settlement port."""
         self._settlement = _SandboxSettlementPort(self)
+
+    async def _await_protocol_claim(self, request_id: PatchRequestId) -> None:
+        """Await protocol-owned durable claim before any target effect."""
+        if type(request_id) is not PatchRequestId:
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        if request_id in self._protocol_claimed:
+            return
+        waiter = self._protocol_claim_waiters.get(request_id)
+        if waiter is None:
+            waiter = get_running_loop().create_future()
+            self._protocol_claim_waiters[request_id] = waiter
+        await shield(waiter)
+
+    def _signal_protocol_claim(self, request_id: PatchRequestId) -> None:
+        """Release protocol staging after owner and fence are durable."""
+        self._protocol_claimed.add(request_id)
+        waiter = self._protocol_claim_waiters.get(request_id)
+        if waiter is not None and not waiter.done():
+            waiter.set_result(None)
+
+    def _fail_protocol_claim(self, request_id: PatchRequestId) -> None:
+        """Release protocol staging when no durable claim can be observed."""
+        waiter = self._protocol_claim_waiters.get(request_id)
+        if waiter is not None and not waiter.done():
+            waiter.set_exception(
+                TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            )
 
     def _patch_sandbox_endpoint(self) -> object:
         """Return the runtime endpoint for sealed SDK authority issuance."""
@@ -2565,6 +2617,7 @@ class SandboxPatchSdkService:
         correlation_id: "PatchObserverCorrelationId",
         *,
         identity: DurableRequestIdentity | None = None,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Parse, plan, approve, and durably execute one selected request."""
         del capability
@@ -2574,11 +2627,10 @@ class SandboxPatchSdkService:
             correlation_id,
             self.configuration.input_limits,
         )
-        execution_id = _execution_id_for_request(request_id)
         expected_identity = DurableRequestIdentity(
             self.configuration.subject.tenant,
             self.configuration.subject.principal,
-            execution_id,
+            _execution_id_for_request(request_id),
             self.policy.approval.route,
             RetransmissionKey("sandbox-" + request_id.value),
         )
@@ -2588,15 +2640,23 @@ class SandboxPatchSdkService:
             type(identity) is not DurableRequestIdentity
             or identity.tenant_id != expected_identity.tenant_id
             or identity.principal_id != expected_identity.principal_id
-            or identity.execution_id != expected_identity.execution_id
             or identity.route_id != expected_identity.route_id
         ):
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+        if origin is not None:
+            self._validate_protocol_origin(origin, identity)
+        execution_id = identity.execution_id
         access = DurableRequestAccess(request_id, identity)
         reservation = await self.store.reserve(
             identity, canonical.digest, request_id
         )
         existing = await self.store.inspect(access)
+        if (
+            origin is not None
+            and existing.plan is not None
+            and existing.plan.origin != origin
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         if existing.terminal is not None:
             terminal = existing.terminal
             if terminal.outbox.correlation_id != correlation_id:
@@ -2606,6 +2666,37 @@ class SandboxPatchSdkService:
             )
             self._latest = terminal.result
             return terminal.result
+        if getattr(existing, "lifecycle", None) is LifecyclePhase.PLANNED:
+            stored_plan = existing.plan
+            if type(stored_plan) is not DurablePlanReference or origin is None:
+                raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
+            self._requests[request_id] = _SandboxRequestAccess(
+                access, correlation_id
+            )
+            try:
+                restored = (
+                    self.configuration.approval_issuer.open_plan_material(
+                        identity,
+                        origin,
+                        request_id,
+                        stored_plan,
+                    )
+                )
+            except BaseException as error:
+                if isinstance(error, (KeyboardInterrupt, SystemExit)):
+                    raise
+                raise TargetInspectionError(
+                    TargetErrorCode.WITNESS_STALE
+                ) from None
+            return await self._review_and_commit(
+                reservation,
+                request_id,
+                restored,
+                stored_plan,
+                identity,
+                correlation_id,
+                restored.binding.final.approval,
+            )
         if existing.plan is not None:
             self._requests[request_id] = _SandboxRequestAccess(
                 access, correlation_id
@@ -2646,11 +2737,11 @@ class SandboxPatchSdkService:
         final = await authorizer.authorize_final(
             preflight, candidate, self.handshake
         )
-        now = await self.configuration.clock.now()
+        planning_now = await self.configuration.clock.now()
         request = _patch_request(
             request_id, execution_id, operation, raw_arguments, paths
         )
-        plan = seal_plan(
+        sealed_plan = seal_plan(
             _plan_id_for_request(request_id),
             PlanBinding(
                 request,
@@ -2663,12 +2754,52 @@ class SandboxPatchSdkService:
                 final,
             ),
             candidate,
-            ExpiryTick(now.value + self.configuration.review_duration.value),
+            ExpiryTick(
+                planning_now.value + self.configuration.review_duration.value
+            ),
         )
-        durable_plan = _durable_plan(plan)
+        rehydration = b""
+        if origin is not None:
+            rehydration = (
+                self.configuration.approval_issuer.seal_plan_material(
+                    identity, origin, sealed_plan
+                )
+            )
+        durable_plan = (
+            _durable_plan(sealed_plan)
+            if origin is None
+            else _durable_plan(sealed_plan, origin, rehydration)
+        )
+        assert existing.plan is None
         await self.store.persist_plan(reservation, durable_plan)
+        return await self._review_and_commit(
+            reservation,
+            request_id,
+            sealed_plan,
+            durable_plan,
+            identity,
+            correlation_id,
+            final.approval,
+        )
+
+    async def _review_and_commit(
+        self,
+        reservation: DurableReservation,
+        request_id: PatchRequestId,
+        plan: SealedPlan,
+        durable_plan: DurablePlanReference,
+        identity: DurableRequestIdentity,
+        correlation_id: PatchObserverCorrelationId,
+        requirements: ApprovalRequirements,
+    ) -> PatchInvocationOutcome:
+        """Review one persisted sealed plan and claim its lone effect owner."""
+        access = DurableRequestAccess(request_id, identity)
         reviewed = await self.configuration.approvals.await_review(
-            PlanReviewRequest(plan, self.configuration.subject, final.approval)
+            PlanReviewRequest(
+                plan,
+                self.configuration.subject,
+                requirements,
+            )
         )
         if reviewed.state is not ApprovalDecisionState.APPROVED:
             result = _approval_result(request_id, plan.plan_id, reviewed.state)
@@ -2683,6 +2814,7 @@ class SandboxPatchSdkService:
             self.configuration.subject,
         )
         artifacts = _durable_artifacts(plan)
+        now = await self.configuration.clock.now()
         claim = await self.store.claim_commit(
             reservation,
             durable_plan,
@@ -2694,9 +2826,11 @@ class SandboxPatchSdkService:
         )
         if claim.state is DurableCommitClaimState.TERMINAL:
             assert claim.terminal is not None
+            self._signal_protocol_claim(request_id)
             self._latest = claim.terminal.result
             return claim.terminal.result
         if claim.state is DurableCommitClaimState.ATTACHED:
+            self._signal_protocol_claim(request_id)
             outcome = await self._attached_outcome(
                 request_id, identity, correlation_id
             )
@@ -2740,6 +2874,7 @@ class SandboxPatchSdkService:
             )
             task = create_task(worker.commit(command))
             self._worker_tasks[request_id] = task
+            self._signal_protocol_claim(request_id)
             report = await shield(task)
         except CancelledError:
             assert pending_request is not None
@@ -2775,6 +2910,7 @@ class SandboxPatchSdkService:
                     self._reconciliation_tasks.discard
                 )
         except BaseException:
+            self._fail_protocol_claim(request_id)
             await self._reap_bound_worker(
                 claim.lease, worker_binding, worker_bound
             )
@@ -2821,6 +2957,7 @@ class SandboxPatchSdkService:
         request_id: PatchRequestId,
         correlation_id: "PatchObserverCorrelationId",
         identity: DurableRequestIdentity,
+        origin: DurableProtocolOrigin | None = None,
     ) -> PatchInvocationOutcome:
         """Invoke only a server-derived retransmission identity.
 
@@ -2839,7 +2976,33 @@ class SandboxPatchSdkService:
             request_id,
             correlation_id,
             identity=identity,
+            origin=origin,
         )
+
+    def _validate_protocol_origin(
+        self,
+        origin: DurableProtocolOrigin,
+        identity: DurableRequestIdentity,
+    ) -> None:
+        """Reject an origin that differs from this fixed service subject."""
+        subject = self.configuration.subject
+        target = self.runtime.profile.identity
+        if (
+            type(origin) is not DurableProtocolOrigin
+            or type(identity) is not DurableRequestIdentity
+            or not origin.matches(identity)
+            or origin.tenant_id != subject.tenant
+            or origin.principal_id != subject.principal
+            or self.configuration.execution_id != origin.execution_id
+            or origin.run_id != subject.run
+            or origin.session_id != subject.session
+            or origin.task_id != subject.task
+            or origin.agent_id != subject.agent
+            or origin.route_id != self.policy.approval.route
+            or origin.context_id != target.context_id
+            or origin.workspace_id != target.workspace_id
+        ):
+            raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
 
     async def _reap_bound_worker(
         self,
@@ -3146,24 +3309,7 @@ class SandboxPatchSdkService:
                 artifacts = tuple(
                     ("recovery:" + item.value, item) for item in artifact_ids
                 )
-                report = WorkerReport(
-                    WorkerState.FENCED,
-                    SettlementJournal(
-                        tuple(
-                            JournalStep(
-                                item.step_id,
-                                item.lineage_id,
-                                CommitStepState.UNKNOWN,
-                            )
-                            for item in plan.steps
-                        ),
-                        tuple(
-                            ArtifactJournal(identifier, ArtifactState.UNKNOWN)
-                            for identifier, _ in artifacts
-                        ),
-                        PostconditionState.UNKNOWN,
-                    ),
-                )
+                report = _recovery_report(snapshot, plan, artifacts)
                 return await self._reconcile_worker(
                     request_id,
                     identity,
@@ -3277,7 +3423,11 @@ def _patch_request(
     )
 
 
-def _durable_plan(plan: "SealedPlan") -> DurablePlanReference:
+def _durable_plan(
+    plan: "SealedPlan",
+    origin: DurableProtocolOrigin | None = None,
+    rehydration: bytes = b"",
+) -> DurablePlanReference:
     """Project a sealed plan into the exact durable journal graph."""
     return DurablePlanReference(
         plan.plan_id,
@@ -3301,6 +3451,8 @@ def _durable_plan(plan: "SealedPlan") -> DurablePlanReference:
                 )
             )
         ),
+        origin,
+        rehydration,
     )
 
 
@@ -3384,6 +3536,41 @@ def _approval_result(
             else PatchStatus.APPROVAL_DENIED
         ),
         PatchDiagnostic(ErrorStage.APPROVAL, code, Retryability.NOT_RETRYABLE),
+    )
+
+
+def _recovery_report(
+    snapshot: DurableRequestSnapshot,
+    plan: DurablePlanReference,
+    artifacts: tuple[tuple[str, PatchArtifactId], ...],
+) -> WorkerReport:
+    """Return terminal journal truth already durably observed before loss."""
+    states = {item.step_id: item.state for item in snapshot.journal.steps}
+    terminal_steps = tuple(
+        JournalStep(
+            item.step_id,
+            item.lineage_id,
+            states.get(item.step_id, CommitStepState.UNKNOWN),
+        )
+        for item in plan.steps
+    )
+    committed = bool(terminal_steps) and all(
+        item.state is CommitStepState.COMMITTED for item in terminal_steps
+    )
+    return WorkerReport(
+        WorkerState.SETTLED if committed else WorkerState.FENCED,
+        SettlementJournal(
+            terminal_steps,
+            tuple(
+                ArtifactJournal(identifier, ArtifactState.UNKNOWN)
+                for identifier, _ in artifacts
+            ),
+            (
+                PostconditionState.ESTABLISHED
+                if committed
+                else PostconditionState.UNKNOWN
+            ),
+        ),
     )
 
 

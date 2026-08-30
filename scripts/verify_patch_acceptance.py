@@ -55,7 +55,7 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 13
+_CURRENT_PHASE = 14
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
     "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
@@ -79,6 +79,7 @@ _FIXTURE_NAMES = (
     "phase11_evidence.json",
     "phase12_evidence.json",
     "phase13_evidence.json",
+    "phase14_evidence.json",
     "phase7_evidence.json",
     "phase_evidence_index.json",
 )
@@ -86,6 +87,16 @@ _PHASE_EVIDENCE_ARTIFACT_ENVS = (
     "AVALAN_PATCH_PHASE_EVIDENCE_COVERAGE_JSON",
     "AVALAN_PATCH_PHASE_EVIDENCE_COVERAGE_XML",
     "AVALAN_PATCH_PHASE_EVIDENCE_PYTEST_FACTS",
+)
+_PHASE_EVIDENCE_ARTIFACT_PATHS = (
+    "coverage.json",
+    "coverage.xml",
+    ".patch-contract-pytest-facts.json",
+)
+_PHASE_EVIDENCE_SIDECAR_PATHS = (
+    ".patch-phase-evidence-coverage.json",
+    ".patch-phase-evidence-coverage.xml",
+    ".patch-phase-evidence-pytest-facts.json",
 )
 _NODE_PATTERN = compile_regex(r"^tests/[A-Za-z0-9_./-]+\.py::[^\s]+$")
 _IDENTIFIER_PATTERN = compile_regex(r"^PATCH-[A-Z0-9-]+$")
@@ -1114,7 +1125,7 @@ def load_phase0_contracts(
         root,
     )
     _validate_phase_evidence(
-        fixtures / "phase13_evidence.json", manifest, root
+        fixtures / "phase14_evidence.json", manifest, root
     )
     _validate_phase_evidence_history(
         fixtures / "phase_evidence_index.json",
@@ -3237,6 +3248,7 @@ def _validate_phase_evidence(
         11: "2026-08-25",
         12: "2026-08-26",
         13: "2026-08-27",
+        14: "2026-08-28",
     }.get(_CURRENT_PHASE)
     if (
         expected_date is None
@@ -3575,6 +3587,7 @@ def _validate_phase_evidence_artifacts(
         return
     paths: list[str] = []
     names: set[str] = set()
+    overrides = _phase_evidence_artifact_overrides(root)
     for raw in raw_artifacts:
         artifact = mapping(raw, "phase evidence artifact digest")
         _exact_keys(
@@ -3589,7 +3602,7 @@ def _validate_phase_evidence_artifacts(
             raise PatchAcceptanceError("phase artifact path is unsafe")
         paths.append(path)
         expected_sha = _sha256(artifact.get("sha256"), "phase artifact digest")
-        source = root / candidate
+        source = overrides.get(path, root / candidate)
         if source.is_symlink() or not source.is_file():
             raise PatchAcceptanceError("phase artifact path is missing")
         if _file_sha256(source) != expected_sha:
@@ -3743,10 +3756,21 @@ def _validate_phase_evidence_coverage(
 
 def _phase_evidence_artifact_paths(root: Path) -> tuple[Path, Path, Path]:
     """Return retained gate artifacts, preferring explicit mirror paths."""
-    defaults = (
-        root / "coverage.json",
-        root / "coverage.xml",
-        root / ".patch-contract-pytest-facts.json",
+    paths = tuple(_phase_evidence_artifact_overrides(root).values())
+    for path in paths:
+        if path.is_symlink() or not path.is_file():
+            raise PatchAcceptanceError(
+                "phase evidence retained artifact is missing"
+            )
+    first, second, third = paths
+    return first, second, third
+
+
+def _phase_evidence_artifact_overrides(root: Path) -> dict[str, Path]:
+    """Return the exact gate-artifact mapping constrained to this root."""
+    resolved_root = root.resolve()
+    defaults = tuple(
+        resolved_root / name for name in _PHASE_EVIDENCE_ARTIFACT_PATHS
     )
     values = tuple(environ.get(name) for name in _PHASE_EVIDENCE_ARTIFACT_ENVS)
     if any(value is None for value in values) and any(
@@ -3755,24 +3779,32 @@ def _phase_evidence_artifact_paths(root: Path) -> tuple[Path, Path, Path]:
         raise PatchAcceptanceError(
             "phase evidence artifact environment is partial"
         )
-    paths = (
-        defaults
-        if not any(values)
-        else tuple(
-            Path(value).resolve() for value in values if value is not None
-        )
-    )
-    if len(paths) != 3 or any(path.parent != root.resolve() for path in paths):
-        raise PatchAcceptanceError(
-            "phase evidence artifact path escapes execution root"
-        )
-    for path in paths:
-        if path.is_symlink() or not path.is_file():
+    if not any(values):
+        return dict(zip(_PHASE_EVIDENCE_ARTIFACT_PATHS, defaults, strict=True))
+    paths: list[Path] = []
+    for expected, sidecar, value in zip(
+        _PHASE_EVIDENCE_ARTIFACT_PATHS,
+        _PHASE_EVIDENCE_SIDECAR_PATHS,
+        values,
+        strict=True,
+    ):
+        assert value is not None
+        supplied = Path(value)
+        path = supplied.resolve()
+        if (
+            not supplied.is_absolute()
+            or path.parent != resolved_root
+            or path.name not in {expected, sidecar}
+        ):
             raise PatchAcceptanceError(
-                "phase evidence retained artifact is missing"
+                "phase evidence artifact mapping is invalid"
             )
-    first, second, third = paths
-    return first, second, third
+        paths.append(path)
+    if len(set(paths)) != len(paths):
+        raise PatchAcceptanceError(
+            "phase evidence artifact mapping is duplicated"
+        )
+    return dict(zip(_PHASE_EVIDENCE_ARTIFACT_PATHS, paths, strict=True))
 
 
 def _pytest_facts_collected(path: Path) -> int:
@@ -3797,8 +3829,8 @@ def _validate_phase_evidence_counts(
         "phase evidence node counts",
     )
     expected = {
-        "active_requirements": 839,
-        "planned_requirements": 178,
+        "active_requirements": 868,
+        "planned_requirements": 149,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))

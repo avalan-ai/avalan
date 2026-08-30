@@ -9,6 +9,10 @@ from typing import Any
 _SKIPPED = object()
 
 
+class FlowSuspension:
+    """Stop one flow before routing work that depends on unresolved truth."""
+
+
 class Flow:
     """Directed graph of nodes and connections."""
 
@@ -180,6 +184,8 @@ class Flow:
                 )
             await _check_cancelled(cancellation_checker)
             out_value = outputs[node.name]
+            if isinstance(out_value, FlowSuspension):
+                return out_value
             for connection in self.outgoing.get(node.name, []):
                 indegree[connection.dest.name] -= 1
                 if out_value is not _SKIPPED and (

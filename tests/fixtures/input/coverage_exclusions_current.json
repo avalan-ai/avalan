@@ -2617,18 +2617,14 @@
       686
     ],
     "src/avalan/task/stores/pgsql.py": [
-      176,
-      177,
-      178,
-      179,
+      180,
+      181,
       182,
       183,
-      184,
-      185,
+      186,
+      187,
+      188,
       189,
-      190,
-      191,
-      192,
       193,
       194,
       195,
@@ -2646,7 +2642,11 @@
       207,
       208,
       209,
-      210
+      210,
+      211,
+      212,
+      213,
+      214
     ],
     "src/avalan/patch/target.py": [
       267,
@@ -2843,5 +2843,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "502673a794125eab21e326933ac1bc1b863118acf7b67cce1d607be590de1899"
+  "snapshot_sha256": "328d2bcc5d85b4d1931389ec0b0f274038bb31fe71eaa81ad465e3dd2dda90b1"
 }

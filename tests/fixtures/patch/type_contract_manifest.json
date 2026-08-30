@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 13,
+  "current_phase": 14,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -530,7 +530,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7b56936d61102dd8642218a2b0ed54f00e0465e0b15955437a6fca563f64e9c0"
+      "source_sha256": "87d67f069dfcc968d5b0cbe9c57701ad6329fc0314749172bc22ec29e9b508f3"
     },
     {
       "id": "PATCH-TS-004",
@@ -539,7 +539,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8c22d78d5d50862a92f634006b0b6bac02b860ca03a7f3cdfb5a3a1c206ddac1"
+      "source_sha256": "8d314674f5678f2b60f1836fde57f377c98e3566c8ce73169482a3cc2da2a5a4"
     },
     {
       "id": "PATCH-TS-005",
@@ -548,7 +548,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a4f67e08295e216bfedcdbd09720b27be0232e5b81865d28df62867e5f0421ee"
+      "source_sha256": "94b891ae5ddf3b78cd88840ffac13d2b43e1bf49fe0468cfd7c1a92b2f392449"
     },
     {
       "id": "PATCH-TS-006",
@@ -575,7 +575,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "c13c1fadb2d1402ba90604805bd6bf08b3c8d85de6029f35f1cb31c09cde6974"
+      "source_sha256": "2caa9b2baede6f4bdd1c5063f4e21d1fe56e3c6c2bd26c0bdd7d123a3ee65819"
     },
     {
       "id": "PATCH-TS-009",
@@ -584,7 +584,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5b0ead0cc186e47e7364ea5f12eb7696e109822fdf55fffe8346c5354b0d2f02"
+      "source_sha256": "51ce591a1d4aaa5950c3603affa04e992ddc38f54c3c16b223fafee4c6ffec58"
     },
     {
       "id": "PATCH-TS-010",
@@ -665,7 +665,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1a3dcdca31e35d6ab495f785012d482759a5d5fbff1d1734933f9730bb49b653"
+      "source_sha256": "8e726a8c7f1f3494ba5d57bd0def033def72dcc23eef62524a0dcb5e94c31bcb"
     },
     {
       "id": "PATCH-TS-019",
@@ -773,7 +773,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ee8c6edbd7cb2ab071d7ad53e1b59cd78a265602115f79499d2185f041948dbc"
+      "source_sha256": "da0413a40629e10d647e4d8908334f396c398b77388acb27f50c39e506c3f29d"
     },
     {
       "id": "PATCH-TS-031",
@@ -782,7 +782,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2f2130acc5a6563ed7cde24f7ebd6426db255a8d8f5aec1c97dc7b1721993731"
+      "source_sha256": "6101c561481cc2be126c8daf245830bbab23b52787945d7d54a490def50275bd"
     },
     {
       "id": "PATCH-TS-032",
@@ -791,7 +791,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "c1b9a22219d0573dbbb383527f7af360619b538b8d974f7406ecb1330b227180"
+      "source_sha256": "760fa38dbec89668e13921012e73d7ac32b12e6c2e9ee04d385cdd404481a5f6"
     },
     {
       "id": "PATCH-TS-033",
@@ -801,7 +801,7 @@
         "TASK_PGSQL_HEAD_REVISION",
         "_TASK_PGSQL_REVISION_MODULES"
       ],
-      "source_sha256": "29ed0df59125994c15b83dad1bc66d71b24e327907752ec9d97e028537ee28cf"
+      "source_sha256": "48bd4c9823e4d8ac37a8ec102bed9b90054b1dea2b9647055a415a0dcffaf645"
     },
     {
       "id": "PATCH-TS-034",
@@ -837,7 +837,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "48679a7b80c4901791ed8dc0bbde18070553bc171de83d196d0bf7f7dd67c7e2"
+      "source_sha256": "e12085a2a2150a2261f1f648af7654bc8ec1e189131f1e553d711373398391da"
     },
     {
       "id": "PATCH-TS-038",
@@ -909,7 +909,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "fd1f661421730e5b41a560e9efbe64436e795a13a11c987f11d8309b1a3f4f0e"
+      "source_sha256": "f321736ecf420fd0d82dbbedad2aed7cfc08a5cc998eff4efb86cd36250d9d37"
     },
     {
       "id": "PATCH-TS-046",
@@ -918,7 +918,7 @@
       "symbols": [
         "TASK_PGSQL_HEAD_REVISION"
       ],
-      "source_sha256": "37abd4ce41aa7c351706a5758e57ccb080907be57cd7029b4abb09cd7ca21d6a"
+      "source_sha256": "9dd9024545b18916bb2da2a9389326d6e996b7cd8345f6937080cc18d38182c5"
     },
     {
       "id": "PATCH-TS-047",
@@ -964,7 +964,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "717593f2a7a9f640916ab567c47d5468c30d615eef02ae79f14e4fdaecac4cb0"
+      "source_sha256": "93b0a30800f0a623b244f582fa6ad5bdf57e645ee9817c992009c62c737be51c"
     },
     {
       "id": "PATCH-TS-052",
@@ -1019,7 +1019,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "2fa1b1064526a577def64ba476a8e2324d5c6c65007061462904b73b1e968f2d"
+      "source_sha256": "15fa23149c9280a86dc952f6d03cb2c66496e924e8e7165c683258ab2ec188b0"
     },
     {
       "id": "PATCH-TS-058",
@@ -1102,7 +1102,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "f14bc60651b5fb4b20baa4d73ebbf2e74b32bad0155df696c8bdb5d36e6a1261"
+      "source_sha256": "9984857665fd2ac8698045ad97c9c00a43555075f9b26316f6dfa0081d680699"
     },
     {
       "id": "PATCH-TS-067",
@@ -1111,7 +1111,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8c6d54383a59bf7c517f223d847e81d907c212cffd7ca376fbf82bdc879bf666"
+      "source_sha256": "b2dc3b414bc094894a27605e249b00ce35ee3ed1b0d5ade6e817a4c3931232fc"
     },
     {
       "id": "PATCH-TS-068",
@@ -1165,7 +1165,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d10207a19d2cfd19a6afbc060f6cb1765e2eb994303072d06004ab73adfc8388"
+      "source_sha256": "b6c229336cafe9928ad6d760e2bb8952a990739c1da0f174224d1e6be4dd33a7"
     },
     {
       "id": "PATCH-TS-074",
@@ -1237,7 +1237,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "fe09d62c59e98397f903e4c022229e733168de90c3d910f93dcfcff4f9f36078"
+      "source_sha256": "1a76ed8135d91868321cfd190736ac037b29c2e2fa018e7be13e195a9af947ca"
     },
     {
       "id": "PATCH-TS-082",
@@ -1264,7 +1264,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "a789e6d4d383e9394e0dbb8370789ee61ec9a88da1a8ade952811f180c2e2500"
+      "source_sha256": "b2b6b8371f797f0d5af01acfa151eba39464aabfdf9facde933f6307ed08c6af"
     },
     {
       "id": "PATCH-TS-085",
@@ -1592,7 +1592,112 @@
         "_write"
       ],
       "source_sha256": "99cc1a3f1ea52c1b850479d4ff9b75a6d27a16d78c258361d3d2a1ad5459296c"
+    },
+    {
+      "id": "PATCH-TS-118",
+      "path": "src/avalan/patch/protocols.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "068fb13c44e23ea8681bf6ae020f9642ab77c5a8af1521039f4e324f6b9861b6"
+    },
+    {
+      "id": "PATCH-TS-119",
+      "path": "tests/patch/phase_14_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_14_requirements",
+        "test_patch_protocol_reserves_before_planning_and_replays_once",
+        "test_patch_protocol_continuations_are_typed_and_identity_bound",
+        "test_patch_protocol_rejects_unadvertised_and_cross_agent_reads",
+        "test_patch_protocol_checks_invalid_values_and_all_continuation_truth"
+      ],
+      "source_sha256": "eab7e7f70969e5bb6f87105a9f6339241e619e4518aeab75ba71e8b5d9d6c102"
+    },
+    {
+      "id": "PATCH-TS-120",
+      "path": "src/avalan/server/patch_protocols.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "PatchProtocolAdapter"
+      ],
+      "source_sha256": "649d3a2fbfbf7ecc513e4b43abd51ac98003dcddb55423ad5675af7177e4f0e9"
+    },
+    {
+      "id": "PATCH-TS-121",
+      "path": "tests/server/patch_protocols_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_mcp_loopback_lifecycle_is_detached_replay_safe_and_private",
+        "test_a2a_loopback_restart_preserves_typed_task_correlation",
+        "test_incapable_profiles_and_faulted_replays_stay_inert",
+        "test_adapter_rejects_invalid_configuration_and_handles",
+        "test_adapter_closes_all_malformed_protocol_shapes_without_oracles",
+        "test_adapter_helper_failures_are_closed_and_identity_independent"
+      ],
+      "source_sha256": "ea2f2b2fdfcda589ea9d4f1f1b75d495d3fc3bf09842bb1f24473a0c217905cc"
+    },
+    {
+      "id": "PATCH-TS-122",
+      "path": "src/avalan/flow/flow.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "FlowSuspension"
+      ],
+      "source_sha256": "73d8ceef3503f08baafa359a0d2ac102e3cd33afdc682a3ed465d366d4dbe4d9"
+    },
+    {
+      "id": "PATCH-TS-123",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260828_0001_patch_coordination.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "upgrade"
+      ],
+      "source_sha256": "3d3009ed394651974850431ebe4c45596a31f568afe97a3f0a36ba6aa4cb9f85"
+    },
+    {
+      "id": "PATCH-TS-124",
+      "path": "tests/patch/phase_14_agent_provider_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_035_coordinates_three_agent_contexts",
+        "test_patch_e2e_036_provider_json_freeform_parity_and_inert_replay",
+        "test_patch_phase_14_provider_rejects_foreign_and_noncurrent_calls",
+        "test_patch_phase_14_multi_agent_rejects_bad_durable_owner_bindings"
+      ],
+      "source_sha256": "7ca78fa7447a0a4c3ef5c1afaa3cc389e20b2ba84bb7f0d21b321cd85c2da7ba"
+    },
+    {
+      "id": "PATCH-TS-125",
+      "path": "tests/patch/phase_14_flow_task_pgsql_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_034_pgsql_task_selected_runtime_recovery",
+        "test_patch_e2e_035_pgsql_coordination_survives_process_restart"
+      ],
+      "source_sha256": "8278469ac517fa2723017e8ff8404b91256f219cf7fbd813b09882a43ec2aa25"
+    },
+    {
+      "id": "PATCH-TS-126",
+      "path": "tests/patch/phase_14_flow_task_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_033_flow_suspends_dependents_then_reads_once",
+        "test_patch_e2e_034_task_adapter_reconciles_without_effect_retry",
+        "test_patch_e2e_033_selected_runtime_suspends_then_commits"
+      ],
+      "source_sha256": "6351836477664a47e88f9b6802264648658168ff09ef7e2ecc6755d47897ec97"
+    },
+    {
+      "id": "PATCH-TS-127",
+      "path": "tests/patch/phase_14_tri_profile_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_e2e_035_container_shared_root_is_test_only_and_physical"
+      ],
+      "source_sha256": "9a955552c2cd5e412ae55e7756c1b4c95468944c8e3ecf431e3ae107250bb07b"
     }
   ],
-  "manifest_sha256": "27ad6c70ebce506ffb94a736f19d0740a79ea3a561fddacbf2be04ffd6615c05"
+  "manifest_sha256": "1b6b0cdffac72aa894ff3b607eb3fc1b47a7a5ed14cc726cbd2323c496a27530"
 }

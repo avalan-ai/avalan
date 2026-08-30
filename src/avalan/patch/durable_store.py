@@ -22,6 +22,7 @@ from avalan.patch.domain import (
     DurationTicks,
     ExpiryTick,
     LifecyclePhase,
+    LogicalPath,
     MutationState,
     PatchApprovalId,
     PatchArtifactId,
@@ -45,7 +46,11 @@ from avalan.patch.domain import (
     SequenceNumber,
 )
 from avalan.patch.policy import (
+    PatchAgentId,
     PatchPrincipalId,
+    PatchRunId,
+    PatchSessionId,
+    PatchTaskId,
     PatchTenantId,
     PolicyBrokerId,
     PolicyReviewerRole,
@@ -126,6 +131,95 @@ class DurableReservation:
 
 
 @dataclass(frozen=True, slots=True)
+class DurableCoordinationAccess:
+    """Bind workspace coordination reads to full originating authority."""
+
+    reservation: DurableReservation
+    run_id: PatchRunId
+    session_id: PatchSessionId
+    task_id: PatchTaskId
+    agent_id: PatchAgentId
+    context_id: PatchContextId
+    workspace_id: PatchWorkspaceId
+    domain_id: PatchDomainId
+
+    def __post_init__(self) -> None:
+        """Require exact immutable workspace authority components."""
+        if (
+            type(self.reservation) is not DurableReservation
+            or type(self.run_id) is not PatchRunId
+            or type(self.session_id) is not PatchSessionId
+            or type(self.task_id) is not PatchTaskId
+            or type(self.agent_id) is not PatchAgentId
+            or type(self.context_id) is not PatchContextId
+            or type(self.workspace_id) is not PatchWorkspaceId
+            or type(self.domain_id) is not PatchDomainId
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.INVALID_RESERVATION)
+
+
+@dataclass(frozen=True, slots=True)
+class DurableProtocolOrigin:
+    """Bind a durable plan to every originating protocol authority fact."""
+
+    tenant_id: PatchTenantId
+    principal_id: PatchPrincipalId
+    execution_id: PatchExecutionId
+    run_id: PatchRunId
+    session_id: PatchSessionId
+    task_id: PatchTaskId
+    agent_id: PatchAgentId
+    route_id: PolicyRouteId
+    context_id: PatchContextId
+    workspace_id: PatchWorkspaceId
+
+    def __post_init__(self) -> None:
+        """Require every exact originating identity component."""
+        if (
+            type(self.tenant_id) is not PatchTenantId
+            or type(self.principal_id) is not PatchPrincipalId
+            or type(self.execution_id) is not PatchExecutionId
+            or type(self.run_id) is not PatchRunId
+            or type(self.session_id) is not PatchSessionId
+            or type(self.task_id) is not PatchTaskId
+            or type(self.agent_id) is not PatchAgentId
+            or type(self.route_id) is not PolicyRouteId
+            or type(self.context_id) is not PatchContextId
+            or type(self.workspace_id) is not PatchWorkspaceId
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.INVALID_RESERVATION)
+
+    def matches(self, identity: DurableRequestIdentity) -> bool:
+        """Return whether a request tuple is the exact persisted origin."""
+        if type(identity) is not DurableRequestIdentity:
+            return False
+        return (
+            self.tenant_id == identity.tenant_id
+            and self.principal_id == identity.principal_id
+            and self.execution_id == identity.execution_id
+            and self.route_id == identity.route_id
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class DurableCoordinationAdmission:
+    """Bind one workspace mutation to an immutable path footprint."""
+
+    access: DurableCoordinationAccess
+    paths: frozenset[LogicalPath]
+
+    def __post_init__(self) -> None:
+        """Require exact immutable authority and a nonempty path footprint."""
+        if (
+            type(self.access) is not DurableCoordinationAccess
+            or type(self.paths) is not frozenset
+            or not self.paths
+            or any(type(path) is not LogicalPath for path in self.paths)
+        ):
+            raise DurableStoreError(DurableStoreErrorCode.INVALID_RESERVATION)
+
+
+@dataclass(frozen=True, slots=True)
 class DurableStepBinding:
     """Bind one sealed requested-effect step to its lineage."""
 
@@ -143,7 +237,7 @@ class DurableStepBinding:
 
 @dataclass(frozen=True, slots=True)
 class DurablePlanReference:
-    """Store non-content sealed-plan evidence needed for durable recovery."""
+    """Store sealed-plan evidence and opaque restart material."""
 
     plan_id: PatchPlanId
     canonical_digest: AlgorithmDigest
@@ -153,6 +247,8 @@ class DurablePlanReference:
     workspace_id: PatchWorkspaceId
     domain_id: PatchDomainId
     steps: tuple[DurableStepBinding, ...]
+    origin: DurableProtocolOrigin | None = None
+    rehydration: bytes = field(repr=False, default=b"")
 
     def __post_init__(self) -> None:
         """Require a bounded unique sealed requested-effect graph."""
@@ -167,6 +263,12 @@ class DurablePlanReference:
             or type(self.steps) is not tuple
             or not self.steps
             or any(type(item) is not DurableStepBinding for item in self.steps)
+            or (
+                self.origin is not None
+                and type(self.origin) is not DurableProtocolOrigin
+            )
+            or type(self.rehydration) is not bytes
+            or len(self.rehydration) > 1_048_576
             or len({item.step_id for item in self.steps}) != len(self.steps)
             or len(self.steps) > 4096
         ):
@@ -840,6 +942,26 @@ class DurablePatchStore(Protocol):
     ) -> DurableReservation:
         """Reserve an authenticated request identity before inspection."""
 
+    async def admit_coordination(
+        self, admission: DurableCoordinationAdmission
+    ) -> None:
+        """Durably serialize one workspace mutation before planning."""
+
+    async def release_coordination(
+        self, access: DurableCoordinationAccess
+    ) -> None:
+        """Release one exact terminal or unplanned workspace admission."""
+
+    async def release_terminal_coordination(
+        self, access: DurableRequestAccess
+    ) -> None:
+        """Release the matching terminal admission after settlement."""
+
+    async def is_coordination_admitted(
+        self, access: DurableCoordinationAccess
+    ) -> bool:
+        """Return whether one exact workspace admission remains current."""
+
     async def persist_plan(
         self,
         reservation: DurableReservation,
@@ -1077,6 +1199,9 @@ class InMemoryDurablePatchBackend:
         self.by_request: dict[PatchRequestId, _DurableRecord] = {}
         self.fences: dict[PatchDomainId, int] = {}
         self.active_leases: dict[PatchDomainId, DurableCommitLease] = {}
+        self.coordination: dict[
+            PatchWorkspaceId, DurableCoordinationAdmission
+        ] = {}
         self.consumed_grants: dict[PatchGrantId, PatchRequestId] = {}
         self.event_ids: set[PatchEventId] = set()
 
@@ -1114,6 +1239,13 @@ class InMemoryDurablePatchStore:
                     canonical_digest,
                     True,
                 )
+            if (
+                request_id is not None
+                and request_id in self._backend.by_request
+            ):
+                raise DurableStoreError(
+                    DurableStoreErrorCode.IDEMPOTENCY_CONFLICT
+                )
             reservation = DurableReservation(
                 request_id or PatchRequestId.new(),
                 identity,
@@ -1124,6 +1256,86 @@ class InMemoryDurablePatchStore:
             self._backend.records[identity] = record
             self._backend.by_request[reservation.request_id] = record
             return reservation
+
+    async def admit_coordination(
+        self, admission: DurableCoordinationAdmission
+    ) -> None:
+        """Durably admit only one exact uncompleted workspace mutation."""
+        _require_exact(admission, DurableCoordinationAdmission)
+        async with self._backend.lock:
+            record = self._record_for_reservation(admission.access.reservation)
+            if record.terminal is not None:
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            existing = self._backend.coordination.get(
+                admission.access.workspace_id
+            )
+            if existing is None:
+                self._backend.coordination[admission.access.workspace_id] = (
+                    admission
+                )
+                return
+            if existing != admission:
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+
+    async def release_coordination(
+        self, access: DurableCoordinationAccess
+    ) -> None:
+        """Release only an exact terminal or not-yet-planned admission."""
+        _require_exact(access, DurableCoordinationAccess)
+        async with self._backend.lock:
+            record = self._record_for_reservation(access.reservation)
+            existing = self._backend.coordination.get(access.workspace_id)
+            if existing is None:
+                return
+            if existing.access != access:
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            if record.terminal is None and record.plan is not None:
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            del self._backend.coordination[access.workspace_id]
+
+    async def release_terminal_coordination(
+        self, access: DurableRequestAccess
+    ) -> None:
+        """Release only the terminal admission matching one exact request."""
+        _require_exact(access, DurableRequestAccess)
+        async with self._backend.lock:
+            record = self._record_for_access(access)
+            if record.terminal is None:
+                raise DurableStoreError(
+                    DurableStoreErrorCode.LIFECYCLE_CONFLICT
+                )
+            for workspace_id, admission in tuple(
+                self._backend.coordination.items()
+            ):
+                if (
+                    admission.access.reservation.request_id
+                    == access.request_id
+                    and admission.access.reservation.identity
+                    == access.identity
+                ):
+                    del self._backend.coordination[workspace_id]
+                    return
+
+    async def is_coordination_admitted(
+        self, access: DurableCoordinationAccess
+    ) -> bool:
+        """Return whether this exact admission still owns its workspace."""
+        _require_exact(access, DurableCoordinationAccess)
+        async with self._backend.lock:
+            self._record_for_reservation(access.reservation)
+            return (
+                self._backend.coordination.get(access.workspace_id) is not None
+                and self._backend.coordination[access.workspace_id].access
+                == access
+            )
 
     async def persist_plan(
         self,
@@ -1583,6 +1795,15 @@ class InMemoryDurablePatchStore:
             record.outbox.append(outbox)
             if self._backend.active_leases.get(lease.domain_id) == lease:
                 del self._backend.active_leases[lease.domain_id]
+            for workspace_id, admission in tuple(
+                self._backend.coordination.items()
+            ):
+                if (
+                    admission.access.reservation.request_id == lease.request_id
+                    and admission.access.reservation.identity
+                    == record.reservation.identity
+                ):
+                    del self._backend.coordination[workspace_id]
             self._backend.event_ids.add(outbox.event_id)
             self._delete_terminal_retention(record)
             record.terminal_event.set()

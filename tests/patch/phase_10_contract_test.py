@@ -8712,6 +8712,10 @@ def test_patch_phase_10_runtime_process_fences_bad_child_io(
 
     async def exercise() -> None:
         """Fence absent streams, oversize requests, and invalid controls."""
+        with pytest.raises(TargetInspectionError) as invalid_timeout:
+            await owner._request_locked("witness", {}, response_timeout=0.0)
+        assert invalid_timeout.value.code is TargetErrorCode.WORKER_UNAVAILABLE
+
         owner._process = cast(
             Process, SimpleNamespace(returncode=None, stdin=None, stdout=None)
         )
@@ -8796,15 +8800,42 @@ def test_patch_phase_10_runtime_process_fences_bad_child_io(
             await owner._request_locked("witness", {})
         assert stalled_drain.value.code is TargetErrorCode.WORKER_UNAVAILABLE
 
+        monkeypatch.setattr(sandbox_commit_module, "wait_for", native_wait_for)
+
+        class DelayedOutput(Output):
+            """Return a live response after the ordinary I/O window."""
+
+            async def readline(self) -> bytes:
+                """Delay a live response beyond the normal request budget."""
+                await sleep(sandbox_commit_module._PROCESS_IO_SECONDS + 0.05)
+                return await super().readline()
+
+        delayed_output = DelayedOutput(input_stream, {"result": "ok"})
+        owner._process = cast(
+            Process,
+            SimpleNamespace(
+                returncode=None, stdin=input_stream, stdout=delayed_output
+            ),
+        )
+        reaps_before_delayed_startup = len(reaped)
+        delayed_startup = await owner._request_locked(
+            "canary",
+            {},
+            response_timeout=sandbox_commit_module._PROCESS_STARTUP_IO_SECONDS,
+        )
+        assert delayed_startup == {"result": "ok"}
+        assert len(reaped) == reaps_before_delayed_startup
+
         calls = 0
+        observed_timeouts: list[float] = []
 
         async def timeout_read_only(
             awaitable: Awaitable[object], *, timeout: float
         ) -> object:
             """Permit the write then model a child that never replies."""
-            del timeout
             nonlocal calls
             calls += 1
+            observed_timeouts.append(timeout)
             await awaitable
             if calls == 2:
                 raise TimeoutError
@@ -8822,6 +8853,10 @@ def test_patch_phase_10_runtime_process_fences_bad_child_io(
         with pytest.raises(TargetInspectionError) as stalled_read:
             await owner._request_locked("witness", {})
         assert stalled_read.value.code is TargetErrorCode.WORKER_UNAVAILABLE
+        assert observed_timeouts == [
+            sandbox_commit_module._PROCESS_IO_SECONDS,
+            sandbox_commit_module._PROCESS_IO_SECONDS,
+        ]
 
         output_stream.body = {"control": "fence", "effect": 1}
         calls = 0
@@ -9069,6 +9104,158 @@ def test_patch_phase_10_runtime_start_reaps_canary_and_launch_faults(
 
     run(exercise())
     assert closed == ["bundle", "bundle", "bundle", "bundle"]
+
+
+def test_patch_phase_10_runtime_startup_uses_only_bounded_live_io(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Allow a live startup proof without widening effect I/O."""
+    root = tmp_path / "view"
+    namespace = tmp_path / "namespace"
+    bundle_root = tmp_path / "bundle"
+    root.mkdir()
+    namespace.mkdir()
+    bundle_root.mkdir()
+    owner = _runtime(root, namespace)._process
+    backend = owner.profile.execution_plan.settings.backend
+    closed: list[str] = []
+
+    class Bundle:
+        """Provide the one immutable worker bundle expected at startup."""
+
+        root = bundle_root
+        digest = "implementation-digest"
+        source_digest = sandbox_commit_module._PINNED_WORKER_SOURCE_DIGEST
+
+        def close(self) -> None:
+            """Record release after the startup-only proof finishes."""
+            closed.append("bundle")
+
+    class Launched:
+        """Model a live child without real streams in this test."""
+
+        pid = 42
+        returncode: int | None = None
+
+        def terminate(self) -> None:
+            """Terminate the synthetic child during reaping."""
+            self.returncode = 0
+
+        async def wait(self) -> int:
+            """Report the terminal synthetic child result."""
+            return 0
+
+    async def available_probe(
+        _backend: SandboxBackend,
+    ) -> SandboxBackendProbeResult:
+        """Return the selected backend capability for the startup proof."""
+        return cast(
+            SandboxBackendProbeResult,
+            SimpleNamespace(
+                ok=True,
+                capabilities=SimpleNamespace(
+                    backend=backend,
+                    runtime_name="test-runtime",
+                    sandbox_executable="test-sandbox",
+                ),
+            ),
+        )
+
+    def private_command(*_arguments: object) -> tuple[str, ...]:
+        """Keep the proof independent of native command construction."""
+        return ("test-sandbox", "worker")
+
+    def primitive_receipts(
+        *_arguments: object,
+    ) -> Mapping[TargetPrimitive, str]:
+        """Keep the liveness assertion independent of receipt derivation."""
+        return {}
+
+    async def launched(*_args: object, **_kwargs: object) -> Launched:
+        """Return one delayed-but-live synthetic child process."""
+        return Launched()
+
+    observed: list[tuple[str, float]] = []
+    root_witness = rooted_worker_module.RootWitness(
+        FileIdentity(1, 2),
+        owner.profile.identity.mount_id,
+        owner.profile.identity.filesystem_id,
+    )
+
+    async def delayed_live_canary(
+        _owner: sandbox_commit_module._SandboxRuntimeProcess,
+        kind: str,
+        _body: Mapping[str, object],
+        *,
+        response_timeout: float = sandbox_commit_module._PROCESS_IO_SECONDS,
+        **_kwargs: object,
+    ) -> Mapping[str, object]:
+        """Return a valid canary only through the startup-specific deadline."""
+        observed.append((kind, response_timeout))
+        return {
+            "pid": 2 if backend is SandboxBackend.BUBBLEWRAP else Launched.pid,
+            "outside_read_denied": True,
+            "metadata_probe": "a" * 64,
+        }
+
+    async def delayed_live_witness(
+        _owner: sandbox_commit_module._SandboxRuntimeProcess,
+        *,
+        response_timeout: float = sandbox_commit_module._PROCESS_IO_SECONDS,
+    ) -> rooted_worker_module.RootWitness:
+        """Return the live rooted witness through the startup deadline."""
+        observed.append(("witness", response_timeout))
+        return root_witness
+
+    async def exercise() -> None:
+        """Start, attest, and reap without widening regular effect I/O."""
+        monkeypatch.setattr(
+            sandbox_commit_module,
+            "_ImplementationBundle",
+            SimpleNamespace(create=lambda _workspace: Bundle()),
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module, "_runtime_backend_probe", available_probe
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module, "_runtime_child_command", private_command
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module,
+            "_backend_policy_digest",
+            lambda *_arguments: "policy-digest",
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module,
+            "_primitive_receipts",
+            primitive_receipts,
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module,
+            "create_subprocess_exec",
+            launched,
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module._SandboxRuntimeProcess,
+            "_request_locked",
+            delayed_live_canary,
+        )
+        monkeypatch.setattr(
+            sandbox_commit_module._SandboxRuntimeProcess,
+            "_witness_locked",
+            delayed_live_witness,
+        )
+        started = await owner.start()
+        assert started[0] is root_witness
+        assert observed == [
+            ("canary", sandbox_commit_module._PROCESS_STARTUP_IO_SECONDS),
+            ("witness", sandbox_commit_module._PROCESS_STARTUP_IO_SECONDS),
+        ]
+        await owner._reap()
+
+    run(exercise())
+    assert closed == ["bundle"]
 
 
 def test_patch_phase_10_service_reuses_durable_terminal_claim_truth(
@@ -9330,6 +9517,8 @@ def test_patch_phase_10_service_preserves_review_and_claim_outcomes(
     service._worker_tasks = {}
     service._reconciliation_tasks = set()
     service._reader_tasks = set()
+    service._protocol_claimed = set()
+    service._protocol_claim_waiters = {}
 
     class Authorizer:
         """Allow the service to reach its durable review boundary."""
