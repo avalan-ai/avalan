@@ -99,12 +99,12 @@ _PROVIDER_CONFORMANCE_PATH = (
     / "conversation"
     / "provider_conformance.json"
 )
-_PROVIDER_TRANSITION_PATH = (
+_PHASE13_PROVIDER_TRANSITION_PATH = (
     _REPOSITORY_ROOT
     / "tests"
     / "fixtures"
     / "conversation"
-    / "provider_transition.phase5.json"
+    / "provider_transition.phase13.json"
 )
 _ADAPTER_PATH = (
     _REPOSITORY_ROOT
@@ -124,6 +124,10 @@ _PROVIDER_CONFORMANCE_CANONICAL_SHA256 = (
 )
 _PHASE0_PROVIDER_SOURCE_SHA256 = (
     "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
+)
+_PRE_PHASE13_PROVIDER_SOURCE_SIZE = 337_354
+_PRE_PHASE13_PROVIDER_SOURCE_SHA256 = (
+    "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5"
 )
 _CANONICAL_JSON_ENCODING = (
     "utf-8 canonical JSON with sorted keys and compact separators"
@@ -319,9 +323,9 @@ def _phase0_provider_source_digest(source: str) -> str:
     return sha256(source.encode("utf-8")).hexdigest()
 
 
-def _phase5_provider_source_sha256() -> str:
-    transition = _load_json(_PROVIDER_TRANSITION_PATH)
-    assert transition["phase"] == 5
+def _phase13_provider_source_sha256() -> str:
+    transition = _load_json(_PHASE13_PROVIDER_TRANSITION_PATH)
+    assert transition["phase"] == 13
     assert transition["kind"] == "reviewed_provider_source_transition"
     payload = dict(transition)
     digest = payload.pop("canonical_sha256")
@@ -334,8 +338,8 @@ def _phase5_provider_source_sha256() -> str:
         for item in entries
         if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
     )
-    assert source["from_size"] == 336_124
-    assert source["from_sha256"] == _PHASE0_PROVIDER_SOURCE_SHA256
+    assert source["from_size"] == _PRE_PHASE13_PROVIDER_SOURCE_SIZE
+    assert source["from_sha256"] == _PRE_PHASE13_PROVIDER_SOURCE_SHA256
     target = source["to_sha256"]
     assert type(target) is str
     return target
@@ -344,7 +348,7 @@ def _phase5_provider_source_sha256() -> str:
 def _assert_phase0_provider_source_integrity(source: str) -> None:
     assert (
         _phase0_provider_source_digest(source)
-        == _phase5_provider_source_sha256()
+        == _phase13_provider_source_sha256()
     ), (
         "Phase 0 provider source integrity drifted; rotate the immutable "
         "anchor only through a reviewed provider phase transition"
@@ -1799,10 +1803,10 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
     }
     adapter_source = _ADAPTER_PATH.read_text(encoding="utf-8")
     assert sha256(_ADAPTER_PATH.read_bytes()).hexdigest() == (
-        _phase5_provider_source_sha256()
+        _phase13_provider_source_sha256()
     )
     assert _phase0_provider_source_digest(adapter_source) == (
-        _phase5_provider_source_sha256()
+        _phase13_provider_source_sha256()
     )
 
     typed_fields = _mapping(create_policy["typed_sdk_create_fields"])
@@ -1990,125 +1994,155 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
             id="attempt-mapping-alias",
         ),
         pytest.param(
-            "                assert isinstance(attempt_kwargs, dict)\n",
-            "                assert isinstance(attempt_kwargs, dict)\n"
-            '                attempt_kwargs.update({"store": False})\n',
+            "                    assert isinstance(attempt_kwargs, dict)\n",
+            "                    assert isinstance(attempt_kwargs, dict)\n"
+            '                    attempt_kwargs.update({"store": False})\n',
             id="attempt-mapping-update",
         ),
         pytest.param(
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
-            "                        store=False,\n"
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
+            "                                store=False,\n"
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
             id="named-store-keyword",
         ),
         pytest.param(
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
-            "                        background=False,\n"
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
+            "                                background=False,\n"
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
             id="named-background-keyword",
         ),
         pytest.param(
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
-            "                        **cast(dict[str, Any], attempt_kwargs),\n"
-            "                        **{},\n",
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs),\n"
+            "                                **{},\n",
             id="extra-create-mapping-unpack",
         ),
         pytest.param(
-            "                        **cast(dict[str, Any], attempt_kwargs)\n",
-            "                        **cast(dict[str, Any], kwargs)\n",
+            "                                **cast(dict[str, Any], "
+            "attempt_kwargs)\n",
+            "                                **cast(dict[str, Any], kwargs)\n",
             id="alternate-create-unpack-source",
         ),
         pytest.param(
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                    create = request_client.responses.create\n"
-            "                    created_response = await create(\n",
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                        create = request_client.responses."
+            "create\n"
+            "                        created_response = (\n"
+            "                            await create(\n",
             id="aliased-create-method",
         ),
         pytest.param(
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                    created_response = await getattr(\n"
-            '                        request_client.responses, "create"\n'
-            "                    )(\n",
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                        created_response = (\n"
+            "                            await getattr(\n"
+            "                                request_client.responses, "
+            '"create"\n'
+            "                            )(\n",
             id="getattr-create-method",
         ),
         pytest.param(
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            '                    lifecycle_method = "create"\n'
-            "                    created_response = await getattr(\n"
-            "                        request_client.responses, "
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            '                        lifecycle_method = "create"\n'
+            "                        created_response = (\n"
+            "                            await getattr(\n"
+            "                                request_client.responses, "
             "lifecycle_method\n"
-            "                    )(\n",
+            "                            )(\n",
             id="dynamic-getattr-create-method",
         ),
         pytest.param(
-            "                try:\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                try:\n"
-            "                    compact = request_client.responses.compact\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
+            "                    try:\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                    try:\n"
+            "                        compact = request_client.responses."
+            "compact\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
             id="aliased-compact-method",
         ),
         pytest.param(
-            "                try:\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                try:\n"
-            "                    retrieve = "
+            "                    try:\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                    try:\n"
+            "                        retrieve = "
             "request_client.responses.retrieve\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
             id="aliased-retrieve-method",
         ),
         pytest.param(
-            "                try:\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                try:\n"
-            "                    delete = request_client.responses.delete\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
+            "                    try:\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                    try:\n"
+            "                        delete = request_client.responses."
+            "delete\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
             id="aliased-delete-method",
         ),
         pytest.param(
-            "                try:\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                try:\n"
-            "                    responses_alias = request_client.responses\n"
-            '                    lifecycle_method = "create"\n'
-            "                    getattr(\n"
-            "                        responses_alias, lifecycle_method\n"
-            "                    )\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
+            "                    try:\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                    try:\n"
+            "                        responses_alias = request_client."
+            "responses\n"
+            '                        lifecycle_method = "create"\n'
+            "                        getattr(\n"
+            "                            responses_alias, lifecycle_method\n"
+            "                        )\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
             id="aliased-responses-resource",
         ),
         pytest.param(
-            "                try:\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                try:\n"
-            "                    request_client_alias = request_client\n"
-            "                    getattr(\n"
-            "                        request_client_alias.responses, "
+            "                    try:\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                    try:\n"
+            "                        request_client_alias = request_client\n"
+            "                        getattr(\n"
+            "                            request_client_alias.responses, "
             '"create"\n'
-            "                    )\n"
-            "                    created_response = await "
-            "request_client.responses.create(\n",
+            "                        )\n"
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
             id="aliased-request-client",
         ),
         pytest.param(
-            "                    created_response = await "
-            "request_client.responses.create(\n",
-            "                    created_response = await "
-            "request_client.responses.__getattribute__(\n"
-            '                        "create"\n'
-            "                    )(\n",
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "create(\n",
+            "                        created_response = (\n"
+            "                            await request_client.responses."
+            "__getattribute__(\n"
+            '                                "create"\n'
+            "                            )(\n",
             id="dunder-getattribute-create-method",
         ),
     ],
@@ -2510,23 +2544,31 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
             (
                 (
                     (
-                        "                try:\n"
-                        "                    created_response = await "
+                        "                    try:\n"
+                        "                        created_response = (\n"
+                        "                            await "
                         "request_client.responses.create(\n"
                     ),
                     (
-                        "                alternate_client = self._client\n    "
-                        '            responses_name = "".join(\n              '
-                        '      ("res", "ponses")\n                )\n         '
-                        "       responses_resource = getattr(\n               "
-                        "     alternate_client, responses_name\n              "
-                        '  )\n                compact_name = "".join(\n       '
-                        '             ("com", "pact")\n                )\n    '
-                        "            await getattr(\n                   "
-                        " responses_resource, compact_name\n               "
-                        " )()\n                try:\n                   "
-                        " created_response = await"
-                        " request_client.responses.create(\n"
+                        "                    alternate_client = self._client\n"
+                        '                    responses_name = "".join(\n'
+                        '                        ("res", "ponses")\n'
+                        "                    )\n"
+                        "                    responses_resource = getattr(\n"
+                        "                        alternate_client, "
+                        "responses_name\n"
+                        "                    )\n"
+                        '                    compact_name = "".join(\n'
+                        '                        ("com", "pact")\n'
+                        "                    )\n"
+                        "                    await getattr(\n"
+                        "                        responses_resource, "
+                        "compact_name\n"
+                        "                    )()\n"
+                        "                    try:\n"
+                        "                        created_response = (\n"
+                        "                            await "
+                        "request_client.responses.create(\n"
                     ),
                 ),
             ),

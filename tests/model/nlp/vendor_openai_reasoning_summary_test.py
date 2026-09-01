@@ -16,6 +16,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
+from httpx import Request
+from openai import APIError
 from openai.types.responses import ResponseStreamEvent
 from openai.types.responses.response_function_tool_call import (
     ResponseFunctionToolCall,
@@ -47,6 +49,7 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallResult,
 )
+from avalan.interaction.entities import ProviderIdempotencyKey
 from avalan.model.capability import ModelCapabilityCatalog
 from avalan.model.nlp.text.vendor import openai as openai_module
 from avalan.model.nlp.text.vendor.openai import OpenAIClient, OpenAIStream
@@ -2946,6 +2949,10 @@ def test_private_replay_create_errors_and_cancellation_are_sanitized() -> None:
     ]
     assert encrypted not in create_diagnostics
     assert summary not in create_diagnostics
+    assert (
+        cast(AsyncMock, create_client._client.responses.create).await_count
+        == 1
+    )
 
     cancelled_call_id = "cancelled-create-private"
     cancelled_owner = _owner()
@@ -3017,6 +3024,148 @@ def test_private_replay_create_errors_and_cancellation_are_sanitized() -> None:
     assert run(control_flow_private_create()) is provider_control_flow
     assert control_flow_owner.release_count == 1
     assert cast(Any, control_flow_client)._replay_owners_by_call_id == {}
+
+
+def test_private_replay_rate_limit_create_error_retries() -> None:
+    call_id = "rate-limit-create-private"
+    create = AsyncMock(
+        side_effect=[
+            APIError(
+                "rate limited",
+                Request("POST", "https://provider.invalid/responses"),
+                body={"code": "rate_limit_exceeded"},
+            ),
+            _AsyncEvents([_completed_event(text="answer")]),
+        ]
+    )
+    client = _retained_private_client(create, call_id)
+
+    items = run(
+        _consume(
+            run(
+                client(
+                    "plain-model",
+                    [_tool_result(call_id, "value")],
+                )
+            )
+        )
+    )
+
+    assert create.await_count == 2
+    assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED for item in items
+    )
+
+
+def test_resumed_azure_private_replay_create_error_is_single_attempt() -> None:
+    call_id = "azure-durable-rate-limit-private"
+    create = AsyncMock(
+        side_effect=APIError(
+            "rate limited",
+            Request("POST", "https://provider.invalid/responses"),
+            body={"code": "rate_limit_exceeded"},
+        )
+    )
+    client = _retained_private_client(create, call_id)
+    request_client = cast(Any, client)._client
+    request_client.with_options = MagicMock(return_value=request_client)
+    cast(Any, client)._is_azure = True
+    owner = cast(Any, client)._replay_owners_by_call_id[call_id]
+    owner.restore_provider_idempotency_key(
+        ProviderIdempotencyKey("resumed-azure-dispatch")
+    )
+
+    with pytest.raises(openai_module._OpenAIProviderRequestError) as context:
+        run(client("plain-model", [_tool_result(call_id, "value")]))
+
+    nodes, diagnostics = _safe_exception_diagnostics(context.value)
+    assert [getattr(node, "code", None) for node in nodes] == [
+        "openai_provider_request_failed"
+    ]
+    assert _PRIVATE_ENCRYPTED_SENTINEL not in diagnostics
+    assert _PRIVATE_SUMMARY_SENTINEL not in diagnostics
+    assert create.await_count == 1
+    request_client.with_options.assert_called_once_with(max_retries=0)
+    assert create.await_args.kwargs["extra_headers"]["Idempotency-Key"] == (
+        "resumed-azure-dispatch"
+    )
+
+
+def test_private_replay_stream_and_create_retries_share_budget() -> None:
+    call_id = "shared-retry-budget-private"
+    create = AsyncMock(
+        side_effect=[
+            _FailingAsyncEvents(
+                [],
+                APIError(
+                    "rate limited",
+                    Request("POST", "https://provider.invalid/responses"),
+                    body={"code": "rate_limit_exceeded"},
+                ),
+            ),
+            APIError(
+                "rate limited",
+                Request("POST", "https://provider.invalid/responses"),
+                body={"code": "rate_limit_exceeded"},
+            ),
+            _AsyncEvents([_completed_event(text="unexpected")]),
+        ]
+    )
+    client = _retained_private_client(create, call_id)
+    cast(Any, client)._stream_response_failed_retries = 1
+
+    items = run(
+        _consume(run(client("plain-model", [_tool_result(call_id, "value")])))
+    )
+
+    assert create.await_count == 2
+    assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
+    terminal = _error_item(items)
+    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
+        "openai_provider_request_failed"
+    )
+    outward = repr([item.to_trace_dict() for item in items])
+    assert _PRIVATE_ENCRYPTED_SENTINEL not in outward
+    assert _PRIVATE_SUMMARY_SENTINEL not in outward
+
+
+def test_private_replay_replacement_open_uses_shared_retry_budget() -> None:
+    call_id = "replacement-open-rate-limit-private"
+    failed = _FailingAsyncEvents(
+        [],
+        APIError(
+            "rate limited",
+            Request("POST", "https://provider.invalid/responses"),
+            body={"code": "rate_limit_exceeded"},
+        ),
+    )
+    create = AsyncMock(
+        side_effect=[
+            failed,
+            APIError(
+                "rate limited",
+                Request("POST", "https://provider.invalid/responses"),
+                body={"code": "rate_limit_exceeded"},
+            ),
+            _AsyncEvents([_completed_event(text="answer")]),
+        ]
+    )
+    client = _retained_private_client(create, call_id)
+
+    items = run(
+        _consume(run(client("plain-model", [_tool_result(call_id, "value")])))
+    )
+
+    assert failed.close_count == 1
+    assert create.await_count == 3
+    assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
+    assert create.await_args_list[1].kwargs == create.await_args_list[2].kwargs
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED for item in items
+    )
 
 
 def test_private_replay_retry_factory_errors_are_sanitized() -> None:
@@ -3749,6 +3898,212 @@ def test_pre_output_retry_preserves_request_and_resets_state() -> None:
         item for item in items if item.kind is StreamItemKind.REASONING_DELTA
     )
     assert reasoning.segment_instance_ordinal == 0
+
+
+def test_pre_output_rate_limit_stream_exception_retries_privately() -> None:
+    secret = "RATE_LIMIT_STREAM_PRIVATE_SENTINEL"
+    owner = _owner()
+    owner.admit(
+        _reasoning_item(
+            "rate-limit-replay",
+            secret,
+            [{"type": "summary_text", "text": secret}],
+        )
+    )
+    owner.commit_attempt()
+    failed = _FailingAsyncEvents(
+        [],
+        APIError(
+            secret,
+            Request("POST", "https://provider.invalid/responses"),
+            body={"code": "rate_limit_exceeded", "message": secret},
+        ),
+    )
+    recovered = _AsyncEvents([_completed_event(text="answer")])
+    retry = AsyncMock(return_value=recovered)
+    items = run(
+        _consume(
+            OpenAIStream(
+                failed,
+                replay_owner=owner,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_awaited_once_with()
+    assert failed.close_count == 1
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+def test_pre_output_rate_limit_response_failed_retries_privately() -> None:
+    secret = "RATE_LIMIT_RESPONSE_FAILED_PRIVATE_SENTINEL"
+    owner = _owner()
+    owner.admit(
+        _reasoning_item(
+            "rate-limit-response-failed-replay",
+            secret,
+            [{"type": "summary_text", "text": secret}],
+        )
+    )
+    owner.commit_attempt()
+    failed = _AsyncEvents(
+        [
+            {
+                "type": "response.failed",
+                "response": {
+                    "status": "failed",
+                    "error": {
+                        "code": "rate_limit_exceeded",
+                        "message": secret,
+                    },
+                    "output": [],
+                },
+            }
+        ]
+    )
+    recovered = _AsyncEvents([_completed_event(text="answer")])
+    retry = AsyncMock(return_value=recovered)
+    items = run(
+        _consume(
+            OpenAIStream(
+                failed,
+                replay_owner=owner,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_awaited_once_with()
+    assert failed.close_count == 1
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+@pytest.mark.parametrize(
+    ("response_code", "event_code"),
+    [
+        ("invalid_request_error", None),
+        (None, "invalid_request_error"),
+        ("rate_limit_exceeded", "invalid_request_error"),
+        ("invalid_request_error", "server_error"),
+    ],
+)
+def test_invalid_or_mixed_response_failed_does_not_retry_privately(
+    response_code: str | None,
+    event_code: str | None,
+) -> None:
+    secret = "INVALID_RESPONSE_FAILED_PRIVATE_SENTINEL"
+    owner = _owner()
+    owner.admit(
+        _reasoning_item(
+            "invalid-response-failed-replay",
+            secret,
+            [{"type": "summary_text", "text": secret}],
+        )
+    )
+    owner.commit_attempt()
+    response: dict[str, object] = {"status": "failed", "output": []}
+    if response_code is not None:
+        response["error"] = {"code": response_code, "message": secret}
+    failed_event: dict[str, object] = {
+        "type": "response.failed",
+        "response": response,
+    }
+    if event_code is not None:
+        failed_event["error"] = {"code": event_code, "message": secret}
+    recovered = _AsyncEvents([_completed_event(text="answer")])
+    retry = AsyncMock(return_value=recovered)
+    items = run(
+        _consume(
+            OpenAIStream(
+                _AsyncEvents([failed_event]),
+                replay_owner=owner,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_not_awaited()
+    terminal = _error_item(items)
+    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
+        "openai_provider_request_failed"
+    )
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+def test_invalid_request_stream_exception_is_not_retried() -> None:
+    secret = "INVALID_REQUEST_STREAM_PRIVATE_SENTINEL"
+    owner = _owner()
+    owner.admit(
+        _reasoning_item(
+            "invalid-request-replay",
+            secret,
+            [{"type": "summary_text", "text": secret}],
+        )
+    )
+    owner.commit_attempt()
+    failed = _FailingAsyncEvents(
+        [],
+        APIError(
+            secret,
+            Request("POST", "https://provider.invalid/responses"),
+            body={"code": "invalid_request_error", "message": secret},
+        ),
+    )
+    retry = AsyncMock(return_value=_AsyncEvents([_completed_event()]))
+    items = run(
+        _consume(
+            OpenAIStream(
+                failed,
+                replay_owner=owner,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_not_awaited()
+    terminal = _error_item(items)
+    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
+        "openai_provider_request_failed"
+    )
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+def test_visible_reasoning_disables_stream_exception_retry() -> None:
+    failed = _FailingAsyncEvents(
+        [
+            {
+                "type": "response.reasoning_text.delta",
+                "delta": "visible reasoning",
+                "content_index": 0,
+            }
+        ],
+        APIError(
+            "rate limited",
+            Request("POST", "https://provider.invalid/responses"),
+            body={"code": "rate_limit_exceeded"},
+        ),
+    )
+    retry = AsyncMock(return_value=_AsyncEvents([_completed_event()]))
+    items = run(
+        _consume(
+            OpenAIStream(
+                failed,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_not_awaited()
+    assert any(item.kind is StreamItemKind.REASONING_DELTA for item in items)
+    assert any(item.kind is StreamItemKind.STREAM_ERRORED for item in items)
 
 
 def test_visible_native_or_summary_reasoning_disables_retry() -> None:

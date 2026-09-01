@@ -34,6 +34,7 @@ from .....model.reasoning import (
     validate_reasoning_summary_request,
 )
 from .....model.response.text import TextGenerationResponse
+from .....model.retry import ProviderRetryController
 from .....model.stream import (
     REASONING_SEGMENT_BOUNDARY_METADATA_KEY,
     CanonicalStreamItem,
@@ -126,6 +127,7 @@ _OPENAI_REASONING_SUMMARY_PROVIDERS = frozenset(
     }
 )
 _OPENAI_VENDOR_MODULE = "avalan.model.nlp.text.vendor.openai"
+_OPENAI_STREAM_RETRY_MAX_DELAY_SECONDS = 8.0
 
 
 def _unique_json_object(
@@ -2856,7 +2858,7 @@ _OpenAIReplayOwner = _OpenAIDirectReplayExecutionState
 
 
 class OpenAIStream(TextGenerationVendorStream):
-    _STREAM_RETRY_MAX_DELAY_SECONDS = 8.0
+    _STREAM_RETRY_MAX_DELAY_SECONDS = _OPENAI_STREAM_RETRY_MAX_DELAY_SECONDS
     _TEXT_DELTA_EVENTS = {"response.text.delta", "response.output_text.delta"}
     _TEXT_DONE_EVENTS = {"response.text.done", "response.output_text.done"}
     _REASONING_DELTA_EVENTS = {"response.reasoning_text.delta"}
@@ -2893,6 +2895,17 @@ class OpenAIStream(TextGenerationVendorStream):
         "response.function_call_arguments.done",
     }
     _ERROR_EVENTS = {"response.error", "response.failed", "error"}
+    _RETRYABLE_STREAM_ERROR_CODES = frozenset(
+        {"rate_limit_exceeded", "server_error"}
+    )
+    _RETRYABLE_STREAM_ERROR_TYPES = frozenset(
+        {
+            "APIConnectionError",
+            "APITimeoutError",
+            "InternalServerError",
+            "RateLimitError",
+        }
+    )
     _INCOMPLETE_EVENTS = {"response.incomplete"}
     _INCOMPLETE_REASONS = {"content_filter", "max_output_tokens"}
     _stream: AsyncIterator[Any] | None
@@ -2904,8 +2917,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _answer_done_seen: bool
     _output_item_sink: Callable[[dict[str, Any]], None] | None
     _stream_factory: Callable[[], Awaitable[AsyncIterator[Any]]] | None
-    _stream_retry_delay_seconds: float
-    _stream_retries: int
+    _stream_retry_controller: ProviderRetryController
     _capability_catalog: ModelCapabilityCatalog | None
     _last_text_delta_alias_key: tuple[object, ...] | None
     _last_text_delta_alias_event_type: str | None
@@ -2981,8 +2993,11 @@ class OpenAIStream(TextGenerationVendorStream):
         self._output_item_sink = output_item_sink
         self._output_item_rollback = output_item_rollback
         self._stream_factory = stream_factory
-        self._stream_retry_delay_seconds = stream_retry_delay_seconds
-        self._stream_retries = stream_retries
+        self._stream_retry_controller = ProviderRetryController(
+            stream_retries,
+            initial_delay_seconds=stream_retry_delay_seconds,
+            maximum_delay_seconds=self._STREAM_RETRY_MAX_DELAY_SECONDS,
+        )
         self._capability_catalog = capability
         self._last_text_delta_alias_key = None
         self._last_text_delta_alias_event_type = None
@@ -3030,6 +3045,14 @@ class OpenAIStream(TextGenerationVendorStream):
             provider_family=provider_family,
             sources=(stream,),
         )
+
+    def _share_retry_controller(
+        self,
+        controller: ProviderRetryController,
+    ) -> None:
+        """Share one continuation-scoped retry controller."""
+        assert isinstance(controller, ProviderRetryController)
+        self._stream_retry_controller = controller
 
     def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
         assert self._generator
@@ -3288,7 +3311,6 @@ class OpenAIStream(TextGenerationVendorStream):
         replacement_stream: AsyncIterator[Any] | None = None
         try:
             try:
-                attempts = 0
                 reasoning_output_seen = False
                 if self._provider_terminal_prepared:
                     assert self._provider_terminal_event is not None
@@ -3316,6 +3338,29 @@ class OpenAIStream(TextGenerationVendorStream):
                             )
                         except StopAsyncIteration:
                             break
+                        except Exception as error:
+                            if self._should_retry_provider_stream_exception(
+                                error,
+                                non_reasoning_output_seen=(
+                                    non_reasoning_output_seen
+                                ),
+                                reasoning_output_seen=reasoning_output_seen,
+                            ):
+                                provider_events = (
+                                    (
+                                        self._private_replay_provider_failure_event()
+                                        if (
+                                            self._request_has_replay_items
+                                            or self._private_output_seen
+                                        )
+                                        else self._provider_exception_event(
+                                            error
+                                        )
+                                    ),
+                                )
+                                retry = True
+                                break
+                            raise
                         self._raise_if_provider_interrupted()
                         provider_event_type: str | None = None
                         retryable_capability_failure = False
@@ -3417,7 +3462,6 @@ class OpenAIStream(TextGenerationVendorStream):
                             retryable_capability_failure=(
                                 retryable_capability_failure
                             ),
-                            attempts=attempts,
                         ):
                             retry = True
                             break
@@ -3504,17 +3548,12 @@ class OpenAIStream(TextGenerationVendorStream):
                     )
                     await self._raise_if_retry_interrupted()
                     assert self._stream_factory is not None
-                    delay = min(
-                        self._stream_retry_delay_seconds * (2**attempts),
-                        max(
-                            self._stream_retry_delay_seconds,
-                            self._STREAM_RETRY_MAX_DELAY_SECONDS,
-                        ),
+                    delay = (
+                        self._stream_retry_controller.take_retry_delay_seconds()
                     )
                     if delay > 0:
                         await self._run_provider_operation(sleep(delay))
                     await self._raise_if_retry_interrupted()
-                    attempts += 1
                     replacement_stream = cast(
                         AsyncIterator[Any],
                         await self._run_provider_operation(
@@ -3837,11 +3876,10 @@ class OpenAIStream(TextGenerationVendorStream):
         non_reasoning_output_seen: bool,
         reasoning_output_seen: bool,
         retryable_capability_failure: bool,
-        attempts: int,
     ) -> bool:
         if (
             self._stream_factory is None
-            or attempts >= self._stream_retries
+            or not self._stream_retry_controller.can_retry()
             or non_reasoning_output_seen
             or any(
                 self._is_retry_blocking_output_event(provider_event)
@@ -3877,11 +3915,49 @@ class OpenAIStream(TextGenerationVendorStream):
             for provider_event in provider_events
         )
 
-    @staticmethod
+    def _should_retry_provider_stream_exception(
+        self,
+        error: Exception,
+        *,
+        non_reasoning_output_seen: bool,
+        reasoning_output_seen: bool,
+    ) -> bool:
+        """Return whether a transient pre-output stream pull can retry."""
+        if (
+            self._stream_factory is None
+            or not self._stream_retry_controller.can_retry()
+            or non_reasoning_output_seen
+            or reasoning_output_seen
+        ):
+            return False
+        return self._is_retryable_provider_stream_exception(error)
+
+    @classmethod
+    def _is_retryable_provider_stream_exception(
+        cls,
+        error: Exception,
+    ) -> bool:
+        """Return whether an exception is a trusted transient OpenAI error."""
+        error_type = type(error)
+        if error_type.__module__.split(".", maxsplit=1)[0] != "openai":
+            return False
+        code = getattr(error, "code", None)
+        if type(code) is str and code in cls._RETRYABLE_STREAM_ERROR_CODES:
+            return True
+        status_code = getattr(error, "status_code", None)
+        if type(status_code) is int and (
+            status_code == 429 or status_code >= 500
+        ):
+            return True
+        return error_type.__name__ in cls._RETRYABLE_STREAM_ERROR_TYPES
+
+    @classmethod
     def _is_retryable_response_failed_error_pair(
+        cls,
         response_error: object,
         event_error: object,
     ) -> bool:
+        """Return whether all reported terminal errors are transient."""
         if response_error is None and event_error is None:
             return True
         present_errors = tuple(
@@ -3890,9 +3966,18 @@ class OpenAIStream(TextGenerationVendorStream):
             if error is not None
         )
         return bool(present_errors) and all(
-            OpenAIClient._response_field(error, "code") == "response_failed"
+            cls._is_retryable_response_failed_error(error)
             for error in present_errors
         )
+
+    @classmethod
+    def _is_retryable_response_failed_error(cls, error: object) -> bool:
+        """Return whether one ``response.failed`` error is transient."""
+        code = OpenAIClient._response_field(error, "code")
+        return type(code) is str and code in {
+            "response_failed",
+            *cls._RETRYABLE_STREAM_ERROR_CODES,
+        }
 
     @staticmethod
     def _is_retry_blocking_output_event(
@@ -7069,26 +7154,55 @@ class OpenAIClient(TextGenerationVendor):
             normalized_request_kwargs = _strict_replay_json_copy(kwargs)
             assert isinstance(normalized_request_kwargs, dict)
             request_kwargs = cast(dict[str, Any], normalized_request_kwargs)
+            stream_retry_controller = ProviderRetryController(
+                stream_response_failed_retries,
+                initial_delay_seconds=(
+                    stream_response_failed_retry_delay_seconds
+                ),
+                maximum_delay_seconds=(_OPENAI_STREAM_RETRY_MAX_DELAY_SECONDS),
+            )
 
             async def create_response() -> Any:
                 self._raise_if_closed()
-                attempt_kwargs = _strict_replay_json_copy(request_kwargs)
-                assert isinstance(attempt_kwargs, dict)
                 provider_request_failed = False
                 provider_request_cancelled = False
                 created_response: Any = None
-                try:
-                    created_response = await request_client.responses.create(
-                        **cast(dict[str, Any], attempt_kwargs)
-                    )
-                except CancelledError:
-                    if not request_has_replay_items:
-                        raise
-                    provider_request_cancelled = True
-                except Exception:
-                    if not request_has_replay_items:
-                        raise
-                    provider_request_failed = True
+                while True:
+                    attempt_kwargs = _strict_replay_json_copy(request_kwargs)
+                    assert isinstance(attempt_kwargs, dict)
+                    try:
+                        created_response = (
+                            await request_client.responses.create(
+                                **cast(dict[str, Any], attempt_kwargs)
+                            )
+                        )
+                    except CancelledError:
+                        if not request_has_replay_items:
+                            raise
+                        provider_request_cancelled = True
+                        break
+                    except Exception as error:
+                        if not request_has_replay_items:
+                            raise
+                        retry_classifier = (
+                            OpenAIStream._is_retryable_provider_stream_exception
+                        )
+                        retryable_error = retry_classifier(error)
+                        if (
+                            not use_async_generator
+                            or not stream_retry_controller.can_retry()
+                            or not retryable_error
+                        ):
+                            provider_request_failed = True
+                            break
+                        delay = (
+                            stream_retry_controller.take_retry_delay_seconds()
+                        )
+                        if delay > 0:
+                            await sleep(delay)
+                        self._raise_if_closed()
+                        continue
+                    break
                 if provider_request_failed:
                     raise _OpenAIProviderRequestError() from None
                 if provider_request_cancelled:
@@ -7138,6 +7252,9 @@ class OpenAIClient(TextGenerationVendor):
                     ),
                     stream_retries=stream_response_failed_retries,
                     **stream_kwargs,
+                )
+                response_stream._share_retry_controller(
+                    stream_retry_controller
                 )
                 self._register_active_replay_stream(
                     replay_owner,

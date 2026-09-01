@@ -1,0 +1,36 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 13,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase13-provider-retry-review",
+  "reason": "Extract the bounded provider retry controller while preserving the native OpenAI continuation replay, privacy, and durable dispatch boundaries.",
+  "transitions": [
+    {
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "from_size": 337354,
+      "from_sha256": "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5",
+      "to_size": 342263,
+      "to_sha256": "9f3d32fa3de795b823bb8398372537d85ca24bab587864a5ec81a4be6e9871ea"
+    },
+    {
+      "path": "tests/conversation/domain_contract_test.py",
+      "from_size": 161460,
+      "from_sha256": "3d20fe77585eed53afcddec0127de6a40e3af2971a42fb4d343db9a90853eb80",
+      "to_size": 161569,
+      "to_sha256": "ae41797830124ac2aed8e59ca41c61e498685fabf0b5ef152a7a393141f89318"
+    },
+    {
+      "path": "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
+      "from_size": 98550,
+      "from_sha256": "8d324471af2263aa28e1e36ff66d2371e3fa1f57e1bf37f155fd57a994167772",
+      "to_size": 100430,
+      "to_sha256": "ce413aff06e5b71bc1e2e545af4f5f0fc197e7e71831ead2c0df23a379f33d61"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_private_replay_replacement_open_uses_shared_retry_budget",
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_no_production_conversation_dispatch_or_advertisement"
+  ],
+  "canonical_sha256": "fe71c11290a9c281aa8fdc946bca5bc7feb6394c24c6f55f05f1a3cbfc90552f"
+}
