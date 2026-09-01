@@ -16,8 +16,8 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import Request
-from openai import APIError
+from httpx import Request, Response
+from openai import APIError, InternalServerError
 from openai.types.responses import ResponseStreamEvent
 from openai.types.responses.response_function_tool_call import (
     ResponseFunctionToolCall,
@@ -3053,6 +3053,54 @@ def test_private_replay_rate_limit_create_error_retries() -> None:
 
     assert create.await_count == 2
     assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED for item in items
+    )
+
+
+def test_private_replay_server_error_create_retries_after_delay(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    call_id = "server-error-create-private"
+    create = AsyncMock(
+        side_effect=[
+            InternalServerError(
+                "service unavailable",
+                response=Response(
+                    503,
+                    request=Request(
+                        "POST",
+                        "https://provider.invalid/responses",
+                    ),
+                ),
+                body={},
+            ),
+            _AsyncEvents([_completed_event(text="answer")]),
+        ]
+    )
+    client = _retained_private_client(create, call_id)
+    client._stream_response_failed_retry_delay_seconds = 0.25
+    retry_delays: list[float] = []
+
+    async def capture_retry_delay(delay: float) -> None:
+        retry_delays.append(delay)
+
+    monkeypatch.setattr(openai_module, "sleep", capture_retry_delay)
+
+    items = run(
+        _consume(
+            run(
+                client(
+                    "plain-model",
+                    [_tool_result(call_id, "value")],
+                )
+            )
+        )
+    )
+
+    assert create.await_count == 2
+    assert retry_delays == [0.25]
     assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
     assert not any(
         item.kind is StreamItemKind.STREAM_ERRORED for item in items

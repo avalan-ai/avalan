@@ -2001,7 +2001,7 @@
       },
       {
         "path": "src/avalan/model/nlp/text/vendor/openai.py",
-        "source_sha256": "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5"
+        "source_sha256": "9f3d32fa3de795b823bb8398372537d85ca24bab587864a5ec81a4be6e9871ea"
       },
       {
         "path": "src/avalan/model/nlp/text/vendor/openrouter.py",
@@ -2050,6 +2050,10 @@
       {
         "path": "src/avalan/model/response/text.py",
         "source_sha256": "4a89fa993e46fb84a01d594683a7d439ff4a48ca1972a891393bfaab93227165"
+      },
+      {
+        "path": "src/avalan/model/retry.py",
+        "source_sha256": "602e56b2130908d8a3a7301256f93ad419d790c9ecf7febb2c2853caee9ee8e5"
       },
       {
         "path": "src/avalan/model/runtime.py",
@@ -2213,7 +2217,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "40bc6dd78adfd63a9a8ad98966970a0572d92f20ca625ef25fffede3fa77b917"
+        "source_sha256": "9221efd44fec3479bd4cad61e2fc38efbe75c0ff7638431f51aa5f4f066bf0ef"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -3277,6 +3281,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "a11e4303160ca1f1753aeb0e87185faee73913766f3bd70ba326d227780ff18a",
-  "record_sha256": "85cac5ed688dcc2378272c8a02a7a02b5a7a9bc7638de71222d68cecd04419a4"
+  "inventory_sha256": "484005d89efa0f2dc19cffabc3b74695c7b9ec18c4583c6c2cf860b814effce0",
+  "record_sha256": "c75540825a735fb13402d27d885720d7d58432c820fe818190c02ec43968c2cc"
 }

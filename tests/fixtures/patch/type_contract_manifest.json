@@ -974,7 +974,7 @@
         "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_phase12_provider_transitions"
       ],
-      "source_sha256": "4027d68f377d784a689b95eb93649db4127bff17fdf81e51ad136ac8cf663dfe"
+      "source_sha256": "8140b828126f73f2ff38d5fe7c927556ab3dbef9697720d8a3d083786fc446ae"
     },
     {
       "id": "PATCH-TS-053",
@@ -1102,7 +1102,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "40bc6dd78adfd63a9a8ad98966970a0572d92f20ca625ef25fffede3fa77b917"
+      "source_sha256": "9221efd44fec3479bd4cad61e2fc38efbe75c0ff7638431f51aa5f4f066bf0ef"
     },
     {
       "id": "PATCH-TS-067",
@@ -1246,7 +1246,7 @@
       "symbols": [
         "test_patch_phase_11_requirements"
       ],
-      "source_sha256": "7ea1315be0e32ba8ab76a640918ebddc4e25b413962b5848addad21da9f2bab1"
+      "source_sha256": "9c96b3641d3e1f3595f43e9564b3e7fd1be9bb2ff60f48b59dff4d13f3f8270c"
     },
     {
       "id": "PATCH-TS-083",
@@ -1769,7 +1769,16 @@
         "test_fake_copied_outputs_ignore_caller_umask"
       ],
       "source_sha256": "23d3b62877a9f35d442eb2adbde4dd6771d42a9ce16578a8bf377d9c697d379f"
+    },
+    {
+      "id": "PATCH-TS-133",
+      "path": "tests/model/nlp/vendor_openai_reasoning_summary_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_private_replay_server_error_create_retries_after_delay"
+      ],
+      "source_sha256": "ebe5606d6dc8ca7fce7d7d9f77d27bc9d384752d8fa6ab4563a6099517eab909"
     }
   ],
-  "manifest_sha256": "f0e38955993476f093ab3edc1528ae9e027e88e1002565908e67848221bd6ef0"
+  "manifest_sha256": "526cb66748b7c2554dcc04092e61b6aeb0c97aaaae9a615975d8b8d4291f9c7d"
 }
