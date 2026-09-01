@@ -1,6 +1,13 @@
 """Exercise the persistent narrow Docker patch service."""
 
-from asyncio import Event, create_subprocess_exec, create_task, run, sleep
+from asyncio import (
+    Event,
+    Task,
+    create_subprocess_exec,
+    create_task,
+    run,
+    sleep,
+)
 from asyncio.subprocess import DEVNULL, PIPE, Process
 from base64 import b64decode, b64encode
 from collections.abc import Mapping
@@ -12,6 +19,7 @@ from platform import machine
 from runpy import run_path
 from subprocess import run as run_process
 from sys import argv, executable
+from time import monotonic
 from types import SimpleNamespace
 from typing import Protocol, cast
 
@@ -20,6 +28,7 @@ from context_contract_corpus import (
     SHARED_CONTEXT_CORPUS,
     ContextCorpusCase,
 )
+from patch_activation_support import activated_patch_test_profile
 
 import avalan.patch.container_target as _CONTAINER
 import avalan.patch.rooted_worker as _ROOTED
@@ -189,10 +198,14 @@ _TEST_LEASE_AUTHORITY = ContainerPersistentLeaseAuthority.from_bytes(
 )
 _RESTART_PROCESS_BOOTSTRAP = (
     "import runpy,sys;"
-    "sys.path.insert(0,sys.argv[1]);"
-    "sys.argv=sys.argv[2:];"
+    "sys.path[:0]=sys.argv[1:3];"
+    "sys.argv=sys.argv[3:];"
     "runpy.run_path(sys.argv[0],run_name='__main__')"
 )
+_INITIAL_VOLUME_RACE_READY_TIMEOUT_SECONDS = 60.0
+_INITIAL_VOLUME_RACE_HOLD_TIMEOUT_SECONDS = 60.0
+_INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS = 10.0
+_INITIAL_VOLUME_RACE_POLL_SECONDS = 0.01
 
 
 class _DefaultContainerAuthority(Protocol):
@@ -850,14 +863,18 @@ async def _restart_process_from_config(config_path: Path) -> None:
             ):
                 paused = True
                 Path(barrier_ready).write_text("ready\n", encoding="utf-8")
-                for _ in range(1_000):
-                    if Path(barrier_release).is_file():
-                        break
-                    await sleep(0.01)
-                else:
-                    raise AssertionError(
-                        "initial volume race barrier timed out"
-                    )
+                hold_timeout_seconds = (
+                    _INITIAL_VOLUME_RACE_HOLD_TIMEOUT_SECONDS
+                    if barrier_stage == "volume_create"
+                    else _INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS
+                )
+                deadline = monotonic() + hold_timeout_seconds
+                while not Path(barrier_release).is_file():
+                    if monotonic() >= deadline:
+                        raise AssertionError(
+                            "initial volume race barrier timed out"
+                        )
+                    await sleep(_INITIAL_VOLUME_RACE_POLL_SECONDS)
             return output
 
         _CONTAINER._docker_output = gated_output
@@ -880,7 +897,7 @@ async def _restart_process_from_config(config_path: Path) -> None:
     )
     try:
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
     except TargetInspectionError as error:
         print(dumps({"error": error.code.value}), flush=True)
@@ -927,6 +944,7 @@ async def _run_restart_process(
         executable,
         "-c",
         _RESTART_PROCESS_BOOTSTRAP,
+        str(Path(__file__).resolve().parents[1]),
         str(Path(__file__).resolve().parent),
         str(Path(__file__).resolve()),
         "--phase11-restart-process",
@@ -940,6 +958,109 @@ async def _run_restart_process(
     payload = loads(stdout.decode("utf-8"))
     assert type(payload) is dict
     return payload
+
+
+def _assert_restart_process_live(
+    process: Task[Mapping[str, object]], stage: str
+) -> None:
+    """Fail immediately when one held restart process exits.
+
+    Args:
+        process: Restart-process task that must remain held.
+        stage: Exact synchronization stage that requires the held process.
+
+    Returns:
+        None.
+    """
+    if not process.done():
+        return
+    try:
+        outcome = process.result()
+    except BaseException as error:
+        raise AssertionError(
+            stage
+            + " exited before the barrier with "
+            + type(error).__name__
+            + ": "
+            + str(error)
+        ) from error
+    raise AssertionError(
+        stage + " exited before the barrier: " + repr(outcome)
+    )
+
+
+async def _wait_for_restart_barrier(
+    ready: Path,
+    process: Task[Mapping[str, object]],
+    stage: str,
+) -> None:
+    """Wait for one child barrier while checking its process liveness.
+
+    Args:
+        ready: Child-written file that attests barrier entry.
+        process: Restart-process task that must remain live until release.
+        stage: Exact synchronization stage that requires the barrier.
+
+    Returns:
+        None.
+    """
+    deadline = monotonic() + _INITIAL_VOLUME_RACE_READY_TIMEOUT_SECONDS
+    while not ready.is_file():
+        _assert_restart_process_live(process, stage)
+        if monotonic() >= deadline:
+            raise AssertionError(stage + " did not reach the barrier")
+        await sleep(_INITIAL_VOLUME_RACE_POLL_SECONDS)
+    _assert_restart_process_live(process, stage)
+
+
+async def _await_restart_process_while_held(
+    process: Task[Mapping[str, object]],
+    held_process: Task[Mapping[str, object]],
+    stage: str,
+) -> Mapping[str, object]:
+    """Await one contender while failing on a held process exit.
+
+    Args:
+        process: Contender restart-process task to await.
+        held_process: Initial restart-process task retained at the barrier.
+        stage: Exact synchronization stage that requires the held process.
+
+    Returns:
+        Parsed terminal contender result.
+    """
+    while not process.done():
+        _assert_restart_process_live(held_process, stage)
+        await sleep(_INITIAL_VOLUME_RACE_POLL_SECONDS)
+    _assert_restart_process_live(held_process, stage)
+    return process.result()
+
+
+def test_patch_phase_11_initial_volume_race_rejects_held_process_exit() -> (
+    None
+):
+    """Fail before a contender result when the held process has exited."""
+
+    async def exited() -> Mapping[str, object]:
+        """Return one unexpected closed restart-process result."""
+        return {"error": "unexpected"}
+
+    async def exercise() -> None:
+        """Require the held task to be checked before a contender result."""
+        held_process = create_task(exited())
+        contender_process = create_task(exited())
+        await held_process
+        await contender_process
+        with pytest.raises(
+            AssertionError,
+            match="initial volume race while contender starts exited",
+        ):
+            await _await_restart_process_while_held(
+                contender_process,
+                held_process,
+                "initial volume race while contender starts",
+            )
+
+    run(exercise())
 
 
 def test_patch_phase_11_container_authority_rejects_unavailable_boundaries(
@@ -2790,7 +2911,7 @@ def test_patch_phase_11_reuses_shared_context_contract_corpus(
         )
         binder = _binder(settings, configuration, store)
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit", "patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -2934,7 +3055,7 @@ def test_patch_phase_11_subroot_commit_and_root_replacement_race(
             settings, _configuration(_Clock(), approval_authority), store
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -3035,7 +3156,7 @@ def test_patch_phase_11_commits_container_move_with_private_artifact_cleanup(
         image = await _test_image()
         binder = _binder(_settings(source, image), configuration, store)
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -3091,7 +3212,7 @@ def test_patch_phase_11_scopes_container_mutation_to_trusted_cwd(
         )
         binder = _binder(settings, configuration, store)
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -3142,10 +3263,11 @@ def test_patch_phase_11_inactive_profile_never_starts_or_advertises_runtime(
             PatchTestHostProfile(enabled=True, authenticated=False),
         ):
             binder = _binder(_settings(source, image), configuration, store)
-            with pytest.raises(PatchToolError):
-                await PatchToolLoader(binder, profile).load(
-                    enable_tools=["patch.edit"]
-                )
+            bundle = await PatchToolLoader(binder, profile).load(
+                enable_tools=["patch.edit"]
+            )
+            assert bundle.toolset is None
+            assert bundle.manager.list_tools() == []
             assert binder.runtime._process._process is None
             assert binder.runtime._process.volume_name is None
 
@@ -3173,9 +3295,9 @@ def test_patch_phase_11_missing_container_endpoint_fails_closed(
             SandboxPatchSdkService, "_patch_container_endpoint"
         )
         with pytest.raises(PatchToolError, match="container endpoint"):
-            await PatchToolLoader(
-                binder, PatchTestHostProfile(enabled=True, authenticated=True)
-            ).load(enable_tools=["patch.edit"])
+            await PatchToolLoader(binder, activated_patch_test_profile()).load(
+                enable_tools=["patch.edit"]
+            )
         assert binder.runtime._process._process is None
         await binder.runtime.dispose()
 
@@ -3211,7 +3333,7 @@ def test_patch_phase_11_wrong_container_binder_reaps_runtime(
         with pytest.raises(PatchToolError, match="selected runtime"):
             await PatchToolLoader(
                 WrongBinder(),
-                PatchTestHostProfile(enabled=True, authenticated=True),
+                activated_patch_test_profile(),
             ).load(enable_tools=["patch.edit"])
         assert binder.runtime._process._process is None
         await binder.runtime.dispose()
@@ -3241,9 +3363,7 @@ def test_patch_phase_11_requirements(tmp_path: Path) -> None:
         settings = _settings(source, image)
         binder = _binder(settings, configuration, store)
         runtime = binder.runtime
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         bundle = await loader.load(enable_tools=["patch.edit", "patch.apply"])
         assert bundle.toolset is not None
         scope = await runtime.resolve(ScopeSelection(ContextKind.CONTAINER))
@@ -3548,22 +3668,24 @@ def test_patch_phase_11_serializes_initial_volume_creation_across_processes(
                 encoding="utf-8",
             )
             first_task = create_task(_run_restart_process(first_config))
-            for _ in range(1_000):
-                if ready.is_file():
-                    break
-                if first_task.done():
-                    raise AssertionError(
-                        "initial volume race exited before the barrier: "
-                        + repr(first_task.result())
-                    )
-                await sleep(0.01)
-            else:
-                raise AssertionError(
-                    "initial volume race did not reach barrier"
-                )
+            await _wait_for_restart_barrier(
+                ready, first_task, "initial volume race"
+            )
+            await sleep(
+                _INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS
+                + _INITIAL_VOLUME_RACE_POLL_SECONDS
+            )
+            _assert_restart_process_live(first_task, "initial volume race")
 
             contender_config.write_text(dumps(base), encoding="utf-8")
-            contender = await _run_restart_process(contender_config)
+            contender_task = create_task(
+                _run_restart_process(contender_config)
+            )
+            contender = await _await_restart_process_while_held(
+                contender_task,
+                first_task,
+                "initial volume race while contender starts",
+            )
             assert contender == {"error": TargetErrorCode.WITNESS_STALE.value}
             assert (
                 await _docker_output(("docker", "inspect", guard)) is not None
@@ -4058,9 +4180,7 @@ def test_patch_phase_11_e2e_020_reconciles_cancelled_multifile_apply(
         image = await _test_image()
         settings = _settings(source, image)
         binder = _binder(settings, configuration, store)
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         bundle = await loader.load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.toolset.__aenter__()
@@ -4089,18 +4209,15 @@ def test_patch_phase_11_e2e_020_reconciles_cancelled_multifile_apply(
             )
             == "second-before\n"
         )
-        fresh = await loader.load(enable_tools=["patch.apply"])
-        assert fresh.toolset is not None
-        attached = await fresh.toolset.sdk_host().retransmit_json(
+        fresh_host = bundle.toolset.sdk_host()
+        attached = await fresh_host.retransmit_json(
             OperationType.APPLY,
             arguments,
             pending.request_id,
             pending.correlation_id,
         )
         assert attached == pending
-        terminal = create_task(
-            fresh.toolset.sdk_host().await_terminal(attached)
-        )
+        terminal = create_task(fresh_host.await_terminal(attached))
         store.release_effect.set()
         result = await terminal
         assert isinstance(result, PatchResult)
@@ -4174,9 +4291,7 @@ def test_patch_phase_11_e2e_021_fences_replaced_plan_bound_context(
         image = await _test_image()
         settings = _settings(source, image)
         binder = _binder(settings, configuration, store)
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         bundle = await loader.load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.toolset.__aenter__()
@@ -4241,7 +4356,7 @@ def test_patch_phase_11_reconciles_post_dispatch_stale_after_first_effect(
         settings = _settings(source, image)
         binder = _binder(settings, _configuration(_Clock(), authority), store)
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -4379,7 +4494,7 @@ def test_patch_phase_11_preserves_container_representation_and_metadata(
             store,
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -4529,7 +4644,7 @@ def test_patch_phase_11_rejects_hostile_container_volume_topology(
             store,
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -4578,7 +4693,7 @@ def test_patch_phase_11_container_public_lifecycle_and_surfaces_are_redacted(
         settings = _settings(source, image)
         binder = _binder(settings, _configuration(_Clock(), authority), store)
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -4712,10 +4827,10 @@ def test_patch_phase_11_serializes_container_contexts_in_one_domain(
             second_settings, _configuration(_Clock(), authority), store
         )
         first_bundle = await PatchToolLoader(
-            first, PatchTestHostProfile(enabled=True, authenticated=True)
+            first, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         second_bundle = await PatchToolLoader(
-            second, PatchTestHostProfile(enabled=True, authenticated=True)
+            second, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert first_bundle.toolset is not None
         assert second_bundle.toolset is not None
@@ -4787,7 +4902,7 @@ def test_patch_phase_11_rejects_mismatched_domain_for_one_persistent_volume(
         settings = _settings(source, image)
         first = _binder(settings, _configuration(_Clock(), authority), store)
         first_bundle = await PatchToolLoader(
-            first, PatchTestHostProfile(enabled=True, authenticated=True)
+            first, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert first_bundle.toolset is not None
         mismatched = replace(
@@ -4809,7 +4924,7 @@ def test_patch_phase_11_rejects_mismatched_domain_for_one_persistent_volume(
             with pytest.raises(TargetInspectionError) as rejected:
                 await PatchToolLoader(
                     second,
-                    PatchTestHostProfile(enabled=True, authenticated=True),
+                    activated_patch_test_profile(),
                 ).load(enable_tools=["patch.edit"])
             assert rejected.value.code is TargetErrorCode.WITNESS_STALE
             assert second.runtime._process.volume_name is None
@@ -4843,7 +4958,7 @@ def test_patch_phase_11_rejects_destination_race_at_container_fence(
             store,
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -4925,7 +5040,7 @@ def test_patch_phase_11_service_loss_at_fence_stays_pending_without_effect(
             store,
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.toolset.__aenter__()
@@ -4985,7 +5100,7 @@ def test_patch_phase_11_container_service_has_only_its_sealed_authority(
             store,
         )
         bundle = await PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
+            binder, activated_patch_test_profile()
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         try:

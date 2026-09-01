@@ -2187,6 +2187,14 @@ class OrchestratorLoader:
                 settings=manager_settings,
             )
         else:
+            activation_module = import_module("avalan.patch.activation")
+            activation_factory = patch_settings.activation_factory
+            if activation_factory is None:
+                activation_factory = patch_settings.profile.activation_factory
+            if activation_factory is None:
+                activation_factory = (
+                    activation_module.build_patch_runtime_activation_factory()
+                )
             patch_bundle = await PatchToolLoader(
                 patch_settings.binder,
                 patch_settings.profile,
@@ -2194,6 +2202,7 @@ class OrchestratorLoader:
                 enable_tools=effective_enabled_tools,
                 ordinary_toolsets=available_toolsets,
                 settings=manager_settings,
+                activation_factory=activation_factory,
             )
             tool = patch_bundle.manager
         tool = await self._stack.enter_async_context(tool)

@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import httpx
 import pytest
 from fastapi import FastAPI, Request
+from patch_activation_support import activated_patch_test_profile
 from phase_8_store_test import _approval, _backend
 
 from avalan.flow.flow import Flow
@@ -129,7 +130,6 @@ from avalan.patch.toolset import (
     PatchCoordinatorBinding,
     PatchPersistenceBinding,
     PatchSdkHost,
-    PatchTestHostProfile,
     PatchToolLoader,
     PatchToolSet,
 )
@@ -1396,7 +1396,7 @@ def test_patch_e2e_033_selected_runtime_suspends_then_commits(
         )
         bundle = await PatchToolLoader(
             binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit", "patch.apply"])
         toolset = bundle.toolset
         binding = bundle.runtime_binding

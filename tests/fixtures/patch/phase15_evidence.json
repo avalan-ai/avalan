@@ -1,0 +1,221 @@
+{
+  "schema_version": 1,
+  "feature": "patch",
+  "phase": 15,
+  "status": "in_progress",
+  "scope": "Phase 15 remediation is in progress: its active E2E nodes are unique direct integrations, while lower-phase results remain supporting evidence only. E2E037 uses the authenticated final-revalidation barrier and a subprocess foreign writer; E2E039 invokes every selected adapter through the activated public loader; E2E042 proves configured ingress limits through the provider, ToolManager, and durable owner boundaries. No native-platform execution receipt has passed; exact clean-environment and platform receipts remain pending.",
+  "recorded_on": "2026-08-29",
+  "ownership": {
+    "implementation_owners": [
+      "phase15-implementation"
+    ],
+    "review_owners": [
+      "pending-independent-review"
+    ],
+    "base_sha": "0b16e92b09cd716a48e8a24919c46a705f96278e",
+    "head_sha": "0b16e92b09cd716a48e8a24919c46a705f96278e"
+  },
+  "changed_paths": [
+    "docs/PATCH.md",
+    "scripts/run_patch_contract_gate.py",
+    "scripts/verify_patch_acceptance.py",
+    "scripts/verify_patch_types.py",
+    "scripts/verify_src_coverage.py",
+    "src/avalan/agent/loader.py",
+    "src/avalan/patch/activation.py",
+    "src/avalan/patch/durable_store.py",
+    "src/avalan/patch/local_commit.py",
+    "src/avalan/patch/sandbox_commit.py",
+    "src/avalan/patch/sandbox_worker.py",
+    "src/avalan/patch/target.py",
+    "src/avalan/patch/toolset.py",
+    "tests/cli/patch_review_pty_e2e_test.py",
+    "tests/fixtures/patch/acceptance_history.json",
+    "tests/fixtures/patch/acceptance_manifest.json",
+    "tests/fixtures/patch/activation_manifest.json",
+    "tests/fixtures/patch/baseline_evidence.json",
+    "tests/fixtures/patch/contract_decisions.json",
+    "tests/fixtures/patch/phase15_evidence.json",
+    "tests/fixtures/patch/phase15_fuzz_corpus.json",
+    "tests/fixtures/patch/requirements_traceability.json",
+    "tests/fixtures/patch/source_symbols.json",
+    "tests/fixtures/patch/type_contract_manifest.json",
+    "tests/patch/phase_10_contract_test.py",
+    "tests/patch/phase_15_contract_test.py",
+    "tests/patch/phase_15_hardening_test.py",
+    "tests/patch/phase_4_contract_test.py",
+    "tests/patch/phase_9_contract_test.py",
+    "tests/patch_activation_support.py"
+  ],
+  "exact_gate": {
+    "status": "pending",
+    "reason": "The Phase 15 clean-environment exact gate has not been run for this in-progress record."
+  },
+  "commands": [
+    {
+      "id": "PATCH-CMD-P15-EXACT",
+      "command": "make test-patch-pgsql-exact no-install PATCH_PHASE=15",
+      "status": "pending",
+      "reason": "Pending the parent-owned clean-environment exact gate."
+    },
+    {
+      "id": "PATCH-CMD-P15-DARWIN",
+      "command": "make test-patch-exact no-install PATCH_PHASE=15",
+      "status": "pending",
+      "reason": "Pending a Darwin platform receipt."
+    },
+    {
+      "id": "PATCH-CMD-P15-LINUX",
+      "command": "make test-patch-pgsql-exact no-install PATCH_PHASE=15",
+      "status": "pending",
+      "reason": "Pending Linux and container platform receipts."
+    }
+  ],
+  "artifact_digests": [],
+  "suite_facts": [],
+  "coverage": {
+    "status": "pending",
+    "reason": "No exact-gate coverage artifact is retained for this in-progress record."
+  },
+  "node_counts": {
+    "active_requirements": 1017,
+    "planned_requirements": 0,
+    "active_acceptance_nodes": 145,
+    "planned_acceptance_nodes": 0
+  },
+  "quality_gates": {
+    "project_mypy": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "patch_mypy": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "positive_type_assertions": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "rejected_type_diagnostics": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "blocking_io_scan": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "async_heartbeat": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    },
+    "resource_leaks": {
+      "status": "pending",
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "evidence": "Pending the retained exact-gate receipt."
+    }
+  },
+  "database_lifecycle": {
+    "migration_revision": "pending_phase_15",
+    "schema_identity": "pending_phase_15",
+    "crash_restart_boundary": "pending_phase_15",
+    "encryption_key_fixture_version": "pending_phase_15",
+    "outbox_settlement": "pending_phase_15",
+    "teardown_proof": "pending_phase_15"
+  },
+  "platform_receipts": {
+    "darwin_seatbelt": {
+      "status": "pending",
+      "evidence": "No Darwin Seatbelt receipt has been recorded."
+    },
+    "linux_bubblewrap": {
+      "status": "pending",
+      "evidence": "No Linux Bubblewrap or container receipt has been recorded."
+    }
+  },
+  "profiles": [
+    {
+      "id": "PATCH-PROFILE-P15-LOCAL-SANDBOX",
+      "kind": "scripted",
+      "contexts": [
+        "local",
+        "sandbox"
+      ],
+      "command_id": "PATCH-CMD-P15-EXACT",
+      "e2e_ids": [
+        "PATCH-E2E-037",
+        "PATCH-E2E-038",
+        "PATCH-E2E-040",
+        "PATCH-E2E-042"
+      ],
+      "receipt": "Unique Phase 15 E2E038, E2E040, and E2E042 execute direct public ToolManager boundaries locally but are not an exact-gate receipt. The one focused E2E037 attempt reached an alias witness-staleness assertion before the newly corrected alias scope and before its native worker receipt. The focused E2E039 attempt reached the public local ToolManager path and reported patch.worker_unavailable; no passed local or sandbox receipt is recorded."
+    },
+    {
+      "id": "PATCH-PROFILE-P15-CONTAINER",
+      "kind": "inactive",
+      "contexts": [
+        "container"
+      ],
+      "command_id": "PATCH-CMD-P15-LINUX",
+      "e2e_ids": [
+        "PATCH-E2E-039",
+        "PATCH-E2E-041"
+      ],
+      "receipt": "Unique Phase 15 E2E039 constructs and invokes the activated production sandbox and container binders. This host has no supported sandbox/container worker receipt; the focused invocation reports patch.worker_unavailable and no platform result is claimed. Container activation remains non-advertised and the supported-platform receipt is pending."
+    }
+  ],
+  "e2e_ids": [
+    "PATCH-E2E-037",
+    "PATCH-E2E-038",
+    "PATCH-E2E-039",
+    "PATCH-E2E-040",
+    "PATCH-E2E-041",
+    "PATCH-E2E-042"
+  ],
+  "redaction_and_bounds": {
+    "redaction_canary": "not_run",
+    "renderer_injection": "not_run",
+    "timing_disclosure": "not_run",
+    "fuzz": "not_run",
+    "liveness": "not_run",
+    "retention": "not_run",
+    "diagnostic_separation": "not_run",
+    "max_request_bytes": 65536,
+    "max_duration_ticks": 10
+  },
+  "review": {
+    "rounds": [
+      {
+        "round": 1,
+        "findings": [
+          {
+            "id": "PATCH-REVIEW-P15-001",
+            "severity": "P3",
+            "disposition": "open",
+            "owner": "pending-independent-review",
+            "evidence": "Independent Phase 15 review has not run.",
+            "rationale": "This in-progress evidence record must not imply independent review completion."
+          }
+        ],
+        "residual_risks": [
+          "Darwin, Linux, and container receipts are pending.",
+          "The final clean-environment gate and receipt audit are pending."
+        ]
+      }
+    ]
+  },
+  "active_node_ids": [],
+  "external_effects": {
+    "deployment": false,
+    "publication": false,
+    "live_call": false,
+    "workspace_mutation": false,
+    "production_activation": false
+  },
+  "record_sha256": "0e8bfa4116c078ae9c8d6b0412a84ab9422cdc1fd2281b423ece0ca2d19209ea"
+}

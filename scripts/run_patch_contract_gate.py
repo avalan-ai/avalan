@@ -42,7 +42,7 @@ from verify_patch_types import (
     load_manifest as load_patch_type_manifest,
 )
 
-_PATCH_CURRENT_PHASE = 14
+_PATCH_CURRENT_PHASE = 15
 _PATCH_DATABASE_PHASE = 8
 _INPUT_MANIFEST = "tests/fixtures/input/acceptance_manifest.json"
 _CONVERSATION_MANIFEST = (
@@ -74,7 +74,7 @@ _PHASE_EVIDENCE_SIDECAR_PATHS = (
     ".patch-phase-evidence-coverage.xml",
     ".patch-phase-evidence-pytest-facts.json",
 )
-_PHASE_EVIDENCE_PATH = "tests/fixtures/patch/phase14_evidence.json"
+_PHASE_EVIDENCE_PATH = "tests/fixtures/patch/phase15_evidence.json"
 _LEGACY_POSTGRESQL_LEASE_ENV = "AVALAN_TASK_TEST_POSTGRESQL_LEASE_SHA256"
 
 

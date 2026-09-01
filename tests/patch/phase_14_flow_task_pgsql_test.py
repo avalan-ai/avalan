@@ -15,6 +15,7 @@ from traceback import extract_tb
 from uuid import uuid4
 
 import pytest
+from patch_activation_support import activated_patch_test_profile
 from phase_8_store_test import (
     _APPROVAL_AUTHORITY,
     _approval,
@@ -108,7 +109,6 @@ from avalan.patch.toolset import (
     PatchCoordinatorBinding,
     PatchPersistenceBinding,
     PatchSdkHost,
-    PatchTestHostProfile,
     PatchToolLoader,
     PatchToolSet,
 )
@@ -408,7 +408,7 @@ async def _task(
     if progress is not None:
         progress("runtime-loader-start")
     bundle = await PatchToolLoader(
-        binder, PatchTestHostProfile(enabled=True, authenticated=True)
+        binder, activated_patch_test_profile()
     ).load(enable_tools=["patch.edit", "patch.apply"])
     if progress is not None:
         progress("runtime-loader-ready")

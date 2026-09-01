@@ -817,6 +817,7 @@ def sanitized_environment(
             for path in (
                 resolved_root / "src",
                 resolved_root / "scripts",
+                resolved_root / "tests",
             )
             if path.is_dir()
         ),

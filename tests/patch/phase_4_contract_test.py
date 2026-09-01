@@ -926,6 +926,15 @@ def test_patch_phase_4_builds_linux_bubblewrap_worker_view(
     profile = _profile(tmp_path)
     worker_argv = (executable, "-I", "-c", "pass")
     monkeypatch.setattr(target_module, "platform", "linux")
+    linked_venv = tmp_path / "linked-venv"
+    linked_bin = linked_venv / "bin"
+    linked_bin.mkdir(parents=True)
+    linked_interpreter = linked_bin / "python"
+    linked_interpreter.symlink_to(Path(executable).resolve())
+    monkeypatch.setattr(target_module, "executable", str(linked_interpreter))
+    roots = target_module._bubblewrap_worker_read_roots()
+    assert str(linked_bin) not in roots
+    assert str(linked_interpreter.resolve().parent) in roots
     command, environment = target_module._worker_sandbox_command(
         profile,
         worker_argv,
@@ -1031,6 +1040,99 @@ def test_patch_phase_4_builds_linux_bubblewrap_worker_view(
     monkeypatch.setattr(target_module, "cryptography_file", None)
     with pytest.raises(TargetInspectionError):
         target_module._bubblewrap_worker_read_roots()
+
+
+def test_patch_phase_4_linux_worker_request_resolves_symlinked_interpreter(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Launch a Linux worker through its resolved interpreter mount source."""
+    profile = _profile(tmp_path)
+    linked_venv = tmp_path / "linked-venv"
+    linked_bin = linked_venv / "bin"
+    linked_bin.mkdir(parents=True)
+    linked_interpreter = linked_bin / "python"
+    initial_interpreter = Path(executable).resolve()
+    linked_interpreter.symlink_to(initial_interpreter)
+    alternate_interpreter = tmp_path / "alternate-bin" / "python"
+    alternate_interpreter.parent.mkdir()
+    alternate_interpreter.write_text("not executed", encoding="utf-8")
+    captured_command: tuple[str, ...] | None = None
+
+    class Process:
+        """Return one authenticated witness envelope without a child.
+
+        This keeps the interpreter-path regression outside a real sandbox.
+        """
+
+        returncode = 0
+
+        async def communicate(self, _message: bytes) -> tuple[bytes, bytes]:
+            """Return the sealed successful worker response."""
+            payload: dict[str, list[object]] = {"snapshots": []}
+            encoded_payload = dumps(payload, separators=(",", ":")).encode()
+            response = dumps(
+                {
+                    "payload": payload,
+                    "mac": (
+                        digest(
+                            profile._worker_authorization.token,
+                            encoded_payload,
+                            "sha256",
+                        ).hex()
+                    ),
+                },
+                separators=(",", ":"),
+            ).encode()
+            return response, b""
+
+    async def available() -> bool:
+        """Keep this regression on the selected Linux worker path."""
+        return True
+
+    original_read_roots = target_module._bubblewrap_worker_read_roots
+
+    def read_roots(
+        resolved_interpreter: Path | None = None,
+    ) -> tuple[str, ...]:
+        """Swap the raw symlink after capture but before mount assembly."""
+        assert resolved_interpreter == initial_interpreter
+        linked_interpreter.unlink()
+        linked_interpreter.symlink_to(alternate_interpreter)
+        return original_read_roots(resolved_interpreter)
+
+    async def launch(*arguments: str, **_kwargs: object) -> Process:
+        """Capture the real Bubblewrap command and return one response."""
+        nonlocal captured_command
+        captured_command = arguments
+        return Process()
+
+    monkeypatch.setattr(target_module, "platform", "linux")
+    monkeypatch.setattr(target_module, "executable", str(linked_interpreter))
+    monkeypatch.setattr(target_module, "_local_worker_available", available)
+    monkeypatch.setattr(
+        target_module, "_bubblewrap_worker_read_roots", read_roots
+    )
+    monkeypatch.setattr(target_module, "create_subprocess_exec", launch)
+
+    response = run(target_module._worker_request(profile, "witness", (), None))
+    assert response == {"snapshots": []}
+    assert captured_command is not None
+    separator = captured_command.index("--")
+    assert captured_command[separator + 1] == str(initial_interpreter)
+    assert (
+        "--ro-bind",
+        str(initial_interpreter.parent),
+        str(initial_interpreter.parent),
+    ) in tuple(
+        zip(captured_command, captured_command[1:], captured_command[2:])
+    )
+    assert (
+        "--ro-bind",
+        str(alternate_interpreter.parent),
+        str(alternate_interpreter.parent),
+    ) not in tuple(
+        zip(captured_command, captured_command[1:], captured_command[2:])
+    )
 
 
 def test_patch_phase_4_linux_worker_availability_and_acl_soname(

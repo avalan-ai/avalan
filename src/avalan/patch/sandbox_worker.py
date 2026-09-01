@@ -197,6 +197,10 @@ def _worker_source_digest(source_package: Path) -> str:
     """Hash the exact immutable worker source imported by this child."""
     if not source_package.is_dir():
         raise ValueError
+    excluded = {
+        Path("patch/local_commit.py"),
+        Path("patch/sandbox_commit.py"),
+    }
     files = tuple(
         path
         for path in sorted(source_package.rglob("*"))
@@ -204,6 +208,7 @@ def _worker_source_digest(source_package: Path) -> str:
         and not path.is_symlink()
         and "__pycache__" not in path.parts
         and not path.name.endswith(".pyc")
+        and path.relative_to(source_package) not in excluded
     )
     if not files:
         raise ValueError

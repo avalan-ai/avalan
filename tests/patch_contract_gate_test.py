@@ -62,6 +62,31 @@ def _patch_startup_environment() -> dict[str, str]:
     return environment
 
 
+def test_patch_contract_gate_allows_the_declared_test_support_root(
+    tmp_path: Path,
+) -> None:
+    """Expose explicit cross-directory test support to the isolated gate."""
+    root = tmp_path / "repository"
+    runtime = tmp_path / "runtime"
+    for path in (root / "src", root / "scripts", root / "tests"):
+        path.mkdir(parents=True, exist_ok=True)
+    environment = _CONTRACT_GATE.sanitized_environment(
+        root,
+        runtime,
+        trusted_python_root=_ROOT,
+    )
+    assert environment["PYTHONPATH"].split(pathsep) == [
+        str(runtime / "python-startup"),
+        str(root / "src"),
+        str(root / "scripts"),
+        str(root / "tests"),
+    ]
+    assert (
+        environment["AVALAN_CONTRACT_ALLOWED_PYTHONPATH"]
+        == environment["PYTHONPATH"]
+    )
+
+
 def _copy_fixtures(destination: Path) -> None:
     """Copy the complete patch fixture bundle into one disposable directory."""
     destination.mkdir()
@@ -143,7 +168,7 @@ def test_patch_gate_contract_is_current() -> None:
         (_FIXTURES / "baseline_evidence.json").read_text(encoding="utf-8")
     )
     assert isinstance(baseline, dict)
-    assert baseline["phase"] == 14
+    assert baseline["phase"] == 15
     assert baseline["patch_tools"] == []
     facts = baseline["section2_facts"]
     assert isinstance(facts, list)
@@ -166,7 +191,7 @@ def test_patch_gate_contract_is_current() -> None:
     }
     assert not (_ROOT / "src" / "avalan" / "tool" / "patch.py").exists()
     assert _GATE._PATCH_DATABASE_PHASE == 8
-    assert _GATE._PATCH_CURRENT_PHASE == 14
+    assert _GATE._PATCH_CURRENT_PHASE == 15
 
 
 @pytest.mark.parametrize(

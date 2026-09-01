@@ -2,7 +2,7 @@
 
 from asyncio import run, sleep, wait_for
 from collections.abc import Awaitable, Callable, Mapping
-from os import environ
+from os import environ, pathsep
 from pathlib import Path
 from runpy import run_path
 from secrets import token_urlsafe
@@ -15,6 +15,7 @@ from time import monotonic
 import httpx
 import pytest
 from fastapi import FastAPI, Request
+from patch_activation_support import patch_test_activation_factory
 
 from avalan.patch.coordinator import RetransmissionKey
 from avalan.patch.domain import (
@@ -263,6 +264,7 @@ def test_remote_server_runs_selected_sandbox_edit_to_terminal(
             authority_resolver=_Resolver(remote_authority),
             expected_authority=remote_authority,
             binder=binder,
+            activation_factory=patch_test_activation_factory(),
             store=store,
             handle_key=b"s" * 32,
             runtime_witness=RemotePatchRuntimeWitness(
@@ -404,6 +406,19 @@ def test_remote_tcp_runs_selected_sandbox_apply_to_terminal(
         note.write_text("before\n", encoding="utf-8")
         port = _loopback_port()
         secret = token_urlsafe(32)
+        test_root = str(Path("tests").resolve())
+        server_root = str(Path("tests/server").resolve())
+        child_pythonpath = pathsep.join(
+            (
+                *(
+                    item
+                    for item in environ.get("PYTHONPATH", "").split(pathsep)
+                    if item not in {test_root, server_root}
+                ),
+                test_root,
+                server_root,
+            )
+        )
         process = Popen(
             [
                 executable,
@@ -431,6 +446,8 @@ def test_remote_tcp_runs_selected_sandbox_apply_to_terminal(
                 "AVALAN_PATCH_SANDBOX_TCP_ROOT": str(root),
                 "AVALAN_PATCH_SANDBOX_TCP_NAMESPACE": str(namespace),
                 "AVALAN_PATCH_SANDBOX_TCP_SECRET": secret,
+                "PYTHONPATH": child_pythonpath,
+                "AVALAN_CONTRACT_ALLOWED_PYTHONPATH": child_pythonpath,
             },
         )
         base_url = f"http://127.0.0.1:{port}"

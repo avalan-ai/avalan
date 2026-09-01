@@ -10,7 +10,7 @@ from contextlib import AbstractAsyncContextManager
 from dataclasses import dataclass, field
 from enum import Enum
 from hashlib import sha256
-from typing import Protocol
+from typing import Protocol, runtime_checkable
 
 from avalan.patch.coordinator import RetransmissionKey
 from avalan.patch.domain import (
@@ -931,6 +931,7 @@ class DurableStoreLimits:
             raise DurableStoreError(DurableStoreErrorCode.RETENTION_LIMIT)
 
 
+@runtime_checkable
 class DurablePatchStore(Protocol):
     """Persist one strict async durable patch semantic request contract."""
 

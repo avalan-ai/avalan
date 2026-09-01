@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx
 import pytest
 from fastapi import FastAPI, Request
+from patch_activation_support import patch_test_activation_factory
 
 from avalan.patch.domain import Capability, DurationTicks, ExpiryTick
 from avalan.patch.durable_approval import (
@@ -236,6 +237,7 @@ def _configuration(
             authority_resolver=_Resolver(authority),
             expected_authority=authority,
             binder=binder,
+            activation_factory=patch_test_activation_factory(),
             store=store,
             handle_key=handle_key,
             runtime_witness=RemotePatchRuntimeWitness(

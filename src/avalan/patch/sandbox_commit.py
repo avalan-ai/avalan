@@ -34,7 +34,7 @@ from stat import S_IEXEC, S_IREAD
 from sys import executable
 from tempfile import mkdtemp
 from types import MappingProxyType, TracebackType
-from typing import NewType, Protocol, TypedDict
+from typing import NewType, Protocol, TypedDict, runtime_checkable
 
 from cffi import __file__ as cffi_file
 from cryptography import __file__ as cryptography_file
@@ -224,7 +224,7 @@ _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PROCESS_STARTUP_IO_SECONDS = 10.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "08f03c79c131568eab6ca6a8070a1976b4c288d85bfd1d52ac89d0e2ee8be834"
+    "62751d66e2d8407ae959bc311134df12714dd60fc0a39c1b4f50a224bb8d7c59"
 )
 
 
@@ -790,6 +790,8 @@ def _runtime_child_command(
     source_root: Path,
     worker_argv: tuple[str, ...],
     encoded_config: str,
+    *,
+    resolved_interpreter: Path | None = None,
 ) -> tuple[str, ...]:
     """Build the sole native child command for the selected runtime view."""
     match profile.execution_plan.settings.backend:
@@ -808,6 +810,7 @@ def _runtime_child_command(
                 source_root,
                 worker_argv,
                 encoded_config,
+                resolved_interpreter=resolved_interpreter,
             )
         case _:
             raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
@@ -846,9 +849,11 @@ def _bubblewrap_runtime_command(
     source_root: Path,
     worker_argv: tuple[str, ...],
     encoded_config: str,
+    *,
+    resolved_interpreter: Path | None = None,
 ) -> tuple[str, ...]:
     """Mount the selected view without exposing host workspace paths."""
-    roots = _bubblewrap_read_roots(profile, source_root)
+    roots = _bubblewrap_read_roots(profile, source_root, resolved_interpreter)
     directories = _bubblewrap_parent_directories(
         (
             *roots,
@@ -900,16 +905,18 @@ def _bubblewrap_runtime_command(
 
 
 def _bubblewrap_read_roots(
-    profile: SandboxRuntimeProfile, source_root: Path
+    profile: SandboxRuntimeProfile,
+    source_root: Path,
+    resolved_interpreter: Path | None = None,
 ) -> tuple[str, ...]:
     """Return only interpreter and runtime-code roots needed by the child."""
+    interpreter = resolved_interpreter or Path(base_executable).resolve()
     values = (
         Path("/lib"),
         Path("/lib64"),
         Path("/usr/lib"),
-        Path(base_executable).parent,
-        Path(base_executable).resolve().parent,
-        Path(base_executable).resolve().parent.parent,
+        interpreter.parent,
+        interpreter.parent.parent,
         source_root,
     )
     roots: list[str] = []
@@ -1116,8 +1123,17 @@ class _SandboxRuntimeProcess:
                 dumps(config, separators=(",", ":")).encode()
             ).decode()
             source_root = bundle.root
+            resolved_interpreter = (
+                Path(base_executable).resolve()
+                if backend is SandboxBackend.BUBBLEWRAP
+                else None
+            )
             worker_argv = (
-                base_executable,
+                (
+                    str(resolved_interpreter)
+                    if resolved_interpreter is not None
+                    else base_executable
+                ),
                 "-I",
                 "-c",
                 (
@@ -1145,6 +1161,7 @@ class _SandboxRuntimeProcess:
                     source_root,
                     worker_argv,
                     encoded_config,
+                    resolved_interpreter=resolved_interpreter,
                 )
                 process = await create_subprocess_exec(
                     *command,
@@ -2025,7 +2042,7 @@ class SandboxPatchRuntime:
                 LocalPlatformProfile.DARWIN
                 if self.profile.execution_plan.settings.backend
                 is SandboxBackend.SEATBELT
-                else LocalPlatformProfile.POSIX
+                else LocalPlatformProfile.LINUX
             ),
             worker=scope.worker,
         )
@@ -2463,6 +2480,20 @@ class _SandboxSettlementPort:
         return self.service._terminal_future(pending)
 
 
+@runtime_checkable
+class PatchActivationObserver(Protocol):
+    """Observe exact durable ownership transitions for one active host."""
+
+    async def bind_durable_commit(self, lease: DurableCommitLease) -> None:
+        """Bind one coordinator-issued owner before an effect."""
+
+    async def retain_durable_commit(self, lease: DurableCommitLease) -> None:
+        """Retain one pending or partial coordinator owner."""
+
+    async def release_durable_commit(self, lease: DurableCommitLease) -> None:
+        """Release one terminal coordinator owner."""
+
+
 @dataclass(frozen=True, slots=True, repr=False)
 class _SandboxRequestAccess:
     """Keep durable read authority behind the service's issued SDK handle."""
@@ -2529,6 +2560,9 @@ class SandboxPatchSdkService:
     _protocol_claim_waiters: dict[PatchRequestId, Future[None]] = field(
         default_factory=dict, init=False, repr=False
     )
+    _activation_observer: PatchActivationObserver | None = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         """Create the service-owned durable settlement port."""
@@ -2572,6 +2606,41 @@ class SandboxPatchSdkService:
         if self.scope.context_kind is not ContextKind.CONTAINER:
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         return self.runtime._bind_sandbox_endpoint(self.scope)
+
+    def set_activation_observer(
+        self, observer: PatchActivationObserver
+    ) -> None:
+        """Attach one loader-owned durable activation observer to this host."""
+        if self._activation_observer is not None or not isinstance(
+            observer, PatchActivationObserver
+        ):
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+        self._activation_observer = observer
+
+    async def _bind_activation_commit(self, lease: DurableCommitLease) -> None:
+        """Bind a real durable owner before starting its worker."""
+        observer = self._activation_observer
+        if observer is None:
+            return
+        await observer.bind_durable_commit(lease)
+
+    async def _retain_activation_commit(
+        self, lease: DurableCommitLease
+    ) -> None:
+        """Retain one actual pending durable owner after host suspension."""
+        observer = self._activation_observer
+        if observer is None:
+            return
+        await observer.retain_durable_commit(lease)
+
+    async def _release_activation_commit(
+        self, lease: DurableCommitLease
+    ) -> None:
+        """Release one actual terminal durable owner after settlement."""
+        observer = self._activation_observer
+        if observer is None:
+            return
+        await observer.release_durable_commit(lease)
 
     async def __aenter__(self) -> "SandboxPatchSdkService":
         """Own the selected runtime for the loaded toolset lifetime."""
@@ -2840,14 +2909,18 @@ class SandboxPatchSdkService:
         pending_request: DurablePendingRequest | None = None
         worker_binding: DurableWorkerBinding | None = None
         worker_bound = False
+        activation_bound = False
         task: Task[WorkerReport] | None = None
         try:
-            pending_request = self.configuration.pending_factory(
+            await self._bind_activation_commit(claim.lease)
+            activation_bound = True
+            candidate_pending = self.configuration.pending_factory(
                 correlation_id,
                 self.configuration.lease_duration,
             )
-            if type(pending_request) is not DurablePendingRequest:
+            if type(candidate_pending) is not DurablePendingRequest:
                 raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+            pending_request = candidate_pending
             worker_binding = await self._worker_binding()
             await self.store.bind_worker(claim.lease, worker_binding, now)
             worker_bound = True
@@ -2915,6 +2988,8 @@ class SandboxPatchSdkService:
                 claim.lease, worker_binding, worker_bound
             )
             if pending_request is None:
+                if activation_bound:
+                    await self._release_activation_commit(claim.lease)
                 raise
             outcome = await self._suspend_worker(
                 request_id,
@@ -2946,6 +3021,9 @@ class SandboxPatchSdkService:
                 outcome.pending_operation_id,
                 correlation_id,
             )
+            await self._retain_activation_commit(claim.lease)
+        elif activation_bound:
+            await self._release_activation_commit(claim.lease)
         self._latest = outcome
         return outcome
 
@@ -3083,7 +3161,7 @@ class SandboxPatchSdkService:
                 await self.store.mark_worker_reaped(lease, binding)
                 return
             now = await self.configuration.clock.now()
-            await self._reconcile_worker(
+            outcome = await self._reconcile_worker(
                 request_id,
                 identity,
                 plan_id,
@@ -3094,6 +3172,8 @@ class SandboxPatchSdkService:
                 None,
                 artifacts,
             )
+            if not isinstance(outcome, PatchPending):
+                await self._release_activation_commit(lease)
         finally:
             self._worker_tasks.pop(request_id, None)
 
@@ -3268,6 +3348,9 @@ class SandboxPatchSdkService:
         if access is None or pending.correlation_id != access.correlation_id:
             raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
         terminal = await self.store.await_terminal(access)
+        snapshot = await self.store.inspect(access.request)
+        if snapshot.lease is not None:
+            await self._release_activation_commit(snapshot.lease)
         self._latest = terminal.result
         return terminal.result
 

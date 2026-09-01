@@ -1,7 +1,7 @@
 from asyncio import CancelledError, StreamReader, create_task, gather, sleep
 from asyncio import run as run_async
 from collections.abc import Callable, Coroutine, Mapping, Sequence
-from os import environ
+from os import environ, umask
 from pathlib import Path
 from time import perf_counter
 from unittest import TestCase, main, skipUnless
@@ -544,6 +544,25 @@ class DockerContainerBackendTest(TestCase):
         self.assertTrue(_has_call(runner, ("cp",)))
         self.assertTrue(_has_call(runner, ("rm", "--force", "--volumes")))
         self.assertNotIn(None, runner.timeouts)
+
+    def test_fake_copied_outputs_ignore_caller_umask(self) -> None:
+        """Copy safe nested outputs without inheriting the caller umask."""
+        runner = _FakeRunner(copy_entries={"nested/report.txt": b"summary"})
+        backend = DockerContainerBackend(runner)
+        previous_umask = umask(0o0002)
+        try:
+            container = run_async(backend.create(_run_plan()))
+            output = run_async(
+                backend.copy_outputs(container, _output_contract())
+            )
+        finally:
+            umask(previous_umask)
+        observed_umask = umask(0o0002)
+        try:
+            self.assertEqual(observed_umask, previous_umask)
+        finally:
+            umask(observed_umask)
+        self.assertEqual(output.decision, ContainerOutputDecisionType.ACCEPT)
 
     def test_create_reports_policy_and_operation_failures(self) -> None:
         unsupported = DockerContainerBackend(_FakeRunner())
@@ -1694,9 +1713,15 @@ class _FakeRunner:
         if resolved_args[0] == "cp":
             root = Path(resolved_args[-1])
             for relative_path, content in self._copy_entries.items():
-                path = root / relative_path
-                path.parent.mkdir(parents=True, exist_ok=True)
+                relative = Path(relative_path)
+                parent = root
+                for name in relative.parts[:-1]:
+                    parent /= name
+                    parent.mkdir(exist_ok=True, mode=0o700)
+                    parent.chmod(0o700)
+                path = parent / relative.name
                 path.write_bytes(content)
+                path.chmod(0o600)
             return _ok(args=resolved_args)
         return _ok(args=resolved_args)
 
