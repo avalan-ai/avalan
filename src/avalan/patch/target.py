@@ -1494,8 +1494,15 @@ async def _worker_request(
         },
         separators=(",", ":"),
     ).encode()
+    resolved_interpreter = (
+        Path(executable).resolve() if platform.startswith("linux") else None
+    )
     worker_argv = (
-        executable,
+        (
+            str(resolved_interpreter)
+            if resolved_interpreter is not None
+            else executable
+        ),
         "-I",
         "-S",
         "-c",
@@ -1505,7 +1512,10 @@ async def _worker_request(
     )
     try:
         command, environment = _worker_sandbox_command(
-            profile, worker_argv, {_WORKER_TOKEN_ENV: token.hex()}
+            profile,
+            worker_argv,
+            {_WORKER_TOKEN_ENV: token.hex()},
+            resolved_interpreter=resolved_interpreter,
         )
         process = await create_subprocess_exec(
             *command,
@@ -1578,6 +1588,8 @@ def _worker_sandbox_command(
     environment: dict[str, str],
     writable_paths: tuple[Path, ...] = (),
     seatbelt_policy: str | None = None,
+    *,
+    resolved_interpreter: Path | None = None,
 ) -> tuple[tuple[str, ...], dict[str, str]]:
     """Build the sole native no-network command for one local worker."""
     if platform == "darwin":
@@ -1593,9 +1605,14 @@ def _worker_sandbox_command(
             environment,
         )
     if platform.startswith("linux"):
+        interpreter = resolved_interpreter or Path(executable).resolve()
         return (
             _bubblewrap_worker_command(
-                profile, worker_argv, environment, writable_paths
+                profile,
+                worker_argv,
+                environment,
+                writable_paths,
+                interpreter,
             ),
             {},
         )
@@ -1607,6 +1624,7 @@ def _bubblewrap_worker_command(
     worker_argv: tuple[str, ...],
     environment: dict[str, str],
     writable_paths: tuple[Path, ...],
+    resolved_interpreter: Path | None = None,
 ) -> tuple[str, ...]:
     """Build a Linux worker mount view with only declared writable paths."""
     if not environment or any(
@@ -1622,7 +1640,8 @@ def _bubblewrap_worker_command(
         views[path] = True
     if root in views and root in writable_paths:
         views[root] = True
-    roots = _bubblewrap_worker_read_roots()
+    interpreter = resolved_interpreter or Path(executable).resolve()
+    roots = _bubblewrap_worker_read_roots(interpreter)
     directories = _bubblewrap_worker_parent_directories(
         (
             *roots,
@@ -1663,18 +1682,20 @@ def _bubblewrap_worker_command(
     return tuple(command)
 
 
-def _bubblewrap_worker_read_roots() -> tuple[str, ...]:
+def _bubblewrap_worker_read_roots(
+    resolved_interpreter: Path | None = None,
+) -> tuple[str, ...]:
     """Return exact interpreter, native, and source roots for Bubblewrap."""
     if cryptography_file is None:
         raise TargetInspectionError(TargetErrorCode.WORKER_UNAVAILABLE)
+    interpreter = resolved_interpreter or Path(executable).resolve()
     values = (
         Path("/lib"),
         Path("/lib64"),
         Path("/usr/lib"),
         Path("/usr/lib64"),
-        Path(executable).parent,
-        Path(executable).resolve().parent,
-        Path(executable).resolve().parent.parent,
+        interpreter.parent,
+        interpreter.parent.parent,
         Path(__file__).resolve().parents[2],
         Path(cryptography_file).resolve().parent,
         Path(cffi_file).resolve().parents[1],

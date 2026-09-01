@@ -42,6 +42,7 @@ from context_contract_corpus import (
     read_context_corpus_tree,
     write_context_corpus_tree,
 )
+from patch_activation_support import activated_patch_test_profile
 
 from avalan.agent.loader import OrchestratorLoader
 from avalan.entities import (
@@ -75,6 +76,10 @@ from avalan.patch import sandbox_wire as sandbox_wire_module
 from avalan.patch import sandbox_worker as sandbox_worker_module
 from avalan.patch import target as target_module
 from avalan.patch import toolset as patch_toolset_module
+from avalan.patch.activation import (
+    PatchActivationRuntime,
+    PatchActivationRuntimeFactory,
+)
 from avalan.patch.coordinator import (
     ArtifactJournal,
     CommitLease,
@@ -148,6 +153,7 @@ from avalan.patch.durable_approval import (
 from avalan.patch.durable_store import (
     DurableApproval,
     DurableApprovalVerifier,
+    DurableCommitClaim,
     DurableCommitClaimState,
     DurableCommitLease,
     DurableJournal,
@@ -156,6 +162,7 @@ from avalan.patch.durable_store import (
     DurablePatchStoreBinding,
     DurablePendingRequest,
     DurablePlanReference,
+    DurableProtocolOrigin,
     DurableRequestAccess,
     DurableRequestIdentity,
     DurableReservation,
@@ -261,7 +268,6 @@ from avalan.patch.toolset import (
     PatchRuntimeBinding,
     PatchSdkHost,
     PatchSdkService,
-    PatchTestHostProfile,
     PatchToolError,
     PatchToolLoader,
     PatchToolSet,
@@ -456,7 +462,7 @@ def _agent_tool_settings(
     return ToolSettingsContext(
         patch=PatchToolSettings(
             binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ),
         shell=ShellToolSettings(
             execution_mode="sandbox",
@@ -2974,9 +2980,7 @@ def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(
     async def exercise() -> None:
         """Run one public mutation and read only durable lifecycle truth."""
         assert await _native_probe()
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         bundle = await loader.load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         scope = await binder.runtime.resolve(
@@ -3354,6 +3358,7 @@ def test_patch_phase_10_public_sdk_uses_durable_worker_and_outbox(
         for value in public_values:
             projection = repr(value)
             assert all(marker not in projection for marker in private_markers)
+        await bundle.toolset.__aexit__(None, None, None)
         fresh_bundle = await loader.load(enable_tools=["patch.edit"])
         assert fresh_bundle.toolset is not None
         replayed = await fresh_bundle.toolset.sdk_host().retransmit_json(
@@ -3599,7 +3604,7 @@ def test_patch_phase_10_executes_shared_local_contract_corpus(
         assert await _native_probe()
         bundle = await PatchToolLoader(
             binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit", "patch.apply"])
         assert bundle.toolset is not None
         await bundle.manager.__aenter__()
@@ -3756,9 +3761,7 @@ def test_patch_phase_10_cancellation_reconciles_from_fresh_client(
     async def exercise() -> None:
         """Cancel at the real effect fence and attach a new public host."""
         assert await _native_probe()
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         bundle = await loader.load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.toolset.__aenter__()
@@ -3776,9 +3779,7 @@ def test_patch_phase_10_cancellation_reconciles_from_fresh_client(
         assert isinstance(pending, PatchPending)
         assert pending.lifecycle is LifecyclePhase.SETTLEMENT_PENDING
         assert note.read_text(encoding="utf-8") == "before\n"
-        fresh = await loader.load(enable_tools=["patch.edit"])
-        assert fresh.toolset is not None
-        fresh_host = fresh.toolset.sdk_host()
+        fresh_host = bundle.toolset.sdk_host()
         attached = await fresh_host.retransmit_json(
             OperationType.EDIT,
             arguments,
@@ -3840,7 +3841,7 @@ def test_patch_phase_10_fresh_runtime_reaps_and_settles_lost_worker(
         original_binder = create_binder()
         original_bundle = await PatchToolLoader(
             original_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert original_bundle.toolset is not None
         await original_bundle.toolset.__aenter__()
@@ -3876,7 +3877,7 @@ def test_patch_phase_10_fresh_runtime_reaps_and_settles_lost_worker(
         fresh_binder = create_binder()
         fresh_bundle = await PatchToolLoader(
             fresh_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert fresh_bundle.toolset is not None
         await fresh_bundle.toolset.__aenter__()
@@ -3958,7 +3959,7 @@ def test_patch_phase_10_recovers_every_post_claim_binding_failure(
         original_binder = create_binder()
         original_bundle = await PatchToolLoader(
             original_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert original_bundle.toolset is not None
         await original_bundle.toolset.__aenter__()
@@ -3994,7 +3995,7 @@ def test_patch_phase_10_recovers_every_post_claim_binding_failure(
         fresh_binder = create_binder()
         fresh_bundle = await PatchToolLoader(
             fresh_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert fresh_bundle.toolset is not None
         await fresh_bundle.toolset.__aenter__()
@@ -4071,7 +4072,7 @@ def test_patch_phase_10_recovers_pending_factory_failure_after_claim(
         )
         failed_bundle = await PatchToolLoader(
             failed_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert failed_bundle.toolset is not None
         await failed_bundle.toolset.__aenter__()
@@ -4099,7 +4100,7 @@ def test_patch_phase_10_recovers_pending_factory_failure_after_claim(
         fresh_binder = create_binder(configuration)
         fresh_bundle = await PatchToolLoader(
             fresh_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert fresh_bundle.toolset is not None
         await fresh_bundle.toolset.__aenter__()
@@ -4182,7 +4183,7 @@ def test_patch_phase_10_retransmission_recovers_abrupt_claim_crash(
         )
         failed_bundle = await PatchToolLoader(
             failed_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert failed_bundle.toolset is not None
         await failed_bundle.toolset.__aenter__()
@@ -4215,7 +4216,7 @@ def test_patch_phase_10_retransmission_recovers_abrupt_claim_crash(
         fresh_binder = create_binder(configuration)
         fresh_bundle = await PatchToolLoader(
             fresh_binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert fresh_bundle.toolset is not None
         await fresh_bundle.toolset.__aenter__()
@@ -4287,7 +4288,7 @@ def test_patch_phase_10_reaps_every_post_bind_issuance_failure(
         assert await _native_probe()
         bundle = await PatchToolLoader(
             binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         await bundle.toolset.__aenter__()
@@ -4363,7 +4364,7 @@ def test_patch_phase_10_rejects_ordinary_sandbox_write_roots(
 def test_patch_phase_10_bubblewrap_uses_a_distinct_runtime_view(
     tmp_path: Path,
 ) -> None:
-    """Derive Linux mounts from the selected immutable execution plan."""
+    """Derive the Linux view and activation platform from one plan."""
     root = tmp_path / "sandbox-view"
     namespace = tmp_path / "sandbox-private"
     root.mkdir()
@@ -4378,6 +4379,53 @@ def test_patch_phase_10_bubblewrap_uses_a_distinct_runtime_view(
         ("/workspace", str(root)),
         ("/private", str(namespace)),
     )
+    worker = EphemeralWorkerWitness(
+        profile.channel_id, "bubblewrap-worker", "bubblewrap-fence"
+    )
+    scope = ResolvedMutationScope(
+        ContextKind.SANDBOX,
+        profile.identity,
+        profile.cwd,
+        profile.limits,
+        frozenset(
+            (
+                Capability.READ_FOR_MUTATION,
+                Capability.OBSERVE_MUTATION_PRECONDITIONS,
+            )
+        ),
+        frozenset(
+            (
+                TargetPrimitive.ROOTED_CONTAINMENT,
+                TargetPrimitive.NOFOLLOW_INSPECTION,
+                TargetPrimitive.REGULAR_FILE_IDENTITY,
+                TargetPrimitive.BOUNDED_READ,
+            )
+        ),
+        runtime._host_root,
+        worker,
+    )
+    receipt = sandbox_commit_module.SandboxRuntimeReceipt(
+        SandboxSessionId("bubblewrap-session"),
+        sandbox_commit_module.SandboxProfileReceipt("bubblewrap-receipt"),
+        runtime._host_root,
+        worker,
+        {
+            primitive: "bubblewrap-" + primitive.value
+            for primitive in (
+                _FUTURE_MUTATION_PRIMITIVES
+                | sandbox_commit_module._SANDBOX_PRIMITIVES
+            )
+        },
+        "bubblewrap-runtime",
+        "bubblewrap-policy",
+        "bubblewrap-child",
+        "bubblewrap-canary",
+    )
+    runtime._scope = scope
+    runtime._receipt = receipt
+    runtime._receipt_guard = receipt
+    handshake = run(runtime.handshake(scope))
+    assert handshake.platform is LocalPlatformProfile.LINUX
 
 
 def test_patch_phase_10_binds_canary_pid_in_selected_namespace() -> None:
@@ -4829,20 +4877,18 @@ def test_patch_phase_10_rooted_worker_wrappers_retain_target_binding(
             self.path = "/selected/darwin"
             self.status = 0
 
-        def fcntl(self, _descriptor: int, command: int, buffer: object) -> int:
-            """Populate the fixed CFFI buffer or reject the native request."""
+        def __call__(
+            self, _descriptor: int, command: int, buffer: bytes
+        ) -> bytes:
+            """Return the descriptor buffer or reject the native request."""
             assert command == rooted_worker_module._F_GETPATH
             if self.status != 0:
-                return self.status
-            encoded = self.path.encode() + b"\x00"
-            rooted_worker_module._CFFI.buffer(
-                buffer, rooted_worker_module._PATH_MAX
-            )[: len(encoded)] = encoded
-            return 0
+                raise OSError
+            return (self.path.encode() + b"\x00").ljust(len(buffer), b"\x00")
 
     darwin_fcntl = DarwinFcntl()
     monkeypatch.setattr(rooted_worker_module, "sys_platform", "darwin")
-    monkeypatch.setattr(rooted_worker_module, "_LIBC", darwin_fcntl)
+    monkeypatch.setattr(rooted_worker_module, "fcntl", darwin_fcntl)
     assert rooted_worker_module._descriptor_path(10) == Path(
         "/selected/darwin"
     )
@@ -5093,6 +5139,7 @@ def test_patch_phase_10_rooted_publication_rethrows_unobservable_cleanup(
 
 def test_patch_phase_10_sandbox_wire_rejects_invalid_runtime_shapes(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Reject malformed wire and sandbox facts before effects."""
     root = tmp_path / "root"
@@ -5135,6 +5182,51 @@ def test_patch_phase_10_sandbox_wire_rejects_invalid_runtime_shapes(
     assert sandbox_commit_module._backend_policy_digest(
         SandboxBackend.BUBBLEWRAP, bubblewrap_command
     )
+    linked_venv = tmp_path / "linked-venv"
+    linked_bin = linked_venv / "bin"
+    linked_bin.mkdir(parents=True)
+    linked_interpreter = linked_bin / "python"
+    linked_interpreter.symlink_to(
+        Path(sandbox_commit_module.base_executable).resolve()
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module, "base_executable", str(linked_interpreter)
+    )
+    captured_interpreter = linked_interpreter.resolve()
+    alternate_interpreter = tmp_path / "alternate-bin" / "python"
+    alternate_interpreter.parent.mkdir()
+    alternate_interpreter.write_text("not executed", encoding="utf-8")
+    linked_interpreter.unlink()
+    linked_interpreter.symlink_to(alternate_interpreter)
+    captured_command = sandbox_commit_module._runtime_child_command(
+        bubblewrap_profile,
+        "bwrap",
+        source_root,
+        (str(captured_interpreter), "-I", "-c", "pass"),
+        "encoded-config",
+        resolved_interpreter=captured_interpreter,
+    )
+    separator = captured_command.index("--")
+    assert captured_command[separator + 1] == str(captured_interpreter)
+    assert (
+        "--ro-bind",
+        str(captured_interpreter.parent),
+        str(captured_interpreter.parent),
+    ) in tuple(
+        zip(captured_command, captured_command[1:], captured_command[2:])
+    )
+    assert (
+        "--ro-bind",
+        str(alternate_interpreter.parent),
+        str(alternate_interpreter.parent),
+    ) not in tuple(
+        zip(captured_command, captured_command[1:], captured_command[2:])
+    )
+    roots = sandbox_commit_module._bubblewrap_read_roots(
+        bubblewrap_profile, source_root
+    )
+    assert str(linked_bin) not in roots
+    assert str(linked_interpreter.resolve().parent) in roots
     with pytest.raises(TargetInspectionError) as malformed_policy:
         sandbox_commit_module._backend_policy_digest(
             SandboxBackend.SEATBELT, ("sandbox-exec",)
@@ -7427,6 +7519,15 @@ def test_patch_phase_10_toolset_requires_sandbox_endpoint_factory(
         inspect=lambda _handle: None,
         await_terminal=lambda _handle, _pending: None,
     )
+    activation_store = InMemoryDurablePatchStore(InMemoryDurablePatchBackend())
+    activation_observer: object | None = None
+
+    def set_activation_observer(observer: object) -> None:
+        """Retain the test loader's exact activation runtime once."""
+        nonlocal activation_observer
+        if activation_observer is not None:
+            raise RuntimeError("sandbox test activation observer is bound")
+        activation_observer = observer
 
     def no_events(_handle: object) -> AsyncIterator[object]:
         """Return a closed event stream; construction must fail before use."""
@@ -7446,6 +7547,7 @@ def test_patch_phase_10_toolset_requires_sandbox_endpoint_factory(
             review=lambda _handle: None,
             approve=lambda _handle: None,
             subscribe=no_events,
+            set_activation_observer=set_activation_observer,
         ),
     )
     binding = PatchRuntimeBinding(
@@ -7453,8 +7555,8 @@ def test_patch_phase_10_toolset_requires_sandbox_endpoint_factory(
         handshake,
         _runtime_policy(),
         PatchApprovalBinding(True),
-        PatchCoordinatorBinding(True),
-        PatchPersistenceBinding(True),
+        PatchCoordinatorBinding(True, activation_store),
+        PatchPersistenceBinding(True, activation_store),
         service,
     )
     binder = object.__new__(SandboxPatchRuntimeBinder)
@@ -7477,13 +7579,11 @@ def test_patch_phase_10_toolset_requires_sandbox_endpoint_factory(
 
         wrong_loader = PatchToolLoader(
             WrongBinder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         with pytest.raises(PatchToolError, match="selected runtime"):
             await wrong_loader.load(enable_tools=["patch.edit"])
-        loader = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        loader = PatchToolLoader(binder, activated_patch_test_profile())
         with pytest.raises(
             PatchToolError, match="sandbox endpoint is unavailable"
         ):
@@ -8970,8 +9070,18 @@ def test_patch_phase_10_runtime_start_reaps_canary_and_launch_faults(
             ),
         )
 
-    def private_command(*_arguments: object) -> tuple[str, ...]:
-        """Keep launch failure tests independent of native command assembly."""
+    def private_command(
+        *_arguments: object,
+        resolved_interpreter: Path | None = None,
+    ) -> tuple[str, ...]:
+        """Keep launch faults independent of native command assembly."""
+        if backend is SandboxBackend.BUBBLEWRAP:
+            assert (
+                resolved_interpreter
+                == Path(sandbox_commit_module.base_executable).resolve()
+            )
+        else:
+            assert resolved_interpreter is None
         return ("test-sandbox", "worker")
 
     monkeypatch.setattr(
@@ -9162,8 +9272,18 @@ def test_patch_phase_10_runtime_startup_uses_only_bounded_live_io(
             ),
         )
 
-    def private_command(*_arguments: object) -> tuple[str, ...]:
+    def private_command(
+        *_arguments: object,
+        resolved_interpreter: Path | None = None,
+    ) -> tuple[str, ...]:
         """Keep the proof independent of native command construction."""
+        if backend is SandboxBackend.BUBBLEWRAP:
+            assert (
+                resolved_interpreter
+                == Path(sandbox_commit_module.base_executable).resolve()
+            )
+        else:
+            assert resolved_interpreter is None
         return ("test-sandbox", "worker")
 
     def primitive_receipts(
@@ -9519,6 +9639,7 @@ def test_patch_phase_10_service_preserves_review_and_claim_outcomes(
     service._reader_tasks = set()
     service._protocol_claimed = set()
     service._protocol_claim_waiters = {}
+    service._activation_observer = None
 
     class Authorizer:
         """Allow the service to reach its durable review boundary."""
@@ -9653,14 +9774,15 @@ def test_patch_phase_10_service_preserves_review_and_claim_outcomes(
             lease=SimpleNamespace(),
             terminal=None,
         )
-        outcome = await service.invoke(
-            OperationType.EDIT,
-            b"{}",
-            capability,
-            request_id,
-            correlation,
-        )
-        assert outcome is result
+        with pytest.raises(TargetInspectionError) as invalid_pending:
+            await service.invoke(
+                OperationType.EDIT,
+                b"{}",
+                capability,
+                request_id,
+                correlation,
+            )
+        assert invalid_pending.value.code is TargetErrorCode.WORKER_UNAVAILABLE
 
         pending = DurablePendingRequest(
             PatchPendingOperationId.new(),
@@ -9993,3 +10115,382 @@ def test_patch_phase_10_runtime_endpoint_and_authority_fence_stale_handles(
         invalid_configuration.value.code
         is TargetErrorCode.CAPABILITY_UNAVAILABLE
     )
+
+
+def test_patch_phase_10_activation_observer_and_planned_resume_paths(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject observer substitution and resume only a typed planned record."""
+    service = object.__new__(SandboxPatchSdkService)
+    service._activation_observer = None
+    with pytest.raises(TargetInspectionError) as invalid_observer:
+        service.set_activation_observer(
+            cast(sandbox_commit_module.PatchActivationObserver, object())
+        )
+    assert (
+        invalid_observer.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    )
+
+    async def no_observer() -> None:
+        """Keep a missing observer inert during durable retention."""
+        await service._retain_activation_commit(
+            cast(DurableCommitLease, object())
+        )
+
+    run(no_observer())
+
+    root = tmp_path / "view"
+    namespace = tmp_path / "namespace"
+    root.mkdir()
+    namespace.mkdir()
+    request_id = PatchRequestId("request_" + "a" * 16)
+    correlation = PatchObserverCorrelationId("correlation_" + "a" * 16)
+    subject = _runtime_subject()
+    identity = DurableRequestIdentity(
+        subject.tenant,
+        subject.principal,
+        PatchExecutionId("execution_" + "a" * 16),
+        _runtime_policy().approval.route,
+        RetransmissionKey("sandbox-" + request_id.value),
+    )
+    origin = DurableProtocolOrigin(
+        subject.tenant,
+        subject.principal,
+        identity.execution_id,
+        PatchRunId("run_" + "a" * 16),
+        PatchSessionId("session_" + "a" * 16),
+        PatchTaskId("task_" + "a" * 16),
+        PatchAgentId("agent_" + "a" * 16),
+        identity.route_id,
+        PatchContextId("context_" + "a" * 16),
+        PatchWorkspaceId("workspace_" + "a" * 16),
+    )
+    stored_plan = DurablePlanReference(
+        PatchPlanId("plan_" + "a" * 16),
+        AlgorithmDigest("sha256", "a" * 64),
+        AlgorithmDigest("sha256", "b" * 64),
+        AlgorithmDigest("sha256", "c" * 64),
+        PatchContextId("context_" + "a" * 16),
+        PatchWorkspaceId("workspace_" + "a" * 16),
+        PatchDomainId("domain_" + "a" * 16),
+        (
+            DurableStepBinding(
+                PatchStepId("step_" + "a" * 16),
+                PatchLineageId("lineage_" + "a" * 16),
+            ),
+        ),
+        origin,
+    )
+    result = sandbox_commit_module._approval_result(
+        request_id,
+        stored_plan.plan_id,
+        ApprovalDecisionState.DENIED,
+    )
+
+    class Store:
+        """Expose only the planned durable state consumed by resume."""
+
+        async def reserve(self, *_arguments: object) -> object:
+            """Return one opaque reservation after identity validation."""
+            return object()
+
+        async def inspect(self, _access: DurableRequestAccess) -> object:
+            """Return the stored plan and no terminal result."""
+            return SimpleNamespace(
+                terminal=None,
+                lifecycle=LifecyclePhase.PLANNED,
+                plan=stored_plan,
+            )
+
+    resumed = object.__new__(SandboxPatchSdkService)
+    resumed.runtime = _runtime(root, namespace)
+    resumed.scope = cast(
+        ResolvedMutationScope, SimpleNamespace(limits=_limits())
+    )
+    resumed.inspection = cast(
+        SandboxInspectionTarget, SimpleNamespace(inspect=lambda _request: None)
+    )
+    resumed.store = cast(DurablePatchStore, Store())
+    resumed.policy = _runtime_policy()
+    resumed._latest = None
+    resumed._pending = {}
+    resumed._requests = {}
+    resumed._workers = {}
+    resumed._worker_tasks = {}
+    resumed._reconciliation_tasks = set()
+    resumed._reader_tasks = set()
+    resumed.configuration = cast(
+        SandboxPatchServiceConfiguration,
+        SimpleNamespace(
+            subject=subject,
+            input_limits=object(),
+            approval_issuer=SimpleNamespace(
+                open_plan_material=lambda *_arguments: SimpleNamespace(
+                    binding=SimpleNamespace(
+                        final=SimpleNamespace(approval=object())
+                    )
+                )
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "_canonical_request",
+        lambda *_arguments: SimpleNamespace(
+            digest=AlgorithmDigest("sha256", "d" * 64)
+        ),
+    )
+    monkeypatch.setattr(
+        SandboxPatchSdkService,
+        "_validate_protocol_origin",
+        lambda *_arguments: None,
+    )
+
+    async def review_and_commit(
+        _service: SandboxPatchSdkService, *arguments: object
+    ) -> PatchResult:
+        """Return the resumed result only after typed material was reopened."""
+        assert arguments[1] == request_id
+        assert arguments[3] is stored_plan
+        return result
+
+    monkeypatch.setattr(
+        SandboxPatchSdkService, "_review_and_commit", review_and_commit
+    )
+
+    async def resume() -> None:
+        """Resume the planned record through the typed service method."""
+        assert (
+            await resumed.invoke(
+                OperationType.EDIT,
+                b"{}",
+                cast(PatchInvocationCapability, object()),
+                request_id,
+                correlation,
+                identity=identity,
+                origin=origin,
+            )
+            is result
+        )
+
+    run(resume())
+
+
+def test_patch_phase_10_pending_factory_failures_release_activation_owner(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Release activation ownership after reaping a failed pending setup."""
+    profile = activated_patch_test_profile()
+    factory = profile.activation_factory
+    assert isinstance(factory, PatchActivationRuntimeFactory)
+    store = InMemoryDurablePatchStore(InMemoryDurablePatchBackend())
+    service = object.__new__(SandboxPatchSdkService)
+    service._activation_observer = None
+    subject = _runtime_subject()
+    identity = DurableRequestIdentity(
+        subject.tenant,
+        subject.principal,
+        PatchExecutionId("execution_" + "f" * 16),
+        _runtime_policy().approval.route,
+        RetransmissionKey("sandbox-pending-release"),
+    )
+    activation_binding = SimpleNamespace(
+        scope=SimpleNamespace(
+            context_kind=ContextKind.SANDBOX,
+            identity=SimpleNamespace(
+                target_id=SimpleNamespace(value="target_pending_release"),
+                workspace_id=SimpleNamespace(
+                    value="workspace_pending_release"
+                ),
+                domain_id=SimpleNamespace(value="domain_pending_release"),
+            ),
+        ),
+        handshake=SimpleNamespace(platform=SimpleNamespace(value="macos")),
+        coordinator=SimpleNamespace(durable_store=store),
+        persistence=SimpleNamespace(durable_store=store),
+        policy=SimpleNamespace(revision=SimpleNamespace(value="policy-v2")),
+        service=service,
+    )
+    activation = run(factory.activate(activation_binding))
+    assert isinstance(activation, PatchActivationRuntime)
+    assert service._activation_observer is activation
+    reaped: list[DurableCommitLease] = []
+    closed: list[str] = []
+    current_lease: DurableCommitLease | None = None
+
+    class Runtime:
+        """Record the runtime close needed before activation release."""
+
+        async def close(self) -> None:
+            """Record each reap-triggered runtime close."""
+            closed.append("runtime")
+
+    class Clock:
+        """Provide one fixed tick for the synthetic durable claim."""
+
+        async def now(self) -> ExpiryTick:
+            """Return the fixed approval tick."""
+            return ExpiryTick(1)
+
+    async def approved(_request: PlanReviewRequest) -> object:
+        """Return a review whose grant reaches the durable owner branch."""
+        return SimpleNamespace(
+            state=ApprovalDecisionState.APPROVED, grant=object()
+        )
+
+    async def issue(*_arguments: object) -> object:
+        """Return an opaque approval after its typed input is accepted."""
+        return object()
+
+    async def claim_commit(
+        _store: InMemoryDurablePatchStore, *_arguments: object
+    ) -> DurableCommitClaim:
+        """Return the exact current owner lease for this regression path."""
+        assert current_lease is not None
+        return DurableCommitClaim(
+            DurableCommitClaimState.OWNER,
+            current_lease,
+            None,
+        )
+
+    async def mark_worker_absent(
+        _store: InMemoryDurablePatchStore, lease: DurableCommitLease
+    ) -> None:
+        """Record the exact worker owner reaped before release."""
+        assert lease is current_lease
+        reaped.append(lease)
+
+    monkeypatch.setattr(
+        InMemoryDurablePatchStore, "claim_commit", claim_commit
+    )
+    monkeypatch.setattr(
+        InMemoryDurablePatchStore, "mark_worker_absent", mark_worker_absent
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "PlanReviewRequest",
+        lambda *_arguments: SimpleNamespace(),
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module, "_durable_artifacts", lambda _plan: ()
+    )
+    service.runtime = cast(SandboxPatchRuntime, Runtime())
+    service.store = store
+    service.configuration = cast(
+        SandboxPatchServiceConfiguration,
+        SimpleNamespace(
+            subject=subject,
+            approvals=SimpleNamespace(await_review=approved),
+            approval_issuer=SimpleNamespace(issue=issue),
+            clock=Clock(),
+            lease_duration=DurationTicks(10),
+            pending_factory=None,
+        ),
+    )
+    service._protocol_claimed = set()
+    service._protocol_claim_waiters = {}
+
+    def lease_for(
+        request_id: PatchRequestId, owner: str
+    ) -> DurableCommitLease:
+        """Return one exact durable owner for an independent failed request."""
+        return DurableCommitLease(
+            request_id,
+            PatchDomainId("domain_" + "f" * 16),
+            PatchCommitOwnerId(owner),
+            SequenceNumber(1),
+            ExpiryTick(10),
+        )
+
+    async def invoke_failed_pending(
+        request_id: PatchRequestId,
+        pending_factory: Callable[
+            [PatchObserverCorrelationId, DurationTicks], object
+        ],
+    ) -> None:
+        """Reach the real owner branch through one failed pending factory."""
+        nonlocal current_lease
+        current_lease = lease_for(
+            request_id,
+            "owner_" + request_id.value.removeprefix("request_"),
+        )
+        service.configuration.pending_factory = pending_factory
+        await service._review_and_commit(
+            cast(DurableReservation, object()),
+            request_id,
+            cast(
+                SealedPlan,
+                SimpleNamespace(plan_id=PatchPlanId("plan_" + "f" * 16)),
+            ),
+            cast(DurablePlanReference, object()),
+            identity,
+            PatchObserverCorrelationId("correlation_" + request_id.value[8:]),
+            cast(ApprovalRequirements, object()),
+        )
+
+    def raises_pending(
+        _correlation: PatchObserverCorrelationId, _duration: DurationTicks
+    ) -> object:
+        """Raise before a durable pending request can be created."""
+        raise RuntimeError("pending factory failure")
+
+    def invalid_pending(
+        _correlation: PatchObserverCorrelationId, _duration: DurationTicks
+    ) -> object:
+        """Return a forged pending value rejected before worker binding."""
+        return object()
+
+    async def exercise() -> None:
+        """Release both failed owners and prove the same registry recovers."""
+        first_request = PatchRequestId("request_" + "f" * 16)
+        with pytest.raises(RuntimeError, match="pending factory failure"):
+            await invoke_failed_pending(first_request, raises_pending)
+        binding_count = await activation.registry.active_binding_count(
+            activation.lease.key
+        )
+        assert binding_count == 0
+
+        second_request = PatchRequestId("request_" + "e" * 16)
+        with pytest.raises(TargetInspectionError) as invalid_pending_error:
+            await invoke_failed_pending(second_request, invalid_pending)
+        assert (
+            invalid_pending_error.value.code
+            is TargetErrorCode.WORKER_UNAVAILABLE
+        )
+        binding_count = await activation.registry.active_binding_count(
+            activation.lease.key
+        )
+        assert binding_count == 0
+        assert reaped == [
+            lease_for(first_request, "owner_" + "f" * 16),
+            lease_for(second_request, "owner_" + "e" * 16),
+        ]
+        assert closed == ["runtime", "runtime"]
+
+        recovery_lease = lease_for(
+            PatchRequestId("request_" + "d" * 16), "owner_" + "d" * 16
+        )
+        await activation.bind_durable_commit(recovery_lease)
+        binding_count = await activation.registry.active_binding_count(
+            activation.lease.key
+        )
+        assert binding_count == 1
+        await activation.release_durable_commit(recovery_lease)
+        binding_count = await activation.registry.active_binding_count(
+            activation.lease.key
+        )
+        assert binding_count == 0
+
+        await activation.deactivate()
+        recovered_service = object.__new__(SandboxPatchSdkService)
+        recovered_service._activation_observer = None
+        activation_binding.service = recovered_service
+        recovered = await factory.activate(activation_binding)
+        assert isinstance(recovered, PatchActivationRuntime)
+        assert recovered.registry is activation.registry
+        assert recovered.lease.key == activation.lease.key
+        assert recovered.lease.epoch == activation.lease.epoch + 1
+        await recovered.deactivate()
+
+    run(exercise())

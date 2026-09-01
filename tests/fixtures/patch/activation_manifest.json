@@ -1,0 +1,113 @@
+{
+  "manifest_sha256": "9d53b7ffefdce7d8e2bf2d41e50f86d09d2cd411e542dcdbeab8f3cbc895e87e",
+  "profiles": [
+    {
+      "capability_inventory": [
+        "patch.edit",
+        "patch.apply"
+      ],
+      "key": {
+        "approval": "durable-plan-approval-v1",
+        "context": "sandbox",
+        "filesystem": "rooted-no-follow-v1",
+        "persistence": "durable-request-store-v1",
+        "platform": "macos",
+        "policy": "sealed-plan-policy-v1",
+        "provider_codec": "json-function-v1",
+        "surface": "json_function",
+        "target_implementation": "sandbox-worker-v1",
+        "target_protocol": "sandbox-patch-rpc-v1",
+        "version": "v1"
+      },
+      "proofs": {
+        "approval": true,
+        "context": true,
+        "filesystem": true,
+        "persistence": true,
+        "platform": false,
+        "policy": true,
+        "protocol": true,
+        "provider_codec": true,
+        "surface": true,
+        "target": true
+      },
+      "selection_rationale": "The production profile is incomplete until an exact platform receipt is independently recorded.",
+      "state": "incomplete"
+    }
+  ],
+  "protocols": [
+    {
+      "capability_inventory": [
+        "patch.edit",
+        "patch.apply"
+      ],
+      "protocol_surface": "mcp"
+    },
+    {
+      "capability_inventory": [
+        "patch.edit",
+        "patch.apply"
+      ],
+      "protocol_surface": "a2a"
+    },
+    {
+      "capability_inventory": [],
+      "protocol_surface": "flow"
+    },
+    {
+      "capability_inventory": [],
+      "protocol_surface": "task"
+    },
+    {
+      "capability_inventory": [],
+      "protocol_surface": "multi_agent"
+    },
+    {
+      "capability_inventory": [
+        "patch.apply"
+      ],
+      "protocol_surface": "provider_freeform"
+    },
+    {
+      "capability_inventory": [
+        "patch.apply"
+      ],
+      "protocol_surface": "provider_native"
+    }
+  ],
+  "schema_version": 1,
+  "schemas": [
+    {
+      "canonical_json": "{\"function\":{\"description\":\"Edit exact text ranges in one existing file.\",\"name\":\"patch.edit\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"edits\":{\"items\":{\"additionalProperties\":false,\"properties\":{\"new_text\":{\"type\":\"string\"},\"old_text\":{\"minLength\":1,\"type\":\"string\"}},\"required\":[\"old_text\",\"new_text\"],\"type\":\"object\"},\"minItems\":1,\"type\":\"array\"},\"path\":{\"type\":\"string\"}},\"required\":[\"path\",\"edits\"],\"type\":\"object\"},\"return\":{\"additionalProperties\":false,\"properties\":{\"artifact_state\":{\"type\":\"string\"},\"code\":{\"type\":[\"string\",\"null\"]},\"commit_set_exact\":{\"type\":\"boolean\"},\"kind\":{\"enum\":[\"patch_result\"],\"type\":\"string\"},\"lifecycle\":{\"enum\":[\"request_completed\"],\"type\":\"string\"},\"lineage_state\":{\"type\":\"string\"},\"mutation_state\":{\"type\":\"string\"},\"postcondition\":{\"type\":\"string\"},\"requested_effect_occurred\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"workspace_changed\":{\"type\":\"string\"}},\"required\":[\"kind\",\"status\",\"mutation_state\",\"lineage_state\",\"requested_effect_occurred\",\"artifact_state\",\"commit_set_exact\",\"workspace_changed\",\"postcondition\",\"lifecycle\",\"code\"],\"type\":\"object\"}},\"type\":\"function\"}",
+      "schema_sha256": "10d99afafa5c05b3ff76479ec94c876197b3038f355027063a2b53e4e9e73bd7",
+      "tool_name": "patch.edit"
+    },
+    {
+      "canonical_json": "{\"function\":{\"description\":\"Apply one complete versioned multi-file patch.\",\"name\":\"patch.apply\",\"parameters\":{\"additionalProperties\":false,\"properties\":{\"patch\":{\"type\":\"string\"}},\"required\":[\"patch\"],\"type\":\"object\"},\"return\":{\"additionalProperties\":false,\"properties\":{\"artifact_state\":{\"type\":\"string\"},\"code\":{\"type\":[\"string\",\"null\"]},\"commit_set_exact\":{\"type\":\"boolean\"},\"kind\":{\"enum\":[\"patch_result\"],\"type\":\"string\"},\"lifecycle\":{\"enum\":[\"request_completed\"],\"type\":\"string\"},\"lineage_state\":{\"type\":\"string\"},\"mutation_state\":{\"type\":\"string\"},\"postcondition\":{\"type\":\"string\"},\"requested_effect_occurred\":{\"type\":\"string\"},\"status\":{\"type\":\"string\"},\"workspace_changed\":{\"type\":\"string\"}},\"required\":[\"kind\",\"status\",\"mutation_state\",\"lineage_state\",\"requested_effect_occurred\",\"artifact_state\",\"commit_set_exact\",\"workspace_changed\",\"postcondition\",\"lifecycle\",\"code\"],\"type\":\"object\"}},\"type\":\"function\"}",
+      "schema_sha256": "ab0ba4b80c874db2ca9c4b3abc2b1a943150daf49c77eaf8a356b3b20b6a2efe",
+      "tool_name": "patch.apply"
+    }
+  ],
+  "sources": [
+    {
+      "module": "avalan.patch.toolset",
+      "symbol": "PATCH_EDIT_SCHEMA"
+    },
+    {
+      "module": "avalan.patch.toolset",
+      "symbol": "PATCH_APPLY_SCHEMA"
+    },
+    {
+      "module": "avalan.patch.toolset",
+      "symbol": "PatchToolSet"
+    },
+    {
+      "module": "avalan.patch.protocols",
+      "symbol": "PatchProtocolProfile"
+    }
+  ],
+  "tool_inventory": [
+    "patch.edit",
+    "patch.apply"
+  ]
+}

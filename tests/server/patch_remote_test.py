@@ -15,7 +15,8 @@ from asyncio import (
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, replace
 from json import dumps
-from os import environ
+from os import environ, pathsep
+from pathlib import Path
 from secrets import token_urlsafe
 from socket import AF_INET, SOCK_STREAM, socket
 from subprocess import DEVNULL, Popen, TimeoutExpired
@@ -27,6 +28,7 @@ from typing import cast
 import httpx
 import pytest
 from fastapi import FastAPI, Request
+from patch_activation_support import patch_test_activation_factory
 
 from avalan.patch.domain import (
     AlgorithmDigest,
@@ -97,6 +99,7 @@ from avalan.patch.policy import (
     PreauthorizationClass,
     TrustedPatchPolicy,
 )
+from avalan.patch.sandbox_commit import PatchActivationObserver
 from avalan.patch.target import (
     LocalPlatformProfile,
     ResolvedMutationScope,
@@ -261,6 +264,13 @@ class _RemoteService:
             ]
         ] = []
         self.settlement = _Settlement()
+        self._activation_observer: object | None = None
+
+    def set_activation_observer(self, observer: object) -> None:
+        """Retain one loader-issued activation observer for this host."""
+        if self._activation_observer is not None:
+            raise RuntimeError("remote activation observer is already bound")
+        self._activation_observer = observer
 
     async def invoke(
         self,
@@ -621,6 +631,7 @@ def _configuration(
         authority_resolver=_Resolver(authority),
         expected_authority=authority,
         binder=binder,
+        activation_factory=patch_test_activation_factory(),
         store=InMemoryDurablePatchStore(InMemoryDurablePatchBackend()),
         handle_key=b"a" * 32,
         runtime_witness=_runtime_witness(authority),
@@ -649,6 +660,7 @@ def _active_configuration(
             authority_resolver=_Resolver(authority),
             expected_authority=authority,
             binder=binder,
+            activation_factory=patch_test_activation_factory(),
             store=store,
             handle_key=b"a" * 32,
             runtime_witness=_runtime_witness(authority),
@@ -730,6 +742,12 @@ def test_remote_host_never_dispatches_through_a_nonremote_service() -> None:
             self._request_id: PatchRequestId | None = None
             self.store = delegate.store
             self.settlement = self
+
+        def set_activation_observer(
+            self, observer: PatchActivationObserver
+        ) -> None:
+            """Delegate the activation observer to the real service."""
+            self._delegate.set_activation_observer(observer)
 
         def inspect(
             self, _: PatchInvocationHandle
@@ -2216,6 +2234,7 @@ def test_failed_dispatch_same_key_is_pruned_without_blind_redispatch() -> None:
             authority_resolver=_Resolver(authority),
             expected_authority=authority,
             binder=binder,
+            activation_factory=patch_test_activation_factory(),
             store=store,
             handle_key=b"f" * 32,
             runtime_witness=_runtime_witness(authority),
@@ -2874,6 +2893,19 @@ def test_public_client_uses_real_loopback_tcp_server_process() -> None:
     async def scenario() -> None:
         port = _loopback_port()
         secret = token_urlsafe(32)
+        test_root = str(Path("tests").resolve())
+        server_root = str(Path("tests/server").resolve())
+        child_pythonpath = pathsep.join(
+            (
+                *(
+                    item
+                    for item in environ.get("PYTHONPATH", "").split(pathsep)
+                    if item not in {test_root, server_root}
+                ),
+                test_root,
+                server_root,
+            )
+        )
         process = Popen(
             [
                 executable,
@@ -2899,6 +2931,8 @@ def test_public_client_uses_real_loopback_tcp_server_process() -> None:
                     and key != "COVERAGE_PROCESS_START"
                 },
                 "AVALAN_PATCH_TCP_TEST_SECRET": secret,
+                "PYTHONPATH": child_pythonpath,
+                "AVALAN_CONTRACT_ALLOWED_PYTHONPATH": child_pythonpath,
             },
         )
         base_url = f"http://127.0.0.1:{port}"

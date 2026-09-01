@@ -2842,20 +2842,19 @@ def test_patch_phase_7_rooted_parent_and_precondition_revalidation(
         rooted_worker_module._ROOT_DESCRIPTOR.reset(root_token)
         close(root_fd)
 
-    class EmptyDescriptorPath:
-        """Return a successful F_GETPATH status without a path payload."""
-
-        def fcntl(self, descriptor: int, command: int, buffer: object) -> int:
-            """Leave an empty stale path."""
-            del descriptor, command, buffer
-            return 0
+    def empty_descriptor_path(
+        descriptor: int, command: int, buffer: bytes
+    ) -> bytes:
+        """Return one successful but empty Darwin F_GETPATH payload."""
+        del descriptor, command
+        return b"\x00" * len(buffer)
 
     with monkeypatch.context() as patcher:
         if runtime_platform.startswith("linux"):
             patcher.setattr(rooted_worker_module, "readlink", lambda _path: "")
         else:
             patcher.setattr(
-                rooted_worker_module, "_LIBC", EmptyDescriptorPath()
+                rooted_worker_module, "fcntl", empty_descriptor_path
             )
         with pytest.raises(TargetInspectionError):
             rooted_worker_module._descriptor_path(0)

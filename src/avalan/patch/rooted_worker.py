@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from contextvars import ContextVar
 from dataclasses import dataclass
 from errno import ENOSYS, EOPNOTSUPP, EXDEV
+from fcntl import fcntl
 from hashlib import sha256
 from os import (
     O_CLOEXEC,
@@ -32,8 +33,6 @@ from secrets import token_bytes
 from stat import S_ISLNK, S_ISREG
 from sys import platform as sys_platform
 from typing import Callable
-
-from cffi import FFI
 
 from avalan.patch.coordinator import (
     ArtifactJournal,
@@ -101,9 +100,6 @@ _COMMIT_CONTEXT: ContextVar["_CommitContext | None"] = ContextVar(
 _ROOTED_BARRIER: ContextVar[Callable[[str], None] | None] = ContextVar(
     "rooted_worker_barrier", default=None
 )
-_CFFI = FFI()
-_CFFI.cdef("int fcntl(int, int, ...);")
-_LIBC = _CFFI.dlopen(None)
 
 
 def _barrier(stage: str) -> None:
@@ -750,10 +746,13 @@ def _descriptor_path(descriptor: int) -> Path:
         return Path(value)
     if sys_platform != "darwin":
         raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
-    buffer = _CFFI.new("char[]", _PATH_MAX)
-    if _LIBC.fcntl(descriptor, _F_GETPATH, buffer) != 0:
-        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
-    value = _CFFI.string(buffer).decode("utf-8", "strict")
+    try:
+        payload = fcntl(descriptor, _F_GETPATH, b"\x00" * _PATH_MAX)
+    except (OSError, ValueError) as error:
+        raise TargetInspectionError(
+            TargetErrorCode.CAPABILITY_UNAVAILABLE
+        ) from error
+    value = payload.split(b"\x00", maxsplit=1)[0].decode("utf-8", "strict")
     if not value:
         raise TargetInspectionError(TargetErrorCode.WITNESS_STALE)
     return Path(value)

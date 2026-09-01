@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "feature": "patch",
-  "current_phase": 14,
+  "current_phase": 15,
   "fixtures": [
     {
       "id": "PATCH-T-001",
@@ -530,7 +530,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "87d67f069dfcc968d5b0cbe9c57701ad6329fc0314749172bc22ec29e9b508f3"
+      "source_sha256": "0e3a0189741411ff977b17c5c168b22cf314fd21dc3e92dfbc2a8c22eda872ce"
     },
     {
       "id": "PATCH-TS-004",
@@ -539,7 +539,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8d314674f5678f2b60f1836fde57f377c98e3566c8ce73169482a3cc2da2a5a4"
+      "source_sha256": "9c78c0f622be04f3a9c305becaa489d6e28d008ea0981189e34e23d3a84c1dc6"
     },
     {
       "id": "PATCH-TS-005",
@@ -548,7 +548,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "94b891ae5ddf3b78cd88840ffac13d2b43e1bf49fe0468cfd7c1a92b2f392449"
+      "source_sha256": "db02111cc7a2c805e2ecf33b54a96c8b2609674a7d9294138f853adc7153e96e"
     },
     {
       "id": "PATCH-TS-006",
@@ -557,7 +557,7 @@
       "symbols": [
         "_UNMEASURED_FILE_NAMES"
       ],
-      "source_sha256": "3a9c1928043a1e30d8eba118d96d4b6732409521bad5d4dba3e5930d1887f0b1"
+      "source_sha256": "a26e49a1c50d17d12bbbfc45f75a2b9cb32e04893c3a37a8551a2b0866040b34"
     },
     {
       "id": "PATCH-TS-007",
@@ -575,7 +575,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2caa9b2baede6f4bdd1c5063f4e21d1fe56e3c6c2bd26c0bdd7d123a3ee65819"
+      "source_sha256": "14c3e6283228a6b47e6d36c15c63442dc47e6e47ec1ee623518448ff68394313"
     },
     {
       "id": "PATCH-TS-009",
@@ -584,7 +584,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "51ce591a1d4aaa5950c3603affa04e992ddc38f54c3c16b223fafee4c6ffec58"
+      "source_sha256": "eb949e6131faf4533deb961f40fcb9375a7c3f4694b51cad33144e3867898a2d"
     },
     {
       "id": "PATCH-TS-010",
@@ -701,7 +701,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5855fdbff281f0a7b85db12e3ea6f71491b99899a58d8ce56c49be5b5f33cf3e"
+      "source_sha256": "5e4597bfa381c51023435557d8f6cc301d8d157ea8a626bb03329908b71979fe"
     },
     {
       "id": "PATCH-TS-023",
@@ -710,7 +710,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "245e9649fc272911a4182c5510a0c8b4da3ff29f751c33f2638f34797b2aed2a"
+      "source_sha256": "f489f5f7358e1c2fde634394b204aeea4ac6a465413051f9fc254b90e7025a74"
     },
     {
       "id": "PATCH-TS-024",
@@ -737,7 +737,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6b8a18fbb562dedb58b868b112409755446173f19abb3e38ac8ac8b8dda7f024"
+      "source_sha256": "1408e208563bd9db1c647975183b0e54a40144b045ad5476cb6406ce01275afb"
     },
     {
       "id": "PATCH-TS-027",
@@ -755,7 +755,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "2f3a154be5b26d0d13f6be8500c03548305cbf0334ed070e3fff4ebd2a76d01e"
+      "source_sha256": "a4c211eb2f63802f5b6874d2b760732d8d3f19097bb5899c87e72e69a5809807"
     },
     {
       "id": "PATCH-TS-029",
@@ -764,7 +764,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d52ff7c99bfee50bf4c42c0b28fc48c5f150fa4a28862cdf74f99b1cb18aa7f0"
+      "source_sha256": "ac294347d21e6df22c2d2ea8e3294491df6682fbba7bbb77cfb2a0a9a50f5106"
     },
     {
       "id": "PATCH-TS-030",
@@ -782,7 +782,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6101c561481cc2be126c8daf245830bbab23b52787945d7d54a490def50275bd"
+      "source_sha256": "1644e0f326cb4161ee6a43fe1762959ca7823531c833a0c70db068ca0b6f1cea"
     },
     {
       "id": "PATCH-TS-032",
@@ -1019,7 +1019,7 @@
       "symbols": [
         "_PATCH_DOMAIN_EXECUTION_CONTRACT"
       ],
-      "source_sha256": "15fa23149c9280a86dc952f6d03cb2c66496e924e8e7165c683258ab2ec188b0"
+      "source_sha256": "3146569089c9cdfdd5a64fc516c37e9fdcac6f5e20010da9a0980ea14f671a54"
     },
     {
       "id": "PATCH-TS-058",
@@ -1028,7 +1028,7 @@
       "symbols": [
         "_result"
       ],
-      "source_sha256": "19e8ddd1326483f81e87ac7504f436163c7808bb20c48931784c158e7ff50a24"
+      "source_sha256": "79e02d3af3830c165ab0f24d1ba7037f07321a95b1caddae975124379865208f"
     },
     {
       "id": "PATCH-TS-059",
@@ -1057,7 +1057,7 @@
       "symbols": [
         "_PATCH_TOOL_LOADER_INTEGRATION"
       ],
-      "source_sha256": "bf98cec32a0bf5c1f3175745a01f9f64dac01f2cf33118a458b1458764f7c8ff"
+      "source_sha256": "f32f2bbc47d71a85dd9b9906491aac6add72577f72c6770073f4d90277016227"
     },
     {
       "id": "PATCH-TS-062",
@@ -1102,7 +1102,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9984857665fd2ac8698045ad97c9c00a43555075f9b26316f6dfa0081d680699"
+      "source_sha256": "40bc6dd78adfd63a9a8ad98966970a0572d92f20ca625ef25fffede3fa77b917"
     },
     {
       "id": "PATCH-TS-067",
@@ -1111,7 +1111,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b2dc3b414bc094894a27605e249b00ce35ee3ed1b0d5ade6e817a4c3931232fc"
+      "source_sha256": "a79a2ca13007c4b5a72c4e3f32b2df8e16f23f5f31c3d7d0b8877c19e757e25a"
     },
     {
       "id": "PATCH-TS-068",
@@ -1120,7 +1120,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "055e50c91512688a36d521d1a931a51f401e5b002f2d8c3f947a836daa566973"
+      "source_sha256": "36c14cb861f6ed996d1453b052d7a66bed6b195baa6147cb2519198a8e4398fa"
     },
     {
       "id": "PATCH-TS-069",
@@ -1138,7 +1138,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "79f7d7206a58d30b63becd6e7926df080e5b0db948a53c8a099450f823775952"
+      "source_sha256": "a80d5f6b09f439361aaeb0faedc11659680203513b5837a2cbb59f8cb51e6bc4"
     },
     {
       "id": "PATCH-TS-071",
@@ -1246,7 +1246,7 @@
       "symbols": [
         "test_patch_phase_11_requirements"
       ],
-      "source_sha256": "04cb60da76831c05c6c4cd0fc3cbbcedd500f39d5f71b78446bd2752f04d5648"
+      "source_sha256": "7ea1315be0e32ba8ab76a640918ebddc4e25b413962b5848addad21da9f2bab1"
     },
     {
       "id": "PATCH-TS-083",
@@ -1264,7 +1264,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b2b6b8371f797f0d5af01acfa151eba39464aabfdf9facde933f6307ed08c6af"
+      "source_sha256": "ce497fb45b641e3b967c6a8974fc7f69cb1cecbad2e24734a326b79bdf9235af"
     },
     {
       "id": "PATCH-TS-085",
@@ -1433,7 +1433,7 @@
       "symbols": [
         "test_patch_e2e_023_real_pty_review_approve_and_later_read"
       ],
-      "source_sha256": "bb4d0da1ba898f50160263cee3bd7496e7aaca9feab7441533ed0e8200374de2"
+      "source_sha256": "7f1285ec67dfc303de2f137dabebc35f0814a010f8741a7efeb93be08b63a687"
     },
     {
       "id": "PATCH-TS-103",
@@ -1506,7 +1506,7 @@
       "symbols": [
         "RemotePatchTestServerProfile"
       ],
-      "source_sha256": "bf297724fea2566605897a211d0c30e43d2bcfbf29fcc9fda52dfa918a93e4b7"
+      "source_sha256": "033c1de55f6b71123e13a8dc943b8d9743d1961db944957e99e25d07964c6c58"
     },
     {
       "id": "PATCH-TS-109",
@@ -1515,7 +1515,7 @@
       "symbols": [
         "test_remote_patch_routes_are_absent_without_explicit_installation"
       ],
-      "source_sha256": "ac1ce12470de4d5a209f19d918ccf3619db32619768099fbc3422a7d7e190f34"
+      "source_sha256": "3f1e8966af35233fe0e13743e3ec639165914b0a894d88141080cf14df98e06d"
     },
     {
       "id": "PATCH-TS-110",
@@ -1552,16 +1552,7 @@
         "test_remote_server_runs_selected_sandbox_edit_to_terminal",
         "test_remote_tcp_runs_selected_sandbox_apply_to_terminal"
       ],
-      "source_sha256": "dc6b4f694a757937928118b162e5b650a6cbabdb7b2e517aecb116f5acb9ad4a"
-    },
-    {
-      "id": "PATCH-TS-116",
-      "path": "tests/server/patch_remote_sandbox_tcp_fixture.py",
-      "scope": "integration_hunk",
-      "symbols": [
-        "app"
-      ],
-      "source_sha256": "acd99889d678cd9af90830ee85acc7b967de77ccf68ed8387af7c8e58dce7996"
+      "source_sha256": "a775bcdbd23829b6141b16ab979043924f498749fce011d97429d9d8671c5bdd"
     },
     {
       "id": "PATCH-TS-114",
@@ -1571,7 +1562,7 @@
         "test_remote_pgsql_selected_sandbox_replays_terminal_after_restart",
         "test_remote_pgsql_fenced_worker_crash_attaches_same_key_once"
       ],
-      "source_sha256": "a881e47ad4dd59933bd43bb06cbddf05154f44fccdcbd82d4ece0e952158d8be"
+      "source_sha256": "4192374eb75990f1f4ca1f61c6d6ba54bcd9b63e62146794fa6461b2a479ea14"
     },
     {
       "id": "PATCH-TS-115",
@@ -1583,6 +1574,15 @@
         "test_patch_phase_13_continuation_requirements"
       ],
       "source_sha256": "b9800945e651d2d651ce637febf83511839fe7aed8da03a0d5cf32ebe0612c47"
+    },
+    {
+      "id": "PATCH-TS-116",
+      "path": "tests/server/patch_remote_sandbox_tcp_fixture.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "app"
+      ],
+      "source_sha256": "ee2536833fbb3f14c4fdeefde6e606b07d30fd2e9d2be7dc760e7a01beeb9b39"
     },
     {
       "id": "PATCH-TS-117",
@@ -1676,7 +1676,7 @@
         "test_patch_e2e_034_pgsql_task_selected_runtime_recovery",
         "test_patch_e2e_035_pgsql_coordination_survives_process_restart"
       ],
-      "source_sha256": "8278469ac517fa2723017e8ff8404b91256f219cf7fbd813b09882a43ec2aa25"
+      "source_sha256": "d556c4cdbd1d791072fcb1fea8f71929982d8d0476411e282f342547061ecb03"
     },
     {
       "id": "PATCH-TS-126",
@@ -1687,7 +1687,7 @@
         "test_patch_e2e_034_task_adapter_reconciles_without_effect_retry",
         "test_patch_e2e_033_selected_runtime_suspends_then_commits"
       ],
-      "source_sha256": "6351836477664a47e88f9b6802264648658168ff09ef7e2ecc6755d47897ec97"
+      "source_sha256": "1e7e2697cb43e295297a040d1842fb7b1222f90483bfad62bc26a8efe59b6c76"
     },
     {
       "id": "PATCH-TS-127",
@@ -1696,8 +1696,80 @@
       "symbols": [
         "test_patch_e2e_035_container_shared_root_is_test_only_and_physical"
       ],
-      "source_sha256": "9a955552c2cd5e412ae55e7756c1b4c95468944c8e3ecf431e3ae107250bb07b"
+      "source_sha256": "1033fa8d00cd33397e26995c64da789275f618abd11f8ab70aef52868b09c737"
+    },
+    {
+      "id": "PATCH-TS-128",
+      "path": "src/avalan/patch/activation.py",
+      "scope": "patch_domain",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "669bcad3e060d19f0d5443975e8c8fdbf22d2a4f623c51c8d1821d75c4066a9c"
+    },
+    {
+      "id": "PATCH-TS-129",
+      "path": "tests/patch/phase_15_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_15_requirements",
+        "test_patch_activation_manifest_is_source_derived_and_frozen",
+        "test_patch_activation_fails_closed_and_deactivation_keeps_owner",
+        "test_patch_phase_15_documentation_exposes_only_unproven_profiles",
+        "test_patch_phase_15_documentation_replays_schema_examples",
+        "test_patch_phase_15_documentation_specification_heading",
+        "test_patch_e2e_037_rooted_foreign_writer_never_clobbers",
+        "test_patch_phase_15_default_factory_is_inert_without_proof"
+      ],
+      "source_sha256": "e602226557e6cb9525159adeb66a3e5e25af0bfe47791a440de5c72a8994b443"
+    },
+    {
+      "id": "PATCH-TS-130",
+      "path": "tests/patch/phase_15_hardening_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_patch_phase_15_fixed_seed_fuzz_corpus_is_bounded_and_replayable",
+        "test_patch_phase_15_n_minus_one_n_n_plus_one_activation_bounds",
+        "test_patch_phase_15_adversarial_workloads",
+        "test_patch_phase_15_coarse_denials_and_default_inertness",
+        "test_patch_phase_15_parser_limit_matrix_is_exact_and_bounded",
+        "test_patch_phase_15_planner_limit_matrix_is_exact_and_deterministic",
+        "test_patch_phase_15_rooted_candidate_preflight_is_not_commit_e2e",
+        "test_patch_phase_15_inert_schema_boundary_is_not_public_e2e",
+        "test_patch_phase_15_container_profile_remains_incomplete",
+        "test_patch_phase_15_proposed_state_is_not_provider_commit_e2e",
+        "test_patch_phase_15_incomplete_profile_is_inert",
+        "test_patch_phase_15_approval_and_artifact_expiry_remain_closed",
+        "test_patch_phase_15_coordination_faults_are_fenced_and_nonblocking",
+        "test_patch_phase_15_durable_faults_preserve_truth_and_cleanup",
+        "test_patch_phase_15_privacy_and_protocol_boundaries_are_coarse",
+        "test_patch_e2e_038_public_tool_manager_fuzz_bounds_privacy_cleanup",
+        "test_patch_e2e_039_local_sandbox_container_conformance",
+        "test_patch_e2e_040_provider_json_durable_reconciliation",
+        "test_patch_phase_15_loader_requires_retained_activation_runtime",
+        "test_patch_e2e_041_incomplete_default_profiles_load_no_authority",
+        "test_patch_e2e_042_provider_limit_matrix_uses_exact_owner_boundaries"
+      ],
+      "source_sha256": "ed9f2f1249baaaa87f6a4cf9bb2be08272b949914ee149a7ffa220e6bd0ca3fc"
+    },
+    {
+      "id": "PATCH-TS-131",
+      "path": "tests/patch_activation_support.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e61fca0c808c9fc88085efe8fd721a11d8be888536542aeeb8b4fd2171a463be"
+    },
+    {
+      "id": "PATCH-TS-132",
+      "path": "tests/container/docker_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_fake_copied_outputs_ignore_caller_umask"
+      ],
+      "source_sha256": "23d3b62877a9f35d442eb2adbde4dd6771d42a9ce16578a8bf377d9c697d379f"
     }
   ],
-  "manifest_sha256": "1b6b0cdffac72aa894ff3b607eb3fc1b47a7a5ed14cc726cbd2323c496a27530"
+  "manifest_sha256": "f0e38955993476f093ab3edc1528ae9e027e88e1002565908e67848221bd6ef0"
 }

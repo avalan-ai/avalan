@@ -1641,6 +1641,7 @@ def _truth(
     workspace = (
         WorkspaceChange.CHANGED
         if occurrence is RequestedEffectOccurrence.TRUE
+        or artifact in {ArtifactState.STAGED, ArtifactState.LEAKED}
         else (
             WorkspaceChange.UNKNOWN
             if (

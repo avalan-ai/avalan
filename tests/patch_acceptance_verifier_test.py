@@ -109,26 +109,26 @@ def test_patch_acceptance_positive_load() -> None:
     """Load the complete active patch contract bundle."""
     manifest = _VERIFIER.load_phase0_contracts(_FIXTURES, repo_root=_ROOT)
 
-    assert manifest.current_phase == 14
+    assert manifest.current_phase == 15
     assert len(manifest.active_nodes(5)) == 59
 
 
-def test_patch_acceptance_validates_pending_phase14_evidence() -> None:
-    """Validate the prepared Phase 14 evidence record."""
+def test_patch_acceptance_validates_pending_phase15_evidence() -> None:
+    """Validate the prepared in-progress Phase 15 evidence record."""
     manifest = _VERIFIER.load_manifest(_FIXTURES / "acceptance_manifest.json")
 
     _VERIFIER._validate_phase_evidence(
-        _FIXTURES / "phase14_evidence.json", manifest, _ROOT
+        _FIXTURES / "phase15_evidence.json", manifest, _ROOT
     )
 
 
-def test_patch_acceptance_rejects_stale_phase14_evidence_date(
+def test_patch_acceptance_rejects_stale_phase15_evidence_date(
     tmp_path: Path,
 ) -> None:
-    """Reject a re-signed Phase 14 record with the stale receipt date."""
+    """Reject a re-signed Phase 15 record with the stale receipt date."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase14_evidence.json"
+    path = fixtures / "phase15_evidence.json"
     payload = _read(path)
     payload["recorded_on"] = "2026-08-26"
     _resign(payload, "record_sha256")
@@ -291,7 +291,9 @@ def test_patch_acceptance_inherits_only_postgresql_test_dsn(
     monkeypatch.setattr(_VERIFIER, "execute_pytest_nodes", execute_nodes)
     monkeypatch.setattr(_VERIFIER, "load_phase0_contracts", load_contracts)
 
-    _VERIFIER.verify_acceptance(repo_root=_ROOT, through_phase=14)
+    _VERIFIER.verify_acceptance(
+        repo_root=_ROOT, through_phase=_VERIFIER._CURRENT_PHASE
+    )
 
     assert observed == [(_VERIFIER.POSTGRESQL_TEST_DSN_ENV,)]
 
@@ -566,7 +568,7 @@ def test_patch_acceptance_rejects_pending_platform_receipts(
     """Reject a terminal evidence status while platform proof is pending."""
     fixtures = tmp_path / "fixtures"
     _copy_bundle(fixtures)
-    path = fixtures / "phase14_evidence.json"
+    path = fixtures / "phase15_evidence.json"
     payload = _read(path)
     payload["status"] = "complete"
     platform_receipts = payload["platform_receipts"]
@@ -750,7 +752,7 @@ def test_patch_acceptance_rejects_inventory_drift(tmp_path: Path) -> None:
 
 
 def test_patch_acceptance_rejects_premature_active_node(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     """Reject future evidence that claims active lifecycle status early."""
     fixtures = tmp_path / "fixtures"
@@ -759,13 +761,22 @@ def test_patch_acceptance_rejects_premature_active_node(
     payload = _read(path)
     nodes = payload["nodes"]
     assert isinstance(nodes, list)
-    future = next(
-        node
-        for node in nodes
-        if isinstance(node, dict)
-        and node["active_from_phase"] > _VERIFIER._CURRENT_PHASE
+    monkeypatch.setattr(_VERIFIER, "_MAX_PHASE", _VERIFIER._CURRENT_PHASE + 1)
+    prototype = nodes[0]
+    assert isinstance(prototype, dict)
+    future = deepcopy(prototype)
+    future.update(
+        {
+            "id": "PATCH-A-P16-TEST-FUTURE",
+            "node_id": (
+                "tests/patch/phase_15_contract_test.py::"
+                "test_patch_phase_16_future_placeholder"
+            ),
+            "lifecycle": "planned",
+            "active_from_phase": _VERIFIER._CURRENT_PHASE + 1,
+        }
     )
-    assert isinstance(future, dict)
+    nodes.append(future)
     future["lifecycle"] = "active"
     _resign(payload, "manifest_sha256")
     _write(path, payload)

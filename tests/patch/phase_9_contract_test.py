@@ -25,11 +25,12 @@ from pathlib import Path
 from runpy import run_path
 from subprocess import run as run_process
 from sys import executable
-from typing import TypeVar
+from typing import Never, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from patch_activation_support import activated_patch_test_profile
 
 import avalan.patch.target as target_module
 import avalan.patch.toolset as patch_toolset_module
@@ -64,6 +65,7 @@ from avalan.model.capability import (
     ProviderCapabilityCall,
 )
 from avalan.model.hubs.huggingface import HuggingfaceHub
+from avalan.patch.activation import PatchActivationRuntime
 from avalan.patch.domain import (
     ApprovalMode,
     ArtifactState,
@@ -101,6 +103,10 @@ from avalan.patch.domain import (
     Retryability,
     SequenceNumber,
     WorkspaceChange,
+)
+from avalan.patch.durable_store import (
+    InMemoryDurablePatchBackend,
+    InMemoryDurablePatchStore,
 )
 from avalan.patch.parser import (
     PatchInputLimits,
@@ -164,6 +170,8 @@ _PHASE_NINE_TARGET_BASELINE = run_path(target_module.__file__)
 _PHASE_NINE_PRODUCTION_WORKER_BOOTSTRAP = _PHASE_NINE_TARGET_BASELINE[
     "_WORKER_BOOTSTRAP"
 ]
+
+
 _PHASE_NINE_PRODUCTION_RUNTIME_VERIFIER = _PHASE_NINE_TARGET_BASELINE[
     "_RUNTIME_TARGET_AUTHORITY_VERIFIER_BYTES"
 ]
@@ -331,6 +339,20 @@ class _Service:
         self.correlation_id: PatchObserverCorrelationId | None = None
         self.lifecycle = InMemoryPatchLifecycleService()
         self.settlement = _SettlementPort(self)
+        self._activation_store = InMemoryDurablePatchStore(
+            InMemoryDurablePatchBackend()
+        )
+        self._activation_observer: object | None = None
+        self._activation_observers: list[object] = []
+
+    def set_activation_observer(self, observer: object) -> None:
+        """Retain the one loader-issued activation observer for this host."""
+        if observer in self._activation_observers:
+            raise RuntimeError(
+                "phase nine activation observer is already bound"
+            )
+        self._activation_observers.append(observer)
+        self._activation_observer = observer
 
     def settlement_inspection(
         self, handle: PatchInvocationHandle
@@ -427,8 +449,14 @@ def _limits() -> PatchLimits:
     )
 
 
-def _binding(service: _Service) -> PatchRuntimeBinding:
+def _binding(
+    service: object,
+    activation_store: InMemoryDurablePatchStore | None = None,
+) -> PatchRuntimeBinding:
     """Build a complete already-probed local test-host binding."""
+    if activation_store is None:
+        activation_store = getattr(service, "_activation_store", None)
+    assert isinstance(activation_store, InMemoryDurablePatchStore)
     identity = TargetIdentity(
         PatchContextId("context_" + "a" * 16),
         PatchWorkspaceId("workspace_" + "a" * 16),
@@ -461,8 +489,8 @@ def _binding(service: _Service) -> PatchRuntimeBinding:
         handshake,
         _policy(identity.policy_revision),
         PatchApprovalBinding(True),
-        PatchCoordinatorBinding(True),
-        PatchPersistenceBinding(True),
+        PatchCoordinatorBinding(True, activation_store),
+        PatchPersistenceBinding(True, activation_store),
         service,
     )
 
@@ -473,17 +501,18 @@ async def _toolset_async(
     **kwargs: object,
 ) -> PatchToolSet:
     """Construct one test toolset only through the trusted loader path."""
+    activation_store = InMemoryDurablePatchStore(InMemoryDurablePatchBackend())
 
     class Binder:
         """Expose the complete scripted runtime binding to the loader."""
 
         async def bind(self) -> PatchRuntimeBinding:
             """Return the complete local authenticated test binding."""
-            return _binding(service)
+            return _binding(service, activation_store)
 
     loader = PatchToolLoader(
         Binder(),
-        PatchTestHostProfile(enabled=True, authenticated=True),
+        activated_patch_test_profile(),
     )
     bundle = await loader.load(enable_tools=["patch.edit"])
     assert bundle.toolset is not None
@@ -831,11 +860,11 @@ def test_patch_phase_9_runtime_binding_requires_typed_loader_settings() -> (
     with pytest.raises(PatchToolError):
         PatchToolSettings(
             object(),  # type: ignore[arg-type]
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
     assert PatchToolSettings(
         Binder(),
-        PatchTestHostProfile(enabled=True, authenticated=True),
+        activated_patch_test_profile(),
     )
 
 
@@ -933,7 +962,7 @@ def test_patch_phase_9_orchestrator_loader_binds_ready_patch_tools() -> None:
             )
             assert result == "orchestrator"
             tool = orchestrator.call_args.args[4]
-            assert [item.name for item in tool.list_tools()] == ["patch.edit"]
+            assert tool.list_tools() == []
         await stack.aclose()
 
     run(execute())
@@ -963,17 +992,17 @@ def test_patch_phase_9_loader_binds_once_and_requires_test_host() -> None:
 
     async def execute() -> None:
         """Exercise absent, denied, and activated patch manager loading."""
-        inactive = PatchToolLoader(
-            binder, PatchTestHostProfile(enabled=True, authenticated=True)
-        )
+        inactive = PatchToolLoader(binder, activated_patch_test_profile())
         absent = await inactive.load(enable_tools=["shell.*"])
         assert absent.toolset is None
         assert binder.calls == 0
         denied = PatchToolLoader(
             binder, PatchTestHostProfile(enabled=False, authenticated=True)
         )
-        with pytest.raises(ValueError):
-            await denied.load(enable_tools=["patch.*"])
+        denied_bundle = await denied.load(enable_tools=["patch.*"])
+        assert denied_bundle.toolset is None
+        assert denied_bundle.manager.list_tools() == []
+        assert binder.calls == 0
         bundle = await inactive.load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         assert [item.name for item in bundle.manager.list_tools()] == [
@@ -1007,7 +1036,7 @@ def test_patch_phase_9_loader_binds_once_and_requires_test_host() -> None:
 
         policy_denied = await PatchToolLoader(
             PolicyDeniedBinder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.*"])
         assert policy_denied.toolset is not None
         assert policy_denied.manager.list_tools() == []
@@ -1032,7 +1061,7 @@ def test_patch_phase_9_loader_binds_once_and_requires_test_host() -> None:
         with pytest.raises(PatchToolError):
             await PatchToolLoader(
                 ReadOnlyBinder(),
-                PatchTestHostProfile(enabled=True, authenticated=True),
+                activated_patch_test_profile(),
             ).load(enable_tools=["patch.*"])
         assert tuple(
             tool.__name__ for tool in bundle.toolset.available_tools
@@ -1320,7 +1349,7 @@ def test_patch_phase_9_forged_capabilities_cannot_reach_manager_or_sdk() -> (
             "issue_registration",
         )
     )
-    with pytest.raises(PatchToolError):
+    with pytest.raises(TypeError):
         PatchToolSet(
             service,
             PatchCapabilitySnapshot(
@@ -1438,7 +1467,7 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
         edit_available=True,
         apply_available=True,
     )
-    with pytest.raises(PatchToolError):
+    with pytest.raises(TypeError):
         PatchToolSet(service, snapshot)
     forged_capability = object.__new__(PatchInvocationCapability)
     with pytest.raises(PatchToolError):
@@ -1458,6 +1487,8 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
 
     original_snapshot_for_binding = patch_toolset_module._snapshot_for_binding
     original_edit_tool = patch_toolset_module._PatchEditTool
+    profile = activated_patch_test_profile()
+    loader = PatchToolLoader(Binder(), profile)
 
     class BrokenEditTool:
         """Fail after the loader reservation has been consumed."""
@@ -1468,20 +1499,19 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
             raise RuntimeError("broken patch tool construction")
 
     original_toolset = patch_toolset_module.PatchToolSet
+    original_tool_manager = ToolManager.create_instance
 
-    def broken_toolset(service: object, snapshot: object) -> object:
+    def broken_toolset(
+        service: object, snapshot: object, **kwargs: object
+    ) -> object:
         """Fail before the private reservation can be claimed."""
-        del service, snapshot
+        del service, snapshot, kwargs
         raise RuntimeError("broken patch toolset entry")
 
     monkeypatch.setattr(patch_toolset_module, "PatchToolSet", broken_toolset)
 
     async def failed_entry() -> None:
         """Discard one reservation when construction cannot begin."""
-        loader = PatchToolLoader(
-            Binder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
-        )
         with pytest.raises(RuntimeError, match="broken patch toolset entry"):
             await loader.load(enable_tools=["patch.edit"])
 
@@ -1496,10 +1526,6 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
 
     async def failed_construction() -> None:
         """Consume and clean one failed loader reservation."""
-        loader = PatchToolLoader(
-            Binder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
-        )
         with pytest.raises(
             RuntimeError, match="broken patch tool construction"
         ):
@@ -1514,7 +1540,99 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
         "_snapshot_for_binding",
         original_snapshot_for_binding,
     )
-    with pytest.raises(PatchToolError):
+
+    async def retry_same_store() -> None:
+        """Prove one terminal unwind releases the same durable profile."""
+        bundle = await loader.load(enable_tools=["patch.edit"])
+        assert bundle.toolset is not None
+        await bundle.toolset.__aexit__(None, None, None)
+
+    run(retry_same_store())
+
+    def broken_manager(**kwargs: object) -> ToolManager:
+        """Fail after the loader has constructed one exact toolset."""
+        del kwargs
+        raise RuntimeError("broken patch manager construction")
+
+    monkeypatch.setattr(ToolManager, "create_instance", broken_manager)
+
+    async def failed_manager_construction() -> None:
+        """Release a complete toolset if manager construction fails."""
+        with pytest.raises(
+            RuntimeError, match="broken patch manager construction"
+        ):
+            await loader.load(enable_tools=["patch.edit"])
+
+    run(failed_manager_construction())
+    monkeypatch.setattr(ToolManager, "create_instance", original_tool_manager)
+    run(retry_same_store())
+
+    class CleanupFailure:
+        """Fail exactly once while the loader releases an owned resource."""
+
+        def __init__(self) -> None:
+            """Initialize the deterministic cleanup observation."""
+            self.exits = 0
+
+        async def __aenter__(self) -> "CleanupFailure":
+            """Return the never-entered loader-owned resource."""
+            return self
+
+        async def __aexit__(self, *arguments: object) -> None:
+            """Record the close and expose one cleanup failure."""
+            del arguments
+            self.exits += 1
+            raise RuntimeError("owned resource cleanup failed")
+
+    cleanup_failure = CleanupFailure()
+    resource_binding = replace(binding, owned_resources=(cleanup_failure,))
+
+    class ResourceBinder:
+        """Return the same durable record with one owned resource."""
+
+        async def bind(self) -> PatchRuntimeBinding:
+            """Return the same store-bound retry identity."""
+            return resource_binding
+
+    resource_loader = PatchToolLoader(ResourceBinder(), profile)
+    monkeypatch.setattr(patch_toolset_module, "PatchToolSet", broken_toolset)
+
+    async def failed_resource_cleanup() -> None:
+        """Keep construction failure primary when cleanup also fails."""
+        with pytest.raises(
+            RuntimeError, match="broken patch toolset entry"
+        ) as failure:
+            await resource_loader.load(enable_tools=["patch.edit"])
+        assert isinstance(failure.value.__cause__, RuntimeError)
+        assert str(failure.value.__cause__) == "owned resource cleanup failed"
+
+    run(failed_resource_cleanup())
+    assert cleanup_failure.exits == 1
+    monkeypatch.setattr(patch_toolset_module, "PatchToolSet", original_toolset)
+    run(retry_same_store())
+
+    def cancelled_toolset(*arguments: object, **kwargs: object) -> object:
+        """Propagate cancellation after activation.
+
+        Do not construct tools after the cancellation point.
+        """
+        del arguments, kwargs
+        raise CancelledError
+
+    monkeypatch.setattr(
+        patch_toolset_module, "PatchToolSet", cancelled_toolset
+    )
+
+    async def cancelled_construction() -> None:
+        """Release the profile before propagating construction cancellation."""
+        with pytest.raises(CancelledError):
+            await loader.load(enable_tools=["patch.edit"])
+
+    run(cancelled_construction())
+    monkeypatch.setattr(patch_toolset_module, "PatchToolSet", original_toolset)
+    run(retry_same_store())
+
+    with pytest.raises(TypeError):
         PatchToolSet(service, snapshot)
 
     async def concurrent_loads() -> None:
@@ -1538,11 +1656,11 @@ def test_patch_phase_9_sealed_authority_rejects_forgery(
 
         first_loader = PatchToolLoader(
             ConcurrentBinder(first_service),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         second_loader = PatchToolLoader(
             ConcurrentBinder(second_service),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         first_task = create_task(
             first_loader.load(enable_tools=["patch.edit"])
@@ -1996,7 +2114,7 @@ def test_patch_phase_9_context_capability_is_loader_bound() -> None:
         """Check empty replay context and loader-bound context authority."""
         bundle = await PatchToolLoader(
             Binder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         ).load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
         assert not hasattr(bundle.manager, "patch_context_capability")
@@ -2067,7 +2185,7 @@ def test_patch_phase_9_stale_rebuild_and_strict_registration() -> None:
         binder = Binder()
         loader = PatchToolLoader(
             binder,
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         bundle = await loader.load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
@@ -2969,7 +3087,7 @@ def test_patch_e2e_012_stream_failures_and_handshakes_never_write() -> None:
         with pytest.raises(PatchToolError):
             await PatchToolLoader(
                 PartialBinder(),
-                PatchTestHostProfile(enabled=True, authenticated=True),
+                activated_patch_test_profile(),
             ).load(enable_tools=["patch.*"])
 
     run(load_partial())
@@ -3664,7 +3782,7 @@ def test_patch_phase_9_public_boundary_rejects_invalid_and_stale_state() -> (
     assert stale.available_tools_for_enabled_tools(("patch.*",)) == ()
     with pytest.raises(PatchToolError):
         stale.with_enabled_tools("patch.*")  # type: ignore[arg-type]
-    with pytest.raises(PatchToolError):
+    with pytest.raises(TypeError):
         PatchToolSet(
             service,
             PatchCapabilitySnapshot(
@@ -3684,7 +3802,7 @@ def test_patch_phase_9_public_boundary_rejects_invalid_and_stale_state() -> (
             """Exit the invalid synchronous resource."""
             del args
 
-    with pytest.raises(PatchToolError):
+    with pytest.raises(TypeError):
         PatchToolSet(
             service,
             PatchCapabilitySnapshot(
@@ -3851,7 +3969,7 @@ def test_patch_phase_9_admission_failure_raw_errors_and_async_resources() -> (
         run(
             PatchToolLoader(
                 Binder(),
-                PatchTestHostProfile(enabled=True, authenticated=True),
+                activated_patch_test_profile(),
             ).load(
                 enable_tools="patch.*"
             )  # type: ignore[arg-type]
@@ -3872,7 +3990,7 @@ def test_patch_phase_9_admission_failure_raw_errors_and_async_resources() -> (
         """Reject one bound target and policy identity mismatch."""
         loader = PatchToolLoader(
             IncompatibleBinder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         with pytest.raises(PatchToolError):
             await loader.load(enable_tools=["patch.*"])
@@ -3954,6 +4072,194 @@ def test_patch_phase_9_admission_cleanup_and_partial_entry_revoke() -> None:
         assert entered == ["first:enter", "second:enter", "first:exit"]
         with pytest.raises(PatchToolError, match="unavailable"):
             await host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            )
+
+    run(execute())
+
+
+def test_patch_phase_9_toolset_lifecycle_always_revokes_after_failures(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve the first cleanup error while always revoking capability."""
+    service = _Service()
+    events: list[str] = []
+
+    class Resource:
+        """Model an entry or close fault around a real async exit stack."""
+
+        def __init__(
+            self,
+            name: str,
+            *,
+            enter_fails: bool = False,
+            close_fails: bool = False,
+        ) -> None:
+            """Store the exact boundary fault requested by this case."""
+            self._name = name
+            self._enter_fails = enter_fails
+            self._close_fails = close_fails
+
+        async def __aenter__(self) -> "Resource":
+            """Enter this resource or fail after recording the attempt."""
+            events.append(self._name + ":enter")
+            if self._enter_fails:
+                raise RuntimeError("entry failure")
+            return self
+
+        async def __aexit__(self, *arguments: object) -> None:
+            """Close this resource and optionally report one close failure."""
+            del arguments
+            events.append(self._name + ":close")
+            if self._close_fails:
+                raise RuntimeError("close failure")
+
+    original_deactivate = PatchActivationRuntime.deactivate
+    original_revoke = PatchToolSet._revoke
+
+    async def deactivate_then_fail(
+        runtime: PatchActivationRuntime,
+    ) -> object:
+        """Perform real deactivation before reporting the forced fault."""
+        events.append("deactivate")
+        await original_deactivate(runtime)
+        raise RuntimeError("deactivate failure")
+
+    def revoke_then_fail(toolset: PatchToolSet) -> None:
+        """Perform real revocation before reporting the forced fault."""
+        events.append("revoke")
+        original_revoke(toolset)
+        raise RuntimeError("revoke failure")
+
+    monkeypatch.setattr(
+        PatchActivationRuntime, "deactivate", deactivate_then_fail
+    )
+    monkeypatch.setattr(
+        PatchToolSet, "_revoke", staticmethod(revoke_then_fail)
+    )
+
+    async def execute() -> None:
+        """Exercise real enter and exit cleanup through all failures."""
+        lifecycle_enter = await _toolset_async(
+            service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+            owned_resources=(
+                Resource("entered"),
+                Resource("entry-failure", enter_fails=True),
+            ),
+        )
+        lifecycle_host = PatchSdkHost(service, lifecycle_enter.capability)
+        with pytest.raises(RuntimeError, match="deactivate failure"):
+            await lifecycle_enter.__aenter__()
+        assert events == [
+            "entered:enter",
+            "entry-failure:enter",
+            "entered:close",
+            "deactivate",
+            "revoke",
+        ]
+        with pytest.raises(PatchToolError, match="unavailable"):
+            await lifecycle_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            )
+
+        events.clear()
+        entering = await _toolset_async(
+            service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+            owned_resources=(
+                Resource("opened", close_fails=True),
+                Resource("rejected", enter_fails=True),
+            ),
+        )
+        entering_host = PatchSdkHost(service, entering.capability)
+        with pytest.raises(RuntimeError, match="close failure"):
+            await entering.__aenter__()
+        assert events == [
+            "opened:enter",
+            "rejected:enter",
+            "opened:close",
+            "deactivate",
+            "revoke",
+        ]
+        with pytest.raises(PatchToolError, match="unavailable"):
+            await entering_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            )
+
+        events.clear()
+        exiting = await _toolset_async(
+            service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+            owned_resources=(Resource("closing", close_fails=True),),
+        )
+        exiting_host = PatchSdkHost(service, exiting.capability)
+        assert await exiting.__aenter__() is exiting
+        with pytest.raises(RuntimeError, match="close failure"):
+            await exiting.__aexit__(None, None, None)
+        assert events == [
+            "closing:enter",
+            "closing:close",
+            "deactivate",
+            "revoke",
+        ]
+        with pytest.raises(PatchToolError, match="unavailable"):
+            await exiting_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            )
+
+        events.clear()
+        activation_only = await _toolset_async(
+            service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+        )
+        assert await activation_only.__aenter__() is activation_only
+        with pytest.raises(RuntimeError, match="deactivate failure"):
+            await activation_only.__aexit__(None, None, None)
+        assert events == ["deactivate", "revoke"]
+
+        monkeypatch.undo()
+        events.clear()
+        monkeypatch.setattr(
+            PatchToolSet, "_revoke", staticmethod(revoke_then_fail)
+        )
+        revoke_only = await _toolset_async(
+            service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+        )
+        revoke_host = PatchSdkHost(service, revoke_only.capability)
+        assert await revoke_only.__aenter__() is revoke_only
+        with pytest.raises(RuntimeError, match="revoke failure"):
+            await revoke_only.__aexit__(None, None, None)
+        assert events == ["revoke"]
+        with pytest.raises(PatchToolError, match="unavailable"):
+            await revoke_host.invoke_json(
                 OperationType.EDIT,
                 {
                     "path": "note.txt",
@@ -4478,7 +4784,7 @@ def test_patch_phase_9_epoch_operations_limits_and_request_handles() -> None:
         """Reject stale, widened, forged, and oversized public invocations."""
         loader = PatchToolLoader(
             Binder(),
-            PatchTestHostProfile(enabled=True, authenticated=True),
+            activated_patch_test_profile(),
         )
         bundle = await loader.load(enable_tools=["patch.edit"])
         assert bundle.toolset is not None
@@ -5510,6 +5816,313 @@ def test_patch_phase_9_pending_cancellation_and_orchestrator_guards() -> None:
         assert response._tool_cycle_count == 0
 
     run(execute())
+
+
+def test_patch_phase_9_activation_and_sdk_review_rejections(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject structural activation hooks and forged SDK review values."""
+
+    class MissingActivation:
+        """Expose no activation member after an independent seal check."""
+
+    class SynchronousActivation:
+        """Expose a synchronous result that cannot mint authority."""
+
+        def activate(self, binding: PatchRuntimeBinding) -> None:
+            """Return no awaitable activation receipt for this binding."""
+            del binding
+
+    class NonJsonReviewService(_Service):
+        """Return a review that cannot be serialized into a sealed binding."""
+
+        async def review(
+            self, handle: PatchInvocationHandle
+        ) -> dict[str, object]:
+            """Return a value rejected by canonical JSON encoding."""
+            assert isinstance(handle, PatchInvocationHandle)
+            return {"not_json": float("nan")}
+
+    class PendingReviewService(_Service):
+        """Preserve the pending outcome until its review is validated."""
+
+        def settlement_inspection(
+            self, handle: PatchInvocationHandle
+        ) -> Future[PatchResult | PatchPending]:
+            """Return a pending invocation instead of a terminal view."""
+            assert isinstance(handle, PatchInvocationHandle)
+            assert self.request_id is not None
+            assert self.correlation_id is not None
+            return _settled_future(
+                PatchPending(
+                    1,
+                    PatchPendingOperationId("pending_" + "b" * 16),
+                    self.request_id,
+                    self.correlation_id,
+                    LifecyclePhase.SETTLEMENT_PENDING,
+                )
+            )
+
+    async def scenario() -> None:
+        binding = _binding(_Service())
+        assert (
+            await patch_toolset_module._activate_sealed_factory(
+                object(), binding
+            )
+            is None
+        )
+        monkeypatch.setattr(
+            patch_toolset_module,
+            "_is_sealed_activation_factory",
+            lambda _: True,
+        )
+        assert (
+            await patch_toolset_module._activate_sealed_factory(
+                MissingActivation(), binding
+            )
+            is None
+        )
+        assert (
+            await patch_toolset_module._activate_sealed_factory(
+                SynchronousActivation(), binding
+            )
+            is None
+        )
+        monkeypatch.undo()
+
+        invalid_service = NonJsonReviewService(pending=True)
+        invalid_toolset = await _toolset_async(
+            invalid_service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+        )
+        invalid_host = PatchSdkHost(
+            invalid_service, invalid_toolset.capability
+        )
+        assert isinstance(
+            await invalid_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            ),
+            PatchPending,
+        )
+        with pytest.raises(PatchToolError):
+            await invalid_host.prepare_approval_review()
+
+        pending_service = PendingReviewService(pending=True)
+        pending_toolset = await _toolset_async(
+            pending_service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+        )
+        pending_host = PatchSdkHost(
+            pending_service, pending_toolset.capability
+        )
+        assert isinstance(
+            await pending_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            ),
+            PatchPending,
+        )
+        review = await pending_host.prepare_approval_review()
+        pending_host.validate_approval_review(review)
+
+        terminal_service = _Service()
+        terminal_toolset = await _toolset_async(
+            terminal_service,
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+        )
+        terminal_host = PatchSdkHost(
+            terminal_service, terminal_toolset.capability
+        )
+        assert isinstance(
+            await terminal_host.invoke_json(
+                OperationType.EDIT,
+                {
+                    "path": "note.txt",
+                    "edits": [{"old_text": "old", "new_text": "new"}],
+                },
+            ),
+            PatchResult,
+        )
+        with pytest.raises(PatchToolError):
+            await terminal_host.prepare_approval_review()
+
+    run(scenario())
+    with pytest.raises(PatchToolError):
+        patch_toolset_module.PatchSdkInvocationReview(cast(Never, object()))
+    review = object.__new__(patch_toolset_module.PatchSdkInvocationReview)
+    assert repr(review) == "PatchSdkInvocationReview(<opaque>)"
+    with pytest.raises(PatchToolError):
+        copy(review)
+    with pytest.raises(PatchToolError):
+        deepcopy(review)
+    with pytest.raises(PatchToolError):
+        review.__reduce__()
+    with pytest.raises(PatchToolError):
+        review.__reduce_ex__(4)
+
+
+def test_patch_phase_9_loader_unwinds_all_activation_cleanup_paths(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Preserve construction failure while every cleanup layer fails."""
+
+    class Resource:
+        """Model one loader-owned async resource whose close fails."""
+
+        async def __aenter__(self) -> "Resource":
+            """Return the resource without a synchronous ownership path."""
+            return self
+
+        async def __aexit__(self, *arguments: object) -> None:
+            """Raise after recording the loader's cleanup attempt."""
+            del arguments
+            raise RuntimeError("resource cleanup failed")
+
+    service = _Service()
+    binding = replace(_binding(service), owned_resources=(Resource(),))
+
+    class Binder:
+        """Return the one resource-owning binding for this loader."""
+
+        async def bind(self) -> PatchRuntimeBinding:
+            """Return the bound service and its owned resource."""
+            return binding
+
+    async def broken_exit(self: PatchToolSet, *arguments: object) -> None:
+        """Fail after the loader has constructed its exact toolset."""
+        del self, arguments
+        raise RuntimeError("toolset cleanup failed")
+
+    def broken_manager(**kwargs: object) -> ToolManager:
+        """Fail after construction so the loader enters all cleanup layers."""
+        del kwargs
+        raise RuntimeError("manager construction failed")
+
+    def broken_revoke(_: PatchToolSet) -> None:
+        """Fail while revoking an incompletely closed toolset capability."""
+        raise RuntimeError("revoke failed")
+
+    async def broken_deactivate(self: PatchActivationRuntime) -> object:
+        """Fail while deactivating the partially constructed runtime."""
+        del self
+        raise RuntimeError("activation cleanup failed")
+
+    monkeypatch.setattr(PatchToolSet, "__aexit__", broken_exit)
+    monkeypatch.setattr(PatchToolSet, "_revoke", staticmethod(broken_revoke))
+    monkeypatch.setattr(ToolManager, "create_instance", broken_manager)
+    monkeypatch.setattr(
+        PatchActivationRuntime, "deactivate", broken_deactivate
+    )
+    loader = PatchToolLoader(Binder(), activated_patch_test_profile())
+
+    async def scenario() -> None:
+        """Retain the original manager error through all cleanup failures."""
+        with pytest.raises(RuntimeError, match="manager construction failed"):
+            await loader.load(enable_tools=["patch.edit"])
+
+    run(scenario())
+
+
+def test_patch_phase_9_loader_deactivates_an_unvalidated_runtime(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Deactivate a non-null runtime that fails exact factory validation."""
+
+    class Runtime:
+        """Record the loader's required deactivation of this fake runtime."""
+
+        def __init__(self) -> None:
+            """Initialize an unvalidated runtime that has not been closed."""
+            self.deactivated = False
+
+        async def deactivate(self) -> None:
+            """Record cleanup before fallback loading continues."""
+            self.deactivated = True
+
+    service = _Service()
+    runtime = Runtime()
+
+    class Binder:
+        """Return the selected local binding for this exact loader."""
+
+        async def bind(self) -> PatchRuntimeBinding:
+            """Return the service-bound durable host handshake."""
+            return _binding(service)
+
+    async def activate(
+        _factory: object, _binding: PatchRuntimeBinding
+    ) -> object:
+        """Return the runtime whose independent validation will fail."""
+        return runtime
+
+    monkeypatch.setattr(
+        patch_toolset_module, "_activate_sealed_factory", activate
+    )
+    monkeypatch.setattr(
+        patch_toolset_module, "_validates_activation_runtime", lambda *_: False
+    )
+    loader = PatchToolLoader(Binder(), activated_patch_test_profile())
+
+    async def scenario() -> None:
+        """Fall back to ordinary tools after deactivating the fake runtime."""
+        bundle = await loader.load(enable_tools=["patch.edit"])
+        assert bundle.toolset is None
+
+    run(scenario())
+    assert runtime.deactivated
+
+
+def test_patch_phase_9_toolset_constructor_rejects_unissued_configuration(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject invalid construction before a caller can claim a capability."""
+    with pytest.raises(PatchToolError):
+        PatchToolSet(
+            cast(object, object()),
+            cast(PatchCapabilitySnapshot, object()),
+            runtime_binding=cast(PatchRuntimeBinding, object()),
+            activation_runtime=object(),
+            activation_factory=object(),
+        )
+    monkeypatch.setattr(
+        patch_toolset_module,
+        "_validates_activation_runtime",
+        lambda *_: True,
+    )
+    with pytest.raises(PatchToolError, match="async-only"):
+        PatchToolSet(
+            cast(object, object()),
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+            runtime_binding=cast(PatchRuntimeBinding, object()),
+            activation_runtime=object(),
+            activation_factory=object(),
+            owned_resources=(object(),),
+        )
+    with pytest.raises(PatchToolError, match="trusted loader"):
+        PatchToolSet(
+            cast(object, object()),
+            PatchCapabilitySnapshot(
+                edit_available=True, apply_available=False
+            ),
+            runtime_binding=cast(PatchRuntimeBinding, object()),
+            activation_runtime=object(),
+            activation_factory=object(),
+        )
 
 
 def test_patch_phase_9_requirements(tmp_path: Path) -> None:

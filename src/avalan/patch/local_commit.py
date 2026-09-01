@@ -86,6 +86,7 @@ from avalan.patch.target import (
     _WORKER_RUNTIME_BOOTSTRAP,
     _WORKER_TOKEN_ENV,
     FileIdentity,
+    LocalPlatformProfile,
     LocalTargetProfile,
     ResolvedMutationScope,
     RootWitness,
@@ -363,8 +364,17 @@ async def _commit_in_seatbelt(
         separators=(",", ":"),
     ).encode()
     cryptography_root, cffi_backend, cffi_root = _worker_runtime_paths()
+    resolved_interpreter = (
+        Path(executable).resolve()
+        if profile.platform is LocalPlatformProfile.LINUX
+        else None
+    )
     worker_argv = (
-        executable,
+        (
+            str(resolved_interpreter)
+            if resolved_interpreter is not None
+            else executable
+        ),
         "-I",
         "-S",
         "-c",
@@ -390,6 +400,7 @@ async def _commit_in_seatbelt(
             },
             (profile.root._path, namespace),
             _commit_seatbelt_profile(profile, namespace, token.hex()),
+            resolved_interpreter=resolved_interpreter,
         )
         process = await create_subprocess_exec(
             *process_command,

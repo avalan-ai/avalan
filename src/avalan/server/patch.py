@@ -35,6 +35,7 @@ from httpx import AsyncClient
 from httpx import Response as HttpResponse
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
+from avalan.patch.activation import is_patch_activation_runtime_factory
 from avalan.patch.coordinator import RetransmissionKey
 from avalan.patch.domain import (
     AlgorithmDigest,
@@ -232,6 +233,7 @@ class RemotePatchTestServerConfiguration:
     authority_resolver: RemotePatchAuthorityResolver
     expected_authority: RemotePatchAuthority
     binder: PatchRuntimeBinder
+    activation_factory: object
     store: DurablePatchStore
     handle_key: bytes = field(repr=False)
     runtime_witness: RemotePatchRuntimeWitness
@@ -258,6 +260,7 @@ class RemotePatchTestServerConfiguration:
             or self.runtime_witness
             != _expected_runtime_witness(self.expected_authority)
             or not isinstance(self.binder, PatchRuntimeBinder)
+            or not is_patch_activation_runtime_factory(self.activation_factory)
             or any(
                 not callable(getattr(self.store, name, None))
                 for name in required_store_methods
@@ -801,7 +804,13 @@ class RemotePatchController:
             try:
                 bundle = await PatchToolLoader(
                     self._configuration.binder,
-                    PatchTestHostProfile(enabled=True, authenticated=True),
+                    PatchTestHostProfile(
+                        enabled=True,
+                        authenticated=True,
+                        activation_factory=(
+                            self._configuration.activation_factory
+                        ),
+                    ),
                 ).load(enable_tools=["patch.edit", "patch.apply"])
                 binding = bundle.runtime_binding
                 if (

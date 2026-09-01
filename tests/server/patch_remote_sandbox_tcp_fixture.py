@@ -7,6 +7,7 @@ from runpy import run_path
 from sys import path as sys_path
 
 from fastapi import FastAPI, Header, HTTPException, Request
+from patch_activation_support import patch_test_activation_factory
 
 from avalan.patch.domain import (
     Capability,
@@ -212,6 +213,7 @@ def _configuration() -> RemotePatchTestServerConfiguration:
         authority_resolver=_Resolver(authority),
         expected_authority=authority,
         binder=binder,
+        activation_factory=patch_test_activation_factory(),
         store=store,
         handle_key=b"t" * 32,
         runtime_witness=RemotePatchRuntimeWitness(

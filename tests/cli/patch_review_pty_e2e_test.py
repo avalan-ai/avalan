@@ -47,6 +47,10 @@ from avalan.patch.domain import (
     PatchPending,
     PatchPendingOperationId,
 )
+from avalan.patch.durable_store import (
+    InMemoryDurablePatchBackend,
+    InMemoryDurablePatchStore,
+)
 from avalan.patch.review_display import ReviewDisplayError
 from avalan.patch.toolset import (
     PatchCapabilitySnapshot,
@@ -83,6 +87,18 @@ class _PendingAfterApprovalService:
         self.request_id: Any = None
         self.correlation_id: Any = None
         self.settlement = self
+        self._activation_store = InMemoryDurablePatchStore(
+            InMemoryDurablePatchBackend()
+        )
+        self._activation_observer: object | None = None
+
+    def set_activation_observer(self, observer: object) -> None:
+        """Retain the one loader-issued activation observer for this host."""
+        if self._activation_observer is not None:
+            raise RuntimeError(
+                "patch review activation observer is already bound"
+            )
+        self._activation_observer = observer
 
     def inspect(self, handle: PatchInvocationHandle) -> Future[Any]:
         """Return the current pending observation for the issued handle."""

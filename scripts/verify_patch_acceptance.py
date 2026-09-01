@@ -55,7 +55,7 @@ from verify_patch_types import load_manifest as load_type_manifest
 from verify_src_coverage import CoverageVerificationError, verify_src_coverage
 
 _FEATURE = "patch"
-_CURRENT_PHASE = 14
+_CURRENT_PHASE = 15
 _MAX_PHASE = 15
 _PINNED_ACCEPTANCE_HISTORY_SNAPSHOT_SHA256 = (
     "c8c7c3b562fc18dedccab1d0a047167c54961d9fa92167a145deff669758c77b"
@@ -80,6 +80,7 @@ _FIXTURE_NAMES = (
     "phase12_evidence.json",
     "phase13_evidence.json",
     "phase14_evidence.json",
+    "phase15_evidence.json",
     "phase7_evidence.json",
     "phase_evidence_index.json",
 )
@@ -852,6 +853,19 @@ class AcceptanceManifest:
             and node.active_from_phase <= through_phase
         )
 
+    def active_node_at_phase(
+        self, node_id: str, through_phase: int
+    ) -> AcceptanceNode | None:
+        """Return one exact active node visible at one phase."""
+        return next(
+            (
+                node
+                for node in self.active_nodes(through_phase)
+                if node.node_id == node_id
+            ),
+            None,
+        )
+
 
 def repository_root() -> Path:
     """Return the checkout root that owns this verifier."""
@@ -1125,7 +1139,7 @@ def load_phase0_contracts(
         root,
     )
     _validate_phase_evidence(
-        fixtures / "phase14_evidence.json", manifest, root
+        fixtures / "phase15_evidence.json", manifest, root
     )
     _validate_phase_evidence_history(
         fixtures / "phase_evidence_index.json",
@@ -1532,7 +1546,9 @@ def _validate_requirements(
     nodes_by_requirement: dict[str, set[str]] = {
         identifier: set() for identifier in ownership_by_identifier
     }
-    manifest_nodes = {node.node_id: node for node in manifest.nodes}
+    manifest_nodes = {
+        (node.node_id, node.active_from_phase): node for node in manifest.nodes
+    }
     for node in manifest.nodes:
         for identifier in node.requirement_ids:
             if identifier not in nodes_by_requirement:
@@ -1540,7 +1556,9 @@ def _validate_requirements(
                     "acceptance node references an unknown requirement"
                 )
             nodes_by_requirement[identifier].add(node.node_id)
-    active_node_requirements: dict[str, list[RequirementOwnership]] = {}
+    active_node_requirements: dict[
+        tuple[str, int], list[RequirementOwnership]
+    ] = {}
     for identifier, node_ids in nodes_by_requirement.items():
         ownership = ownership_by_identifier[identifier]
         if node_ids != {ownership.node_id}:
@@ -1548,8 +1566,8 @@ def _validate_requirements(
                 "requirement is unowned or differs from acceptance evidence: "
                 f"{identifier}"
             )
-        owner = manifest_nodes.get(ownership.node_id)
-        if owner is None or owner.active_from_phase != ownership.owning_phase:
+        owner = manifest_nodes.get((ownership.node_id, ownership.owning_phase))
+        if owner is None:
             raise PatchAcceptanceError(
                 "requirement owner phase differs from acceptance evidence: "
                 f"{identifier}"
@@ -1559,9 +1577,9 @@ def _validate_requirements(
                 raise PatchAcceptanceError(
                     "active requirement has planned evidence"
                 )
-            active_node_requirements.setdefault(owner.node_id, []).append(
-                ownership
-            )
+            active_node_requirements.setdefault(
+                (owner.node_id, owner.active_from_phase), []
+            ).append(ownership)
             _validate_active_requirement_artifact(ownership, root)
         else:
             if owner.lifecycle != "planned":
@@ -1569,7 +1587,7 @@ def _validate_requirements(
                     "planned requirement has active evidence"
                 )
             _validate_planned_requirement_artifact(ownership)
-    for node_id, owned in active_node_requirements.items():
+    for (node_id, _phase_value), owned in active_node_requirements.items():
         if len(owned) > _MAX_ACTIVE_REQUIREMENTS_PER_NODE:
             raise PatchAcceptanceError(
                 f"active acceptance node owns too many requirements: {node_id}"
@@ -1792,7 +1810,6 @@ def _validate_failure_matrix(
         raise PatchAcceptanceError("failure matrix is empty")
     identifiers: list[str] = []
     boundaries: list[str] = []
-    node_ids = {node.node_id: node for node in manifest.nodes}
     for raw in cells:
         item = mapping(raw, "failure cell")
         _exact_keys(
@@ -1847,7 +1864,7 @@ def _validate_failure_matrix(
                 "failure cell references unknown requirement"
             )
         evidence_node_id = _test_node(item.get("evidence_node_id"))
-        node = node_ids.get(evidence_node_id)
+        node = manifest.active_node_at_phase(evidence_node_id, phase)
         if (
             node is None
             or node.lifecycle != "active"
@@ -2386,9 +2403,7 @@ def _validate_goldens(
         ):
             raise PatchAcceptanceError("golden requirement is invalid")
         node = _test_node(item.get("node_id"))
-        candidate = next(
-            (item for item in manifest.nodes if item.node_id == node), None
-        )
+        candidate = manifest.active_node_at_phase(node, phase)
         if (
             candidate is None
             or candidate.lifecycle != "active"
@@ -2460,9 +2475,7 @@ def _validate_threat_model(
         ):
             raise PatchAcceptanceError("threat requirement is invalid")
         node = _test_node(item.get("node_id"))
-        candidate = next(
-            (item for item in manifest.nodes if item.node_id == node), None
-        )
+        candidate = manifest.active_node_at_phase(node, phase)
         if (
             candidate is None
             or candidate.lifecycle != "active"
@@ -3249,6 +3262,7 @@ def _validate_phase_evidence(
         12: "2026-08-26",
         13: "2026-08-27",
         14: "2026-08-28",
+        15: "2026-08-29",
     }.get(_CURRENT_PHASE)
     if (
         expected_date is None
@@ -3828,9 +3842,13 @@ def _validate_phase_evidence_counts(
         },
         "phase evidence node counts",
     )
+    active_requirements = sum(
+        len(node.requirement_ids)
+        for node in manifest.active_nodes(_CURRENT_PHASE)
+    )
     expected = {
-        "active_requirements": 868,
-        "planned_requirements": 149,
+        "active_requirements": active_requirements,
+        "planned_requirements": 1017 - active_requirements,
         "active_acceptance_nodes": len(manifest.active_nodes(_CURRENT_PHASE)),
         "planned_acceptance_nodes": (
             len(manifest.nodes) - len(manifest.active_nodes(_CURRENT_PHASE))

@@ -1,0 +1,73 @@
+{
+  "schema_version": 1,
+  "seed": 20260829,
+  "cases": [
+    {
+      "id": "PATCH-F15-001",
+      "category": "grammar",
+      "payload_hex": "7b227061746368223a222a2a2a20426567696e2050617463682076315c6e2a2a2a204164642046696c653a2066757a7a2e7478745c6e2b6f6b5c6e2a2a2a20456e64205061746368227d",
+      "expected": "accept"
+    },
+    {
+      "id": "PATCH-F15-002",
+      "category": "json",
+      "payload_hex": "7b227061746368223a2278222c227061746368223a2279227d",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-003",
+      "category": "unicode",
+      "payload_hex": "7b227061746368223a22ff227d",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-004",
+      "category": "path",
+      "payload_hex": "7b2270617468223a222f666f7262696464656e2f6e6f74652e747874222c226564697473223a5b7b226f6c645f74657874223a2261222c226e65775f74657874223a2262227d5d7d",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-005",
+      "category": "declaration",
+      "payload_hex": "7b227061746368223a222a2a2a20426567696e2050617463682076315c6e2a2a2a205570646174652046696c653a206e6f74652e7478745c6e2b6f6e6c792d6164645c6e2a2a2a20456e64205061746368227d",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-006",
+      "category": "matching",
+      "payload_hex": "616c7068615c6e616c7068615c6e",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-007",
+      "category": "lineage",
+      "payload_hex": "7b227061746368223a222a2a2a20426567696e2050617463682076315c6e2a2a2a204164642046696c653a20746f6d622e7478745c6e2b76616c75655c6e2a2a2a2044656c6574652046696c653a20746f6d622e7478745c6e2a2a2a20456e64205061746368227d",
+      "expected": "reject"
+    },
+    {
+      "id": "PATCH-F15-008",
+      "category": "target_rpc",
+      "payload_hex": "7b22726571756573745f6964223a2266757a7a222c2273657175656e6365223a317d",
+      "expected": "accept"
+    },
+    {
+      "id": "PATCH-F15-009",
+      "category": "event",
+      "payload_hex": "736574746c656d656e745f70656e64696e67",
+      "expected": "accept"
+    },
+    {
+      "id": "PATCH-F15-010",
+      "category": "result",
+      "payload_hex": "70617463682e616c6961735f64656e696564",
+      "expected": "accept"
+    },
+    {
+      "id": "PATCH-F15-011",
+      "category": "protocol",
+      "payload_hex": "6d6370",
+      "expected": "inert"
+    }
+  ],
+  "corpus_sha256": "fbbecebb89fd06365364071d9b8ac8a4407db052fc5a52fafb0097999b0d7c1c"
+}

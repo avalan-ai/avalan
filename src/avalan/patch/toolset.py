@@ -28,9 +28,10 @@ from collections.abc import (
 )
 from contextlib import AbstractAsyncContextManager
 from contextvars import ContextVar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import StrEnum
 from hashlib import sha256
+from importlib import import_module
 from inspect import currentframe
 from json import dumps
 from types import MappingProxyType, TracebackType
@@ -387,12 +388,18 @@ class PatchTestHostProfile:
 
     enabled: bool = False
     authenticated: bool = False
+    activation_factory: object | None = field(
+        default=None,
+        repr=False,
+    )
 
     def __post_init__(self) -> None:
         """Reject all non-boolean activation witnesses."""
         if (
             type(self.enabled) is not bool
             or type(self.authenticated) is not bool
+            or self.activation_factory is not None
+            and not _is_sealed_activation_factory(self.activation_factory)
         ):
             raise PatchToolError("patch test-host profile is invalid")
 
@@ -484,6 +491,49 @@ class PatchRuntimeBinding:
             raise PatchToolError("patch runtime handshake is incomplete")
 
 
+def _is_sealed_activation_factory(value: object) -> bool:
+    """Return whether one value is an activation-module-issued factory."""
+    activation = import_module("avalan.patch.activation")
+    validator = getattr(
+        activation, "is_patch_activation_runtime_factory", None
+    )
+    return callable(validator) and bool(validator(value))
+
+
+def _validates_activation_runtime(
+    factory: object,
+    binding: PatchRuntimeBinding,
+    runtime: object,
+) -> bool:
+    """Return whether one activation runtime matches its exact host binding."""
+    activation = import_module("avalan.patch.activation")
+    validator = getattr(activation, "validates_patch_activation_runtime", None)
+    return callable(validator) and bool(validator(factory, binding, runtime))
+
+
+async def _activate_sealed_factory(
+    factory: object,
+    binding: PatchRuntimeBinding,
+) -> object:
+    """Activate one issued concrete factory without structural authority."""
+    if not _is_sealed_activation_factory(factory):
+        return None
+    activation = getattr(factory, "activate", None)
+    if not callable(activation):
+        return None
+    candidate = activation(binding)
+    if not isinstance(candidate, Awaitable):
+        return None
+    return await candidate
+
+
+class PatchActivationRuntimeLease(Protocol):
+    """Expose deactivation only after concrete runtime identity validation."""
+
+    async def deactivate(self) -> object:
+        """Stop future admissions while retaining durable owners."""
+
+
 @dataclass(frozen=True, slots=True)
 class RemotePatchRuntimeWitness:
     """Bind the server-visible authority to one selected runtime service."""
@@ -546,12 +596,15 @@ class PatchToolSettings:
 
     binder: PatchRuntimeBinder
     profile: PatchTestHostProfile
+    activation_factory: object | None = None
 
     def __post_init__(self) -> None:
         """Require one typed binder and a closed activation profile."""
         if (
             not isinstance(self.binder, PatchRuntimeBinder)
             or type(self.profile) is not PatchTestHostProfile
+            or self.activation_factory is not None
+            and not _is_sealed_activation_factory(self.activation_factory)
         ):
             raise PatchToolError("patch tool settings are invalid")
 
@@ -727,6 +780,15 @@ def _seal_patch_authority() -> tuple[object, ...]:
         nonlocal invocations
         if not sealed_capability_is_issued(capability, service):
             raise PatchToolError("patch invocation capability is invalid")
+        for issue in invocations:
+            if (
+                issue.capability is capability
+                and issue.service is service
+                and issue.operation is operation
+                and issue.correlation is correlation
+                and issue.request_id == request_id
+            ):
+                return cast(PatchInvocationHandle, issue.handle)
         handle = PatchInvocationHandle(object())
         invocations = (
             *invocations,
@@ -1041,6 +1103,7 @@ def _seal_patch_authority() -> tuple[object, ...]:
         enable_tools: list[str] | None,
         ordinary_toolsets: Sequence[ToolSet] = (),
         settings: ToolManagerSettings | None = None,
+        activation_factory: object | None = None,
     ) -> PatchToolManagerBundle:
         """Bind once and construct a manager without inventory-time probing."""
         if not _PatchAuthorityValidator.loader_is_issued(self):
@@ -1061,9 +1124,46 @@ def _seal_patch_authority() -> tuple[object, ...]:
                 ),
                 None,
             )
+        profile_factory = self._profile.activation_factory
+        if (
+            activation_factory is not None
+            and profile_factory is not None
+            and activation_factory is not profile_factory
+        ):
+            return PatchToolManagerBundle(
+                ToolManager.create_instance(
+                    available_toolsets=ordinary_toolsets,
+                    enable_tools=enable_tools,
+                    settings=settings,
+                ),
+                None,
+            )
+        retained_factory = (
+            activation_factory
+            if activation_factory is not None
+            else profile_factory
+        )
+        if not _is_sealed_activation_factory(retained_factory):
+            return PatchToolManagerBundle(
+                ToolManager.create_instance(
+                    available_toolsets=ordinary_toolsets,
+                    enable_tools=enable_tools,
+                    settings=settings,
+                ),
+                None,
+            )
         if not (self._profile.enabled and self._profile.authenticated):
-            raise PatchToolError("patch activation requires local test host")
+            return PatchToolManagerBundle(
+                ToolManager.create_instance(
+                    available_toolsets=ordinary_toolsets,
+                    enable_tools=enable_tools,
+                    settings=settings,
+                ),
+                None,
+            )
         binding = await self._binder.bind()
+        activation_runtime: object | None = None
+        toolset: PatchToolSet | None = None
         try:
             if binding.scope.context_kind is ContextKind.SANDBOX:
                 from avalan.patch.sandbox_commit import (
@@ -1084,6 +1184,25 @@ def _seal_patch_authority() -> tuple[object, ...]:
                         "container patch activation requires selected runtime"
                     )
             snapshot = _snapshot_for_binding(binding)
+            activation_runtime = await _activate_sealed_factory(
+                retained_factory, binding
+            )
+            if not _validates_activation_runtime(
+                retained_factory, binding, activation_runtime
+            ):
+                if activation_runtime is not None:
+                    await cast(
+                        PatchActivationRuntimeLease, activation_runtime
+                    ).deactivate()
+                return PatchToolManagerBundle(
+                    ToolManager.create_instance(
+                        available_toolsets=ordinary_toolsets,
+                        enable_tools=enable_tools,
+                        settings=settings,
+                    ),
+                    None,
+                    binding,
+                )
             reservation = reserve(binding.service, snapshot)
             context_token = active_reservation.set(reservation)
             try:
@@ -1091,10 +1210,19 @@ def _seal_patch_authority() -> tuple[object, ...]:
                     PatchToolSet(
                         binding.service,
                         snapshot,
+                        runtime_binding=binding,
+                        activation_runtime=activation_runtime,
+                        activation_factory=retained_factory,
                         owned_resources=binding.owned_resources,
                     )
                     if binding.owned_resources
-                    else PatchToolSet(binding.service, snapshot)
+                    else PatchToolSet(
+                        binding.service,
+                        snapshot,
+                        runtime_binding=binding,
+                        activation_runtime=activation_runtime,
+                        activation_factory=retained_factory,
+                    )
                 )
             finally:
                 active_reservation.reset(context_token)
@@ -1106,10 +1234,40 @@ def _seal_patch_authority() -> tuple[object, ...]:
             )
             return PatchToolManagerBundle(manager, toolset, binding)
         except BaseException as error:
+            cleanup_error: BaseException | None = None
+            toolset_closed = False
+            if isinstance(toolset, ToolSet):
+                try:
+                    await toolset.__aexit__(
+                        type(error), error, error.__traceback__
+                    )
+                    toolset_closed = True
+                except BaseException as close_error:
+                    cleanup_error = close_error
+            if isinstance(toolset, ToolSet) and not toolset_closed:
+                revoke = getattr(toolset, "_revoke", None)
+                if callable(revoke):
+                    try:
+                        revoke(toolset)
+                    except BaseException as revoke_error:
+                        cleanup_error = cleanup_error or revoke_error
+            if activation_runtime is not None and not toolset_closed:
+                try:
+                    await cast(
+                        PatchActivationRuntimeLease, activation_runtime
+                    ).deactivate()
+                except BaseException as deactivate_error:
+                    cleanup_error = cleanup_error or deactivate_error
             for resource in reversed(binding.owned_resources):
-                await resource.__aexit__(
-                    type(error), error, error.__traceback__
-                )
+                try:
+                    await resource.__aexit__(
+                        type(error), error, error.__traceback__
+                    )
+                except BaseException as resource_error:
+                    if cleanup_error is None:
+                        cleanup_error = resource_error
+            if cleanup_error is not None:
+                raise error from cleanup_error
             raise
 
     def capability_post_init(self: "PatchInvocationCapability") -> None:
@@ -1124,6 +1282,9 @@ def _seal_patch_authority() -> tuple[object, ...]:
         *,
         admission_filter: PatchAdmissionFilter | None = None,
         admission_timeout_seconds: float = 1.0,
+        runtime_binding: PatchRuntimeBinding,
+        activation_runtime: object,
+        activation_factory: object,
         owned_resources: Sequence[AbstractAsyncContextManager[object]] = (),
     ) -> None:
         """Bind one already-probed host, inventory, and async resources."""
@@ -1132,6 +1293,9 @@ def _seal_patch_authority() -> tuple[object, ...]:
             or type(admission_timeout_seconds) not in {int, float}
             or isinstance(admission_timeout_seconds, bool)
             or admission_timeout_seconds <= 0
+            or not _validates_activation_runtime(
+                activation_factory, runtime_binding, activation_runtime
+            )
         ):
             raise PatchToolError("patch toolset configuration is invalid")
         resources = tuple(owned_resources)
@@ -1151,6 +1315,9 @@ def _seal_patch_authority() -> tuple[object, ...]:
             self._snapshot = snapshot
             self._admission_filter = admission_filter
             self._admission_timeout_seconds = float(admission_timeout_seconds)
+            self._runtime_binding = runtime_binding
+            self._activation_runtime = activation_runtime
+            self._activation_factory = activation_factory
             self._owned_resources = resources
             self._capability_owner = self
             self._capability = PatchInvocationCapability(
@@ -1192,6 +1359,9 @@ def _seal_patch_authority() -> tuple[object, ...]:
         selected._snapshot = self._snapshot
         selected._admission_filter = self._admission_filter
         selected._admission_timeout_seconds = self._admission_timeout_seconds
+        selected._runtime_binding = self._runtime_binding
+        selected._activation_runtime = self._activation_runtime
+        selected._activation_factory = self._activation_factory
         selected._owned_resources = self._owned_resources
         selected._capability_owner = self._capability_owner
         selected._capability = self._capability
@@ -1284,6 +1454,7 @@ def _bind_sealed_patch_methods(
         enable_tools: list[str] | None,
         ordinary_toolsets: Sequence[ToolSet] = (),
         settings: ToolManagerSettings | None = None,
+        activation_factory: object | None = None,
     ) -> PatchToolManagerBundle:
         """Construct a manager through the sealed loader implementation."""
         assert isinstance(active_reservation, ContextVar)
@@ -1294,6 +1465,7 @@ def _bind_sealed_patch_methods(
             enable_tools=enable_tools,
             ordinary_toolsets=ordinary_toolsets,
             settings=settings,
+            activation_factory=activation_factory,
         )
 
     def bound_capability_post_init(self: object) -> None:
@@ -1307,6 +1479,9 @@ def _bind_sealed_patch_methods(
         *,
         admission_filter: PatchAdmissionFilter | None = None,
         admission_timeout_seconds: float = 1.0,
+        runtime_binding: PatchRuntimeBinding,
+        activation_runtime: object,
+        activation_factory: object,
         owned_resources: Sequence[AbstractAsyncContextManager[object]] = (),
     ) -> None:
         """Construct one toolset through the sealed issuance records."""
@@ -1320,6 +1495,9 @@ def _bind_sealed_patch_methods(
             snapshot,
             admission_filter=admission_filter,
             admission_timeout_seconds=admission_timeout_seconds,
+            runtime_binding=runtime_binding,
+            activation_runtime=activation_runtime,
+            activation_factory=activation_factory,
             owned_resources=owned_resources,
         )
 
@@ -1481,10 +1659,27 @@ class PatchToolLoader:
         """Rebind a stale patch inventory through the async host loader."""
         if type(toolset) is not PatchToolSet or not toolset.snapshot_stale:
             raise PatchToolError("patch toolset is not stale")
+        activation_runtime = toolset._activation_runtime
         toolset._revoke(toolset)
+        if not _validates_activation_runtime(
+            toolset._activation_factory,
+            toolset._runtime_binding,
+            activation_runtime,
+        ):
+            return PatchToolManagerBundle(
+                ToolManager.create_instance(
+                    available_toolsets=ordinary_toolsets,
+                    enable_tools=enable_tools,
+                ),
+                None,
+            )
+        await cast(
+            PatchActivationRuntimeLease, activation_runtime
+        ).deactivate()
         return await self.load(
             enable_tools=enable_tools,
             ordinary_toolsets=ordinary_toolsets,
+            activation_factory=toolset._activation_factory,
         )
 
 
@@ -1774,6 +1969,9 @@ class PatchToolSet(ToolSet):
     _snapshot: PatchCapabilitySnapshot
     _admission_filter: PatchAdmissionFilter | None
     _admission_timeout_seconds: float
+    _runtime_binding: PatchRuntimeBinding
+    _activation_runtime: object
+    _activation_factory: object
     _owned_resources: tuple[AbstractAsyncContextManager[object], ...]
     _capability: PatchInvocationCapability
     _capability_owner: object
@@ -1843,13 +2041,40 @@ class PatchToolSet(ToolSet):
                 await self._exit_stack.enter_async_context(resource)
             for tool in self.tools:
                 await self._exit_stack.enter_async_context(cast(Tool, tool))
-        except BaseException:
+        except BaseException as entry_error:
+            cleanup_error: BaseException | None = None
             try:
                 await self._exit_stack.aclose()
-            finally:
-                self._revoke(self)
+            except BaseException as close_error:
+                cleanup_error = close_error
+            try:
+                await self._close_activation_lifecycle()
+            except BaseException as lifecycle_error:
+                if cleanup_error is None:
+                    cleanup_error = lifecycle_error
+            if cleanup_error is not None:
+                raise cleanup_error from entry_error
             raise
         return self
+
+    async def _close_activation_lifecycle(self) -> None:
+        """Deactivate then revoke while retaining the first cleanup failure."""
+        cleanup_error: BaseException | None = None
+        try:
+            try:
+                await cast(
+                    PatchActivationRuntimeLease, self._activation_runtime
+                ).deactivate()
+            except BaseException as deactivate_error:
+                cleanup_error = deactivate_error
+        finally:
+            try:
+                self._revoke(self)
+            except BaseException as revoke_error:
+                if cleanup_error is None:
+                    cleanup_error = revoke_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     async def __aexit__(
         self,
@@ -1858,15 +2083,25 @@ class PatchToolSet(ToolSet):
         traceback: TracebackType | None,
     ) -> bool | None:
         """Close owned resources and revoke the active capability epoch."""
+        cleanup_error: BaseException | None = None
+        result: bool | None = None
         try:
-            return await ToolSet.__aexit__(
+            result = await ToolSet.__aexit__(
                 self,
                 exc_type,
                 exc_value,
                 traceback,
             )
-        finally:
-            self._revoke(self)
+        except BaseException as close_error:
+            cleanup_error = close_error
+        try:
+            await self._close_activation_lifecycle()
+        except BaseException as lifecycle_error:
+            if cleanup_error is None:
+                cleanup_error = lifecycle_error
+        if cleanup_error is not None:
+            raise cleanup_error
+        return result
 
     async def invoke_json(
         self,

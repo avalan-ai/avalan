@@ -8,6 +8,7 @@ from runpy import run_path
 from sys import path as sys_path
 
 import pytest
+from patch_activation_support import activated_patch_test_profile
 
 from avalan.patch.container_target import (
     ContainerInspectionTarget,
@@ -30,7 +31,7 @@ from avalan.patch.target import (
     TargetErrorCode,
     TargetInspectionError,
 )
-from avalan.patch.toolset import PatchTestHostProfile, PatchToolLoader
+from avalan.patch.toolset import PatchToolLoader
 
 
 def _phase_eleven() -> dict[str, object]:
@@ -95,7 +96,7 @@ def test_patch_e2e_035_container_shared_root_is_test_only_and_physical(
         try:
             bundle = await PatchToolLoader(
                 binder,
-                PatchTestHostProfile(enabled=True, authenticated=True),
+                activated_patch_test_profile(),
             ).load(enable_tools=["patch.edit"])
         except TargetInspectionError as unavailable:
             assert unavailable.code in {
