@@ -1589,13 +1589,17 @@ def test_public_core_sources_have_no_dynamic_or_synchronous_escape_hatch() -> (
         loads(
             (
                 _ROOT
-                / "tests/fixtures/conversation/provider_transition.phase5.json"
+                / (
+                    "tests/fixtures/conversation/"
+                    "provider_transition.phase13.json"
+                )
             ).read_text(encoding="utf-8")
         ),
     )
     transitions = cast(
         list[dict[str, object]], transition_payload["transitions"]
     )
+    assert transition_payload["phase"] == 13
     provider_transition = next(
         item
         for item in transitions

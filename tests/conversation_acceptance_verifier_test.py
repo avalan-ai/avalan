@@ -683,6 +683,41 @@ def test_phase5_provider_transition_target_has_independent_byte_anchor(
         _VERIFIER._phase5_provider_transitions(tmp_path)
 
 
+def test_phase13_provider_transition_target_has_independent_byte_anchor(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject a re-signed provider retry transition target rewrite."""
+    payload = _read("provider_transition.phase13.json")
+    transitions = payload["transitions"]
+    assert isinstance(transitions, list)
+    target = transitions[0]
+    assert isinstance(target, dict)
+    target["to_size"] = int(cast(int, target["to_size"])) + 1
+    target["to_sha256"] = "0" * 64
+    _resign(payload, "canonical_sha256")
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        payload["canonical_sha256"],
+    )
+    transition_path = (
+        tmp_path
+        / "tests"
+        / "fixtures"
+        / "conversation"
+        / "provider_transition.phase13.json"
+    )
+    transition_path.parent.mkdir(parents=True)
+    _write(transition_path, payload)
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="target differs from its independent anchor",
+    ):
+        _VERIFIER._phase13_provider_transitions(tmp_path)
+
+
 def test_phase6_lifecycle_transition_pins_exact_bytes() -> None:
     """Bind lifecycle transition evidence to executable fallback bytes."""
     expected = (

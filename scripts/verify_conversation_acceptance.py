@@ -464,6 +464,36 @@ _PHASE12_PROVIDER_TRANSITION_PATH = (
 _PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
     "a1fe168b70e6266baf2ec7498ea98de096b980e5528e047ce598e899ffe57136"
 )
+_PHASE13_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase13.json"
+)
+_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "fe71c11290a9c281aa8fdc946bca5bc7feb6394c24c6f55f05f1a3cbfc90552f"
+)
+_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS = {
+    "src/avalan/model/nlp/text/vendor/openai.py": (
+        342_263,
+        "9f3d32fa3de795b823bb8398372537d85ca24bab587864a5ec81a4be6e9871ea",
+    ),
+    "tests/conversation/domain_contract_test.py": (
+        161_569,
+        "ae41797830124ac2aed8e59ca41c61e498685fabf0b5ef152a7a393141f89318",
+    ),
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
+        100_430,
+        "ce413aff06e5b71bc1e2e545af4f5f0fc197e7e71831ead2c0df23a379f33d61",
+    ),
+}
+_PHASE13_PROVIDER_EVIDENCE_NODES = (
+    (
+        "tests/model/nlp/vendor_openai_reasoning_summary_test.py::"
+        "test_private_replay_replacement_open_uses_shared_retry_budget"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::"
+        "test_no_production_conversation_dispatch_or_advertisement"
+    ),
+)
 _PHASE12_TRACEABILITY_CANDIDATE_PATH = (
     "tests/fixtures/conversation/acceptance_candidate.phase12.json"
 )
@@ -2149,6 +2179,11 @@ def verify_gate_source_isolation(
             if (root / _PHASE12_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
+        (
+            _phase13_provider_transitions(root)
+            if (root / _PHASE13_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
     )
     transition_chains: dict[
         str,
@@ -3030,6 +3065,21 @@ def _validate_phase0_provider_byte_anchors(root: Path) -> None:
         _phase8_provider_transitions(root),
         _phase9_provider_transitions(root),
         _phase10_provider_transitions(root),
+        (
+            _phase11_provider_transitions(root)
+            if (root / _PHASE11_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase12_provider_transitions(root)
+            if (root / _PHASE12_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase13_provider_transitions(root)
+            if (root / _PHASE13_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
     )
     for relative, (
         expected_size,
@@ -4057,6 +4107,113 @@ def _phase12_provider_transitions(
     if len(transitions) != 15:
         raise ConversationAcceptanceError(
             "Phase 12 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _phase13_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact reviewed provider retry source transitions."""
+    path = root / _PHASE13_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE13_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 13 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 13 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 13
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by") != "phase13-provider-retry-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 13 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 13 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    if (
+        _string_list(
+            payload.get("evidence_node_ids"),
+            "Phase 13 provider transition evidence nodes",
+        )
+        != _PHASE13_PROVIDER_EVIDENCE_NODES
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 13 provider transition evidence is invalid"
+        )
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 13 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 13 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 13 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"), "transition source digest"
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"), "transition target digest"
+        )
+        if (
+            type(from_size) is not int
+            or from_size <= 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 13 provider byte transition is invalid"
+            )
+        transition = (from_size, from_sha256, to_size, to_sha256)
+        if (to_size, to_sha256) != _PHASE13_PROVIDER_TARGET_BYTE_ANCHORS.get(
+            relative
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 13 provider transition target differs from its "
+                f"independent anchor: {relative}"
+            )
+        transitions[relative] = transition
+    if set(transitions) != set(_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS):
+        raise ConversationAcceptanceError(
+            "Phase 13 provider transition inventory is invalid"
         )
     return transitions
 

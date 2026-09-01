@@ -1620,25 +1620,33 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
     async def test_stream_retries_response_failed_error_code_before_output(
         self,
     ):
+        error_codes = [
+            "response_failed",
+            "rate_limit_exceeded",
+            "server_error",
+        ]
         cases = [
             SimpleNamespace(
                 type="response.failed",
                 response=SimpleNamespace(
                     status="failed",
                     error={
-                        "code": "response_failed",
+                        "code": code,
                         "message": "response failed",
                     },
                     output=[],
                 ),
-            ),
+            )
+            for code in error_codes
+        ] + [
             SimpleNamespace(
                 type="response.failed",
                 error={
-                    "code": "response_failed",
+                    "code": code,
                     "message": "response failed",
                 },
-            ),
+            )
+            for code in error_codes
         ]
 
         for failed_event in cases:
