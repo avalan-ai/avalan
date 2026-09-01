@@ -4989,7 +4989,7 @@
         "authority": "loader_issued_capability",
         "commit_boundary": "commit",
         "evidence_class": "phase15_direct_integration",
-        "executable_sha256": "fd9affc59a9016f9659c010cb27101e354b818750c5fea50becb866bb002f0e2"
+        "executable_sha256": "94b41d7fb69cc87d3db9e7447cf7c178d52fccd7be03546756c9475b84fd9319"
       },
       "review_round": 1,
       "reviewer": "phase15-remediation",
@@ -5334,5 +5334,5 @@
       "rationale": "A unique direct Phase 15 integration owns the configured-limit matrix across provider, ToolManager, and durable boundaries."
     }
   ],
-  "history_sha256": "083a8f7bba465963e984c66baf23b248aff43f2f6656510379aa473460a90493"
+  "history_sha256": "6ca67c2930f948e14befd430e1cd5431354def2c5e5dfd04ea49642ea7ae5e2b"
 }

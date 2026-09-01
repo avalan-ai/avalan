@@ -1,16 +1,19 @@
 """Exercise the persistent narrow Docker patch service."""
 
 from asyncio import (
+    CancelledError,
     Event,
     Task,
     create_subprocess_exec,
     create_task,
     run,
     sleep,
+    wait,
 )
 from asyncio.subprocess import DEVNULL, PIPE, Process
 from base64 import b64decode, b64encode
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Callable, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import replace
 from hashlib import sha256
 from json import JSONDecodeError, dumps, loads
@@ -205,7 +208,10 @@ _RESTART_PROCESS_BOOTSTRAP = (
 _INITIAL_VOLUME_RACE_READY_TIMEOUT_SECONDS = 60.0
 _INITIAL_VOLUME_RACE_HOLD_TIMEOUT_SECONDS = 60.0
 _INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS = 10.0
+_FAILED_START_CLEANUP_RACE_HOLD_TIMEOUT_SECONDS = 60.0
 _INITIAL_VOLUME_RACE_POLL_SECONDS = 0.01
+_RESTART_PROCESS_SETTLEMENT_TIMEOUT_SECONDS = 15.0
+_RESTART_PROCESS_TERMINATION_TIMEOUT_SECONDS = 5.0
 
 
 class _DefaultContainerAuthority(Protocol):
@@ -801,7 +807,7 @@ async def _restart_process_from_config(config_path: Path) -> None:
         or (barrier_ready is None) != (barrier_release is None)
         or type(barrier_stage) is not str
         or barrier_stage
-        not in {"volume_create", "guard_acquired", "guard_released"}
+        not in {"volume_create", "guard_acquired", "failed_start_cleanup"}
         or startup_failure is not None
         and type(startup_failure) is not str
         or startup_failure is not None
@@ -859,14 +865,21 @@ async def _restart_process_from_config(config_path: Path) -> None:
             if not paused and (
                 (barrier_stage == "volume_create" and is_volume_create)
                 or (barrier_stage == "guard_acquired" and is_guard_create)
-                or (barrier_stage == "guard_released" and is_guard_release)
+                or (
+                    barrier_stage == "failed_start_cleanup"
+                    and is_guard_release
+                )
             ):
                 paused = True
                 Path(barrier_ready).write_text("ready\n", encoding="utf-8")
                 hold_timeout_seconds = (
                     _INITIAL_VOLUME_RACE_HOLD_TIMEOUT_SECONDS
                     if barrier_stage == "volume_create"
-                    else _INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS
+                    else (
+                        _FAILED_START_CLEANUP_RACE_HOLD_TIMEOUT_SECONDS
+                        if barrier_stage == "failed_start_cleanup"
+                        else _INITIAL_VOLUME_RACE_LEGACY_HOLD_SECONDS
+                    )
                 )
                 deadline = monotonic() + hold_timeout_seconds
                 while not Path(barrier_release).is_file():
@@ -936,6 +949,62 @@ async def _restart_process_from_config(config_path: Path) -> None:
         await binder.runtime.close()
 
 
+async def _terminate_and_reap_restart_process(process: Process) -> None:
+    """Terminate, kill if needed, and reap one restart child process.
+
+    Args:
+        process: Child process to terminate and reap without PID reuse risk.
+
+    Returns:
+        None.
+    """
+    reaped = create_task(process.wait())
+    if process.returncode is None:
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+    done, _ = await wait(
+        (reaped,), timeout=_RESTART_PROCESS_TERMINATION_TIMEOUT_SECONDS
+    )
+    if done:
+        reaped.result()
+        return
+    if process.returncode is None:
+        try:
+            process.kill()
+        except ProcessLookupError:
+            pass
+    done, _ = await wait(
+        (reaped,), timeout=_RESTART_PROCESS_TERMINATION_TIMEOUT_SECONDS
+    )
+    if done:
+        reaped.result()
+        return
+    raise AssertionError("restart child did not exit after termination")
+
+
+async def _communicate_restart_process(
+    process: Process,
+) -> tuple[bytes, bytes]:
+    """Read one restart child while reaping it after an abnormal wait.
+
+    Args:
+        process: Child process whose output is read to completion.
+
+    Returns:
+        Complete standard-output and standard-error bytes.
+    """
+    try:
+        return await process.communicate()
+    except BaseException as error:
+        try:
+            await _terminate_and_reap_restart_process(process)
+        except BaseException as cleanup_error:
+            raise cleanup_error from error
+        raise
+
+
 async def _run_restart_process(
     config_path: Path,
 ) -> Mapping[str, object]:
@@ -953,7 +1022,7 @@ async def _run_restart_process(
         stdout=PIPE,
         stderr=PIPE,
     )
-    stdout, stderr = await process.communicate()
+    stdout, stderr = await _communicate_restart_process(process)
     assert process.returncode == 0, stderr.decode("utf-8")
     payload = loads(stdout.decode("utf-8"))
     assert type(payload) is dict
@@ -1013,6 +1082,133 @@ async def _wait_for_restart_barrier(
     _assert_restart_process_live(process, stage)
 
 
+async def _settle_released_restart_process(
+    process: Task[Mapping[str, object]], stage: str
+) -> Mapping[str, object] | None:
+    """Settle a restart process after its barrier has been released.
+
+    Args:
+        process: Restart-process task expected to finish after release.
+        stage: Exact synchronization stage used in any failure message.
+
+    Returns:
+        Child result when it finishes normally, or None when cancelled.
+    """
+    done, _ = await wait(
+        (process,), timeout=_RESTART_PROCESS_SETTLEMENT_TIMEOUT_SECONDS
+    )
+    if done:
+        return process.result()
+    process.cancel()
+    done, _ = await wait(
+        (process,), timeout=_RESTART_PROCESS_SETTLEMENT_TIMEOUT_SECONDS
+    )
+    if not done:
+        raise AssertionError(stage + " did not settle after cancellation")
+    try:
+        return process.result()
+    except CancelledError:
+        return None
+
+
+def _restart_race_cleanup_error(
+    errors: list[BaseException],
+) -> BaseException | None:
+    """Return one visible error for every failed restart-race cleanup.
+
+    Args:
+        errors: Cleanup failures in their attempted execution order.
+
+    Returns:
+        One error, an aggregate, or None when cleanup succeeded.
+    """
+    match errors:
+        case []:
+            return None
+        case [error]:
+            return error
+        case _:
+            return BaseExceptionGroup("restart race cleanup failed", errors)
+
+
+async def _attempt_restart_race_cleanup(
+    releases: tuple[Path, ...],
+    restart_tasks: tuple[tuple[Task[Mapping[str, object]] | None, str], ...],
+    guard: str,
+    volume: str,
+) -> BaseException | None:
+    """Attempt every exact restart-race cleanup action once.
+
+    Args:
+        releases: Barrier files that release held restart processes.
+        restart_tasks: Optional held tasks and their cleanup stages.
+        guard: Exact Docker guard container name to remove.
+        volume: Exact Docker volume name to remove.
+
+    Returns:
+        One error, an aggregate, or None when cleanup succeeded.
+    """
+    errors: list[BaseException] = []
+    for release in releases:
+        try:
+            release.write_text("release\n", encoding="utf-8")
+        except BaseException as error:
+            errors.append(error)
+    for process, stage in restart_tasks:
+        if process is None:
+            continue
+        try:
+            await _settle_released_restart_process(process, stage)
+        except BaseException as error:
+            errors.append(error)
+    for command in (
+        ("docker", "rm", "--force", guard),
+        ("docker", "volume", "rm", "--force", volume),
+    ):
+        try:
+            await _docker_output(command, False)
+        except BaseException as error:
+            errors.append(error)
+    return _restart_race_cleanup_error(errors)
+
+
+@asynccontextmanager
+async def _cleanup_restart_race(
+    releases: tuple[Path, ...],
+    restart_tasks: Callable[
+        [],
+        tuple[tuple[Task[Mapping[str, object]] | None, str], ...],
+    ],
+    guard: str,
+    volume: str,
+) -> AsyncIterator[None]:
+    """Preserve a restart-race failure while attempting all cleanup.
+
+    Args:
+        releases: Barrier files that release held restart processes.
+        restart_tasks: Reads current held tasks after the protected body.
+        guard: Exact Docker guard container name to remove.
+        volume: Exact Docker volume name to remove.
+
+    Yields:
+        None.
+    """
+    primary_error: BaseException | None = None
+    try:
+        yield
+    except BaseException as error:
+        primary_error = error
+    cleanup_error = await _attempt_restart_race_cleanup(
+        releases, restart_tasks(), guard, volume
+    )
+    if primary_error is not None:
+        if cleanup_error is not None:
+            raise primary_error from cleanup_error
+        raise primary_error
+    if cleanup_error is not None:
+        raise cleanup_error
+
+
 async def _await_restart_process_while_held(
     process: Task[Mapping[str, object]],
     held_process: Task[Mapping[str, object]],
@@ -1060,6 +1256,235 @@ def test_patch_phase_11_initial_volume_race_rejects_held_process_exit() -> (
                 "initial volume race while contender starts",
             )
 
+    run(exercise())
+
+
+def test_patch_phase_11_restart_barrier_is_bounded_and_fails_on_exit(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bound a missing restart barrier and reject an exited child."""
+
+    async def blocked() -> Mapping[str, object]:
+        """Wait until the test cancels the deliberately blocked child."""
+        await Event().wait()
+        return {}
+
+    async def exited() -> Mapping[str, object]:
+        """Return the unexpected child result used by the exit check."""
+        return {"error": "unexpected"}
+
+    async def exercise() -> None:
+        """Require the shared helper to stop or reject immediately."""
+        process = create_task(blocked())
+        try:
+            with pytest.raises(
+                AssertionError,
+                match="missing restart barrier did not reach the barrier",
+            ):
+                await _wait_for_restart_barrier(
+                    tmp_path / "missing", process, "missing restart barrier"
+                )
+        finally:
+            process.cancel()
+            with pytest.raises(CancelledError):
+                await process
+
+        exited_process = create_task(exited())
+        await exited_process
+        with pytest.raises(
+            AssertionError,
+            match="exited restart barrier exited before the barrier",
+        ):
+            await _wait_for_restart_barrier(
+                tmp_path / "missing", exited_process, "exited restart barrier"
+            )
+
+    monkeypatch.setattr(
+        "phase_11_contract_test._INITIAL_VOLUME_RACE_READY_TIMEOUT_SECONDS",
+        0.0,
+    )
+    run(exercise())
+
+
+def test_patch_phase_11_restart_cleanup_settles_released_tasks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Bound caller cleanup after releasing a restart barrier."""
+
+    async def blocked() -> Mapping[str, object]:
+        """Remain blocked until the settlement helper cancels the task."""
+        await Event().wait()
+        return {}
+
+    async def completed(release: Path) -> Mapping[str, object]:
+        """Finish only after the caller has released the barrier."""
+        while not release.is_file():
+            await sleep(0)
+        return {"status": "released"}
+
+    async def failed() -> Mapping[str, object]:
+        """Raise the error that normal settlement must propagate."""
+        raise OSError("expected restart failure")
+
+    async def exercise() -> None:
+        """Release, settle, and reap each no-Docker child outcome."""
+        stuck_release = tmp_path / "stuck-release"
+        stuck_task = create_task(blocked())
+        stuck_release.write_text("release\n", encoding="utf-8")
+        assert (
+            await _settle_released_restart_process(
+                stuck_task, "stuck restart cleanup"
+            )
+            is None
+        )
+        assert stuck_task.cancelled()
+
+        completed_release = tmp_path / "completed-release"
+        completed_task = create_task(completed(completed_release))
+        completed_release.write_text("release\n", encoding="utf-8")
+        assert await _settle_released_restart_process(
+            completed_task, "completed restart cleanup"
+        ) == {"status": "released"}
+
+        failed_task = create_task(failed())
+        with pytest.raises(OSError, match="expected restart failure"):
+            await _settle_released_restart_process(
+                failed_task, "failed restart cleanup"
+            )
+
+    monkeypatch.setattr(
+        "phase_11_contract_test._RESTART_PROCESS_SETTLEMENT_TIMEOUT_SECONDS",
+        0.01,
+    )
+    run(exercise())
+
+
+def test_patch_phase_11_restart_process_cancellation_reaps_child() -> None:
+    """Terminate and reap a cancelled local restart child process."""
+
+    async def exercise() -> None:
+        """Preserve normal output and reap a cancelled child process."""
+        completed = await create_subprocess_exec(
+            executable,
+            "-c",
+            "print('completed')",
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+        stdout, stderr = await _communicate_restart_process(completed)
+        assert completed.returncode == 0
+        assert stdout == b"completed\n"
+        assert stderr == b""
+
+        blocked = await create_subprocess_exec(
+            executable,
+            "-c",
+            "from time import sleep;sleep(60)",
+            stdin=DEVNULL,
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+        communication = create_task(_communicate_restart_process(blocked))
+        await sleep(0)
+        assert blocked.returncode is None
+        communication.cancel()
+        with pytest.raises(CancelledError):
+            await communication
+        assert blocked.returncode is not None
+        assert await blocked.wait() == blocked.returncode
+
+    run(exercise())
+
+
+def test_patch_phase_11_restart_race_cleanup_preserves_primary_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Attempt all cleanup while preserving the protected failure."""
+    events: list[str | tuple[str, ...]] = []
+    current_release: Path | None = None
+    guard = "restart-cleanup-guard"
+    volume = "restart-cleanup-volume"
+
+    async def completed() -> Mapping[str, object]:
+        """Return the completed task value used by the cleanup fixture."""
+        return {}
+
+    async def failing_settlement(
+        _: Task[Mapping[str, object]], __: str
+    ) -> Mapping[str, object] | None:
+        """Record one released settlement failure without Docker."""
+        assert current_release is not None and current_release.is_file()
+        events.append("settle")
+        raise OSError("expected settlement failure")
+
+    async def failing_docker_cleanup(
+        command: tuple[str, ...], required: bool = True
+    ) -> str | None:
+        """Record exact cleanup commands and fail only volume cleanup."""
+        del required
+        events.append(command)
+        if command[:3] == ("docker", "volume", "rm"):
+            raise RuntimeError("expected volume cleanup failure")
+        return None
+
+    async def exercise() -> None:
+        """Exercise cleanup-only and primary-error cleanup ordering."""
+        nonlocal current_release
+        current_release = tmp_path / "cleanup-only-release"
+        cleanup_only_task = create_task(completed())
+        await cleanup_only_task
+        with pytest.raises(BaseExceptionGroup) as cleanup_only:
+            async with _cleanup_restart_race(
+                (current_release,),
+                lambda: ((cleanup_only_task, "cleanup-only"),),
+                guard,
+                volume,
+            ):
+                pass
+        assert current_release.is_file()
+        assert events == [
+            "settle",
+            ("docker", "rm", "--force", guard),
+            ("docker", "volume", "rm", "--force", volume),
+        ]
+        assert tuple(
+            type(error) for error in cleanup_only.value.exceptions
+        ) == (
+            OSError,
+            RuntimeError,
+        )
+
+        events.clear()
+        current_release = tmp_path / "primary-error-release"
+        primary_task = create_task(completed())
+        await primary_task
+        with pytest.raises(
+            ValueError, match="primary restart failure"
+        ) as primary:
+            async with _cleanup_restart_race(
+                (current_release,),
+                lambda: ((primary_task, "primary-error"),),
+                guard,
+                volume,
+            ):
+                raise ValueError("primary restart failure")
+        assert current_release.is_file()
+        assert events == [
+            "settle",
+            ("docker", "rm", "--force", guard),
+            ("docker", "volume", "rm", "--force", volume),
+        ]
+        assert isinstance(primary.value.__cause__, BaseExceptionGroup)
+
+    monkeypatch.setattr(
+        "phase_11_contract_test._settle_released_restart_process",
+        failing_settlement,
+    )
+    monkeypatch.setattr(
+        "phase_11_contract_test._docker_output",
+        failing_docker_cleanup,
+    )
     run(exercise())
 
 
@@ -3787,7 +4212,12 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
         release = tmp_path / "dispose-reclaim-release"
         config = tmp_path / "dispose-reclaim.json"
         reclaim_task = None
-        try:
+        async with _cleanup_restart_race(
+            (release,),
+            lambda: ((reclaim_task, "guard reclaim cleanup"),),
+            guard,
+            volume,
+        ):
             config.write_text(dumps(base), encoding="utf-8")
             assert await _run_restart_process(config) == {
                 "status": PatchStatus.COMMITTED.value,
@@ -3814,17 +4244,9 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
                 encoding="utf-8",
             )
             reclaim_task = create_task(_run_restart_process(config))
-            for _ in range(1_000):
-                if ready.is_file():
-                    break
-                if reclaim_task.done():
-                    raise AssertionError(
-                        "guard reclaim exited before the barrier: "
-                        + repr(reclaim_task.result())
-                    )
-                await sleep(0.01)
-            else:
-                raise AssertionError("guard reclaim did not reach the barrier")
+            await _wait_for_restart_barrier(
+                ready, reclaim_task, "guard reclaim"
+            )
 
             with pytest.raises(TargetInspectionError) as rejected:
                 await retired._dispose_owned_volume()
@@ -3881,14 +4303,6 @@ def test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard(
                 await _docker_output(("docker", "inspect", guard), False)
                 is None
             )
-        finally:
-            release.write_text("release\n", encoding="utf-8")
-            if reclaim_task is not None:
-                await reclaim_task
-            await _docker_output(("docker", "rm", "--force", guard), False)
-            await _docker_output(
-                ("docker", "volume", "rm", "--force", volume), False
-            )
 
     run(exercise())
 
@@ -3933,7 +4347,15 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
         reclaim_config = tmp_path / "failed-start-reclaim.json"
         failed_task = None
         reclaim_task = None
-        try:
+        async with _cleanup_restart_race(
+            (failed_release, reclaim_release),
+            lambda: (
+                (failed_task, "failed starter cleanup"),
+                (reclaim_task, "reclaimer cleanup"),
+            ),
+            guard,
+            volume,
+        ):
             failed_config.write_text(
                 dumps(
                     {
@@ -3941,25 +4363,15 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
                         "startup_failure": "attach",
                         "barrier_ready": str(failed_ready),
                         "barrier_release": str(failed_release),
-                        "barrier_stage": "guard_released",
+                        "barrier_stage": "failed_start_cleanup",
                     }
                 ),
                 encoding="utf-8",
             )
             failed_task = create_task(_run_restart_process(failed_config))
-            for _ in range(1_000):
-                if failed_ready.is_file():
-                    break
-                if failed_task.done():
-                    raise AssertionError(
-                        "failed starter exited before cleanup barrier: "
-                        + repr(failed_task.result())
-                    )
-                await sleep(0.01)
-            else:
-                raise AssertionError(
-                    "failed starter did not release its guard"
-                )
+            await _wait_for_restart_barrier(
+                failed_ready, failed_task, "failed starter cleanup"
+            )
 
             reclaim_config.write_text(
                 dumps(
@@ -3973,17 +4385,9 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
                 encoding="utf-8",
             )
             reclaim_task = create_task(_run_restart_process(reclaim_config))
-            for _ in range(1_000):
-                if reclaim_ready.is_file():
-                    break
-                if reclaim_task.done():
-                    raise AssertionError(
-                        "reclaimer exited before guard barrier: "
-                        + repr(reclaim_task.result())
-                    )
-                await sleep(0.01)
-            else:
-                raise AssertionError("reclaimer did not acquire the guard")
+            await _wait_for_restart_barrier(
+                reclaim_ready, reclaim_task, "reclaimer guard"
+            )
 
             assert (
                 await _volume_bytes(image, volume, "note.txt") == b"before\n"
@@ -4040,17 +4444,6 @@ def test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume(
             assert (
                 await _docker_output(("docker", "inspect", guard), False)
                 is None
-            )
-        finally:
-            failed_release.write_text("release\n", encoding="utf-8")
-            reclaim_release.write_text("release\n", encoding="utf-8")
-            if failed_task is not None:
-                await failed_task
-            if reclaim_task is not None:
-                await reclaim_task
-            await _docker_output(("docker", "rm", "--force", guard), False)
-            await _docker_output(
-                ("docker", "volume", "rm", "--force", volume), False
             )
 
     run(exercise())
