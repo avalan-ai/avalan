@@ -290,6 +290,30 @@ from avalan.tool.context import ToolSettingsContext
 from avalan.tool.shell import ShellGitToolSettings, ShellToolSettings
 
 
+class _DirectoryLstat(Protocol):
+    """Describe the private directory-stat syscall seam."""
+
+    def __call__(
+        self,
+        path: str | Path,
+        *,
+        dir_fd: int | None = None,
+    ) -> object:
+        """Read one directory entry without following a link."""
+
+
+class _DirectoryRemove(Protocol):
+    """Describe the private directory-removal syscall seam."""
+
+    def __call__(
+        self,
+        path: str | Path,
+        *,
+        dir_fd: int | None = None,
+    ) -> None:
+        """Remove one empty directory entry."""
+
+
 def _limits() -> PatchLimits:
     """Return bounded limits for a selected sandbox context."""
     return PatchLimits(
@@ -8637,6 +8661,138 @@ def test_patch_phase_10_private_bundle_rejects_overlap_and_tampering(
     with pytest.raises(TargetInspectionError) as changed_source:
         sandbox_commit_module._ImplementationBundle.create(tmp_path / "third")
     assert changed_source.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    assert not digest_root.exists()
+
+
+def test_patch_phase_10_private_bundle_close_removes_only_owned_tree(
+    tmp_path: Path,
+) -> None:
+    """Remove a locked private bundle without following a planted link."""
+    outside = tmp_path / "outside"
+    outside.write_text("preserved", encoding="utf-8")
+    bundle = sandbox_commit_module._ImplementationBundle.create(
+        tmp_path, include_dependencies=False
+    )
+    bundle.root.chmod(0o700)
+    (bundle.root / "outside").symlink_to(outside)
+
+    bundle.close()
+
+    assert not bundle.root.exists()
+    assert outside.read_text(encoding="utf-8") == "preserved"
+
+
+def test_patch_phase_10_private_bundle_rejects_pre_remove_child_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep a replacement that appears before child removal is attempted."""
+    root = tmp_path / "root"
+    child = root / "child"
+    child.mkdir(parents=True)
+    descriptor = open_fd(root, 0)
+    original_lstat = cast(
+        _DirectoryLstat,
+        sandbox_commit_module.__dict__["lstat"],
+    )
+    original_rmdir = cast(
+        _DirectoryRemove,
+        sandbox_commit_module.__dict__["rmdir"],
+    )
+    child_checks = 0
+    replacement_created = False
+
+    def replace_before_final_check(
+        path: str | Path,
+        **kwargs: object,
+    ) -> object:
+        """Replace the child immediately before its final identity check."""
+        nonlocal child_checks, replacement_created
+        if path == "child" and kwargs.get("dir_fd") == descriptor:
+            child_checks += 1
+            if child_checks == 2:
+                original_rmdir(child)
+                child.mkdir()
+                replacement_created = True
+        directory = kwargs.get("dir_fd")
+        assert directory is None or isinstance(directory, int)
+        return original_lstat(path, dir_fd=directory)
+
+    def reject_child_removal(path: str | Path, **kwargs: object) -> None:
+        """Fail if cleanup reaches a removal call for the replacement."""
+        if path == "child" and kwargs.get("dir_fd") == descriptor:
+            raise AssertionError("cleanup removed a replacement child")
+        directory = kwargs.get("dir_fd")
+        assert directory is None or isinstance(directory, int)
+        original_rmdir(path, dir_fd=directory)
+
+    monkeypatch.setattr(
+        sandbox_commit_module, "lstat", replace_before_final_check
+    )
+    monkeypatch.setattr(sandbox_commit_module, "rmdir", reject_child_removal)
+    try:
+        with pytest.raises(TargetInspectionError) as replacement:
+            sandbox_commit_module._remove_owned_bundle_contents(descriptor)
+    finally:
+        close(descriptor)
+
+    assert replacement.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    assert replacement_created
+    assert child.exists()
+
+
+def test_patch_phase_10_private_bundle_rejects_pre_remove_root_replacement(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Keep a replacement that appears before root removal is attempted."""
+    root = tmp_path / "root"
+    root.mkdir()
+    original_lstat = cast(
+        _DirectoryLstat,
+        sandbox_commit_module.__dict__["lstat"],
+    )
+    original_rmdir = cast(
+        _DirectoryRemove,
+        sandbox_commit_module.__dict__["rmdir"],
+    )
+    root_checks = 0
+    replacement_created = False
+
+    def replace_before_final_check(
+        path: str | Path,
+        **kwargs: object,
+    ) -> object:
+        """Replace the root immediately before its final identity check."""
+        nonlocal replacement_created, root_checks
+        if Path(path) == root:
+            root_checks += 1
+            if root_checks == 2:
+                original_rmdir(root)
+                root.mkdir()
+                replacement_created = True
+        directory = kwargs.get("dir_fd")
+        assert directory is None or isinstance(directory, int)
+        return original_lstat(path, dir_fd=directory)
+
+    def reject_root_removal(path: str | Path, **kwargs: object) -> None:
+        """Fail if cleanup reaches a removal call for the replacement."""
+        if Path(path) == root:
+            raise AssertionError("cleanup removed a replacement root")
+        directory = kwargs.get("dir_fd")
+        assert directory is None or isinstance(directory, int)
+        original_rmdir(path, dir_fd=directory)
+
+    monkeypatch.setattr(
+        sandbox_commit_module, "lstat", replace_before_final_check
+    )
+    monkeypatch.setattr(sandbox_commit_module, "rmdir", reject_root_removal)
+    with pytest.raises(TargetInspectionError) as replacement:
+        sandbox_commit_module._remove_owned_bundle(root)
+
+    assert replacement.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    assert replacement_created
+    assert root.exists()
 
 
 def test_patch_phase_10_runtime_values_and_adapter_calls_fail_closed(
