@@ -1104,7 +1104,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "efdc901dc769fdcfca1fd008431f9a206855c1c4a23b20528c8349edbd3b90c1"
+      "source_sha256": "056aa1cdc3e418c17e0c8f38c4bd307ae0c31d92b499d22cf645c0918fb596b5"
     },
     {
       "id": "PATCH-TS-067",
@@ -1113,7 +1113,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "5bc53099125a60103cb76435366e122afa5aa3f80a041bb37fc4cd7a420d03e6"
+      "source_sha256": "0d4e36876722c1d28cce05b26e2bdc1ea8ad275d401741bfbbb88d69122a0abd"
     },
     {
       "id": "PATCH-TS-068",
@@ -1239,7 +1239,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1a76ed8135d91868321cfd190736ac037b29c2e2fa018e7be13e195a9af947ca"
+      "source_sha256": "0d8a382fd0f0a233b5fdd6a0818cb71b276558ed06fec3aadb28ad961e7c2f80"
     },
     {
       "id": "PATCH-TS-082",
@@ -1698,7 +1698,7 @@
       "symbols": [
         "test_patch_e2e_035_container_shared_root_is_test_only_and_physical"
       ],
-      "source_sha256": "1033fa8d00cd33397e26995c64da789275f618abd11f8ab70aef52868b09c737"
+      "source_sha256": "18f49f165eee4db550e2a85a33afd1eefe14616d75e7b4fad0104bbee5321402"
     },
     {
       "id": "PATCH-TS-128",
@@ -1791,5 +1791,5 @@
       "source_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760"
     }
   ],
-  "manifest_sha256": "042df28164886fde4ee2a666c3d459e2f241ecb3dd04d1186de7deb8666557cb"
+  "manifest_sha256": "0356ea0a52c1825909a788058b924cf20a77fca38098541f31da8cad1559dae9"
 }
