@@ -1426,7 +1426,7 @@
       "symbols": [
         "test_patch_cli_binding_is_exact_opaque_and_single_profile_owner"
       ],
-      "source_sha256": "b8a54ddfff04c3a3670a17260a4dd69ce6ba43fdeae0e45998407b66f331663d"
+      "source_sha256": "d902296f2663e55c8babcc06a383d5780ddf291bc0a74010099fb5e176e293ad"
     },
     {
       "id": "PATCH-TS-102",
@@ -1793,5 +1793,5 @@
       "source_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760"
     }
   ],
-  "manifest_sha256": "2eb01c9fc5b624bce3804ce58a8e96411f1b06a5c758e8ebdd872d5f401c57e6"
+  "manifest_sha256": "1e1d0f14bb81b18b9514f5dc19e49f19569a496acd0e18b5c6c11f37b7f49fc4"
 }
