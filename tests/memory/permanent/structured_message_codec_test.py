@@ -25,6 +25,8 @@ from avalan.entities import (
     ToolCallDiagnosticStage,
     ToolCallError,
     ToolCallResult,
+    ToolResultImage,
+    ToolResultText,
     ToolValue,
 )
 from avalan.memory.permanent import PermanentMessageMemory
@@ -218,6 +220,40 @@ class StructuredMessageCodecTest(TestCase):
                     tool_call_diagnostic=diagnostic,
                 )
                 self.assertEqual(_round_trip(message), message)
+
+    def test_tool_image_receipt_omits_pixels_and_requires_new_delivery(self):
+        pixels = b"private tool image pixels"
+        message = Message(
+            role=MessageRole.TOOL,
+            tool_call_result=ToolCallResult(
+                id="result-1",
+                name="shell.montage",
+                arguments={},
+                call=ToolCall(id="call-1", name="shell.montage", arguments={}),
+                result="metadata",
+                content=(
+                    ToolResultText(text="metadata"),
+                    ToolResultImage(
+                        data=pixels,
+                        media_type="image/png",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            ),
+        )
+
+        encoded = encode_message_data(message)
+        restored = decode_message_data(MessageRole.TOOL, encoded)
+
+        self.assertNotIn("private tool image pixels", encoded)
+        self.assertNotIn(pixels.hex(), encoded)
+        assert restored.tool_call_result is not None
+        image = restored.tool_call_result.content[1]
+        self.assertIsInstance(image, ToolResultImage)
+        assert isinstance(image, ToolResultImage)
+        self.assertIsNone(image.data)
+        self.assertIn("not retained", image.unavailable_reason or "")
 
     def test_rejects_invalid_public_values_and_payloadless_message(
         self,

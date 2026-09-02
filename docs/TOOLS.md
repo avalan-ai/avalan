@@ -108,7 +108,7 @@ enabled.
 | `mcp` | `mcp.call` | Call tools exposed by an MCP server. |
 | `a2a` | `a2a.call` | Call another A2A agent as a tool, including file forwarding. |
 | `skills` | `skills.list`, `skills.match`, `skills.read`, `skills.check` | Discover and read trusted instruction resources through a registry. |
-| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `date`, `shasum`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `pipeline`, `git_*` | Read, inspect, search, transform, hash files, read backend-relative time, create bounded image composites, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
+| `shell` | `rg`, `head`, `tail`, `ls`, `cat`, `nl`, `date`, `shasum`, `pgrep`, `ps`, `lsof`, `kill`, `file`, `find`, `wc`, `awk`, `sed`, `jq`, `pdfinfo`, `pdftotext`, `pdftoppm`, `reportlab`, `pdfplumber`, `pypdf`, `tesseract`, `montage`, `view_image`, `pipeline`, `git_*` | Read, inspect, search, transform, hash files, read backend-relative time, create bounded image composites, attach approved image pixels to a model continuation, query bounded process metadata, signal an explicitly selected process, compose workspace file operations, and run bounded shell Git wrappers under policy limits. `shell.pgrep`, `shell.ps`, and `shell.lsof` require `allow_process_tools = true`; `shell.kill` additionally requires `allow_process_control = true`; media tools such as `shell.montage` and `shell.view_image` require `allow_media_tools = true`; `shell.pipeline` also requires `allow_pipelines = true`; shell Git tools require `[tool.shell.git]` capabilities and command allowlists. |
 
 `search_engine.search` also exists as a simple SDK/demo tool. It is useful for
 tests or custom toolsets, but production search should be backed by a real
@@ -455,6 +455,36 @@ image must make both `avalan` and the target PDF library importable to that
 Python interpreter. Absolute paths, symlinks, hidden files, and executable
 search paths are also opt-in.
 
+### Model-visible tool images
+
+Tools can return a `ToolResult` with ordered `ToolResultText` and
+`ToolResultImage` blocks. Avalan retains textual metadata and forwards image
+bytes as genuine native image content in the immediate model continuation. A
+path, artifact record, JSON field, or data URL inside ordinary tool text is
+metadata only; it does not mean the model saw the pixels.
+
+OpenAI Responses, Anthropic, Bedrock Converse, and Google/Gemini receive a
+native image representation. OpenAI-compatible tool-message backends and the
+DS4 continuation renderer cannot carry tool-result images, so Avalan raises a
+`ToolResultImageDeliveryError` instead of silently claiming image inspection.
+Multiple blocks stay associated with their tool call and preserve their order.
+
+Image bytes are transient. Durable events and permanent memory retain text and
+an image receipt (media type, digest, dimensions), never raw pixels. A restored
+history therefore fails explicitly if asked to deliver an image again; its
+existing artifact record remains usable through authorized tools.
+
+`shell.view_image` is exposed with `allow_media_tools = true`. It attaches one
+allowed regular workspace PNG or JPEG and accepts
+`detail="auto" | "low" | "high" | "original"`. Directories, symlinks,
+out-of-scope paths, malformed or unsupported images, races, and byte or
+dimension overages are rejected. Sandbox and container mode never fall back to
+the host filesystem: an unavailable target image carrier fails clearly.
+PNG validation uses the built-in bounded validator. Full JPEG pixel validation
+requires Pillow, which is included in Avalan's `vendors` and `vision` extras;
+if Pillow is absent, JPEG delivery fails explicitly instead of relying only on
+filename or marker metadata.
+
 `shell.montage` combines two or more explicit PNG, PNM, or JPEG paths into one
 bounded generated image. It does not perform shell brace, glob, variable, or
 command expansion. Use structured values such as `thumbnail="425x550"`,
@@ -468,7 +498,10 @@ contract is used for host, sandbox, and container execution. Each path selects
 only its first image scene; embedded label and caption properties are cleared.
 ImageMagick memory, map, disk, thread, and list-length resources are bounded,
 and returned JPEG or PNG signatures and dimensions are validated after
-execution.
+execution. A successful continuation retains the generated-artifact metadata
+and attaches the exact generated PNG or JPEG bytes. If a sandbox or container
+target does not return those bytes, Avalan does not read a host fallback and
+reports that image delivery cannot occur.
 The documented Alpine container selects its packaged `DejaVu-Sans` font.
 Local and sandbox execution use ImageMagick's host font configuration unless
 the operator sets trusted `montage_font` configuration (or

@@ -1,8 +1,9 @@
-from ....entities import ToolCallContext
-from ..entities import ShellCommandRequest
+from ....entities import ToolCallContext, ToolResultImageDetail
+from ..entities import ShellCommandRequest, ShellFormattedResult
 from ..executor import CommandExecutor
 from ..policy import ExecutionPolicy
 from ..settings import ShellToolSettings
+from ..tool_images import montage_tool_result
 from ._arguments import _optional_cwd, _path_operands
 from ._base import ShellResultFormatter, _ShellCommandTool
 
@@ -21,6 +22,7 @@ class MontageTool(_ShellCommandTool):
         output_format: Generated image format.
         output_filename: Optional safe basename for the returned artifact.
         quality: Optional output quality from 1 through 100.
+        detail: Requested model image fidelity.
         cwd: Workspace-relative working directory for the command.
         timeout_seconds: Optional execution timeout in seconds.
         max_stdout_bytes: Optional stdout byte cap.
@@ -87,14 +89,15 @@ class MontageTool(_ShellCommandTool):
         output_format: Literal["jpg", "jpeg", "png"] = "jpg",
         output_filename: str | None = None,
         quality: int | None = None,
+        detail: Literal["auto", "low", "high", "original"] = "auto",
         cwd: str | None = None,
         timeout_seconds: float | None = None,
         max_stdout_bytes: int | None = None,
         max_stderr_bytes: int | None = None,
         *,
         context: ToolCallContext,
-    ) -> str:
-        return await self._execute_request(
+    ) -> ShellFormattedResult:
+        formatted = await self._execute_request(
             self._build_request(
                 paths=paths,
                 thumbnail=thumbnail,
@@ -109,4 +112,15 @@ class MontageTool(_ShellCommandTool):
                 max_stderr_bytes=max_stderr_bytes,
             ),
             context=context,
+        )
+        assert isinstance(formatted, ShellFormattedResult)
+        result = await montage_tool_result(
+            formatted,
+            settings=self._settings,
+            detail=ToolResultImageDetail(detail),
+        )
+        return ShellFormattedResult(
+            str(formatted),
+            formatted.execution_result,
+            result.content,
         )

@@ -5,6 +5,9 @@ from ..entities import (
     MessageContentFile,
     MessageContentImage,
     MessageContentText,
+    ToolCallResult,
+    ToolResultImage,
+    ToolResultImageDeliveryError,
 )
 from ..tool.name_policy import ToolNamePolicy
 from .capability import CorrelatedCapabilityResult, ModelCapabilityCatalog
@@ -131,6 +134,14 @@ class TextGenerationVendor(ABC):
         for msg in messages:
             if exclude_roles and msg.role in exclude_roles:
                 continue
+            if isinstance(msg.tool_call_result, ToolCallResult) and any(
+                isinstance(block, ToolResultImage)
+                for block in msg.tool_call_result.content
+            ):
+                raise ToolResultImageDeliveryError(
+                    "This provider continuation cannot attach tool-result "
+                    "images."
+                )
 
             out.append(
                 {

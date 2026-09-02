@@ -29,6 +29,8 @@ from ....entities import (
     Token,
     TokenDetail,
     ToolCall,
+    ToolCallResult,
+    ToolResultImageDeliveryError,
     TransformerEngineSettings,
 )
 from ....model.capability import ModelCapabilityCatalog
@@ -51,6 +53,7 @@ from ....model.stream import (
 from ....tool.dsml import DsmlParseResult, DsmlPromptMessage, DsmlTools
 from ....types import LooseJsonValue
 from .generation import TextGenerationModel
+from .tool_result_images import tool_result_images
 
 import asyncio
 import hashlib
@@ -2076,6 +2079,15 @@ class Ds4Model(TextGenerationModel):
         messages: list[_Ds4PromptMessage] = []
         for message in raw_messages:
             role = self._message_role(message)
+            if (
+                role is MessageRole.TOOL
+                and isinstance(message.tool_call_result, ToolCallResult)
+                and tool_result_images(message.tool_call_result)
+            ):
+                raise ToolResultImageDeliveryError(
+                    "The DS4 continuation renderer cannot attach tool-result "
+                    "images."
+                )
             content = self._message_text(message.content)
             if role is MessageRole.DEVELOPER:
                 if content:

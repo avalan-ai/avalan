@@ -330,10 +330,11 @@ Public shell tools:
 | `shell.pypdf` | Inspect metadata or extract bounded text from a PDF. | Python PDF | `python3` with `avalan` and `pypdf` |
 | `shell.tesseract` | Recognize text in an image. | OCR | `tesseract-ocr` or `tesseract` |
 | `shell.montage` | Create one bounded composite image from explicit image paths. | ImageMagick | `imagemagick`, JPEG codec support, and a configured font |
+| `shell.view_image` | Attach one approved PNG or JPEG as model-visible image content. | built in | Pillow for JPEG validation; no external binary |
 
 Media tools (`shell.pdfinfo`, `shell.pdftotext`, `shell.pdftoppm`,
 `shell.reportlab`, `shell.pdfplumber`, `shell.pypdf`, `shell.tesseract`, and
-`shell.montage`)
+`shell.montage`, and `shell.view_image`)
 are disabled unless `allow_media_tools = true`. Optional binaries are resolved
 at invocation time: if a configured command is not installed, the tool returns
 a formatted `command_unavailable` result instead of failing agent loading. The

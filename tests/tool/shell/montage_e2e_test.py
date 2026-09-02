@@ -1,5 +1,6 @@
 from .image_fixtures import VALID_JPEG_BYTES
 
+from base64 import b64decode
 from json import loads
 from pathlib import Path
 from sys import executable as sys_executable
@@ -13,8 +14,11 @@ from avalan.entities import (
     ToolCallDiagnosticCode,
     ToolCallResult,
     ToolManagerSettings,
+    ToolResultImage,
+    ToolResultText,
     ToolValue,
 )
+from avalan.model.nlp.text.vendor.openai import OpenAIClient
 from avalan.tool.manager import ToolManager
 from avalan.tool.shell import (
     ShellExecutionErrorCode,
@@ -23,6 +27,7 @@ from avalan.tool.shell import (
     ShellToolSet,
     ShellToolSettings,
 )
+from avalan.tool.shell.input_files import shell_input_file_filter
 
 
 class MontageToolManagerE2ETest(IsolatedAsyncioTestCase):
@@ -78,6 +83,23 @@ class MontageToolManagerE2ETest(IsolatedAsyncioTestCase):
         self.assertEqual(generated.display_path, "contact-01-06.jpg")
         self.assertEqual(generated.media_type, "image/jpeg")
         self.assertEqual((generated.width, generated.height), (16, 16))
+        self.assertEqual(len(outcome.content), 2)
+        self.assertIsInstance(outcome.content[0], ToolResultText)
+        self.assertIsInstance(outcome.content[1], ToolResultImage)
+        image = outcome.content[1]
+        assert isinstance(image, ToolResultImage)
+        self.assertEqual(image.data, VALID_JPEG_BYTES)
+        self.assertEqual(image.sha256, generated.sha256)
+        self.assertEqual((image.width, image.height), (16, 16))
+        provider_output = OpenAIClient._tool_output_content(
+            outcome,
+            outcome.result,
+        )
+        assert isinstance(provider_output, list)
+        image_block = provider_output[2]
+        self.assertEqual(image_block["type"], "input_image")
+        encoded = image_block["image_url"].split(",", 1)[1]
+        self.assertEqual(b64decode(encoded), VALID_JPEG_BYTES)
         expected_inputs = [f"./{path}[0]" for path in paths]
         first_input_index = launched.index(expected_inputs[0])
         self.assertEqual(
@@ -128,6 +150,43 @@ class MontageToolManagerE2ETest(IsolatedAsyncioTestCase):
         self.assertIs(
             result.error_code, ShellExecutionErrorCode.DENIED_COMMAND
         )
+
+    async def test_view_image_attaches_a_prior_montage_artifact(self) -> None:
+        with TemporaryDirectory() as temporary_directory:
+            root = Path(temporary_directory)
+            executable, _marker = _fake_montage(root)
+            _write_jpeg(root / "one.jpg")
+            _write_jpeg(root / "two.jpg")
+            manager = _manager(
+                root,
+                executable,
+                allow_media_tools=True,
+                enable_tools=["shell.montage", "shell.view_image"],
+            )
+            montage = await manager.execute_call(
+                ToolCall(
+                    id="montage",
+                    name="shell.montage",
+                    arguments={"paths": ["one.jpg", "two.jpg"]},
+                ),
+                context=ToolCallContext(),
+            )
+            assert isinstance(montage, ToolCallResult)
+            viewed = await manager.execute_call(
+                ToolCall(
+                    id="view-montage",
+                    name="shell.view_image",
+                    arguments={"path": "montage.jpg"},
+                ),
+                context=ToolCallContext(calls=[montage]),
+            )
+
+        self.assertIsInstance(viewed, ToolCallResult)
+        assert isinstance(viewed, ToolCallResult)
+        self.assertIsInstance(viewed.content[1], ToolResultImage)
+        image = viewed.content[1]
+        assert isinstance(image, ToolResultImage)
+        self.assertEqual(image.data, VALID_JPEG_BYTES)
 
     async def test_schema_invalid_arguments_never_launch(self) -> None:
         invalid_arguments: tuple[dict[str, ToolValue], ...] = (
@@ -214,6 +273,7 @@ def _manager(
     executable: Path,
     *,
     allow_media_tools: bool,
+    enable_tools: list[str] | None = None,
 ) -> ToolManager:
     settings = ShellToolSettings(
         workspace_root=str(root),
@@ -222,8 +282,10 @@ def _manager(
     )
     return ToolManager.create_instance(
         available_toolsets=[ShellToolSet(settings=settings)],
-        enable_tools=["shell.montage"],
-        settings=ToolManagerSettings(),
+        enable_tools=enable_tools or ["shell.montage"],
+        settings=ToolManagerSettings(
+            filters=[shell_input_file_filter(settings)],
+        ),
     )
 
 

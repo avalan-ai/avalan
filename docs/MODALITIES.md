@@ -26,6 +26,16 @@ task you need:
   - 🎨 [Text to image](#text-to-image): Generate images from text prompts.
   - 🎬 [Text to video](#text-to-video): Generate short videos from prompts.
 
+## Tool-returned images
+
+Vision-capable provider continuations can receive a tool-produced image as
+real image content. This is distinct from a returned filename or artifact
+description. `shell.montage` creates a bounded contact sheet and
+`shell.view_image` attaches an approved workspace PNG/JPEG; both preserve text
+metadata and attach pixels in the next continuation when the selected provider
+supports tool-result images. See [Tools](TOOLS.md#model-visible-tool-images)
+for provider support, fidelity control, and safety limits.
+
 ## Audio
 
 ### Audio classification

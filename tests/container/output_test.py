@@ -211,6 +211,8 @@ class ContainerOutputTest(TestCase):
 
         self.assertEqual(result.decision, ContainerOutputDecisionType.ACCEPT)
         self.assertEqual(result.artifacts[0].signature, content)
+        self.assertEqual(result.artifacts[0].content, content)
+        self.assertNotIn("content", result.artifacts[0].to_dict())
         self.assertEqual(contract.to_dict()["image_inspection_bytes"], 32)
 
     def test_archive_retains_contract_scoped_inspection_prefix(self) -> None:
@@ -1145,9 +1147,15 @@ class ContainerOutputTest(TestCase):
             size_bytes=2,
             media_type="text/plain",
             digest=f"sha256:{'0' * 64}",
+            signature=b"ok",
             content=b"ok",
         )
         self.assertEqual(artifact.content, b"ok")
+        self.assertNotIn("content=", repr(artifact))
+        self.assertNotIn("signature=", repr(artifact))
+        self.assertNotIn("b'ok'", repr(artifact))
+        self.assertNotIn("content", artifact.to_dict())
+        self.assertNotIn("signature", artifact.to_dict())
         diagnostic = ContainerOutputDiagnostic(
             code="container.output.too_large",
             path="artifact.txt",

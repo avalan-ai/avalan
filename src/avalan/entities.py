@@ -11,6 +11,7 @@ from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import StrEnum
+from hashlib import sha256
 from math import isfinite
 from typing import (
     TYPE_CHECKING,
@@ -732,6 +733,135 @@ class MessageContentFile:
 MessageContent = MessageContentText | MessageContentImage | MessageContentFile
 
 
+class ToolResultImageDetail(StrEnum):
+    """Describe the requested fidelity for a tool-returned image."""
+
+    AUTO = "auto"
+    LOW = "low"
+    HIGH = "high"
+    ORIGINAL = "original"
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolResultText:
+    """Represent one textual block returned by a tool."""
+
+    type: Literal["text"] = "text"
+    text: str
+
+    def __post_init__(self) -> None:
+        if self.type != "text":
+            raise ValueError("tool result text type must be text")
+        if not isinstance(self.text, str):
+            raise TypeError("tool result text must be a string")
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolResultImage:
+    """Represent one in-memory image block returned by a tool.
+
+    Image bytes deliberately live only on this transient result object.  They
+    are sent to the immediate model continuation, but durable codecs retain a
+    receipt instead of serializing the pixels.
+    """
+
+    type: Literal["image"] = "image"
+    data: bytes | None = field(default=None, repr=False)
+    media_type: str
+    detail: ToolResultImageDetail = ToolResultImageDetail.AUTO
+    sha256: str | None = None
+    width: int | None = None
+    height: int | None = None
+    unavailable_reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.type != "image":
+            raise ValueError("tool result image type must be image")
+        if not isinstance(self.media_type, str) or not (
+            self.media_type.startswith("image/")
+        ):
+            raise ValueError(
+                "tool result image media_type must be an image type"
+            )
+        if not isinstance(self.detail, ToolResultImageDetail):
+            raise TypeError("tool result image detail must be an image detail")
+        if self.data is not None and type(self.data) is not bytes:
+            raise TypeError("tool result image data must be bytes or None")
+        if self.data is None and not self.unavailable_reason:
+            raise ValueError(
+                "tool result image without data requires an unavailable reason"
+            )
+        if self.data is not None and self.unavailable_reason is not None:
+            raise ValueError(
+                "available tool result image cannot have an unavailable reason"
+            )
+        if self.unavailable_reason is not None and not isinstance(
+            self.unavailable_reason, str
+        ):
+            raise TypeError(
+                "tool result image unavailable_reason must be a string"
+            )
+        if self.sha256 is not None:
+            if (
+                not isinstance(self.sha256, str)
+                or len(self.sha256) != 64
+                or any(
+                    character not in "0123456789abcdef"
+                    for character in self.sha256
+                )
+            ):
+                raise ValueError(
+                    "tool result image sha256 must be lowercase hex"
+                )
+        if self.data is not None:
+            digest = sha256(self.data).hexdigest()
+            if self.sha256 is not None and self.sha256 != digest:
+                raise ValueError(
+                    "tool result image sha256 does not match data"
+                )
+            object.__setattr__(self, "sha256", digest)
+        for name in ("width", "height"):
+            value = getattr(self, name)
+            if value is not None and (
+                not isinstance(value, int)
+                or isinstance(value, bool)
+                or value <= 0
+            ):
+                raise ValueError(f"tool result image {name} must be positive")
+
+    @property
+    def available(self) -> bool:
+        """Return whether this result still has pixels for a continuation."""
+        return self.data is not None
+
+
+ToolResultContent = ToolResultText | ToolResultImage
+
+
+class ToolResultImageDeliveryError(ValueError):
+    """Raise when a tool image cannot reach the model continuation."""
+
+
+@final
+@dataclass(frozen=True, kw_only=True, slots=True)
+class ToolResult:
+    """Return JSON-compatible metadata plus ordered multimodal tool blocks."""
+
+    result: ToolValue | None = None
+    content: tuple[ToolResultContent, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.content, tuple):
+            raise TypeError("tool result content must be a tuple")
+        for item in self.content:
+            if not isinstance(item, ToolResultText | ToolResultImage):
+                raise TypeError(
+                    "tool result content contains an unsupported block"
+                )
+
+
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class MessageToolCall:
@@ -827,6 +957,17 @@ class ToolCallResult(ToolCall):
     id: UUID | str
     call: ToolCall
     result: ToolValue | None = None
+    content: tuple[ToolResultContent, ...] = ()
+
+    def __post_init__(self) -> None:
+        ToolCall.__post_init__(self)
+        if not isinstance(self.content, tuple):
+            raise TypeError("tool call result content must be a tuple")
+        for item in self.content:
+            if not isinstance(item, ToolResultText | ToolResultImage):
+                raise TypeError(
+                    "tool call result content contains an unsupported block"
+                )
 
 
 @final

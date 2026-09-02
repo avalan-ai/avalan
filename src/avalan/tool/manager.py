@@ -24,6 +24,8 @@ from ..entities import (
     ToolNameResolution,
     ToolNameResolutionStatus,
     ToolProviderArgumentsMode,
+    ToolResult,
+    ToolResultContent,
     ToolTransformer,
     ToolTransformerResult,
 )
@@ -2863,7 +2865,16 @@ class ToolManager:
         tool = prepared.callable
         outcome_call = self._outcome_call(call)
         try:
-            result = await self._dispatch_tool(tool, call, context)
+            dispatched = await self._dispatch_tool(tool, call, context)
+            result_content: tuple[ToolResultContent, ...] = ()
+            if isinstance(dispatched, ToolResult):
+                result = dispatched.result
+                result_content = dispatched.content
+            else:
+                result = dispatched
+                shell_content = getattr(dispatched, "tool_result_content", ())
+                if isinstance(shell_content, tuple):
+                    result_content = shell_content
             result = self._apply_transformers(call, context, result)
 
             return ToolCallResult(
@@ -2878,6 +2889,7 @@ class ToolManager:
                     outcome_call.provider_arguments_malformed
                 ),
                 result=result,
+                content=result_content,
             )
         except Exception as exc:
             error: dict[str, object] | BaseException = (

@@ -287,10 +287,6 @@ def _generated_file_lines(
                 f"  truncated: {_bool(generated_file.truncated)}",
             ]
         )
-        if generated_file.content_base64 is not None:
-            lines.append(
-                f"  content_base64: {redactor(generated_file.content_base64)}"
-            )
     return lines
 
 

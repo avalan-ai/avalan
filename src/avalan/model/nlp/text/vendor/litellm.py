@@ -5,6 +5,7 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    ToolResultImageDeliveryError,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -31,6 +32,7 @@ from ....capability import (
     TaskInputCapabilityCall,
 )
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from ..tool_result_images import tool_result_images
 from . import (
     DiffusionPipeline,
     PreTrainedModel,
@@ -484,6 +486,13 @@ class LiteLLMClient(TextGenerationVendor):
                         if isinstance(outcome, ToolCallResult)
                         else {"error": outcome.message}
                     )
+                    if isinstance(
+                        outcome, ToolCallResult
+                    ) and tool_result_images(outcome):
+                        raise ToolResultImageDeliveryError(
+                            "The OpenAI-compatible provider tool-result "
+                            "carrier cannot attach images."
+                        )
                 provider_name = TextGenerationVendor.provider_tool_name(
                     canonical_name,
                     capability=capability,
