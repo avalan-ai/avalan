@@ -39,11 +39,11 @@ lint:
 
 lint-check:
 	poetry run black --check --preview --enable-unstable-feature=string_processing $(LINT_PATHS)
-	poetry run ruff check $(LINT_PATHS)
+	poetry run ruff check --no-fix $(LINT_PATHS)
 	poetry run mypy
 	poetry run mypy $(INPUT_CONTRACT_SCRIPTS)
 	poetry run black --check --preview --enable-unstable-feature=string_processing $(CONVERSATION_CONTRACT_SCRIPTS)
-	poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run ruff check --no-fix $(CONVERSATION_CONTRACT_SCRIPTS)
 	poetry run mypy $(CONVERSATION_CONTRACT_SCRIPTS)
 
 test:

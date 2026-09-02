@@ -238,7 +238,7 @@ def _makefile_lint_check_is_non_mutating(makefile: str) -> bool:
         maxsplit=1,
     )[0]
     return (
-        "poetry run ruff check $(LINT_PATHS)" in lint_check
+        "poetry run ruff check --no-fix $(LINT_PATHS)" in lint_check
         and (
             "poetry run black --check --preview "
             "--enable-unstable-feature=string_processing $(LINT_PATHS)"
@@ -246,7 +246,7 @@ def _makefile_lint_check_is_non_mutating(makefile: str) -> bool:
         )
         and "poetry run mypy\n" in lint_check
         and "poetry run mypy $(INPUT_CONTRACT_SCRIPTS)" in lint_check
-        and "poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)"
+        and "poetry run ruff check --no-fix $(CONVERSATION_CONTRACT_SCRIPTS)"
         in lint_check
         and (
             "poetry run black --check --preview "
@@ -261,14 +261,14 @@ def _makefile_lint_check_is_non_mutating(makefile: str) -> bool:
             "poetry run black --check --preview "
             "--enable-unstable-feature=string_processing $(LINT_PATHS)"
         )
-        < lint_check.index("poetry run ruff check $(LINT_PATHS)")
+        < lint_check.index("poetry run ruff check --no-fix $(LINT_PATHS)")
         and lint_check.index(
             "poetry run black --check --preview "
             "--enable-unstable-feature=string_processing "
             "$(CONVERSATION_CONTRACT_SCRIPTS)"
         )
         < lint_check.index(
-            "poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)"
+            "poetry run ruff check --no-fix $(CONVERSATION_CONTRACT_SCRIPTS)"
         )
     )
 
@@ -487,7 +487,7 @@ def test_workflow_rejects_broad_or_partial_macos_docker_exclusions() -> None:
 
 def test_makefile_rejects_mutating_ci_lint_check() -> None:
     makefile = _read_repository_text("Makefile").replace(
-        "poetry run ruff check $(LINT_PATHS)",
+        "poetry run ruff check --no-fix $(LINT_PATHS)",
         "poetry run ruff check --fix $(LINT_PATHS)",
         1,
     )
@@ -532,8 +532,8 @@ def test_makefile_rejects_ruff_check_before_black() -> None:
     makefile = _read_repository_text("Makefile").replace(
         "poetry run black --check --preview "
         "--enable-unstable-feature=string_processing $(LINT_PATHS)\n\t"
-        "poetry run ruff check $(LINT_PATHS)",
-        "poetry run ruff check $(LINT_PATHS)\n\t"
+        "poetry run ruff check --no-fix $(LINT_PATHS)",
+        "poetry run ruff check --no-fix $(LINT_PATHS)\n\t"
         "poetry run black --check --preview "
         "--enable-unstable-feature=string_processing $(LINT_PATHS)",
         1,

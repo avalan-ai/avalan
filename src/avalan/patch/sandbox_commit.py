@@ -27,10 +27,27 @@ from hashlib import sha256
 from hmac import compare_digest, digest
 from importlib.util import find_spec
 from json import dumps, loads
+from os import (
+    O_DIRECTORY,
+    O_NOFOLLOW,
+    O_RDONLY,
+    fchmod,
+    fstat,
+    listdir,
+    lstat,
+    rmdir,
+    unlink,
+)
+from os import (
+    close as close_file_descriptor,
+)
+from os import (
+    open as open_file_descriptor,
+)
 from pathlib import Path
 from secrets import token_bytes
 from shutil import copytree, rmtree
-from stat import S_IEXEC, S_IREAD
+from stat import S_IEXEC, S_IREAD, S_ISDIR, S_IWRITE
 from sys import executable
 from tempfile import mkdtemp
 from types import MappingProxyType, TracebackType
@@ -224,7 +241,7 @@ _PROCESS_IO_SECONDS = 2.0
 _PROCESS_REAP_SECONDS = 2.0
 _PROCESS_STARTUP_IO_SECONDS = 10.0
 _PINNED_WORKER_SOURCE_DIGEST = (
-    "a9ace39c89eb86b8b6f41beb8576ba7410453e2ab709cf7792154052dcc5b8d6"
+    "5287a86cfde14c1e410bf1982d9d77da957b863a00711acee7691206693ddeca"
 )
 
 
@@ -334,13 +351,87 @@ class _ImplementationBundle:
                     TargetErrorCode.CAPABILITY_UNAVAILABLE
                 )
             return cls(root, _implementation_digest(root), source_digest)
-        except BaseException:
-            rmtree(root, ignore_errors=True)
+        except BaseException as primary:
+            try:
+                _remove_owned_bundle(root)
+            except BaseException as cleanup:
+                raise primary from cleanup
             raise
 
     def close(self) -> None:
         """Remove the private immutable bundle after the child has reaped."""
-        rmtree(self.root, ignore_errors=True)
+        _remove_owned_bundle(self.root)
+
+
+def _remove_owned_bundle(root: Path) -> None:
+    """Remove one owned private bundle without traversing links."""
+    if not root.is_absolute():
+        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    expected = lstat(root)
+    if not S_ISDIR(expected.st_mode):
+        raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+    descriptor = open_file_descriptor(
+        root, O_RDONLY | O_DIRECTORY | O_NOFOLLOW
+    )
+    try:
+        opened = fstat(descriptor)
+        if (opened.st_dev, opened.st_ino) != (
+            expected.st_dev,
+            expected.st_ino,
+        ):
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+        _remove_owned_bundle_contents(descriptor)
+        # POSIX can remove a directory only by pathname, not by its already
+        # verified descriptor. The bundle's private-name boundary therefore
+        # excludes an uncooperative same-UID replacement after this immediate
+        # check; any replacement observable before rmdir is left in place.
+        current = lstat(root)
+        if (current.st_dev, current.st_ino) != (
+            expected.st_dev,
+            expected.st_ino,
+        ):
+            raise TargetInspectionError(TargetErrorCode.CAPABILITY_UNAVAILABLE)
+        rmdir(root)
+    finally:
+        close_file_descriptor(descriptor)
+
+
+def _remove_owned_bundle_contents(descriptor: int) -> None:
+    """Delete entries through one trusted owned-directory descriptor."""
+    fchmod(descriptor, S_IREAD | S_IWRITE | S_IEXEC)
+    for name in listdir(descriptor):
+        expected = lstat(name, dir_fd=descriptor)
+        if not S_ISDIR(expected.st_mode):
+            unlink(name, dir_fd=descriptor)
+            continue
+        child = open_file_descriptor(
+            name,
+            O_RDONLY | O_DIRECTORY | O_NOFOLLOW,
+            dir_fd=descriptor,
+        )
+        try:
+            opened = fstat(child)
+            if (opened.st_dev, opened.st_ino) != (
+                expected.st_dev,
+                expected.st_ino,
+            ):
+                raise TargetInspectionError(
+                    TargetErrorCode.CAPABILITY_UNAVAILABLE
+                )
+            _remove_owned_bundle_contents(child)
+            # See _remove_owned_bundle: verify at the last portable point
+            # before pathname removal and fail closed on observed replacement.
+            current = lstat(name, dir_fd=descriptor)
+            if (current.st_dev, current.st_ino) != (
+                expected.st_dev,
+                expected.st_ino,
+            ):
+                raise TargetInspectionError(
+                    TargetErrorCode.CAPABILITY_UNAVAILABLE
+                )
+            rmdir(name, dir_fd=descriptor)
+        finally:
+            close_file_descriptor(child)
 
 
 def _paths_overlap(first: Path, second: Path) -> bool:
