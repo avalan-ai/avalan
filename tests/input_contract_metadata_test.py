@@ -27,6 +27,39 @@ def _load_gate() -> ModuleType:
 _GATE = _load_gate()
 
 
+def _lint_contract_uses_black_before_ruff(makefile: str) -> bool:
+    """Return whether both lint targets use the canonical formatter policy."""
+    lint = makefile.split("lint:\n", maxsplit=1)[1].split(
+        "\n\nlint-check:\n",
+        maxsplit=1,
+    )[0]
+    lint_check = makefile.split("lint-check:\n", maxsplit=1)[1].split(
+        "\n\ntest:\n",
+        maxsplit=1,
+    )[0]
+    black = (
+        "poetry run black --preview "
+        "--enable-unstable-feature=string_processing $(LINT_PATHS)"
+    )
+    black_check = (
+        "poetry run black --check --preview "
+        "--enable-unstable-feature=string_processing $(LINT_PATHS)"
+    )
+    ruff_fix = "poetry run ruff check --fix $(LINT_PATHS)"
+    ruff_check = "poetry run ruff check --no-fix $(LINT_PATHS)"
+    return (
+        "ruff format" not in lint
+        and "ruff format" not in lint_check
+        and black in lint
+        and ruff_fix in lint
+        and lint.index(black) < lint.index(ruff_fix)
+        and black_check in lint_check
+        and ruff_check in lint_check
+        and "--fix" not in lint_check
+        and lint_check.index(black_check) < lint_check.index(ruff_check)
+    )
+
+
 def test_exact_make_target_fails_closed_on_pytest_failure(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -137,9 +170,7 @@ def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
         expected_scripts
     )
     assert "LINT_PATHS := src/ tests/ $(INPUT_CONTRACT_SCRIPTS)" in makefile
-    assert "poetry run ruff format --preview $(LINT_PATHS)" in makefile
-    assert "poetry run black --preview" in makefile
-    assert "poetry run ruff check --fix $(LINT_PATHS)" in makefile
+    assert _lint_contract_uses_black_before_ruff(makefile)
     assert "poetry run mypy $(INPUT_CONTRACT_SCRIPTS)" in makefile
     database_command = (
         "--docker --runner-script scripts/run_input_contract_gate.py -- "
@@ -230,3 +261,59 @@ def test_project_metadata_pins_input_gate_and_standard_coverage() -> None:
     )
     assert "--through-phase 5" not in workflow
     assert "git diff --check" in workflow
+
+
+def test_project_metadata_rejects_ruff_formatter_in_lint() -> None:
+    """Reject a second formatter in the mutating lint target."""
+    makefile = (
+        (_ROOT / "Makefile")
+        .read_text(encoding="utf-8")
+        .replace(
+            "lint:\n",
+            "lint:\n\tpoetry run ruff format --preview $(LINT_PATHS)\n",
+            1,
+        )
+    )
+
+    assert not _lint_contract_uses_black_before_ruff(makefile)
+
+
+def test_project_metadata_rejects_ruff_before_black_in_lint() -> None:
+    """Keep Black before the potentially mutating Ruff check."""
+    makefile = (
+        (_ROOT / "Makefile")
+        .read_text(encoding="utf-8")
+        .replace(
+            "poetry run black --preview "
+            "--enable-unstable-feature=string_processing $(LINT_PATHS)\n\t"
+            "poetry run ruff check --fix $(LINT_PATHS)",
+            "poetry run ruff check --fix $(LINT_PATHS)\n\tpoetry run black"
+            " --preview --enable-unstable-feature=string_processing"
+            " $(LINT_PATHS)",
+            1,
+        )
+    )
+
+    assert not _lint_contract_uses_black_before_ruff(makefile)
+
+
+def test_project_metadata_rejects_mutating_or_reordered_lint_check() -> None:
+    """Keep CI lint checks non-mutating and Black-first."""
+    makefile = (_ROOT / "Makefile").read_text(encoding="utf-8")
+    mutating = makefile.replace(
+        "poetry run ruff check --no-fix $(LINT_PATHS)",
+        "poetry run ruff check --fix $(LINT_PATHS)",
+        1,
+    )
+    reordered = makefile.replace(
+        "poetry run black --check --preview "
+        "--enable-unstable-feature=string_processing $(LINT_PATHS)\n\t"
+        "poetry run ruff check --no-fix $(LINT_PATHS)",
+        "poetry run ruff check --no-fix $(LINT_PATHS)\n\tpoetry run black "
+        "--check --preview --enable-unstable-feature=string_processing "
+        "$(LINT_PATHS)",
+        1,
+    )
+
+    assert not _lint_contract_uses_black_before_ruff(mutating)
+    assert not _lint_contract_uses_black_before_ruff(reordered)
