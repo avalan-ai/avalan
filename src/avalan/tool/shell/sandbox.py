@@ -644,6 +644,7 @@ async def _generated_files(
                 width=width,
                 height=height,
                 content_base64=content_base64,
+                transient_content=content,
                 truncated=False,
                 metadata=metadata,
             )

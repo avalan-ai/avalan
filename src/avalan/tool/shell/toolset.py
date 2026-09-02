@@ -113,6 +113,7 @@ from .tools import (
     ShellResultFormatter,
     TailTool,
     TesseractTool,
+    ViewImageTool,
     WcTool,
 )
 
@@ -456,6 +457,13 @@ class ShellToolSet(ToolSet):
                 formatter=formatter,
             ),
         ]
+        if self._settings.allow_media_tools:
+            tools.append(
+                ViewImageTool(
+                    settings=self._settings,
+                    policy=policy,
+                )
+            )
         self._base_tools = tuple(tools)
         super().__init__(namespace=namespace, tools=tools)
 

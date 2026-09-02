@@ -6,6 +6,8 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    ToolResultImage,
+    ToolResultText,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -30,12 +32,17 @@ from ....capability import (
 )
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from ..tool_result_images import (
+    required_image_data,
+    tool_result_content,
+)
 from . import (
     DiffusionPipeline,
     PreTrainedModel,
     TextGenerationVendorModel,
 )
 
+from base64 import b64encode
 from collections.abc import Mapping
 from typing import Any, AsyncIterator, cast
 
@@ -423,18 +430,37 @@ class GoogleClient(TextGenerationVendor):
                     capability=capability,
                     provider_family=ProviderFamily.GOOGLE,
                 )
+                parts: list[dict[str, Any]] = [
+                    {
+                        "function_response": {
+                            "id": call_id,
+                            "name": provider_name,
+                            "response": {"output": result},
+                        }
+                    }
+                ]
+                if isinstance(outcome, ToolCallResult):
+                    for block in tool_result_content(outcome):
+                        if isinstance(block, ToolResultText):
+                            parts.append({"text": block.text})
+                            continue
+                        assert isinstance(block, ToolResultImage)
+                        parts.append(
+                            {
+                                "inline_data": {
+                                    "data": (
+                                        b64encode(
+                                            required_image_data(block)
+                                        ).decode("ascii")
+                                    ),
+                                    "mime_type": block.media_type,
+                                }
+                            }
+                        )
                 output.append(
                     {
                         "role": str(MessageRole.USER),
-                        "parts": [
-                            {
-                                "function_response": {
-                                    "id": call_id,
-                                    "name": provider_name,
-                                    "response": {"output": result},
-                                }
-                            }
-                        ],
+                        "parts": parts,
                     }
                 )
                 continue

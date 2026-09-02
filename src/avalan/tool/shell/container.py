@@ -1111,6 +1111,7 @@ def _generated_file(
         page=_generated_page_number(path.name, plan.prefix_name),
         width=width,
         height=height,
+        transient_content=artifact.content,
         truncated=False,
         metadata={"quarantined": artifact.quarantined},
     )

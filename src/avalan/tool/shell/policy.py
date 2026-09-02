@@ -152,6 +152,55 @@ class ExecutionPolicy:
             stdin_output_kind=None,
         )
 
+    async def resolve_view_image_path(
+        self,
+        path: str,
+        *,
+        cwd: str | None = None,
+    ) -> tuple[Path, str, ShellPathMetadata]:
+        """Resolve one policy-approved local image path for model delivery."""
+        if not isinstance(path, str):
+            raise TypeError("path must be a string")
+        if cwd is not None and not isinstance(cwd, str):
+            raise TypeError("cwd must be a string or None")
+        if not self._settings.allow_media_tools:
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "media tools are disabled",
+            )
+        if self._settings.execution_mode != "local":
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_COMMAND,
+                "view_image requires a target image carrier; host fallback "
+                "is disabled",
+            )
+        workspace = await _normalized_workspace(self._settings, cwd)
+        paths = await _normalized_paths(
+            (
+                PathOperand(
+                    name="path",
+                    path=path,
+                    kind="image_file",
+                    access="read",
+                ),
+            ),
+            workspace=workspace,
+            settings=self._settings,
+        )
+        normalized = paths[0]
+        metadata = await _required_file_metadata(normalized)
+        if metadata.size > self._settings.max_ocr_input_bytes:
+            raise _policy_denied(
+                ShellExecutionErrorCode.TOO_LARGE,
+                "view_image input file is too large",
+            )
+        if metadata.hardlink_count != 1:
+            raise _policy_denied(
+                ShellExecutionErrorCode.DENIED_PATH,
+                "view_image requires a singly linked file",
+            )
+        return normalized.path, normalized.display_path, metadata
+
     async def normalize_composition(
         self,
         request: ShellCompositionRequest,

@@ -141,4 +141,5 @@ from .sed import SedTool as SedTool
 from .shasum import ShasumTool as ShasumTool
 from .tail import TailTool as TailTool
 from .tesseract import TesseractTool as TesseractTool
+from .view_image import ViewImageTool as ViewImageTool
 from .wc import WcTool as WcTool

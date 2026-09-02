@@ -370,8 +370,8 @@ class ContainerOutputArtifact:
     size_bytes: int
     media_type: str
     digest: str
-    signature: bytes = b""
-    content: bytes | None = None
+    signature: bytes = field(default=b"", repr=False)
+    content: bytes | None = field(default=None, repr=False)
     quarantined: bool = False
 
     def __post_init__(self) -> None:
@@ -782,6 +782,7 @@ def validate_copied_outputs(
             stat_result.st_uid,
             stat_result.st_gid,
             contract.artifact_inspection_bytes,
+            capture_content=contract.image_inspection_bytes is not None,
         )
         if opened_file is None:
             entry_diagnostics.append(
@@ -793,7 +794,7 @@ def validate_copied_outputs(
             )
             diagnostics.extend(entry_diagnostics)
             continue
-        signature, digest = opened_file
+        signature, digest, content = opened_file
         media_type = _media_type_for_path(relative_path, None)
         entry_diagnostics.extend(
             _media_diagnostics(
@@ -813,6 +814,7 @@ def validate_copied_outputs(
                     media_type=media_type,
                     digest=digest,
                     signature=signature,
+                    content=content,
                     quarantined=_partial_mode(
                         partial_output,
                         resolved_policy,
@@ -1226,7 +1228,9 @@ def _read_validated_file(
     expected_uid: int,
     expected_gid: int,
     inspection_bytes: int,
-) -> tuple[bytes, str] | None:
+    *,
+    capture_content: bool,
+) -> tuple[bytes, str, bytes | None] | None:
     try:
         file_descriptor = open_fd(str(path), O_RDONLY | O_NOFOLLOW)
     except OSError:
@@ -1249,10 +1253,11 @@ def _read_validated_file(
                 expected_gid,
             ):
                 return None
-            signature, digest = _read_fd_signature_and_digest(
+            signature, digest, content = _read_fd_signature_and_digest(
                 file_descriptor,
                 expected_size,
                 inspection_bytes,
+                capture_content=capture_content,
             )
             after_stat = fstat(file_descriptor)
             if not _same_validated_file(
@@ -1272,7 +1277,7 @@ def _read_validated_file(
                 return None
         except OSError:
             return None
-        return signature, digest
+        return signature, digest, content
     finally:
         close_fd(file_descriptor)
 
@@ -1307,9 +1312,12 @@ def _read_fd_signature_and_digest(
     file_descriptor: int,
     expected_size: int,
     inspection_bytes: int,
-) -> tuple[bytes, str]:
+    *,
+    capture_content: bool,
+) -> tuple[bytes, str, bytes | None]:
     digest = sha256()
     signature = b""
+    content_chunks: list[bytes] | None = [] if capture_content else None
     remaining_size = expected_size
     lseek(file_descriptor, 0, SEEK_SET)
     while remaining_size > 0:
@@ -1320,10 +1328,13 @@ def _read_fd_signature_and_digest(
         if len(signature) < inspection_bytes:
             remaining = inspection_bytes - len(signature)
             signature += chunk[:remaining]
+        if content_chunks is not None:
+            content_chunks.append(chunk)
         digest.update(chunk)
     if remaining_size != 0 or read_fd(file_descriptor, 1):
         raise OSError("output changed while being read")
-    return signature, f"sha256:{digest.hexdigest()}"
+    content = b"".join(content_chunks) if content_chunks is not None else None
+    return signature, f"sha256:{digest.hexdigest()}", content
 
 
 def _metadata_digest(entry: ContainerArchiveEntry) -> str:

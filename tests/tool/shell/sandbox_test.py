@@ -13,6 +13,8 @@ from avalan.entities import (
     ToolCallContext,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
+    ToolResultImage,
+    ToolResultText,
 )
 from avalan.isolation import (
     IsolationEffectiveSettings,
@@ -1258,6 +1260,12 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
             ),
             (16, 16),
         )
+        self.assertEqual(len(formatted.tool_result_content), 2)
+        self.assertIsInstance(formatted.tool_result_content[0], ToolResultText)
+        image = formatted.tool_result_content[1]
+        self.assertIsInstance(image, ToolResultImage)
+        assert isinstance(image, ToolResultImage)
+        self.assertEqual(image.data, VALID_JPEG_BYTES)
 
     async def test_montage_sandbox_rejects_oversized_compressed_raster(
         self,

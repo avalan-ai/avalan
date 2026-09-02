@@ -1,3 +1,4 @@
+from ...entities import ToolResultContent
 from ...types import (
     assert_bool as _assert_bool,
 )
@@ -44,6 +45,7 @@ from ...types import (
     assert_suffix_media_type_mapping as _assert_suffix_media_type_mapping,
 )
 
+from builtins import bytes as _Bytes
 from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
 from typing import Literal, final
@@ -652,6 +654,7 @@ class GeneratedFile:
     width: int | None = None
     height: int | None = None
     content_base64: str | None = None
+    transient_content: _Bytes | None = field(default=None, repr=False)
     truncated: bool = False
     metadata: dict[str, object] = field(default_factory=dict)
 
@@ -667,6 +670,14 @@ class GeneratedFile:
         _assert_optional_non_negative_int(self.height, "height")
         if self.content_base64 is not None:
             _assert_non_empty_string(self.content_base64, "content_base64")
+        if self.transient_content is not None:
+            assert isinstance(
+                self.transient_content,
+                bytes,
+            ), "transient_content must be bytes"
+            assert (
+                len(self.transient_content) == self.bytes
+            ), "transient_content must match bytes"
         _assert_bool(self.truncated, "truncated")
         assert isinstance(self.metadata, dict), "metadata must be a dictionary"
         object.__setattr__(self, "metadata", dict(self.metadata))
@@ -858,19 +869,26 @@ class ShellCompositionResult:
 
 class ShellFormattedResult(str):
     execution_result: ExecutionResult
+    tool_result_content: tuple[ToolResultContent, ...]
 
     def __new__(
         cls,
         value: str,
         execution_result: ExecutionResult,
+        tool_result_content: tuple[ToolResultContent, ...] = (),
     ) -> "ShellFormattedResult":
         assert isinstance(value, str), "value must be a string"
         assert isinstance(
             execution_result,
             ExecutionResult,
         ), "execution_result must be a shell execution result"
+        assert isinstance(
+            tool_result_content,
+            tuple,
+        ), "tool_result_content must be a tuple"
         formatted = str.__new__(cls, value)
         formatted.execution_result = execution_result
+        formatted.tool_result_content = tool_result_content
         return formatted
 
     def __copy__(self) -> "ShellFormattedResult":
@@ -884,8 +902,13 @@ class ShellFormattedResult(str):
 
     def __reduce__(
         self,
-    ) -> tuple[type["ShellFormattedResult"], tuple[str, ExecutionResult]]:
-        return (self.__class__, (str(self), self.execution_result))
+    ) -> tuple[type["ShellFormattedResult"], tuple[object, ...]]:
+        if not self.tool_result_content:
+            return (self.__class__, (str(self), self.execution_result))
+        return (
+            self.__class__,
+            (str(self), self.execution_result, self.tool_result_content),
+        )
 
 
 class ShellFormattedCompositionResult(str):

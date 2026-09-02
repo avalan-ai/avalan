@@ -16,6 +16,10 @@ from ...entities import (
     ToolCallDiagnosticStatus,
     ToolCallError,
     ToolCallResult,
+    ToolResultContent,
+    ToolResultImage,
+    ToolResultImageDetail,
+    ToolResultText,
     ToolValue,
     normalize_tool_arguments,
 )
@@ -371,6 +375,9 @@ def _encode_tool_call_result(result: ToolCallResult) -> dict[str, object]:
         "base": _encode_tool_call(result),
         "call": _encode_tool_call(result.call),
         "result": _json_value(result.result, "tool_call_result.result"),
+        "content": [
+            _encode_tool_result_content(item) for item in result.content
+        ],
     }
 
 
@@ -378,9 +385,22 @@ def _optional_tool_call_result(value: object) -> ToolCallResult | None:
     if value is None:
         return None
     payload = _object(value, "message.tool_call_result")
-    _require_keys(
-        payload, {"base", "call", "result"}, "message.tool_call_result"
-    )
+    expected_fields = {"base", "call", "result"}
+    content: tuple[ToolResultContent, ...] = ()
+    if set(payload) == expected_fields | {"content"}:
+        content = tuple(
+            _decode_tool_result_content(
+                item,
+                f"message.tool_call_result.content[{index}]",
+            )
+            for index, item in enumerate(
+                _list(payload["content"], "message.tool_call_result.content")
+            )
+        )
+    elif set(payload) != expected_fields:
+        raise ValueError(
+            "message.tool_call_result fields do not match the envelope schema"
+        )
     base = _decode_tool_call(payload["base"], "message.tool_call_result.base")
     identifier = base.id
     if identifier is None:
@@ -398,7 +418,55 @@ def _optional_tool_call_result(value: object) -> ToolCallResult | None:
         result=_json_value(
             payload["result"], "message.tool_call_result.result"
         ),
+        content=content,
     )
+
+
+def _encode_tool_result_content(
+    content: ToolResultContent,
+) -> dict[str, object]:
+    if isinstance(content, ToolResultText):
+        return {"kind": "text", "text": content.text}
+    assert isinstance(content, ToolResultImage)
+    return {
+        "kind": "image_receipt",
+        "media_type": content.media_type,
+        "detail": content.detail.value,
+        "sha256": content.sha256,
+        "width": content.width,
+        "height": content.height,
+    }
+
+
+def _decode_tool_result_content(
+    value: object,
+    path: str,
+) -> ToolResultContent:
+    payload = _object(value, path)
+    kind = _string(payload.get("kind"), f"{path}.kind")
+    if kind == "text":
+        _require_keys(payload, {"kind", "text"}, path)
+        return ToolResultText(text=_string(payload["text"], f"{path}.text"))
+    if kind == "image_receipt":
+        _require_keys(
+            payload,
+            {"kind", "media_type", "detail", "sha256", "width", "height"},
+            path,
+        )
+        return ToolResultImage(
+            media_type=_string(payload["media_type"], f"{path}.media_type"),
+            detail=ToolResultImageDetail(
+                _string(payload["detail"], f"{path}.detail")
+            ),
+            sha256=_optional_string(payload["sha256"], f"{path}.sha256"),
+            width=_optional_positive_int(payload["width"], f"{path}.width"),
+            height=_optional_positive_int(payload["height"], f"{path}.height"),
+            unavailable_reason=(
+                "Image pixels are transient and were not retained in durable "
+                "tool history."
+            ),
+        )
+    raise ValueError(f"{path}.kind is unsupported")
 
 
 def _encode_tool_call_error(error: ToolCallError) -> dict[str, object]:
@@ -592,6 +660,14 @@ def _optional_string(value: object, path: str) -> str | None:
     if value is None:
         return None
     return _string(value, path)
+
+
+def _optional_positive_int(value: object, path: str) -> int | None:
+    if value is None:
+        return None
+    if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+        raise ValueError(f"{path} must be a positive integer or null")
+    return value
 
 
 def _boolean(value: object, path: str) -> bool:

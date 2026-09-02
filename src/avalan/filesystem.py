@@ -7,9 +7,11 @@ from asyncio import to_thread
 from base64 import b64encode
 from collections.abc import Sequence
 from hashlib import sha256
-from os import pathsep, stat_result
+from os import O_NOFOLLOW, O_RDONLY, close, fstat, pathsep, read, stat_result
+from os import open as open_fd
 from pathlib import Path
 from shutil import rmtree, which
+from stat import S_ISREG
 from tempfile import mkdtemp
 
 DEFAULT_TEXT_ENCODING = "utf-8"
@@ -42,6 +44,41 @@ async def read_bytes_prefix(path: str | Path, max_bytes: int) -> bytes:
     assert not isinstance(max_bytes, bool), "max_bytes must be an integer"
     assert max_bytes >= 0, "max_bytes must not be negative"
     return await to_thread(_read_bytes_prefix, Path(path), max_bytes)
+
+
+async def read_validated_bytes(
+    path: str | Path,
+    *,
+    device: int,
+    inode: int,
+    mode: int,
+    size: int,
+    hardlink_count: int,
+    max_bytes: int,
+) -> bytes:
+    """Read one unchanged regular file without following its final symlink."""
+    assert isinstance(path, str | Path), "path must be a string or path"
+    for field_name, value in (
+        ("device", device),
+        ("inode", inode),
+        ("mode", mode),
+        ("size", size),
+        ("hardlink_count", hardlink_count),
+        ("max_bytes", max_bytes),
+    ):
+        assert isinstance(value, int), f"{field_name} must be an integer"
+        assert not isinstance(value, bool), f"{field_name} must be an integer"
+        assert value >= 0, f"{field_name} must not be negative"
+    return await to_thread(
+        _read_validated_bytes,
+        Path(path),
+        device,
+        inode,
+        mode,
+        size,
+        hardlink_count,
+        max_bytes,
+    )
 
 
 async def file_digest_and_base64(
@@ -166,6 +203,73 @@ async def write_bytes(path: str | Path, data: bytes) -> int:
 def _read_bytes_prefix(path: Path, max_bytes: int) -> bytes:
     with path.open("rb") as input_file:
         return input_file.read(max_bytes)
+
+
+def _read_validated_bytes(
+    path: Path,
+    device: int,
+    inode: int,
+    mode: int,
+    size: int,
+    hardlink_count: int,
+    max_bytes: int,
+) -> bytes:
+    if not S_ISREG(mode) or hardlink_count != 1 or size > max_bytes:
+        raise OSError("file metadata is not allowed")
+    file_descriptor = open_fd(str(path), O_RDONLY | O_NOFOLLOW)
+    try:
+        before = fstat(file_descriptor)
+        if not _matches_file_identity(
+            before,
+            device=device,
+            inode=inode,
+            mode=mode,
+            size=size,
+            hardlink_count=hardlink_count,
+        ):
+            raise OSError("file identity changed")
+        chunks: list[bytes] = []
+        remaining = size
+        while remaining:
+            chunk = read(file_descriptor, min(65536, remaining))
+            if not chunk:
+                raise OSError("file was truncated")
+            chunks.append(chunk)
+            remaining -= len(chunk)
+        if read(file_descriptor, 1):
+            raise OSError("file grew while being read")
+        after = fstat(file_descriptor)
+        if not _matches_file_identity(
+            after,
+            device=device,
+            inode=inode,
+            mode=mode,
+            size=size,
+            hardlink_count=hardlink_count,
+        ):
+            raise OSError("file metadata changed")
+        return b"".join(chunks)
+    finally:
+        close(file_descriptor)
+
+
+def _matches_file_identity(
+    actual: stat_result,
+    *,
+    device: int,
+    inode: int,
+    mode: int,
+    size: int,
+    hardlink_count: int,
+) -> bool:
+    return (
+        actual.st_dev == device
+        and actual.st_ino == inode
+        and actual.st_mode == mode
+        and actual.st_size == size
+        and actual.st_nlink == hardlink_count
+        and S_ISREG(actual.st_mode)
+    )
 
 
 def _file_digest_and_base64(

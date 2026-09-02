@@ -8,6 +8,8 @@ from .....entities import (
     ReasoningSummaryMode,
     ToolCallDiagnostic,
     ToolCallResult,
+    ToolResultImage,
+    ToolResultText,
 )
 from .....interaction.codec import (
     decode_continuation_snapshot,
@@ -75,6 +77,10 @@ from ....capability import (
 )
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from ..tool_result_images import (
+    required_image_data,
+    tool_result_content,
+)
 from . import (
     DiffusionPipeline,
     PreTrainedModel,
@@ -90,6 +96,7 @@ from asyncio import (
     current_task,
     sleep,
 )
+from base64 import b64encode
 from collections.abc import (
     AsyncIterator,
     Awaitable,
@@ -7873,7 +7880,7 @@ class OpenAIClient(TextGenerationVendor):
                 else {"error": outcome.message}
             )
 
-        return [
+        messages: list[dict[str, Any]] = [
             {
                 "type": "function_call",
                 "name": TextGenerationVendor.provider_tool_name(
@@ -7887,9 +7894,47 @@ class OpenAIClient(TextGenerationVendor):
             {
                 "type": "function_call_output",
                 "call_id": call_id,
-                "output": to_json(output),
+                "output": (
+                    self._tool_output_content(outcome, output)
+                    if isinstance(outcome, ToolCallResult)
+                    else to_json(output)
+                ),
             },
         ]
+        return messages
+
+    @staticmethod
+    def _tool_output_content(
+        result: ToolCallResult,
+        output: object,
+    ) -> str | list[dict[str, Any]]:
+        if not result.content:
+            return to_json(output)
+        content: list[dict[str, Any]] = [
+            {
+                "type": "input_text",
+                "text": to_json(output),
+            }
+        ]
+        for block in tool_result_content(result):
+            if isinstance(block, ToolResultText):
+                content.append({"type": "input_text", "text": block.text})
+                continue
+            assert isinstance(block, ToolResultImage)
+            content.append(
+                OpenAIClient._image_block(
+                    {
+                        "data": (
+                            b64encode(required_image_data(block)).decode(
+                                "ascii"
+                            )
+                        ),
+                        "mime_type": block.media_type,
+                        "detail": block.detail.value,
+                    }
+                )
+            )
+        return content
 
     @staticmethod
     def capability_result_message(

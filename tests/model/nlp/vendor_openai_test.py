@@ -2,6 +2,7 @@ import importlib
 import sys
 import types
 from asyncio import CancelledError, Event, create_task, sleep, wait_for
+from base64 import b64decode
 from collections.abc import AsyncIterable
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -38,6 +39,9 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolNamePolicyMode,
     ToolNamePolicySettings,
+    ToolResultImage,
+    ToolResultImageDeliveryError,
+    ToolResultText,
     TransformerEngineSettings,
 )
 from avalan.interaction.entities import RESERVED_INPUT_CAPABILITY_NAME
@@ -8018,6 +8022,134 @@ class OpenAIAdditionalCoverageTestCase(TestCase):
 
         self.assertEqual(text, "hello<tool>")
         build.assert_called_once_with("call-id", "pkg.tool", '{"a":1}')
+
+    def test_tool_result_images_are_native_ordered_continuation_content(self):
+        client = self.mod.OpenAIClient(api_key="key", base_url="base")
+        first = b"first exact image bytes"
+        second = b"second exact image bytes"
+        result = ToolCallResult(
+            id="result-1",
+            call=ToolCall(id="call-1", name="shell.montage", arguments={}),
+            name="shell.montage",
+            arguments={},
+            result="artifact metadata",
+            content=(
+                ToolResultText(text="artifact metadata"),
+                ToolResultImage(
+                    data=first,
+                    media_type="image/png",
+                    width=1,
+                    height=1,
+                ),
+                ToolResultText(text="second image follows"),
+                ToolResultImage(
+                    data=second,
+                    media_type="image/jpeg",
+                    width=1,
+                    height=1,
+                ),
+            ),
+        )
+        messages = client._template_messages(
+            OrchestratorResponse._tool_observation_messages(
+                result,
+                json_output=False,
+            )
+        )
+
+        self.assertEqual(messages[0]["type"], "function_call")
+        self.assertEqual(messages[0]["call_id"], "call-1")
+        self.assertEqual(messages[1]["type"], "function_call_output")
+        self.assertEqual(messages[1]["call_id"], "call-1")
+        content = messages[1]["output"]
+        self.assertEqual(
+            [block["type"] for block in content],
+            [
+                "input_text",
+                "input_text",
+                "input_image",
+                "input_text",
+                "input_image",
+            ],
+        )
+        self.assertEqual(content[0]["text"], '"artifact metadata"')
+        self.assertEqual(content[1]["text"], "artifact metadata")
+        self.assertEqual(content[3]["text"], "second image follows")
+        self.assertEqual(
+            b64decode(content[2]["image_url"].split(",", 1)[1]), first
+        )
+        self.assertEqual(
+            b64decode(content[4]["image_url"].split(",", 1)[1]), second
+        )
+        self.assertEqual(content[2]["detail"], "auto")
+        self.assertEqual(content[4]["detail"], "auto")
+
+    def test_tool_result_image_without_pixels_fails_explicitly(self):
+        client = self.mod.OpenAIClient(api_key="key", base_url="base")
+        result = ToolCallResult(
+            id="result-1",
+            call=ToolCall(id="call-1", name="shell.montage", arguments={}),
+            name="shell.montage",
+            arguments={},
+            content=(
+                ToolResultImage(
+                    media_type="image/png",
+                    unavailable_reason="target bytes were not retained",
+                ),
+            ),
+        )
+
+        with self.assertRaisesRegex(
+            ToolResultImageDeliveryError,
+            "target bytes were not retained",
+        ):
+            client._template_messages(
+                [Message(role=MessageRole.TOOL, tool_call_result=result)]
+            )
+
+    def test_repeated_tool_image_calls_keep_call_association(self):
+        client = self.mod.OpenAIClient(api_key="key", base_url="base")
+        first = ToolCallResult(
+            id="result-1",
+            call=ToolCall(id="call-1", name="shell.view_image", arguments={}),
+            name="shell.view_image",
+            arguments={},
+            content=(ToolResultImage(data=b"first", media_type="image/png"),),
+        )
+        second = ToolCallResult(
+            id="result-2",
+            call=ToolCall(id="call-2", name="shell.view_image", arguments={}),
+            name="shell.view_image",
+            arguments={},
+            content=(
+                ToolResultImage(data=b"second", media_type="image/jpeg"),
+            ),
+        )
+        observations = [
+            *OrchestratorResponse._tool_observation_messages(
+                first,
+                json_output=False,
+            ),
+            *OrchestratorResponse._tool_observation_messages(
+                second,
+                json_output=False,
+            ),
+        ]
+
+        messages = client._template_messages(observations)
+
+        self.assertEqual(
+            [message.get("call_id") for message in messages],
+            ["call-1", "call-1", "call-2", "call-2"],
+        )
+        self.assertEqual(
+            b64decode(messages[1]["output"][1]["image_url"].split(",", 1)[1]),
+            b"first",
+        )
+        self.assertEqual(
+            b64decode(messages[3]["output"][1]["image_url"].split(",", 1)[1]),
+            b"second",
+        )
 
     def test_non_stream_response_content_uses_tool_name_policy(self):
         response = {

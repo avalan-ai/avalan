@@ -1,0 +1,32 @@
+[engine]
+uri = "ai://env:OPENAI_API_KEY@openai/gpt-4.1-mini"
+
+[tool]
+enable = [
+    "shell.montage",
+    "shell.view_image",
+]
+
+[tool.shell]
+workspace_root = "."
+cwd = "."
+allow_media_tools = true
+max_montage_input_bytes = 10485760
+max_montage_input_pixels = 12000000
+max_montage_input_pixels_per_file = 6000000
+
+[memory]
+recent = true
+
+[run]
+max_new_tokens = 1024
+
+[agent]
+name = "Workspace Image Inspector"
+role = """
+Use shell.montage only with two or more explicit workspace images and then
+inspect its attached contact sheet in the next continuation. Use shell.view_image
+for one approved PNG or JPEG. A returned path or artifact description is not
+visual evidence: only state that you inspected pixels after the tool result has
+an attached image. If image delivery is unsupported, explain that limitation.
+"""

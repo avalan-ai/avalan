@@ -268,7 +268,8 @@ class ShellFormattingTest(TestCase):
         self.assertIn("  width: 320", formatted)
         self.assertIn("  height: 240", formatted)
         self.assertIn("  truncated: false", formatted)
-        self.assertIn("  content_base64: aW1hZ2U=", formatted)
+        self.assertNotIn("content_base64", formatted)
+        self.assertNotIn("aW1hZ2U=", formatted)
 
     def test_empty_generated_files_format_as_empty_list(self) -> None:
         formatted = format_shell_result(

@@ -9,6 +9,9 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    ToolResultImage,
+    ToolResultImageDeliveryError,
+    ToolResultText,
 )
 from .....model.provider import ProviderFamily
 from .....model.stream import (
@@ -37,6 +40,7 @@ from ....capability import (
 )
 from ....message import TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from ..tool_result_images import required_image_data, tool_result_content
 from . import (
     DiffusionPipeline,
     PreTrainedModel,
@@ -1169,17 +1173,34 @@ class BedrockClient(TextGenerationVendor):
                 ],
             }
 
+        result_content: list[dict[str, Any]] = [
+            {
+                "text": to_json(
+                    result.result
+                    if isinstance(result, ToolCallResult)
+                    else result.message
+                )
+            }
+        ]
+        if isinstance(result, ToolCallResult):
+            for block in tool_result_content(result):
+                if isinstance(block, ToolResultText):
+                    result_content.append({"text": block.text})
+                    continue
+                assert isinstance(block, ToolResultImage)
+                result_content.append(
+                    {
+                        "image": {
+                            "format": _bedrock_image_format(block.media_type),
+                            "source": {
+                                "bytes": required_image_data(block),
+                            },
+                        }
+                    }
+                )
         content: dict[str, Any] = {
             "toolUseId": result.call.id,
-            "content": [
-                {
-                    "text": to_json(
-                        result.result
-                        if isinstance(result, ToolCallResult)
-                        else result.message
-                    )
-                }
-            ],
+            "content": result_content,
             "status": (
                 "success" if isinstance(result, ToolCallResult) else "error"
             ),
@@ -1251,3 +1272,14 @@ class BedrockModel(TextGenerationVendorModel):
             region_name=self._settings.base_url,
             endpoint_url=self._settings.access_token,
         )
+
+
+def _bedrock_image_format(media_type: str) -> str:
+    """Return Bedrock's image format name for one supported media type."""
+    formats = {"image/jpeg": "jpeg", "image/png": "png"}
+    try:
+        return formats[media_type]
+    except KeyError:
+        raise ToolResultImageDeliveryError(
+            f"Bedrock does not support tool-result image type {media_type!r}"
+        ) from None

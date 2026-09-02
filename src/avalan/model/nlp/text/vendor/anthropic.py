@@ -10,6 +10,8 @@ from .....entities import (
     ToolCallDiagnostic,
     ToolCallError,
     ToolCallResult,
+    ToolResultImage,
+    ToolResultText,
     normalize_tool_arguments,
 )
 from .....model.provider import ProviderFamily
@@ -39,6 +41,10 @@ from ....capability import (
 )
 from ....message import TemplateMessage, TemplateMessageRole
 from ....vendor import TextGenerationVendor, TextGenerationVendorStream
+from ..tool_result_images import (
+    required_image_data,
+    tool_result_content,
+)
 from . import (
     DiffusionPipeline,
     PreTrainedModel,
@@ -46,6 +52,7 @@ from . import (
     _decode_text_file_data,
 )
 
+from base64 import b64encode
 from collections.abc import Mapping
 from contextlib import AsyncExitStack
 from typing import Any, AsyncIterator, cast
@@ -852,18 +859,42 @@ class AnthropicClient(TextGenerationVendor):
                 ],
             }
 
-        tool_result_content: dict[str, Any] = {
+        value = (
+            result.result
+            if isinstance(result, ToolCallResult)
+            else result.message
+        )
+        content: str | list[dict[str, Any]] = to_json(value)
+        if isinstance(result, ToolCallResult) and result.content:
+            blocks: list[dict[str, Any]] = [{"type": "text", "text": content}]
+            for block in tool_result_content(result):
+                if isinstance(block, ToolResultText):
+                    blocks.append({"type": "text", "text": block.text})
+                    continue
+                assert isinstance(block, ToolResultImage)
+                blocks.append(
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": block.media_type,
+                            "data": (
+                                b64encode(required_image_data(block)).decode(
+                                    "ascii"
+                                )
+                            ),
+                        },
+                    }
+                )
+            content = blocks
+        tool_result_payload: dict[str, Any] = {
             "type": "tool_result",
             "tool_use_id": str(result.call.id),
-            "content": to_json(
-                result.result
-                if isinstance(result, ToolCallResult)
-                else result.message
-            ),
+            "content": content,
         }
         if isinstance(result, ToolCallError):
-            tool_result_content["is_error"] = True
-        return {"role": "user", "content": [tool_result_content]}
+            tool_result_payload["is_error"] = True
+        return {"role": "user", "content": [tool_result_payload]}
 
     @staticmethod
     def capability_result_message(

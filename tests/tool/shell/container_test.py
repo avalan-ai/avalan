@@ -2,6 +2,7 @@ from .image_fixtures import VALID_JPEG_BYTES, valid_png_bytes
 
 from argparse import Namespace
 from collections.abc import Awaitable, Callable
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Literal, cast
@@ -53,6 +54,8 @@ from avalan.entities import (
     ToolCallContext,
     ToolExecutionStreamEvent,
     ToolExecutionStreamKind,
+    ToolResultImage,
+    ToolResultText,
 )
 from avalan.tool import Tool
 from avalan.tool.shell import (
@@ -1639,8 +1642,9 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
                                 path="montage.jpg",
                                 size_bytes=len(VALID_JPEG_BYTES),
                                 media_type="image/jpeg",
-                                digest=f"sha256:{'1' * 64}",
+                                digest=f"sha256:{sha256(VALID_JPEG_BYTES).hexdigest()}",
                                 signature=VALID_JPEG_BYTES,
+                                content=VALID_JPEG_BYTES,
                             ),
                         ),
                         total_bytes=len(VALID_JPEG_BYTES),
@@ -1684,6 +1688,12 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
             ),
             (16, 16),
         )
+        self.assertEqual(len(formatted.tool_result_content), 2)
+        self.assertIsInstance(formatted.tool_result_content[0], ToolResultText)
+        image = formatted.tool_result_content[1]
+        self.assertIsInstance(image, ToolResultImage)
+        assert isinstance(image, ToolResultImage)
+        self.assertEqual(image.data, VALID_JPEG_BYTES)
 
     async def test_montage_container_rejects_oversized_compressed_raster(
         self,
