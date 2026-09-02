@@ -11,6 +11,7 @@ from asyncio import (
     get_running_loop,
     run,
     sleep,
+    wait,
     wait_for,
 )
 from collections.abc import Iterator
@@ -2735,9 +2736,57 @@ def test_patch_e2e_010_direct_sdk_edit_reviews_approves_and_reads(
         PatchCapabilitySnapshot(edit_available=True, apply_available=False),
     )
     host = PatchSdkHost(service, toolset.capability)
+    watchdog_timeout = 60
 
     async def execute() -> None:
         """Review, approve, commit, subscribe, and later inspect one edit."""
+
+        async def wait_for_terminal_pair(
+            approval: Future[PatchResult],
+            invocation: Future[PatchResult],
+        ) -> tuple[PatchResult, PatchResult]:
+            """Wait for both terminal callers and drain them on timeout."""
+            done, pending = await wait(
+                (approval, invocation), timeout=watchdog_timeout
+            )
+            if pending:
+                for task in (approval, invocation):
+                    task.cancel()
+                settled = await gather(
+                    approval, invocation, return_exceptions=True
+                )
+                failures = tuple(
+                    outcome
+                    for outcome in settled
+                    if isinstance(outcome, BaseException)
+                )
+                message = (
+                    "approval and invocation did not settle within "
+                    + str(watchdog_timeout)
+                    + " seconds"
+                )
+                if failures:
+                    raise AssertionError(
+                        message + "; cancellation ended with failures"
+                    ) from failures[0]
+                raise AssertionError(message)
+            assert approval in done
+            assert invocation in done
+            settled = await gather(
+                approval, invocation, return_exceptions=True
+            )
+            failures = tuple(
+                outcome
+                for outcome in settled
+                if isinstance(outcome, BaseException)
+            )
+            if failures:
+                raise failures[0]
+            approved, result = settled
+            assert isinstance(approved, PatchResult)
+            assert isinstance(result, PatchResult)
+            return approved, result
+
         invocation = create_task(
             host.invoke_json(
                 OperationType.EDIT,
@@ -2747,27 +2796,40 @@ def test_patch_e2e_010_direct_sdk_edit_reviews_approves_and_reads(
                 },
             )
         )
-        await wait_for(service.ready_for_review.wait(), timeout=2)
-        lifecycle = host.lifecycle()
-        first_event = create_task(anext(lifecycle))
-        review = await host.review()
-        assert review["operation"] == "edit"
-        assert review["review"] is service._plan.review
-        approved = await wait_for(host.approve(), timeout=2)
-        result = await wait_for(invocation, timeout=2)
-        assert approved is result
-        assert result.status is PatchStatus.COMMITTED
-        assert (tmp_path / "note0.txt").read_bytes() == b"after\n"
-        assert await host.inspect() is result
-        events = [await first_event]
-        for _ in range(len(service.events) - 1):
-            events.append(await anext(lifecycle))
-        assert [item.sequence.value for item in events] == list(
-            range(1, len(events) + 1)
-        )
-        assert events[-1].lifecycle is LifecyclePhase.REQUEST_COMPLETED
-        await service.lifecycle.close()
-        await lifecycle.aclose()
+        first_event: Future[PatchLifecycleEvent] | None = None
+        try:
+            await wait_for(
+                service.ready_for_review.wait(), timeout=watchdog_timeout
+            )
+            lifecycle = host.lifecycle()
+            first_event = create_task(anext(lifecycle))
+            review = await host.review()
+            assert review["operation"] == "edit"
+            assert review["review"] is service._plan.review
+            approved, result = await wait_for_terminal_pair(
+                create_task(host.approve()), invocation
+            )
+            assert approved is result
+            assert result.status is PatchStatus.COMMITTED
+            assert (tmp_path / "note0.txt").read_bytes() == b"after\n"
+            assert await host.inspect() is result
+            events = [await first_event]
+            for _ in range(len(service.events) - 1):
+                events.append(await anext(lifecycle))
+            assert [item.sequence.value for item in events] == list(
+                range(1, len(events) + 1)
+            )
+            assert events[-1].lifecycle is LifecyclePhase.REQUEST_COMPLETED
+            await service.lifecycle.close()
+            await lifecycle.aclose()
+        finally:
+            if first_event is not None:
+                if not first_event.done():
+                    first_event.cancel()
+                await gather(first_event, return_exceptions=True)
+            if not invocation.done():
+                invocation.cancel()
+            await gather(invocation, return_exceptions=True)
 
     run(execute())
 
