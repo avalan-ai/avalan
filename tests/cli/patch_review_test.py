@@ -1699,7 +1699,8 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
     error_tty = fdopen(dup(slave), "w", encoding="utf-8")
     original_blocking = get_blocking(output_tty.fileno())
     original_inspect = profile._binding._host.inspect
-    backpressured = Event()
+    original_wait = _TerminalStateGuard._wait_until_output_writable
+    writer_registered = Event()
 
     async def filled_inspect() -> object:
         """Fill the guarded nonblocking PTY before returning host truth."""
@@ -1709,8 +1710,28 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
             try:
                 write(output_tty.fileno(), payload)
             except BlockingIOError:
-                backpressured.set()
-                return outcome
+                try:
+                    write(output_tty.fileno(), b"x")
+                except BlockingIOError:
+                    return outcome
+
+    async def observe_writer_registration(
+        terminal: _TerminalStateGuard,
+    ) -> None:
+        """Signal only after the real output readiness writer is registered."""
+        loop = get_running_loop()
+        original_add_writer = loop.add_writer
+
+        def register_writer(
+            descriptor: int,
+            callback: Callable[[], None],
+        ) -> None:
+            """Register the original writer before exposing the wait point."""
+            original_add_writer(descriptor, callback)
+            writer_registered.set()
+
+        with patch.object(loop, "add_writer", new=register_writer):
+            await original_wait(terminal)
 
     async def exercise() -> tuple[bytes, list[dict[str, Any]]]:
         """Queue cancellation before writable delivery and audit the loop."""
@@ -1734,6 +1755,11 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
                     "inspect",
                     new=filled_inspect,
                 ),
+                patch.object(
+                    _TerminalStateGuard,
+                    "_wait_until_output_writable",
+                    new=observe_writer_registration,
+                ),
                 patch.object(patch_review, "tcgetpgrp", return_value=1),
                 patch.object(patch_review, "getpgrp", return_value=1),
             ):
@@ -1744,12 +1770,11 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
                         error_stream=error_tty,
                     )
                 )
-                await wait_for(backpressured.wait(), 2)
-                await sleep(0)
+                await wait_for(writer_registered.wait(), 2)
                 assert not reader.done()
+                loop.call_soon(reader.cancel)
                 while select((master,), (), (), 0)[0]:
                     output += read(master, 65536)
-                loop.call_soon(reader.cancel)
                 with pytest.raises(CancelledError):
                     await reader
                 await sleep(0)
