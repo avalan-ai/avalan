@@ -1,4 +1,4 @@
-REAL_TARGETS := install lint test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract version release
+REAL_TARGETS := install lint lint-check test tests test-pgsql tests-pgsql test-coverage test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract version release
 TEST_ARGS := $(filter-out $(REAL_TARGETS),$(MAKECMDGOALS))
 PYTEST_ARGS := --verbose
 TASK_PGSQL_TEST_DEPS := "alembic>=1.17.2,<2.0.0"
@@ -29,14 +29,21 @@ install:
 	poetry sync --all-extras
 
 lint:
-	poetry run ruff format --preview $(LINT_PATHS)
 	poetry run black --preview --enable-unstable-feature=string_processing $(LINT_PATHS)
 	poetry run ruff check --fix $(LINT_PATHS)
 	poetry run mypy
 	poetry run mypy $(INPUT_CONTRACT_SCRIPTS)
-	poetry run ruff format --preview $(CONVERSATION_CONTRACT_SCRIPTS)
 	poetry run black --preview --enable-unstable-feature=string_processing $(CONVERSATION_CONTRACT_SCRIPTS)
 	poetry run ruff check --fix $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run mypy $(CONVERSATION_CONTRACT_SCRIPTS)
+
+lint-check:
+	poetry run black --check --preview --enable-unstable-feature=string_processing $(LINT_PATHS)
+	poetry run ruff check $(LINT_PATHS)
+	poetry run mypy
+	poetry run mypy $(INPUT_CONTRACT_SCRIPTS)
+	poetry run black --check --preview --enable-unstable-feature=string_processing $(CONVERSATION_CONTRACT_SCRIPTS)
+	poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)
 	poetry run mypy $(CONVERSATION_CONTRACT_SCRIPTS)
 
 test:
@@ -53,7 +60,7 @@ else
 	poetry run pytest $(PYTEST_ARGS)
 endif
 
-.PHONY: test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract
+.PHONY: lint lint-check test tests test-pgsql tests-pgsql test-coverage-exact test-pgsql-exact typecheck-input-contract test-conversation-current-exact test-conversation-exact test-conversation-pgsql-exact typecheck-conversation-contract test-patch-exact test-patch-pgsql-exact typecheck-patch-contract
 tests: test
 
 test-pgsql:

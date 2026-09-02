@@ -2834,6 +2834,7 @@ async def test_a2a_input_helper_negative_branches(
 @pytest.mark.anyio
 async def test_request_handler_returns_prepared_follow_up_replay() -> None:
     """Return a prepared replay without delegating the duplicate message."""
+
     async def prepare_follow_up(_params: object, _context: object) -> str:
         """Provide the cached response for one idempotent follow-up."""
         return "replay"

@@ -882,8 +882,7 @@ async def test_interrupt_releases_cancelled_pre_dispatch_task() -> None:
         await dispatch
     assert admission._dispatch_task is None
     assert (
-        settled
-        is continuation_module.DurableContinuationResumeState.RELEASED
+        settled is continuation_module.DurableContinuationResumeState.RELEASED
     )
     assert harness.store.calls.count("release") == 1
 

@@ -2319,12 +2319,6 @@ WHERE "request_id" = %s
 RETURNING *
 """
 
-_INSERT_ARTIFACT_INTENT_SQL = """
-INSERT INTO "patch_durable_artifact_intents" (
-    "request_id", "artifact_id"
-) VALUES (%s, %s)
-"""
-
 _RENEW_LEASE_SQL = """
 UPDATE "patch_durable_requests" AS "request"
 SET "lease_expires_at" = %s, "updated_at" = CURRENT_TIMESTAMP
@@ -2569,11 +2563,6 @@ _SELECT_RETENTION_SQL = """
 SELECT "retention_id", "kind", "key_id", "ciphertext", "ciphertext_digest",
        "expires_at", "delete_on_terminal"
 FROM "patch_durable_retention"
-WHERE "retention_id" = %s AND "request_id" = %s
-"""
-
-_DELETE_RETENTION_SQL = """
-DELETE FROM "patch_durable_retention"
 WHERE "retention_id" = %s AND "request_id" = %s
 """
 

@@ -629,6 +629,7 @@ def test_preflight_executes_no_pytest_process(
             "preflight must not execute pytest"
         ),
     )
+    monkeypatch.setattr(_GATE, "_load_patch_contracts", lambda root: None)
     _GATE.preflight(_GATE._PATCH_CURRENT_PHASE, repo_root=_ROOT)
 
 
@@ -640,6 +641,7 @@ def test_preflight_accepts_caller_database_after_durability(
         _GATE.POSTGRESQL_TEST_DSN_ENV,
         "postgresql://test/patch_phase2",
     )
+    monkeypatch.setattr(_GATE, "_load_patch_contracts", lambda root: None)
 
     with pytest.raises(
         _GATE.PatchContractGateError,
@@ -783,6 +785,66 @@ def test_gate_uses_prior_phase_receipts_without_reusing_coverage_outputs(
     assert stages[-1] == "current-contract-verifiers"
     assert stages[1:-1]
     assert all(stage == "coverage-verifier" for stage in stages[1:-1])
+
+
+def test_patch_gate_supplies_the_complete_phase_receipt_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Pass all three retained receipts explicitly to each verifier child."""
+    root = tmp_path / "root"
+    root.mkdir()
+    receipts = tuple(
+        root / name for name in _GATE._PHASE_EVIDENCE_SIDECAR_PATHS
+    )
+    for index, receipt in enumerate(receipts):
+        receipt.write_text(f"receipt-{index}\n", encoding="utf-8")
+    observed: dict[str, str] = {}
+
+    @contextmanager
+    def isolated_environment(
+        supplied_root: Path, *, trusted_python_root: Path
+    ) -> Iterator[dict[str, str]]:
+        assert supplied_root == root
+        assert trusted_python_root == _GATE.repository_root()
+        yield {}
+
+    def run_command(
+        command: tuple[str, ...], **kwargs: object
+    ) -> SimpleNamespace:
+        assert command == ("python", "-c", "pass")
+        assert kwargs["cwd"] == root
+        assert kwargs["check"] is False
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        observed.update(
+            {
+                name: environment[name]
+                for name in _GATE._PHASE_EVIDENCE_ARTIFACT_ENVS
+            }
+        )
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(
+        _GATE, "isolated_subprocess_environment", isolated_environment
+    )
+    monkeypatch.setattr(_GATE, "run", run_command)
+
+    assert (
+        _GATE._run_isolated_command(
+            root,
+            ("python", "-c", "pass"),
+            None,
+            evidence_artifacts=receipts,
+        )
+        == 0
+    )
+    assert observed == {
+        name: str(path)
+        for name, path in zip(
+            _GATE._PHASE_EVIDENCE_ARTIFACT_ENVS, receipts, strict=True
+        )
+    }
 
 
 def test_gate_owns_database_before_coverage_until_teardown(

@@ -2087,6 +2087,16 @@ def test_patch_phase_11_refuses_foreign_or_partial_owned_volume(
     async def exercise() -> None:
         """Keep the foreign volume untouched and start no worker process."""
         monkeypatch.setattr(_CONTAINER, "_docker_output", output)
+        monkeypatch.setattr(
+            _CONTAINER._ImplementationBundle,
+            "create",
+            classmethod(lambda *_args, **_kwargs: _Bundle()),
+        )
+        monkeypatch.setattr(
+            _CONTAINER,
+            "_make_container_bundle_readable",
+            _mock_bundle_readable,
+        )
         process = _CONTAINER._ContainerRuntimeProcess(settings)
         with pytest.raises(TargetInspectionError) as rejected:
             await process.start()

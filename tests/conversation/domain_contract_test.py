@@ -1584,17 +1584,12 @@ def test_public_core_sources_have_no_dynamic_or_synchronous_escape_hatch() -> (
     provider_source = (
         _ROOT / "src/avalan/model/nlp/text/vendor/openai.py"
     ).read_bytes()
+    transition_path = (
+        _ROOT / "tests/fixtures/conversation/provider_transition.phase13.json"
+    )
     transition_payload = cast(
         dict[str, object],
-        loads(
-            (
-                _ROOT
-                / (
-                    "tests/fixtures/conversation/"
-                    "provider_transition.phase13.json"
-                )
-            ).read_text(encoding="utf-8")
-        ),
+        loads(transition_path.read_text(encoding="utf-8")),
     )
     transitions = cast(
         list[dict[str, object]], transition_payload["transitions"]

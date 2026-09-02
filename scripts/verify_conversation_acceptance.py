@@ -468,7 +468,7 @@ _PHASE13_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase13.json"
 )
 _PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "fe71c11290a9c281aa8fdc946bca5bc7feb6394c24c6f55f05f1a3cbfc90552f"
+    "c8e696d5ab65b39ce776cb0e94b8cc4888c73ed7b55650c9238350b358a1a22b"
 )
 _PHASE13_PROVIDER_TARGET_BYTE_ANCHORS = {
     "src/avalan/model/nlp/text/vendor/openai.py": (
@@ -476,8 +476,8 @@ _PHASE13_PROVIDER_TARGET_BYTE_ANCHORS = {
         "9f3d32fa3de795b823bb8398372537d85ca24bab587864a5ec81a4be6e9871ea",
     ),
     "tests/conversation/domain_contract_test.py": (
-        161_569,
-        "ae41797830124ac2aed8e59ca41c61e498685fabf0b5ef152a7a393141f89318",
+        161_490,
+        "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760",
     ),
     "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
         100_430,

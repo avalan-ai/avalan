@@ -539,7 +539,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9c78c0f622be04f3a9c305becaa489d6e28d008ea0981189e34e23d3a84c1dc6"
+      "source_sha256": "fbd065bfabc4695e93ded3b9ff4f8a07ca0c33fb58a28c17a817e645c3f19da6"
     },
     {
       "id": "PATCH-TS-005",
@@ -548,7 +548,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "db02111cc7a2c805e2ecf33b54a96c8b2609674a7d9294138f853adc7153e96e"
+      "source_sha256": "3ea39d9ad35d3609672fab8f6ee388fd2aae5060667fd70506ea9cc8f8abc91d"
     },
     {
       "id": "PATCH-TS-006",
@@ -575,7 +575,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "14c3e6283228a6b47e6d36c15c63442dc47e6e47ec1ee623518448ff68394313"
+      "source_sha256": "6007a495e10d46bd0495995ee6c45a3de0fd24073f5dccaa9e469321db4cbb42"
     },
     {
       "id": "PATCH-TS-009",
@@ -584,7 +584,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "eb949e6131faf4533deb961f40fcb9375a7c3f4694b51cad33144e3867898a2d"
+      "source_sha256": "c1ac3f380f230cc2f33eb7ad9a25613ed6cb30fcb47cd7e1063f50dc1a6e1735"
     },
     {
       "id": "PATCH-TS-010",
@@ -791,7 +791,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "760fa38dbec89668e13921012e73d7ac32b12e6c2e9ee04d385cdd404481a5f6"
+      "source_sha256": "a62f4fe9aa0e8df60927384cb6a87051c1d65b0a778292fb5c501677983bd1e0"
     },
     {
       "id": "PATCH-TS-033",
@@ -972,9 +972,11 @@
       "scope": "integration_hunk",
       "symbols": [
         "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
-        "_phase12_provider_transitions"
+        "_phase12_provider_transitions",
+        "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        "_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS"
       ],
-      "source_sha256": "8140b828126f73f2ff38d5fe7c927556ab3dbef9697720d8a3d083786fc446ae"
+      "source_sha256": "d06f278dfa7176d0968e84b1cfd724e649487d838e216e3e509e1afe4c71bd15"
     },
     {
       "id": "PATCH-TS-053",
@@ -1055,9 +1057,9 @@
       "path": "src/avalan/agent/loader.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_PATCH_TOOL_LOADER_INTEGRATION"
+        "_SHELL_EXECUTION_MODE_FIELDS"
       ],
-      "source_sha256": "f32f2bbc47d71a85dd9b9906491aac6add72577f72c6770073f4d90277016227"
+      "source_sha256": "1244b79012c268c9adbf6d4865becb0a8904c7914a2dc8024305735c7512fa5a"
     },
     {
       "id": "PATCH-TS-062",
@@ -1228,7 +1230,7 @@
       "symbols": [
         "test_test_workflow_covers_supported_matrix_and_build_gates"
       ],
-      "source_sha256": "70b22eea5203b9cfed869d45f9e11cb3fcca311ade6a009e68b62bcdd909341e"
+      "source_sha256": "ca6f34855b27f2a90b8d5f8f2995fa47f1e9a131efa9a60561b5db13e7509445"
     },
     {
       "id": "PATCH-TS-081",
@@ -1246,7 +1248,7 @@
       "symbols": [
         "test_patch_phase_11_requirements"
       ],
-      "source_sha256": "9c96b3641d3e1f3595f43e9564b3e7fd1be9bb2ff60f48b59dff4d13f3f8270c"
+      "source_sha256": "d66e3d6cc01cf97763cfe82b804c7b51c979372982e0ec894abecaa84464afed"
     },
     {
       "id": "PATCH-TS-083",
@@ -1315,7 +1317,7 @@
         "test_interrupt_releases_cancelled_pre_dispatch_task",
         "test_hardening_rejects_duplicate_validate_plan_admission"
       ],
-      "source_sha256": "e9051f0f6a31baec14f8dd7556da3d7e42947750cce8a112e2c6005ac884779b"
+      "source_sha256": "bac722f8584a7de97114f859a8ea121def3a237aff32a38da42e1a2a3a151b72"
     },
     {
       "id": "PATCH-TS-090",
@@ -1325,7 +1327,7 @@
         "test_request_handler_returns_prepared_follow_up_replay",
         "test_resume_pending_rejects_stale_follow_up"
       ],
-      "source_sha256": "c8a73b80ee020d92bf0ac6ca37ba40525dfcacc46307efeb0bc081b760c405af"
+      "source_sha256": "0cec3a111f704aca93ca6e88f08799d272859c78acef8a409f2217b857cc8278"
     },
     {
       "id": "PATCH-TS-091",
@@ -1721,7 +1723,7 @@
         "test_patch_e2e_037_rooted_foreign_writer_never_clobbers",
         "test_patch_phase_15_default_factory_is_inert_without_proof"
       ],
-      "source_sha256": "e602226557e6cb9525159adeb66a3e5e25af0bfe47791a440de5c72a8994b443"
+      "source_sha256": "22576d57368acc7fc1e2b2211525905e4bdf3376fee5eac3a066b712de3b868b"
     },
     {
       "id": "PATCH-TS-130",
@@ -1750,7 +1752,7 @@
         "test_patch_e2e_041_incomplete_default_profiles_load_no_authority",
         "test_patch_e2e_042_provider_limit_matrix_uses_exact_owner_boundaries"
       ],
-      "source_sha256": "ed9f2f1249baaaa87f6a4cf9bb2be08272b949914ee149a7ffa220e6bd0ca3fc"
+      "source_sha256": "284da999398785e641f3994c120649cde97c82f8b32c17f2d95405dda00a417c"
     },
     {
       "id": "PATCH-TS-131",
@@ -1777,8 +1779,17 @@
       "symbols": [
         "test_private_replay_server_error_create_retries_after_delay"
       ],
-      "source_sha256": "ebe5606d6dc8ca7fce7d7d9f77d27bc9d384752d8fa6ab4563a6099517eab909"
+      "source_sha256": "0e40bc460c00d8c663e2c8fab2ceda103f17e984ff2ca300e34ff8d10bc9b0d2"
+    },
+    {
+      "id": "PATCH-TS-134",
+      "path": "tests/conversation/domain_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_ROOT"
+      ],
+      "source_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760"
     }
   ],
-  "manifest_sha256": "526cb66748b7c2554dcc04092e61b6aeb0c97aaaae9a615975d8b8d4291f9c7d"
+  "manifest_sha256": "7feb9df6e685ac7dbeb767770080f2b7744a1b099f52082b2b35e4ab62043704"
 }

@@ -201,6 +201,31 @@ def test_patch_acceptance_phase_evidence_sidecars_are_exact_and_local(
         _VERIFIER._phase_evidence_artifact_paths(root)
 
 
+def test_patch_acceptance_allows_absent_historical_phase_receipts(
+    tmp_path: Path,
+) -> None:
+    """Accept a clean checkout that has no ignored historical receipts."""
+    root = tmp_path / "root"
+    root.mkdir()
+
+    assert _VERIFIER._phase_evidence_artifact_paths(root) is None
+
+
+def test_patch_acceptance_ignores_incidental_phase_receipts_without_env(
+    tmp_path: Path,
+) -> None:
+    """Ignore stale root and sidecar receipts unless the gate supplies them."""
+    root = tmp_path / "root"
+    root.mkdir()
+    for name in (
+        *_VERIFIER._PHASE_EVIDENCE_ARTIFACT_PATHS,
+        *_VERIFIER._PHASE_EVIDENCE_SIDECAR_PATHS,
+    ):
+        (root / name).write_text("stale\n", encoding="utf-8")
+
+    assert _VERIFIER._phase_evidence_artifact_paths(root) is None
+
+
 @pytest.mark.parametrize(
     "paths",
     (
