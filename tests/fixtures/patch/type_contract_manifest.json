@@ -1104,7 +1104,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "056aa1cdc3e418c17e0c8f38c4bd307ae0c31d92b499d22cf645c0918fb596b5"
+      "source_sha256": "22ba51a5d55e297e29a8196c8d8a62606e696a83ed8ec33550400b044506a96e"
     },
     {
       "id": "PATCH-TS-067",
@@ -1707,7 +1707,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "669bcad3e060d19f0d5443975e8c8fdbf22d2a4f623c51c8d1821d75c4066a9c"
+      "source_sha256": "ce30573cb2e7e8cb228ad2c72b06bd151ae67f43c9f1bb0ab31a9ae3669ed117"
     },
     {
       "id": "PATCH-TS-129",
@@ -1716,6 +1716,8 @@
       "symbols": [
         "test_patch_phase_15_requirements",
         "test_patch_activation_manifest_is_source_derived_and_frozen",
+        "_runtime_invalid_protocol_surface",
+        "test_patch_activation_protocol_tools_reject_unknown_runtime_surface",
         "test_patch_activation_fails_closed_and_deactivation_keeps_owner",
         "test_patch_phase_15_documentation_exposes_only_unproven_profiles",
         "test_patch_phase_15_documentation_replays_schema_examples",
@@ -1723,7 +1725,7 @@
         "test_patch_e2e_037_rooted_foreign_writer_never_clobbers",
         "test_patch_phase_15_default_factory_is_inert_without_proof"
       ],
-      "source_sha256": "22576d57368acc7fc1e2b2211525905e4bdf3376fee5eac3a066b712de3b868b"
+      "source_sha256": "9bee71d61d468822c123d1f6b280a9db866725e8462fdcee7b5e58a0293aa926"
     },
     {
       "id": "PATCH-TS-130",
@@ -1791,5 +1793,5 @@
       "source_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760"
     }
   ],
-  "manifest_sha256": "c6b0d23d6b5265c39717350798f4233a810a2974dde27d2dff6828f7c9f3026f"
+  "manifest_sha256": "2eb01c9fc5b624bce3804ce58a8e96411f1b06a5c758e8ebdd872d5f401c57e6"
 }

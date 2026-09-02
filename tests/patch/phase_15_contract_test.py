@@ -24,6 +24,7 @@ import avalan.patch.local_commit as local_commit_module
 import avalan.patch.target as target_module
 from avalan.agent.loader import OrchestratorLoader
 from avalan.patch.activation import (
+    PatchActivationError,
     PatchActivationPlatform,
     PatchActivationRegistry,
     PatchActivationRuntime,
@@ -31,6 +32,7 @@ from avalan.patch.activation import (
     PatchProfileState,
     _build_activation_verifier,
     _new_activation_authority,
+    _protocol_tools,
     build_patch_production_manifest,
     build_patch_runtime_activation_factory,
     render_patch_production_manifest,
@@ -120,6 +122,7 @@ from avalan.patch.policy import (
     compose_limits,
     seal_plan,
 )
+from avalan.patch.protocols import PatchProtocolSurface
 from avalan.patch.target import (
     AliasMode,
     InspectionRequest,
@@ -366,6 +369,21 @@ def test_patch_activation_manifest_is_source_derived_and_frozen() -> None:
     assert loads(render_patch_production_manifest(manifest)) == expected
     assert manifest.profiles[0].state is PatchProfileState.INCOMPLETE
     assert manifest.tool_inventory == ("patch.edit", "patch.apply")
+
+
+def _runtime_invalid_protocol_surface() -> PatchProtocolSurface:
+    """Return an enum-shaped surface that is not a declared protocol value."""
+    return str.__new__(PatchProtocolSurface, "unsupported")
+
+
+def test_patch_activation_protocol_tools_reject_unknown_runtime_surface() -> (
+    None
+):
+    """Reject a runtime-invalid protocol surface without a fallthrough."""
+    with pytest.raises(
+        PatchActivationError, match="protocol surface is unsupported"
+    ):
+        _protocol_tools(_runtime_invalid_protocol_surface())
 
 
 def test_patch_e2e_037_rooted_foreign_writer_never_clobbers(
