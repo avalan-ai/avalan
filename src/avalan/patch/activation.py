@@ -1370,6 +1370,8 @@ def _protocol_tools(surface: PatchProtocolSurface) -> tuple[str, ...]:
             | PatchProtocolSurface.MULTI_AGENT
         ):
             return ()
+        case _:
+            raise PatchActivationError("patch protocol surface is unsupported")
 
 
 def _digest(value: object) -> str:
