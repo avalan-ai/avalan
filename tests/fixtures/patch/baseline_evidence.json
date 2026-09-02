@@ -64,9 +64,9 @@
         },
         {
           "path": "src/avalan/tool/manager.py",
-          "line": 1948,
+          "line": 1950,
           "text": "    async def prepare_call(",
-          "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
+          "source_sha256": "831918e1cd4988c67aa58e956d7ebca193c7b07317d7751b656869fb7e699787"
         }
       ]
     },
@@ -76,9 +76,9 @@
       "source_markers": [
         {
           "path": "src/avalan/entities.py",
-          "line": 959,
+          "line": 1100,
           "text": "class ToolCapabilities:",
-          "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
+          "source_sha256": "eddfa37414c736c2144bebed985faa4f45f2a91adea3034a27f99ea16b71f560"
         }
       ]
     },
@@ -88,9 +88,9 @@
       "source_markers": [
         {
           "path": "src/avalan/tool/manager.py",
-          "line": 2046,
+          "line": 2048,
           "text": "        if confirm is not None and not self._is_patch_call(prepared.call):",
-          "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
+          "source_sha256": "831918e1cd4988c67aa58e956d7ebca193c7b07317d7751b656869fb7e699787"
         }
       ]
     },
@@ -100,9 +100,9 @@
       "source_markers": [
         {
           "path": "src/avalan/entities.py",
-          "line": 1461,
+          "line": 1602,
           "text": "class ToolCallContext:",
-          "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
+          "source_sha256": "eddfa37414c736c2144bebed985faa4f45f2a91adea3034a27f99ea16b71f560"
         }
       ]
     },
@@ -136,9 +136,9 @@
       "source_markers": [
         {
           "path": "src/avalan/tool/shell/toolset.py",
-          "line": 242,
+          "line": 243,
           "text": "            if execution_mode == \"sandbox\":",
-          "source_sha256": "5c129837e40439ed0428f7efe23f0c031da63fbc8d6b5e9a581c787cc0bacdb8"
+          "source_sha256": "fcaddf2968796f93e18ccf5d426aca603ea3316b044b99790ff147310836eba2"
         }
       ]
     },
@@ -208,6 +208,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "4d7963bbdd72cd7759f708320d4ae7279d014704d0f8360c211a0cc50f461e5f",
-  "evidence_sha256": "7819f0b39fab7f33c26739653f05bf9b4f0bbb75ad7fdca57f58f62d735ab0a6"
+  "contract_inventory_sha256": "37b9998d341abc10baec6328a22fa603cce35a10550474cc8613859b2945ab13",
+  "evidence_sha256": "361e1680cac30cb30da48ca46430b45881eef9787219d70771bdf6ab678d397a"
 }

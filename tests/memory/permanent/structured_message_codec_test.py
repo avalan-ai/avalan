@@ -255,6 +255,76 @@ class StructuredMessageCodecTest(TestCase):
         self.assertIsNone(image.data)
         self.assertIn("not retained", image.unavailable_reason or "")
 
+    def test_tool_image_receipt_rejects_schema_and_dimension_tampering(
+        self,
+    ) -> None:
+        """Keep durable image receipts closed with null dimensions."""
+        call = ToolCall(id="call-1", name="shell.montage", arguments={})
+        message = Message(
+            role=MessageRole.TOOL,
+            tool_call_result=ToolCallResult(
+                id="result-1",
+                name="shell.montage",
+                arguments={},
+                call=call,
+                result="metadata",
+                content=(
+                    ToolResultImage(
+                        data=b"pixels",
+                        media_type="image/png",
+                        width=1,
+                        height=1,
+                    ),
+                ),
+            ),
+        )
+        payload = _payload(message)
+
+        unexpected_result_field = deepcopy(payload)
+        cast(
+            dict[str, object],
+            unexpected_result_field["tool_call_result"],
+        )["unexpected"] = True
+        unsupported_kind = deepcopy(payload)
+        cast(
+            list[dict[str, object]],
+            cast(dict[str, object], unsupported_kind["tool_call_result"])[
+                "content"
+            ],
+        )[0]["kind"] = "unrecognized"
+        null_dimension = deepcopy(payload)
+        cast(
+            list[dict[str, object]],
+            cast(dict[str, object], null_dimension["tool_call_result"])[
+                "content"
+            ],
+        )[0]["width"] = None
+        invalid_dimension = deepcopy(payload)
+        cast(
+            list[dict[str, object]],
+            cast(dict[str, object], invalid_dimension["tool_call_result"])[
+                "content"
+            ],
+        )[0]["height"] = 0
+
+        for invalid in (
+            unexpected_result_field,
+            unsupported_kind,
+            invalid_dimension,
+        ):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                decode_message_data(MessageRole.TOOL, _encode_payload(invalid))
+
+        restored = decode_message_data(
+            MessageRole.TOOL,
+            _encode_payload(null_dimension),
+        )
+        assert restored.tool_call_result is not None
+        image = restored.tool_call_result.content[0]
+        self.assertIsInstance(image, ToolResultImage)
+        assert isinstance(image, ToolResultImage)
+        self.assertIsNone(image.width)
+
     def test_rejects_invalid_public_values_and_payloadless_message(
         self,
     ) -> None:

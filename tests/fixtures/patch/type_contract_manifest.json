@@ -976,7 +976,7 @@
         "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS"
       ],
-      "source_sha256": "d06f278dfa7176d0968e84b1cfd724e649487d838e216e3e509e1afe4c71bd15"
+      "source_sha256": "3da78d35c11864c9ebc1199f8e4a12a124aecf2ddad288727b174c1eb702aaf4"
     },
     {
       "id": "PATCH-TS-053",
@@ -994,7 +994,7 @@
       "symbols": [
         "ToolDomainExecutionContract"
       ],
-      "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
+      "source_sha256": "eddfa37414c736c2144bebed985faa4f45f2a91adea3034a27f99ea16b71f560"
     },
     {
       "id": "PATCH-TS-055",
@@ -1012,7 +1012,7 @@
       "symbols": [
         "_PATCH_TOOL_NAMES"
       ],
-      "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
+      "source_sha256": "831918e1cd4988c67aa58e956d7ebca193c7b07317d7751b656869fb7e699787"
     },
     {
       "id": "PATCH-TS-057",
@@ -1104,7 +1104,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "22ba51a5d55e297e29a8196c8d8a62606e696a83ed8ec33550400b044506a96e"
+      "source_sha256": "662ab22d3b62fd1add7e743bb6224a995c6f17bc582fcfddee25a6d929e047ed"
     },
     {
       "id": "PATCH-TS-067",
@@ -1113,7 +1113,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "0d4e36876722c1d28cce05b26e2bdc1ea8ad275d401741bfbbb88d69122a0abd"
+      "source_sha256": "30d50b65c255c704d6e1a5fd630d3d6895962fb942f4361bc7d6be1c765d13e8"
     },
     {
       "id": "PATCH-TS-068",
@@ -1593,7 +1593,7 @@
       "symbols": [
         "_write"
       ],
-      "source_sha256": "99cc1a3f1ea52c1b850479d4ff9b75a6d27a16d78c258361d3d2a1ad5459296c"
+      "source_sha256": "1fc47cc6497ae6a28efc31ea3044e06e2281d7e1d14744ebf5aa0fa3dce57258"
     },
     {
       "id": "PATCH-TS-118",
@@ -1791,7 +1791,90 @@
         "_ROOT"
       ],
       "source_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760"
+    },
+    {
+      "id": "PATCH-TS-135",
+      "path": "tests/filesystem_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_validated_read_rejects_changed_or_invalid_file_metadata"
+      ],
+      "source_sha256": "de4eb2041a2cdd901951a0831e7dc0ec21878fddf521a0492d3d423663beeed1"
+    },
+    {
+      "id": "PATCH-TS-136",
+      "path": "tests/memory/permanent/structured_message_codec_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_tool_image_receipt_rejects_schema_and_dimension_tampering"
+      ],
+      "source_sha256": "325c31e0ba0ffde3e22012ae8c205ef831108eb9207286796b1f621c7e75463c"
+    },
+    {
+      "id": "PATCH-TS-137",
+      "path": "tests/model/ds4_model_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_ds4_prompt_messages_reject_tool_result_images"
+      ],
+      "source_sha256": "a77a3f8ce79ff47603b17452f8a8daf9bc008c9da8f9a89560fdf7ac18378514"
+    },
+    {
+      "id": "PATCH-TS-138",
+      "path": "tests/model/nlp/tool_result_image_provider_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_bedrock_rejects_tool_image_media_types_it_cannot_encode",
+        "test_text_blocks_remain_available_alongside_tool_images"
+      ],
+      "source_sha256": "8f7ef61ea61c2e7efc5729c8b6a90deb831e337f8aa7805f94148ee575bfb65a"
+    },
+    {
+      "id": "PATCH-TS-139",
+      "path": "tests/tool/shell/entities_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_formatted_result_preserves_typed_tool_content_on_reduce"
+      ],
+      "source_sha256": "caf96314bc3eb0f07e38aa2045325b51449126cd651233d33acc73c7c7e03677"
+    },
+    {
+      "id": "PATCH-TS-140",
+      "path": "tests/tool/shell/filesystem_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_rejects_invalid_public_inputs",
+        "test_validated_reads_require_an_inspected_file_identity"
+      ],
+      "source_sha256": "9b8020f5588efcc514688fd08abbed81fad4cadef514fe7eee1caabb112b1ac1"
+    },
+    {
+      "id": "PATCH-TS-141",
+      "path": "tests/tool/shell/view_image_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_generated_image_delivery_rejects_untrusted_artifacts",
+        "test_generated_image_metadata_must_match_verified_pixels",
+        "test_invalid_paths_and_images_are_rejected",
+        "test_jpeg_pixel_decoder_rejects_a_format_mismatch",
+        "test_jpeg_validator_rejects_malformed_markers_and_scans",
+        "test_montage_skips_nonvisible_generated_artifacts",
+        "test_png_validator_accepts_adam7_and_enforces_pixel_limit",
+        "test_png_validator_rejects_malformed_chunk_sequences",
+        "test_view_image_policy_rejects_invalid_arguments_and_gate"
+      ],
+      "source_sha256": "f09a0e4918cedea4d13a7d3f91c87e32685044f8584b8b46c924ce6eecf24988"
+    },
+    {
+      "id": "PATCH-TS-142",
+      "path": "tests/tool/tool_result_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_tool_result_content_requires_an_ordered_block_tuple",
+        "test_typed_tool_content_rejects_invalid_text_and_image_blocks"
+      ],
+      "source_sha256": "bbf207058147b305eb6a3922de1873eb84d95fb2df8b3805453fe19db0c0332e"
     }
   ],
-  "manifest_sha256": "918837fc2ced9e2694d60797765e0df3d290d9c162a7958a22d818e34308c03e"
+  "manifest_sha256": "6a648e568b368d148766a051e69d677c96a7a1a745aa78b8e097ca01d493881f"
 }

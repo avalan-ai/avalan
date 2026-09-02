@@ -56,6 +56,8 @@ from avalan.entities import (
     ToolCallResult,
     ToolFormat,
     ToolManagerSettings,
+    ToolResultImage,
+    ToolResultImageDeliveryError,
     TransformerEngineSettings,
 )
 from avalan.model.capability import (
@@ -4255,6 +4257,32 @@ def test_ds4_prompt_messages_reject_invalid_input_and_role(
     with pytest.raises(ValueError, match="critic"):
         model._ds4_prompt_messages(
             [Message(role=cast(MessageRole, "critic"), content="Hello")],
+            None,
+            None,
+        )
+
+
+def test_ds4_prompt_messages_reject_tool_result_images(
+    tmp_path: Path,
+) -> None:
+    """Fail explicitly when DS4 cannot attach a tool-returned image."""
+    model = Ds4Model(
+        str(tmp_path / "not-loaded.gguf"),
+        TransformerEngineSettings(auto_load_model=False),
+    )
+    call = ToolCall(id="call-1", name="shell.view_image", arguments={})
+    result = ToolCallResult(
+        id="result-1",
+        name="shell.view_image",
+        arguments={},
+        call=call,
+        result="metadata",
+        content=(ToolResultImage(data=b"pixels", media_type="image/png"),),
+    )
+
+    with pytest.raises(ToolResultImageDeliveryError, match="cannot attach"):
+        model._ds4_prompt_messages(
+            [Message(role=MessageRole.TOOL, tool_call_result=result)],
             None,
             None,
         )

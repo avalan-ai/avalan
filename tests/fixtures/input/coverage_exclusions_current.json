@@ -890,12 +890,12 @@
       208
     ],
     "src/avalan/entities.py": [
-      25,
       26,
       27,
       28,
-      30,
-      31
+      29,
+      31,
+      32
     ],
     "src/avalan/flow/executor.py": [
       54,
@@ -1331,14 +1331,14 @@
       19
     ],
     "src/avalan/model/nlp/text/ds4.py": [
-      313,
-      314,
-      315,
       316,
       317,
       318,
       319,
-      320
+      320,
+      321,
+      322,
+      323
     ],
     "src/avalan/model/nlp/text/generation.py": [
       63,
@@ -2806,8 +2806,8 @@
       32
     ],
     "src/avalan/tool/manager.py": [
-      51,
-      52
+      53,
+      54
     ],
     "src/avalan/tool/shell/commands/awk.py": [
       22,
@@ -2843,5 +2843,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "328d2bcc5d85b4d1931389ec0b0f274038bb31fe71eaa81ad465e3dd2dda90b1"
+  "snapshot_sha256": "dff96b8e799dac74cbdfb0b62e3b2712b37cdfefb53266053621f99e134a24af"
 }
