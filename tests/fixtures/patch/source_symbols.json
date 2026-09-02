@@ -21,14 +21,14 @@
       "path": "src/avalan/tool/manager.py",
       "symbol": "ToolManager",
       "artifact_class": "tool_manager",
-      "source_sha256": "69927369c370bfb1ed38be3a2a72fd5107d5efdaa39a2dda88de1e9787fcbd3c"
+      "source_sha256": "831918e1cd4988c67aa58e956d7ebca193c7b07317d7751b656869fb7e699787"
     },
     {
       "id": "PATCH-SYM-004",
       "path": "src/avalan/entities.py",
       "symbol": "ToolCall",
       "artifact_class": "entity",
-      "source_sha256": "6f0e762827b6070fe4d94b5f2090cc99c68d1925131c5be6425010369d41e6db"
+      "source_sha256": "eddfa37414c736c2144bebed985faa4f45f2a91adea3034a27f99ea16b71f560"
     },
     {
       "id": "PATCH-SYM-005",
@@ -49,7 +49,7 @@
       "path": "src/avalan/model/vendor.py",
       "symbol": "TextGenerationVendor",
       "artifact_class": "provider",
-      "source_sha256": "6d3e9e91d6ee93011dcf15286e65823eca9f645b7249618ec2c6d94cdcd946dd"
+      "source_sha256": "a03f432e7a48608f0faf472104bce7676c69880ac919ff092bfd0fe877666c19"
     },
     {
       "id": "PATCH-SYM-008",
@@ -84,14 +84,14 @@
       "path": "src/avalan/tool/shell/sandbox.py",
       "symbol": "ShellSandboxCommandExecutor",
       "artifact_class": "sandbox",
-      "source_sha256": "281f7d6ccfe73679da33952ed26ba312e609881d1b6c63185f280231b3430d75"
+      "source_sha256": "9e3ff5470dcfd29035e89515d0ed4bdf92e65a56be048166900a49c479dda8f0"
     },
     {
       "id": "PATCH-SYM-013",
       "path": "src/avalan/tool/shell/container.py",
       "symbol": "ShellContainerCommandExecutor",
       "artifact_class": "container",
-      "source_sha256": "7ef0141af2fe8e4a70912b08bb6afefafe332e354bc7b55416147ee2638d8932"
+      "source_sha256": "6a0b3ee05d56a9e2b3501c3ddcd2550d4d5db97fc29d9c122aeab23bf88e7ca2"
     },
     {
       "id": "PATCH-SYM-014",
@@ -266,7 +266,7 @@
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "22ba51a5d55e297e29a8196c8d8a62606e696a83ed8ec33550400b044506a96e"
+      "source_sha256": "662ab22d3b62fd1add7e743bb6224a995c6f17bc582fcfddee25a6d929e047ed"
     },
     {
       "id": "PATCH-SYM-039",
@@ -367,5 +367,5 @@
       "source_sha256": "ce30573cb2e7e8cb228ad2c72b06bd151ae67f43c9f1bb0ab31a9ae3669ed117"
     }
   ],
-  "inventory_sha256": "b8c99f095943f6dd538b39fc099830cfb3578c2ded882d49561620ee2193cf7e"
+  "inventory_sha256": "03b4706637cb28e6f6d58a5ae3c21c36d0d4fece09475e5629f9b88537d817dc"
 }

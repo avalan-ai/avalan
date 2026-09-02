@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 from typing import cast
 from unittest import TestCase, main
 
+from avalan.entities import ToolResultText
 from avalan.tool.shell import (
     ShellGitCapability,
     ShellGitCommandName,
@@ -1016,6 +1017,33 @@ class ShellEntitiesTest(TestCase):
         self.assertIs(deepcopy(formatted), formatted)
         self.assertIs(reduced_type, ShellFormattedResult)
         self.assertEqual(reduced_args, ("formatted", result))
+
+    def test_formatted_result_preserves_typed_tool_content_on_reduce(
+        self,
+    ) -> None:
+        """Keep result blocks when pickling formatted shell output."""
+        result = ExecutionResult(
+            backend="local",
+            tool_name="shell.montage",
+            command="montage",
+            argv=("montage",),
+            display_argv=("montage",),
+            cwd="/workspace",
+            display_cwd=".",
+            status=ShellExecutionStatus.COMPLETED,
+            exit_code=0,
+            stdout="",
+            stderr="",
+            stdout_media_type="text/plain",
+            output_kind=ShellOutputKind.GENERATED_FILES,
+        )
+        content = (ToolResultText(text="montage metadata"),)
+        formatted = ShellFormattedResult("formatted", result, content)
+
+        reduced_type, reduced_args = formatted.__reduce__()
+
+        self.assertIs(reduced_type, ShellFormattedResult)
+        self.assertEqual(reduced_args, ("formatted", result, content))
 
     def test_shell_exceptions_validate_error_codes(self) -> None:
         denied = ShellPolicyDenied(

@@ -13,8 +13,12 @@ from avalan.entities import (
     ToolResultImageDeliveryError,
     ToolResultText,
 )
+from avalan.model.nlp.text.tool_result_images import tool_result_text_blocks
 from avalan.model.nlp.text.vendor.anthropic import AnthropicClient
-from avalan.model.nlp.text.vendor.bedrock import BedrockClient
+from avalan.model.nlp.text.vendor.bedrock import (
+    BedrockClient,
+    _bedrock_image_format,
+)
 from avalan.model.nlp.text.vendor.google import GoogleClient
 from avalan.model.nlp.text.vendor.huggingface import HuggingfaceClient
 from avalan.model.nlp.text.vendor.litellm import LiteLLMClient
@@ -95,6 +99,27 @@ class ToolResultImageProviderTest(TestCase):
             client._template_messages(
                 [Message(role=MessageRole.TOOL, tool_call_result=result)]
             )
+
+    def test_text_blocks_remain_available_alongside_tool_images(self) -> None:
+        """Keep ordered textual metadata for native result encoders."""
+        result, _first, _second = _result()
+
+        blocks = tool_result_text_blocks(result)
+
+        self.assertEqual(
+            [block.text for block in blocks],
+            ["first metadata", "second metadata"],
+        )
+
+    def test_bedrock_rejects_tool_image_media_types_it_cannot_encode(
+        self,
+    ) -> None:
+        """Expose Bedrock image-carrier limits before model continuation."""
+        with self.assertRaisesRegex(
+            ToolResultImageDeliveryError,
+            "image/gif",
+        ):
+            _bedrock_image_format("image/gif")
 
 
 def _result() -> tuple[ToolCallResult, bytes, bytes]:

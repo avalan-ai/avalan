@@ -8805,6 +8805,107 @@ def test_patch_phase_10_private_bundle_rejects_pre_remove_root_replacement(
     assert root.exists()
 
 
+def test_patch_phase_10_private_bundle_cleanup_preserves_primary_error(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Chain failed bundle cleanup without hiding a failed integrity check."""
+    root = tmp_path / "cleanup"
+
+    def copied_with_forbidden_worker(
+        _source: Path,
+        destination: Path,
+        **_kwargs: object,
+    ) -> Path:
+        """Create a copied worker tree that deliberately retains host code."""
+        destination.mkdir(parents=True)
+        patch = destination / "patch"
+        patch.mkdir(parents=True)
+        (patch / "sandbox_commit.py").write_text(
+            "forbidden",
+            encoding="utf-8",
+        )
+        return destination
+
+    def cleanup_failure(_: Path) -> None:
+        """Model failure to remove a private temporary bundle."""
+        raise RuntimeError("cleanup failed")
+
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "mkdtemp",
+        lambda **_kwargs: str(root),
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "copytree",
+        copied_with_forbidden_worker,
+    )
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "_remove_owned_bundle",
+        cleanup_failure,
+    )
+
+    with pytest.raises(TargetInspectionError) as failed:
+        sandbox_commit_module._ImplementationBundle.create(tmp_path / "work")
+
+    assert isinstance(failed.value.__cause__, RuntimeError)
+    assert str(failed.value.__cause__) == "cleanup failed"
+
+
+def test_patch_phase_10_private_bundle_cleanup_rejects_unowned_roots(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Refuse relative, regular-file, and descriptor-swapped cleanup roots."""
+    with pytest.raises(TargetInspectionError) as relative:
+        sandbox_commit_module._remove_owned_bundle(Path("relative"))
+    assert relative.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+
+    regular_file = tmp_path / "regular-file"
+    regular_file.write_text("not a directory", encoding="utf-8")
+    with pytest.raises(TargetInspectionError) as file_root:
+        sandbox_commit_module._remove_owned_bundle(regular_file)
+    assert file_root.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "fstat",
+        lambda _descriptor: SimpleNamespace(st_dev=-1, st_ino=-1),
+    )
+    with pytest.raises(TargetInspectionError) as descriptor_swap:
+        sandbox_commit_module._remove_owned_bundle(root)
+    assert descriptor_swap.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    assert root.exists()
+
+
+def test_patch_phase_10_private_bundle_cleanup_rejects_child_descriptor_swap(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Leave a child directory in place when its opened identity changes."""
+    root = tmp_path / "root"
+    child = root / "child"
+    child.mkdir(parents=True)
+    descriptor = open_fd(root, 0)
+    monkeypatch.setattr(
+        sandbox_commit_module,
+        "fstat",
+        lambda _descriptor: SimpleNamespace(st_dev=-1, st_ino=-1),
+    )
+    try:
+        with pytest.raises(TargetInspectionError) as descriptor_swap:
+            sandbox_commit_module._remove_owned_bundle_contents(descriptor)
+    finally:
+        close(descriptor)
+
+    assert descriptor_swap.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+    assert child.exists()
+
+
 def test_patch_phase_10_runtime_values_and_adapter_calls_fail_closed(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

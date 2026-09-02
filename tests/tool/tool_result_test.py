@@ -9,6 +9,7 @@ from avalan.entities import (
     ToolManagerSettings,
     ToolResult,
     ToolResultImage,
+    ToolResultImageDetail,
     ToolResultText,
 )
 from avalan.tool import Tool, ToolSet
@@ -50,6 +51,83 @@ class ToolResultTest(IsolatedAsyncioTestCase):
         assert isinstance(text_only, ToolCallResult)
         self.assertEqual(text_only.result, "unchanged")
         self.assertEqual(text_only.content, ())
+
+    def test_typed_tool_content_rejects_invalid_text_and_image_blocks(
+        self,
+    ) -> None:
+        """Reject malformed typed blocks before any continuation sees them."""
+        valid = ToolResultImage(data=b"pixels", media_type="image/png")
+        self.assertTrue(valid.available)
+        unavailable = ToolResultImage(
+            media_type="image/png",
+            unavailable_reason="The execution target cannot retrieve pixels.",
+        )
+        self.assertFalse(unavailable.available)
+
+        invalid_texts = (
+            {"type": "other", "text": "text"},
+            {"text": 1},
+        )
+        for values in invalid_texts:
+            with self.subTest(values=values):
+                with self.assertRaises((TypeError, ValueError)):
+                    ToolResultText(**values)  # type: ignore[arg-type]
+
+        invalid_images = (
+            {"type": "other", "data": b"pixels", "media_type": "image/png"},
+            {"data": b"pixels", "media_type": "text/plain"},
+            {
+                "data": b"pixels",
+                "media_type": "image/png",
+                "detail": "high",
+            },
+            {"data": "pixels", "media_type": "image/png"},
+            {"media_type": "image/png"},
+            {
+                "data": b"pixels",
+                "media_type": "image/png",
+                "unavailable_reason": "unavailable",
+            },
+            {
+                "media_type": "image/png",
+                "unavailable_reason": 1,
+            },
+            {"data": b"pixels", "media_type": "image/png", "sha256": "bad"},
+            {
+                "data": b"pixels",
+                "media_type": "image/png",
+                "sha256": "0" * 64,
+            },
+            {"data": b"pixels", "media_type": "image/png", "width": 0},
+            {"data": b"pixels", "media_type": "image/png", "height": True},
+        )
+        for values in invalid_images:
+            with self.subTest(values=values):
+                with self.assertRaises((TypeError, ValueError)):
+                    ToolResultImage(**values)  # type: ignore[arg-type]
+
+        self.assertEqual(valid.detail, ToolResultImageDetail.AUTO)
+
+    def test_tool_result_content_requires_an_ordered_block_tuple(self) -> None:
+        """Reject mutable or unknown blocks in tool continuation content."""
+        call = ToolCall(id="call", name="example.result", arguments={})
+        invalid_content = ([ToolResultText(text="text")], ("text",))
+        for content in invalid_content:
+            with self.subTest(content=content):
+                with self.assertRaises(TypeError):
+                    ToolResult(  # type: ignore[arg-type]
+                        result="metadata",
+                        content=content,
+                    )
+                with self.assertRaises(TypeError):
+                    ToolCallResult(  # type: ignore[arg-type]
+                        id="result",
+                        name="example.result",
+                        arguments={},
+                        call=call,
+                        result="metadata",
+                        content=content,
+                    )
 
 
 class _Tool(Tool):

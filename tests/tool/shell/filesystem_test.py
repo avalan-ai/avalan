@@ -25,6 +25,7 @@ from avalan.tool.shell.filesystem import (
     read_image_signature,
     read_pdf_signature,
     read_signature,
+    read_validated_bytes,
     remove_file,
     remove_tree,
     resolve_policy_path,
@@ -430,6 +431,30 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
             await remove_tree(object())  # type: ignore[arg-type]
         with self.assertRaises(AssertionError):
             await remove_file(object())  # type: ignore[arg-type]
+        with self.assertRaises(AssertionError):
+            await write_bytes("value.bin", "text")  # type: ignore[arg-type]
+
+    async def test_validated_reads_require_an_inspected_file_identity(
+        self,
+    ) -> None:
+        """Refuse a safe image read when path metadata lacks identity pins."""
+        metadata = ShellPathMetadata(
+            path=Path("image.png"),
+            resolved_path=Path("/workspace/image.png"),
+            mode=0o100600,
+            size=1,
+            is_file=True,
+            is_directory=False,
+            is_symlink=False,
+            is_special_file=False,
+        )
+
+        with self.assertRaisesRegex(ValueError, "identity is unavailable"):
+            await read_validated_bytes(
+                "image.png",
+                metadata,
+                max_bytes=1,
+            )
 
 
 class ShellFilesystemPrivateProbeTest(TestCase):

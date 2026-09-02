@@ -1,10 +1,12 @@
 from asyncio import run as asyncio_run
 from base64 import b64encode
 from hashlib import sha256
+from os import stat_result
 from pathlib import Path
 from stat import S_IMODE
 from tempfile import TemporaryDirectory
 from unittest import TestCase, main
+from unittest.mock import patch
 
 from avalan.filesystem import (
     assert_text_encoding,
@@ -15,6 +17,7 @@ from avalan.filesystem import (
     read_bytes,
     read_bytes_prefix,
     read_text,
+    read_validated_bytes,
     remove_file,
     remove_tree,
     resolve_path,
@@ -58,6 +61,60 @@ class FilesystemTestCase(TestCase):
 
         self.assertEqual(content, b"abc")
         self.assertEqual(empty, b"")
+
+    def test_validated_read_rejects_changed_or_invalid_file_metadata(
+        self,
+    ) -> None:
+        """Fail closed across each identity check used for safe image reads."""
+        with TemporaryDirectory() as temporary_directory:
+            path = Path(temporary_directory) / "value.bin"
+            path.write_bytes(b"abc")
+            metadata = path.stat()
+            kwargs = {
+                "device": metadata.st_dev,
+                "inode": metadata.st_ino,
+                "mode": metadata.st_mode,
+                "size": metadata.st_size,
+                "hardlink_count": metadata.st_nlink,
+                "max_bytes": 3,
+            }
+
+            with self.assertRaisesRegex(OSError, "metadata"):
+                asyncio_run(
+                    read_validated_bytes(
+                        path, **{**kwargs, "hardlink_count": 0}
+                    )
+                )
+            with self.assertRaisesRegex(OSError, "identity changed"):
+                asyncio_run(
+                    read_validated_bytes(
+                        path, **{**kwargs, "inode": metadata.st_ino + 1}
+                    )
+                )
+            with (
+                patch("avalan.filesystem.read", return_value=b""),
+                self.assertRaisesRegex(OSError, "truncated"),
+            ):
+                asyncio_run(read_validated_bytes(path, **kwargs))
+            with (
+                patch(
+                    "avalan.filesystem.read",
+                    side_effect=(b"abc", b"x"),
+                ),
+                self.assertRaisesRegex(OSError, "grew"),
+            ):
+                asyncio_run(read_validated_bytes(path, **kwargs))
+
+            changed = list(metadata)
+            changed[6] = metadata.st_size + 1
+            with (
+                patch(
+                    "avalan.filesystem.fstat",
+                    side_effect=(metadata, stat_result(changed)),
+                ),
+                self.assertRaisesRegex(OSError, "metadata changed"),
+            ):
+                asyncio_run(read_validated_bytes(path, **kwargs))
 
     def test_file_digest_and_base64_reads_in_chunks(self) -> None:
         with TemporaryDirectory() as temporary_directory:
