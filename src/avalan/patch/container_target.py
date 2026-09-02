@@ -17,6 +17,7 @@ from json import JSONDecodeError, dumps, loads
 from pathlib import Path
 from re import fullmatch
 from secrets import token_bytes
+from stat import S_ISDIR
 
 from avalan.patch.coordinator import (
     RootedCommandAuthorityValidator,
@@ -358,11 +359,13 @@ def _persistent_resource_digest(
 def _shared_host_root_is_safe(root: Path) -> bool:
     """Return whether one configured root is safe for a selected host bind."""
     try:
+        status = root.stat(follow_symlinks=False)
+        resolved = root.resolve(strict=True)
+        resolved_status = resolved.stat(follow_symlinks=False)
         return (
             root.is_absolute()
-            and root.is_dir()
-            and not root.is_symlink()
-            and root.resolve(strict=True).is_dir()
+            and S_ISDIR(status.st_mode)
+            and S_ISDIR(resolved_status.st_mode)
         )
     except OSError:
         return False

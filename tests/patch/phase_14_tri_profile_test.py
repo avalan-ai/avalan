@@ -222,7 +222,6 @@ def test_patch_phase_14_shared_root_authority_fails_closed(
         with pytest.raises(TargetInspectionError) as unavailable:
             process._shared_host_root_identity_for(root)
         assert unavailable.value.code is TargetErrorCode.WITNESS_STALE
-        assert not _shared_host_root_is_safe(root)
 
     def no_resolve(self: Path, *, strict: bool = False) -> Path:
         """Model a root that vanishes between profile checks and use."""
@@ -248,3 +247,27 @@ def test_patch_phase_14_shared_root_authority_fails_closed(
         with pytest.raises(TargetInspectionError) as unsealed:
             _shared_host_root(shared)
         assert unsealed.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
+
+
+def test_patch_phase_14_shared_root_safety_requires_live_stat(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Reject a cached directory type without live host metadata."""
+    root = tmp_path / "shared-root"
+    root.mkdir()
+
+    def cached_directory(self: Path) -> bool:
+        """Model pathlib directory metadata cached before a stat failure."""
+        del self
+        return True
+
+    def no_stat(self: Path, *, follow_symlinks: bool = True) -> object:
+        """Model a host filesystem that cannot provide root metadata."""
+        del self, follow_symlinks
+        raise OSError("metadata unavailable")
+
+    with monkeypatch.context() as patched:
+        patched.setattr(Path, "is_dir", cached_directory)
+        patched.setattr(Path, "stat", no_stat)
+
+        assert not _shared_host_root_is_safe(root)

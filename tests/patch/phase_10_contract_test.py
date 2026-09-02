@@ -6222,6 +6222,16 @@ def test_patch_phase_10_rejects_unpinned_worker_source(
     assert drifted.value.code is TargetErrorCode.CAPABILITY_UNAVAILABLE
 
 
+def test_patch_phase_10_pins_current_worker_source() -> None:
+    """Require the installed worker source to match its exact pin."""
+    source = Path(sandbox_commit_module.__file__).resolve().parents[1]
+
+    assert (
+        sandbox_commit_module._worker_source_digest(source)
+        == sandbox_commit_module._PINNED_WORKER_SOURCE_DIGEST
+    )
+
+
 def test_patch_phase_10_sandbox_commit_requires_pycparser_at_import(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
