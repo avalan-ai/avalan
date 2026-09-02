@@ -1700,10 +1700,16 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
     original_blocking = get_blocking(output_tty.fileno())
     original_inspect = profile._binding._host.inspect
     original_wait = _TerminalStateGuard._wait_until_output_writable
-    writer_registered = Event()
+    original_write = patch_review.os_write
+    output = b""
+    reader: Future[PatchCliReviewResult] | None = None
+    pty_is_full = False
+    forced_pending_backpressure = False
+    cancellation_scheduled = False
 
     async def filled_inspect() -> object:
         """Fill the guarded nonblocking PTY before returning host truth."""
+        nonlocal pty_is_full
         outcome = await original_inspect()
         payload = b"x" * 4096
         while True:
@@ -1713,28 +1719,52 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
                 try:
                     write(output_tty.fileno(), b"x")
                 except BlockingIOError:
+                    pty_is_full = True
                     return outcome
 
-    async def observe_writer_registration(
+    def force_pending_backpressure(descriptor: int, data: bytes) -> int:
+        """Force the pending status write through its real readiness waiter."""
+        nonlocal forced_pending_backpressure
+        if (
+            data == b"Patch settlement remains pending.\n"
+            and not forced_pending_backpressure
+        ):
+            forced_pending_backpressure = True
+            raise BlockingIOError
+        return original_write(descriptor, data)
+
+    async def cancel_queued_writer(
         terminal: _TerminalStateGuard,
     ) -> None:
-        """Signal only after the real output readiness writer is registered."""
+        """Drain then cancel exactly after the real writer is registered."""
+        nonlocal cancellation_scheduled, output
         loop = get_running_loop()
         original_add_writer = loop.add_writer
+
+        def drain_and_cancel() -> None:
+            """Drain before cancellation permits terminal restoration."""
+            nonlocal output
+            assert reader is not None
+            while select((master,), (), (), 0)[0]:
+                output += read(master, 65536)
+            reader.cancel()
 
         def register_writer(
             descriptor: int,
             callback: Callable[[], None],
         ) -> None:
-            """Register the original writer before exposing the wait point."""
+            """Register before cancellation can reach readiness delivery."""
+            nonlocal cancellation_scheduled
             original_add_writer(descriptor, callback)
-            writer_registered.set()
+            cancellation_scheduled = True
+            loop.call_soon(drain_and_cancel)
 
         with patch.object(loop, "add_writer", new=register_writer):
             await original_wait(terminal)
 
     async def exercise() -> tuple[bytes, list[dict[str, Any]]]:
         """Queue cancellation before writable delivery and audit the loop."""
+        nonlocal reader, output
         loop = get_running_loop()
         loop_failures: list[dict[str, Any]] = []
         previous_handler = loop.get_exception_handler()
@@ -1747,7 +1777,6 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
             loop_failures.append(context)
 
         loop.set_exception_handler(record_loop_failure)
-        output = b""
         try:
             with (
                 patch.object(
@@ -1758,7 +1787,12 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
                 patch.object(
                     _TerminalStateGuard,
                     "_wait_until_output_writable",
-                    new=observe_writer_registration,
+                    new=cancel_queued_writer,
+                ),
+                patch.object(
+                    patch_review,
+                    "os_write",
+                    new=force_pending_backpressure,
                 ),
                 patch.object(patch_review, "tcgetpgrp", return_value=1),
                 patch.object(patch_review, "getpgrp", return_value=1),
@@ -1770,11 +1804,6 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
                         error_stream=error_tty,
                     )
                 )
-                await wait_for(writer_registered.wait(), 2)
-                assert not reader.done()
-                loop.call_soon(reader.cancel)
-                while select((master,), (), (), 0)[0]:
-                    output += read(master, 65536)
                 with pytest.raises(CancelledError):
                     await reader
                 await sleep(0)
@@ -1789,6 +1818,9 @@ def test_patch_cli_detached_read_cancellation_ignores_queued_pty_writer() -> (
 
     try:
         output, loop_failures = run(exercise())
+        assert pty_is_full
+        assert forced_pending_backpressure
+        assert cancellation_scheduled
         assert loop_failures == []
         assert b"Patch settlement remains pending." not in output
         assert b"Patch terminal result:" not in output
