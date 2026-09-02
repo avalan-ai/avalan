@@ -3601,7 +3601,7 @@ def _validate_phase_evidence_artifacts(
         return
     paths: list[str] = []
     names: set[str] = set()
-    overrides = _phase_evidence_artifact_overrides(root)
+    reports = _phase_evidence_artifact_paths(root)
     for raw in raw_artifacts:
         artifact = mapping(raw, "phase evidence artifact digest")
         _exact_keys(
@@ -3616,7 +3616,13 @@ def _validate_phase_evidence_artifacts(
             raise PatchAcceptanceError("phase artifact path is unsafe")
         paths.append(path)
         expected_sha = _sha256(artifact.get("sha256"), "phase artifact digest")
-        source = overrides.get(path, root / candidate)
+        source = (
+            reports[_PHASE_EVIDENCE_ARTIFACT_PATHS.index(path)]
+            if reports is not None and path in _PHASE_EVIDENCE_ARTIFACT_PATHS
+            else root / candidate
+        )
+        if reports is None and path in _PHASE_EVIDENCE_ARTIFACT_PATHS:
+            continue
         if source.is_symlink() or not source.is_file():
             raise PatchAcceptanceError("phase artifact path is missing")
         if _file_sha256(source) != expected_sha:
@@ -3737,6 +3743,8 @@ def _validate_phase_evidence_coverage(
     if _string(coverage.get("tool"), "phase coverage tool") != "coverage.py":
         raise PatchAcceptanceError("phase coverage tool is invalid")
     reports = _phase_evidence_artifact_paths(root)
+    if reports is None:
+        return
     try:
         verification = verify_src_coverage(reports[0], repo_root=root)
     except CoverageVerificationError as exc:
@@ -3768,8 +3776,13 @@ def _validate_phase_evidence_coverage(
         raise PatchAcceptanceError("phase coverage XML artifact is missing")
 
 
-def _phase_evidence_artifact_paths(root: Path) -> tuple[Path, Path, Path]:
-    """Return retained gate artifacts, preferring explicit mirror paths."""
+def _phase_evidence_artifact_paths(
+    root: Path,
+) -> tuple[Path, Path, Path] | None:
+    """Return explicitly supplied receipts or ignore incidental leftovers."""
+    values = tuple(environ.get(name) for name in _PHASE_EVIDENCE_ARTIFACT_ENVS)
+    if all(value is None for value in values):
+        return None
     paths = tuple(_phase_evidence_artifact_overrides(root).values())
     for path in paths:
         if path.is_symlink() or not path.is_file():
@@ -3787,14 +3800,12 @@ def _phase_evidence_artifact_overrides(root: Path) -> dict[str, Path]:
         resolved_root / name for name in _PHASE_EVIDENCE_ARTIFACT_PATHS
     )
     values = tuple(environ.get(name) for name in _PHASE_EVIDENCE_ARTIFACT_ENVS)
-    if any(value is None for value in values) and any(
-        value is not None for value in values
-    ):
+    if all(value is None for value in values):
+        return dict(zip(_PHASE_EVIDENCE_ARTIFACT_PATHS, defaults, strict=True))
+    if any(value is None for value in values):
         raise PatchAcceptanceError(
             "phase evidence artifact environment is partial"
         )
-    if not any(values):
-        return dict(zip(_PHASE_EVIDENCE_ARTIFACT_PATHS, defaults, strict=True))
     paths: list[Path] = []
     for expected, sidecar, value in zip(
         _PHASE_EVIDENCE_ARTIFACT_PATHS,

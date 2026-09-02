@@ -1,3 +1,4 @@
+import ast
 import re
 import tomllib
 from pathlib import Path
@@ -7,6 +8,51 @@ from packaging.markers import Marker
 from packaging.requirements import Requirement
 from packaging.specifiers import SpecifierSet
 from packaging.utils import canonicalize_name
+
+_PATCH_WORKER_BASE_IMAGE = (
+    "python:3.11-slim-bookworm@sha256:"
+    "2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91"
+)
+_PHASE11_TEST_PREFIX = "tests/patch/phase_11_contract_test.py::"
+_MACOS_DOCKER_INTEGRATION_NODES = tuple(
+    _PHASE11_TEST_PREFIX + name
+    for name in (
+        "test_patch_phase_11_reuses_shared_context_contract_corpus",
+        "test_patch_phase_11_subroot_commit_and_root_replacement_race",
+        "test_patch_phase_11_commits_container_move_with_private_artifact_cleanup",
+        "test_patch_phase_11_scopes_container_mutation_to_trusted_cwd",
+        "test_patch_phase_11_inactive_profile_never_starts_or_advertises_runtime",
+        "test_patch_phase_11_missing_container_endpoint_fails_closed",
+        "test_patch_phase_11_wrong_container_binder_reaps_runtime",
+        "test_patch_phase_11_requirements",
+        "test_patch_phase_11_recovers_authenticated_lease_across_process_restart",
+        "test_patch_phase_11_serializes_initial_volume_creation_across_processes",
+        "test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard",
+        "test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume",
+        "test_patch_phase_11_failed_start_cleanup_defers_to_live_volume",
+        "test_patch_phase_11_e2e_020_reconciles_cancelled_multifile_apply",
+        "test_patch_phase_11_e2e_021_fences_replaced_plan_bound_context",
+        "test_patch_phase_11_reconciles_post_dispatch_stale_after_first_effect",
+        "test_patch_phase_11_rejects_forged_replayed_and_out_of_order_channel",
+        "test_patch_phase_11_preserves_container_representation_and_metadata",
+        "test_patch_phase_11_rejects_hostile_container_volume_topology",
+        "test_patch_phase_11_container_public_lifecycle_and_surfaces_are_redacted",
+        "test_patch_phase_11_serializes_container_contexts_in_one_domain",
+        "test_patch_phase_11_rejects_mismatched_domain_for_one_persistent_volume",
+        "test_patch_phase_11_rejects_destination_race_at_container_fence",
+        "test_patch_phase_11_service_loss_at_fence_stays_pending_without_effect",
+        "test_patch_phase_11_container_service_has_only_its_sealed_authority",
+    )
+) + (
+    (
+        "tests/patch/phase_14_tri_profile_test.py::"
+        "test_patch_e2e_035_container_shared_root_is_test_only_and_physical"
+    ),
+    (
+        "tests/patch/phase_15_hardening_test.py::"
+        "test_patch_e2e_039_local_sandbox_container_conformance"
+    ),
+)
 
 
 def _pyproject() -> dict[str, object]:
@@ -79,8 +125,10 @@ def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
 def _workflow_enforces_input_gates(workflow: str) -> bool:
     type_gate = (
         "      - name: Verify structured-input type contracts\n"
+        "        if: matrix.target.os == 'ubuntu-latest' && "
+        "matrix.python == '3.11'\n"
         "        run: |\n"
-        "          make lint\n"
+        "          make lint-check\n"
         "          make typecheck-input-contract INPUT_PHASE=5\n"
     )
     test_gate = "        run: make test no-install\n"
@@ -98,12 +146,165 @@ def _workflow_enforces_input_gates(workflow: str) -> bool:
     )
 
 
+def _workflow_limits_pushes_to_main(workflow: str) -> bool:
+    return "  push:\n    branches:\n      - main\n" in workflow
+
+
+def _workflow_enforces_pinned_worker_image_preflight(
+    workflow: str, *, condition: str | None
+) -> bool:
+    """Return whether a workflow pulls the exact PATCH worker image."""
+    image_step = "      - name: Pre-pull PATCH worker base image\n"
+    if condition is not None:
+        image_step += f"        if: {condition}\n"
+    image_step += f"        run: docker pull {_PATCH_WORKER_BASE_IMAGE}\n"
+    return (
+        workflow.count(f"docker pull {_PATCH_WORKER_BASE_IMAGE}") == 1
+        and image_step in workflow
+    )
+
+
+def _phase11_real_docker_nodes() -> set[str]:
+    """Return Phase 11 tests that build and invoke a real Docker worker."""
+    path = "tests/patch/phase_11_contract_test.py"
+    source = _read_repository_text(path)
+    tree = ast.parse(source)
+    nodes: set[str] = set()
+    for node in tree.body:
+        if not isinstance(node, (ast.AsyncFunctionDef, ast.FunctionDef)):
+            continue
+        if not node.name.startswith("test_"):
+            continue
+        test_source = ast.get_source_segment(source, node) or ""
+        if (
+            "_test_image(" in test_source
+            and 'monkeypatch.setattr(_CONTAINER, "_docker_output", output)'
+            not in test_source
+        ):
+            nodes.add(f"{path}::{node.name}")
+    return nodes
+
+
+def _real_docker_integration_nodes() -> set[str]:
+    """Return the exact test functions that need a Docker Linux runtime."""
+    return _phase11_real_docker_nodes() | {
+        (
+            "tests/patch/phase_14_tri_profile_test.py::"
+            "test_patch_e2e_035_container_shared_root_is_test_only_and_physical"
+        ),
+        (
+            "tests/patch/phase_15_hardening_test.py::"
+            "test_patch_e2e_039_local_sandbox_container_conformance"
+        ),
+    }
+
+
+def _workflow_enforces_macos_non_docker_policy(workflow: str) -> bool:
+    """Return whether macOS deselects only real Docker integrations."""
+    macos_step = workflow.split(
+        "      - name: Run non-Docker tests (macOS lacks Docker/Linux VM)\n",
+        maxsplit=1,
+    )
+    linux_step = (
+        "      - name: Run tests\n"
+        "        if: matrix.target.os == 'ubuntu-latest' && "
+        "matrix.python != '3.11'\n"
+        "        run: make test no-install\n"
+    )
+    return (
+        len(macos_step) == 2
+        and "        if: matrix.target.os == 'macos-15'\n" in macos_step[1]
+        and "# GitHub-hosted macos-15 has no Docker daemon or nested Linux VM."
+        in macos_step[1]
+        and (
+            "# Keep every portable test; deselect only real Docker "
+            "integrations."
+            in macos_step[1]
+        )
+        and macos_step[1].count("--deselect=")
+        == len(_MACOS_DOCKER_INTEGRATION_NODES)
+        and all(
+            macos_step[1].count("--deselect=" + node) == 1
+            for node in _MACOS_DOCKER_INTEGRATION_NODES
+        )
+        and "--ignore=" not in macos_step[1]
+        and linux_step in workflow
+    )
+
+
+def _makefile_lint_check_is_non_mutating(makefile: str) -> bool:
+    lint_check = makefile.split("lint-check:\n", maxsplit=1)[1].split(
+        "\n\ntest:\n",
+        maxsplit=1,
+    )[0]
+    return (
+        "poetry run ruff check $(LINT_PATHS)" in lint_check
+        and (
+            "poetry run black --check --preview "
+            "--enable-unstable-feature=string_processing $(LINT_PATHS)"
+            in lint_check
+        )
+        and "poetry run mypy\n" in lint_check
+        and "poetry run mypy $(INPUT_CONTRACT_SCRIPTS)" in lint_check
+        and "poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)"
+        in lint_check
+        and (
+            "poetry run black --check --preview "
+            "--enable-unstable-feature=string_processing "
+            "$(CONVERSATION_CONTRACT_SCRIPTS)"
+            in lint_check
+        )
+        and "poetry run mypy $(CONVERSATION_CONTRACT_SCRIPTS)" in lint_check
+        and "ruff format" not in lint_check
+        and "--fix" not in lint_check
+        and lint_check.index(
+            "poetry run black --check --preview "
+            "--enable-unstable-feature=string_processing $(LINT_PATHS)"
+        )
+        < lint_check.index("poetry run ruff check $(LINT_PATHS)")
+        and lint_check.index(
+            "poetry run black --check --preview "
+            "--enable-unstable-feature=string_processing "
+            "$(CONVERSATION_CONTRACT_SCRIPTS)"
+        )
+        < lint_check.index(
+            "poetry run ruff check $(CONVERSATION_CONTRACT_SCRIPTS)"
+        )
+    )
+
+
+def _makefile_lint_uses_black_as_formatter(makefile: str) -> bool:
+    """Return whether mutating lint leaves Black as the formatter."""
+    lint = makefile.split("lint:\n", maxsplit=1)[1].split(
+        "\n\nlint-check:\n",
+        maxsplit=1,
+    )[0]
+    lint_black = (
+        "poetry run black --preview "
+        "--enable-unstable-feature=string_processing"
+    )
+    return (
+        "ruff format" not in lint
+        and "poetry run ruff check --fix $(LINT_PATHS)" in lint
+        and f"{lint_black} $(LINT_PATHS)" in lint
+        and "poetry run ruff check --fix $(CONVERSATION_CONTRACT_SCRIPTS)"
+        in lint
+        and f"{lint_black} $(CONVERSATION_CONTRACT_SCRIPTS)" in lint
+        and lint.index(f"{lint_black} $(LINT_PATHS)")
+        < lint.index("poetry run ruff check --fix $(LINT_PATHS)")
+        and lint.index(f"{lint_black} $(CONVERSATION_CONTRACT_SCRIPTS)")
+        < lint.index(
+            "poetry run ruff check --fix $(CONVERSATION_CONTRACT_SCRIPTS)"
+        )
+    )
+
+
 def _workflow_enforces_single_postgresql_lane(workflow: str) -> bool:
     condition = (
         "matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'"
     )
     return (
-        workflow.count(f"        if: {condition}\n") == 2
+        workflow.count(f"        if: {condition}\n") == 3
         and "      - name: Start PostgreSQL\n" in workflow
         and "sudo systemctl start postgresql.service" in workflow
         and "      - name: Run tests with PostgreSQL\n" in workflow
@@ -113,7 +314,7 @@ def _workflow_enforces_single_postgresql_lane(workflow: str) -> bool:
             in workflow
         )
         and (
-            "if: matrix.target.os != 'ubuntu-latest' || "
+            "if: matrix.target.os == 'ubuntu-latest' && "
             "matrix.python != '3.11'"
             in workflow
         )
@@ -171,7 +372,7 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
     workflow = _read_repository_text(".github/workflows/test.yml")
     matrix_versions = _workflow_python_versions(workflow)
 
-    assert _workflow_declares_event(workflow, "push")
+    assert _workflow_limits_pushes_to_main(workflow)
     assert _workflow_declares_event(workflow, "pull_request")
     assert _workflow_declares_event(workflow, "workflow_dispatch")
     assert matrix_versions == [
@@ -179,11 +380,38 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
         _supported_python_versions(),
     ]
     assert _workflow_enforces_input_gates(workflow)
+    assert _real_docker_integration_nodes() == set(
+        _MACOS_DOCKER_INTEGRATION_NODES
+    )
+    assert _workflow_enforces_macos_non_docker_policy(workflow)
+    assert workflow.count("          make lint-check\n") == 1
+    assert "          make lint\n" not in workflow
     assert _workflow_enforces_single_postgresql_lane(workflow)
+    assert _makefile_lint_check_is_non_mutating(
+        _read_repository_text("Makefile")
+    )
+    assert _makefile_lint_uses_black_as_formatter(
+        _read_repository_text("Makefile")
+    )
     coverage_workflow = _read_repository_text(
         ".github/workflows/code-coverage.yml"
     )
+    assert _workflow_enforces_pinned_worker_image_preflight(
+        workflow,
+        condition="matrix.target.os == 'ubuntu-latest'",
+    )
+    assert _workflow_enforces_pinned_worker_image_preflight(
+        coverage_workflow,
+        condition=None,
+    )
+    assert (
+        _read_repository_text(
+            "tests/fixtures/patch/container_worker.Dockerfile"
+        ).splitlines()[0]
+        == f"FROM {_PATCH_WORKER_BASE_IMAGE}"
+    )
     assert "run: make test no-install coverage" in coverage_workflow
+    assert "--deselect=" not in coverage_workflow
     assert "run: make test coverage" not in coverage_workflow
     assert (
         "tests/project_metadata_test.py::"
@@ -217,6 +445,16 @@ def test_workflow_event_detection_rejects_missing_pull_request() -> None:
     assert not _workflow_declares_event(workflow, "pull_request")
 
 
+def test_workflow_rejects_non_main_push_fanout() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "      - main\n",
+        "      - '**'\n",
+        1,
+    )
+
+    assert not _workflow_limits_pushes_to_main(workflow)
+
+
 def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
     workflow = _read_repository_text(".github/workflows/test.yml").replace(
         "make test no-install",
@@ -224,6 +462,97 @@ def test_workflow_exact_gate_detection_rejects_partial_coverage() -> None:
     )
 
     assert not _workflow_enforces_input_gates(workflow)
+
+
+def test_workflow_exact_gate_detection_rejects_matrix_fanout() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'",
+        "if: matrix.python == '3.11'",
+        1,
+    )
+
+    assert not _workflow_enforces_input_gates(workflow)
+
+
+def test_workflow_rejects_broad_or_partial_macos_docker_exclusions() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        "--deselect=tests/patch/phase_11_contract_test.py::"
+        "test_patch_phase_11_requirements",
+        "--ignore=tests/patch",
+        1,
+    )
+
+    assert not _workflow_enforces_macos_non_docker_policy(workflow)
+
+
+def test_makefile_rejects_mutating_ci_lint_check() -> None:
+    makefile = _read_repository_text("Makefile").replace(
+        "poetry run ruff check $(LINT_PATHS)",
+        "poetry run ruff check --fix $(LINT_PATHS)",
+        1,
+    )
+
+    assert not _makefile_lint_check_is_non_mutating(makefile)
+
+
+def test_makefile_rejects_mutating_black_ci_lint_check() -> None:
+    makefile = _read_repository_text("Makefile").replace(
+        "poetry run black --check --preview ",
+        "poetry run black --preview ",
+        1,
+    )
+
+    assert not _makefile_lint_check_is_non_mutating(makefile)
+
+
+def test_makefile_rejects_ruff_formatter() -> None:
+    makefile = _read_repository_text("Makefile").replace(
+        "lint:\n",
+        "lint:\n\tpoetry run ruff format --preview $(LINT_PATHS)\n",
+        1,
+    )
+
+    assert not _makefile_lint_uses_black_as_formatter(makefile)
+
+
+def test_makefile_rejects_ruff_before_black() -> None:
+    makefile = _read_repository_text("Makefile").replace(
+        "poetry run black --preview"
+        " --enable-unstable-feature=string_processing $(LINT_PATHS)\n\tpoetry"
+        " run ruff check --fix $(LINT_PATHS)",
+        "poetry run ruff check --fix $(LINT_PATHS)\n\tpoetry run black"
+        " --preview --enable-unstable-feature=string_processing $(LINT_PATHS)",
+        1,
+    )
+
+    assert not _makefile_lint_uses_black_as_formatter(makefile)
+
+
+def test_makefile_rejects_ruff_check_before_black() -> None:
+    makefile = _read_repository_text("Makefile").replace(
+        "poetry run black --check --preview "
+        "--enable-unstable-feature=string_processing $(LINT_PATHS)\n\t"
+        "poetry run ruff check $(LINT_PATHS)",
+        "poetry run ruff check $(LINT_PATHS)\n\t"
+        "poetry run black --check --preview "
+        "--enable-unstable-feature=string_processing $(LINT_PATHS)",
+        1,
+    )
+
+    assert not _makefile_lint_check_is_non_mutating(makefile)
+
+
+def test_workflow_rejects_worker_image_digest_drift() -> None:
+    workflow = _read_repository_text(".github/workflows/test.yml").replace(
+        _PATCH_WORKER_BASE_IMAGE,
+        _PATCH_WORKER_BASE_IMAGE.removesuffix("1") + "0",
+        1,
+    )
+
+    assert not _workflow_enforces_pinned_worker_image_preflight(
+        workflow,
+        condition="matrix.target.os == 'ubuntu-latest'",
+    )
 
 
 def test_workflow_postgresql_gate_detection_rejects_matrix_fanout() -> None:

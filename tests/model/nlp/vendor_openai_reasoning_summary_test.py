@@ -3136,8 +3136,9 @@ def test_resumed_azure_private_replay_create_error_is_single_attempt() -> None:
     assert _PRIVATE_SUMMARY_SENTINEL not in diagnostics
     assert create.await_count == 1
     request_client.with_options.assert_called_once_with(max_retries=0)
-    assert create.await_args.kwargs["extra_headers"]["Idempotency-Key"] == (
-        "resumed-azure-dispatch"
+    assert (
+        create.await_args.kwargs["extra_headers"]["Idempotency-Key"]
+        == "resumed-azure-dispatch"
     )
 
 
@@ -3171,8 +3172,9 @@ def test_private_replay_stream_and_create_retries_share_budget() -> None:
     assert create.await_count == 2
     assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
     terminal = _error_item(items)
-    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
-        "openai_provider_request_failed"
+    assert (
+        cast(dict[str, Any], terminal.data)["error"]["code"]
+        == "openai_provider_request_failed"
     )
     outward = repr([item.to_trace_dict() for item in items])
     assert _PRIVATE_ENCRYPTED_SENTINEL not in outward
@@ -4078,8 +4080,9 @@ def test_invalid_or_mixed_response_failed_does_not_retry_privately(
 
     retry.assert_not_awaited()
     terminal = _error_item(items)
-    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
-        "openai_provider_request_failed"
+    assert (
+        cast(dict[str, Any], terminal.data)["error"]["code"]
+        == "openai_provider_request_failed"
     )
     assert secret not in repr([item.to_trace_dict() for item in items])
 
@@ -4117,8 +4120,9 @@ def test_invalid_request_stream_exception_is_not_retried() -> None:
 
     retry.assert_not_awaited()
     terminal = _error_item(items)
-    assert cast(dict[str, Any], terminal.data)["error"]["code"] == (
-        "openai_provider_request_failed"
+    assert (
+        cast(dict[str, Any], terminal.data)["error"]["code"]
+        == "openai_provider_request_failed"
     )
     assert secret not in repr([item.to_trace_dict() for item in items])
 

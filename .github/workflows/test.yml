@@ -3,7 +3,7 @@ name: Unit Tests
 on:
   push:
     branches:
-      - '**'
+      - main
   pull_request:
     branches:
       - '**'
@@ -47,6 +47,10 @@ jobs:
         uses: actions/checkout@v7
         with:
           fetch-depth: 0
+
+      - name: Pre-pull PATCH worker base image
+        if: matrix.target.os == 'ubuntu-latest'
+        run: docker pull python:3.11-slim-bookworm@sha256:2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91
 
       - name: Set up Python ${{ matrix.python }} + Poetry cache
         id: setup-python
@@ -139,8 +143,9 @@ jobs:
             -- /usr/bin/id --user | grep --fixed-strings --line-regexp 0
 
       - name: Verify structured-input type contracts
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python == '3.11'
         run: |
-          make lint
+          make lint-check
           make typecheck-input-contract INPUT_PHASE=5
           poetry run python scripts/verify_patch_types.py \
             --through-phase 11 --include-planned
@@ -159,8 +164,42 @@ jobs:
           AVALAN_TASK_TEST_POSTGRESQL_ADMIN_DSN: postgresql://postgres:postgres@127.0.0.1:5432/postgres
         run: make test no-install
 
+      - name: Run non-Docker tests (macOS lacks Docker/Linux VM)
+        if: matrix.target.os == 'macos-15'
+        run: |
+          # GitHub-hosted macos-15 has no Docker daemon or nested Linux VM.
+          # Keep every portable test; deselect only real Docker integrations.
+          poetry run pytest --verbose \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_reuses_shared_context_contract_corpus \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_subroot_commit_and_root_replacement_race \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_commits_container_move_with_private_artifact_cleanup \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_scopes_container_mutation_to_trusted_cwd \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_inactive_profile_never_starts_or_advertises_runtime \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_missing_container_endpoint_fails_closed \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_wrong_container_binder_reaps_runtime \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_requirements \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_recovers_authenticated_lease_across_process_restart \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_serializes_initial_volume_creation_across_processes \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_dispose_fails_closed_while_reclaim_owns_guard \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_failed_start_cleanup_never_deletes_reclaimed_volume \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_failed_start_cleanup_defers_to_live_volume \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_e2e_020_reconciles_cancelled_multifile_apply \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_e2e_021_fences_replaced_plan_bound_context \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_reconciles_post_dispatch_stale_after_first_effect \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_rejects_forged_replayed_and_out_of_order_channel \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_preserves_container_representation_and_metadata \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_rejects_hostile_container_volume_topology \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_container_public_lifecycle_and_surfaces_are_redacted \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_serializes_container_contexts_in_one_domain \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_rejects_mismatched_domain_for_one_persistent_volume \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_rejects_destination_race_at_container_fence \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_service_loss_at_fence_stays_pending_without_effect \
+            --deselect=tests/patch/phase_11_contract_test.py::test_patch_phase_11_container_service_has_only_its_sealed_authority \
+            --deselect=tests/patch/phase_14_tri_profile_test.py::test_patch_e2e_035_container_shared_root_is_test_only_and_physical \
+            --deselect=tests/patch/phase_15_hardening_test.py::test_patch_e2e_039_local_sandbox_container_conformance
+
       - name: Run tests
-        if: matrix.target.os != 'ubuntu-latest' || matrix.python != '3.11'
+        if: matrix.target.os == 'ubuntu-latest' && matrix.python != '3.11'
         run: make test no-install
 
       - name: Verify native sandbox mutation contract

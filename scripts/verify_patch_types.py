@@ -40,9 +40,6 @@ _FEATURE = "patch"
 _CURRENT_PHASE = 15
 _FIXTURE_ROOT = PurePosixPath("tests/patch_type_contracts")
 _DIAGNOSTIC_PATTERN = compile_regex(r"^.+:[0-9]+: error: .+ \[[a-z-]+\]$")
-_PROHIBITED_SOURCE_PATTERN = compile_regex(
-    r"\bAny\b|\bcast\s*\(|#\s*type:\s*ignore|\bdict\[str,\s*object\]"
-)
 _PATCH_SOURCE_SCOPES = frozenset(
     (
         "patch_script",

@@ -670,7 +670,8 @@ def test_patch_e2e_037_rooted_foreign_writer_never_clobbers(
                 completed = await execution
                 pytest.fail(
                     "local worker completed before the final "
-                    "revalidation barrier: " + str(completed)
+                    "revalidation barrier: "
+                    + str(completed)
                 )
             await sleep(0)
         foreign_writer = await create_subprocess_exec(
@@ -680,10 +681,8 @@ def test_patch_e2e_037_rooted_foreign_writer_never_clobbers(
             + "target = Path("
             + repr(str(destination))
             + "); stage = target.with_name('.foreign-writer'); "
-            + (
-                "stage.write_bytes(b'foreign writer\\n'); "
-                "replace(stage, target)"
-            ),
+            + "stage.write_bytes(b'foreign writer\\n'); "
+            "replace(stage, target)",
         )
         assert await foreign_writer.wait() == 0
         foreign_writer_completed.set()

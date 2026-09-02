@@ -126,7 +126,6 @@ else:
     Partitioner = Any
 
 _SHELL_EXECUTION_MODE_FIELDS = frozenset({"backend", "execution_mode"})
-_PATCH_TOOL_LOADER_INTEGRATION = "trusted_async_binding"
 
 SentenceTransformerModel: type[Any] | None = None
 TextPartitioner: type[Any] | None = None

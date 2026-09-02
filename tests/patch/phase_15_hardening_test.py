@@ -1343,8 +1343,9 @@ def test_patch_phase_15_fixed_seed_fuzz_corpus_is_bounded_and_replayable() -> (
                     plan(request, _workspace())
             case "target_rpc":
                 decoded = loads(case.payload)
-                assert canonical_sandbox_plan_bytes(decoded) == (
-                    b'{"request_id":"fuzz","sequence":1}'
+                assert (
+                    canonical_sandbox_plan_bytes(decoded)
+                    == b'{"request_id":"fuzz","sequence":1}'
                 )
             case "event":
                 assert LifecyclePhase(case.payload.decode("ascii")) is (
@@ -1709,27 +1710,35 @@ def test_patch_e2e_041_incomplete_default_profiles_load_no_authority() -> None:
                 (
                     "update",
                     "patch.edit",
-                    b'{"path":"note.txt","edits":['
-                    b'{"old_text":"before","new_text":"after"}]}',
+                    (
+                        b'{"path":"note.txt","edits":['
+                        b'{"old_text":"before","new_text":"after"}]}'
+                    ),
                 ),
                 (
                     "create",
                     "patch.apply",
-                    b'{"patch":"*** Begin Patch v1\\n*** Add File: '
-                    b'created.txt\\n+created\\n*** End Patch"}',
+                    (
+                        b'{"patch":"*** Begin Patch v1\\n*** Add File: '
+                        b'created.txt\\n+created\\n*** End Patch"}'
+                    ),
                 ),
                 (
                     "delete",
                     "patch.apply",
-                    b'{"patch":"*** Begin Patch v1\\n*** Delete File: '
-                    b'note.txt\\n*** End Patch"}',
+                    (
+                        b'{"patch":"*** Begin Patch v1\\n*** Delete File: '
+                        b'note.txt\\n*** End Patch"}'
+                    ),
                 ),
                 (
                     "move",
                     "patch.apply",
-                    b'{"patch":"*** Begin Patch v1\\n*** Update File: '
-                    b"note.txt\\n*** Move to: moved.txt\\n@@\\n-before\\n"
-                    b'+after\\n*** End Patch"}',
+                    (
+                        b'{"patch":"*** Begin Patch v1\\n*** Update File: '
+                        b"note.txt\\n*** Move to: moved.txt\\n@@\\n-before\\n"
+                        b'+after\\n*** End Patch"}'
+                    ),
                 ),
             )
             assert tuple(item[0] for item in operation_requests) == (
@@ -1824,8 +1833,10 @@ def test_patch_e2e_041_incomplete_default_profiles_load_no_authority() -> None:
                     Capability.UPDATE,
                     "update",
                     "patch.apply",
-                    b'{"patch":"*** Begin Patch v1\\n*** Update File: '
-                    b'note.txt\\n@@\\n-before\\n+after\\n*** End Patch"}',
+                    (
+                        b'{"patch":"*** Begin Patch v1\\n*** Update File: '
+                        b'note.txt\\n@@\\n-before\\n+after\\n*** End Patch"}'
+                    ),
                     {},
                     True,
                 ),
@@ -1997,8 +2008,7 @@ def test_patch_e2e_038_public_tool_manager_fuzz_bounds_privacy_cleanup() -> (
             assert len(service._backend.records) == 1
 
             large_deletion = (
-                b'{"patch":"*** Begin Patch v1\\n*** Delete File: '
-                b"note.txt\\n"
+                b'{"patch":"*** Begin Patch v1\\n*** Delete File: note.txt\\n'
                 + b"# bounded-deletion-complexity\\n" * 16
                 + b'*** End Patch"}'
             )
@@ -4086,8 +4096,7 @@ def test_patch_e2e_042_provider_limit_matrix_uses_exact_owner_boundaries() -> (
             accepted_limits=planner_ceiling(changed=6),
         )
         ambiguous_match = (
-            b'{"path":"note.txt","edits":['
-            b'{"old_text":"x","new_text":"y"}]}'
+            b'{"path":"note.txt","edits":[{"old_text":"x","new_text":"y"}]}'
         )
         candidates_rejected, candidates_rejected_service = (
             await invoke_provider(
