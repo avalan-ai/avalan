@@ -1258,7 +1258,20 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         builder.set_terminal(
             completed=True,
             outcome=StreamTerminalOutcome.ERRORED,
-            error={"error": {"message": "response failed"}},
+            error={
+                "error": {"message": "response failed"},
+                "provider_failure": {
+                    "phase": "event_adapter",
+                    "retry": {
+                        "disposition": "non_retryable",
+                        "retryable": False,
+                        "used": 0,
+                        "maximum": 24,
+                    },
+                    "output_seen": {"reasoning": False, "model": False},
+                    "provider": {"exception_category": "transport_timeout"},
+                },
+            },
         )
         presenter = BasicStreamPresenter(getLogger(__name__))
 
@@ -1273,6 +1286,11 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         tool_text = _render_text(frames[0].renderable)
         self.assertIn("Model stream error: ", tool_text)
         self.assertIn("response failed", tool_text)
+        self.assertIn('"phase": "event_adapter"', tool_text)
+        self.assertIn('"disposition":', tool_text)
+        self.assertIn('"non_retryable"', tool_text)
+        self.assertIn('"exception_category":', tool_text)
+        self.assertIn('"transport_timeout"', tool_text)
         self.assertNotIn("No final answer emitted.", tool_text)
         self.assertNotIn("shell.cat", tool_text)
 

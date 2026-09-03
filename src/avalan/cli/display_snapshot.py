@@ -36,6 +36,7 @@ from typing import Generic, Literal, TypeVar
 
 DEFAULT_EVENT_HISTORY_LIMIT = 4
 DEFAULT_PROJECTION_SUMMARY_LIMIT = 4
+_TERMINAL_ERROR_SUMMARY_LIMIT = MAX_SUMMARY_CHARS * 2
 # A config value of display_tools_events=None means "no visible display
 # limit"; snapshots still use this hard cap so retained CLI history is bounded.
 DEFAULT_UNLIMITED_TOOL_HISTORY_LIMIT = 256
@@ -917,7 +918,14 @@ class CliStreamSnapshotBuilder:
             completed=completed,
             outcome=_primitive_value(outcome),
             sequence=sequence,
-            error_summary=None if error is None else safe_summary(error),
+            error_summary=(
+                None
+                if error is None
+                else safe_summary(
+                    error,
+                    limit=_TERMINAL_ERROR_SUMMARY_LIMIT,
+                )
+            ),
         )
 
     def add_display_token(

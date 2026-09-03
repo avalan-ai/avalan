@@ -47,6 +47,7 @@ from rich.table import Table
 from rich.text import Text
 
 _BASIC_SUMMARY_LIMIT = 160
+_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT = 600
 _BASIC_DATABASE_SQL_PREVIEW_LIMIT = 72
 _BASIC_TOOL_RUNNING_THRESHOLD_SECONDS = 1.0
 _BASIC_TOOL_DYNAMIC_MAX_SECONDS = 3600.0
@@ -1505,12 +1506,13 @@ def _basic_terminal_error_entry(
     request: CliStreamPresenterRequest,
 ) -> _BasicToolLineEntry:
     summary = request.snapshot.terminal.error_summary or "stream errored"
+    visible_summary = _basic_markup_summary(
+        summary,
+        limit=_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT,
+    )
     return _BasicToolLineEntry(
         key="terminal:error",
-        line=(
-            "\n[red]✖ Model stream error: "
-            f"{_basic_markup_summary(summary)}[/red]"
-        ),
+        line=f"\n[red]✖ Model stream error: {visible_summary}[/red]",
         sequence=request.snapshot.terminal.sequence,
     )
 
@@ -2469,17 +2471,26 @@ def _basic_frame_text(lines: Sequence[str | None]) -> str | None:
     return text or None
 
 
-def _basic_summary(value: str | None) -> str:
+def _basic_summary(
+    value: str | None,
+    *,
+    limit: int = _BASIC_SUMMARY_LIMIT,
+) -> str:
     if not value:
         return ""
+    assert limit > 3
     text = " ".join(value.split())
-    if len(text) <= _BASIC_SUMMARY_LIMIT:
+    if len(text) <= limit:
         return text
-    return f"{text[: _BASIC_SUMMARY_LIMIT - 3]}..."
+    return f"{text[: limit - 3]}..."
 
 
-def _basic_markup_summary(value: str | None) -> str:
-    return escape(_basic_summary(value))
+def _basic_markup_summary(
+    value: str | None,
+    *,
+    limit: int = _BASIC_SUMMARY_LIMIT,
+) -> str:
+    return escape(_basic_summary(value, limit=limit))
 
 
 class _BasicAnswerPresenter:

@@ -203,8 +203,11 @@ def test_patch_acceptance_phase_evidence_sidecars_are_exact_and_local(
 
 def test_patch_acceptance_allows_absent_historical_phase_receipts(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Accept a clean checkout that has no ignored historical receipts."""
+    for name in _VERIFIER._PHASE_EVIDENCE_ARTIFACT_ENVS:
+        monkeypatch.delenv(name, raising=False)
     root = tmp_path / "root"
     root.mkdir()
 
@@ -213,8 +216,11 @@ def test_patch_acceptance_allows_absent_historical_phase_receipts(
 
 def test_patch_acceptance_ignores_incidental_phase_receipts_without_env(
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Ignore stale root and sidecar receipts unless the gate supplies them."""
+    for name in _VERIFIER._PHASE_EVIDENCE_ARTIFACT_ENVS:
+        monkeypatch.delenv(name, raising=False)
     root = tmp_path / "root"
     root.mkdir()
     for name in (

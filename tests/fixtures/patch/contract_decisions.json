@@ -1281,7 +1281,7 @@
       },
       {
         "path": "src/avalan/cli/display_snapshot.py",
-        "source_sha256": "2cccea6feb5eb72c334aefc642a2295cecad8ab79a1e168b4fe818a3756fed38"
+        "source_sha256": "cef8b7543245832c1e7d26c297a2e2b5ebbb9c5a897f422c9f45458ad5ef9b6f"
       },
       {
         "path": "src/avalan/cli/download.py",
@@ -1313,7 +1313,7 @@
       },
       {
         "path": "src/avalan/cli/theme/basic.py",
-        "source_sha256": "f37780ebbcd83c507e52ff6f279bd598f2a5fe6783e50fff036013093739e5ce"
+        "source_sha256": "4457652854c96b7cf07e85fe819d0485b6e716bda7374df6bad1063edb0a35f8"
       },
       {
         "path": "src/avalan/cli/theme/fancy.py",
@@ -2005,7 +2005,7 @@
       },
       {
         "path": "src/avalan/model/nlp/text/vendor/openai.py",
-        "source_sha256": "fef2ebf4158a15d25f2e254abe196b104abb3a469d19c2e7d23843fdf81d0751"
+        "source_sha256": "cf925379d546ac052813b724fa7307d772b8ad41019cf36bfe935708507bded3"
       },
       {
         "path": "src/avalan/model/nlp/text/vendor/openrouter.py",
@@ -2065,7 +2065,7 @@
       },
       {
         "path": "src/avalan/model/stream.py",
-        "source_sha256": "6a256f2fbf78330c80fd5ca866381a34ea17dee0dbdb465d0b4b19bec34a96af"
+        "source_sha256": "c1ba17b3e881af37d6ef4b15d1b631b74ed6f5f46c33953e4e20e3c8acba8c35"
       },
       {
         "path": "src/avalan/model/transformer.py",
@@ -2221,7 +2221,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "662ab22d3b62fd1add7e743bb6224a995c6f17bc582fcfddee25a6d929e047ed"
+        "source_sha256": "b6027960470e32987b3290c81554368c2bd284f8d189e9787fb0145ef40cd445"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -3247,7 +3247,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "4eaf96bf00d304448b112f872be54f0c67040b1611d528e72594b2770a80147e"
+        "source_sha256": "c91ec88eb9a141562a20d7f9c0084a8244bb4f131bb99bdf8f2654ac26d7eaa2"
       }
     ],
     "public_tools": [
@@ -3293,6 +3293,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "37b9998d341abc10baec6328a22fa603cce35a10550474cc8613859b2945ab13",
-  "record_sha256": "90a93898738ebc027eec5532d1e2116b8ddcf40f05ce5991eac56bd1f15e753e"
+  "inventory_sha256": "407581219e0f006ac8dd24ff07eb70dccff7de41a4f0bc9445a748296ecfb047",
+  "record_sha256": "1ad0638fff74fc7cb8606256ab70a77535daca672bd16b9b151ca8612b4543ab"
 }

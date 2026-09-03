@@ -16,7 +16,14 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
-from httpx import Request, Response
+from httpx import (
+    ConnectError,
+    HTTPError,
+    ReadTimeout,
+    RemoteProtocolError,
+    Request,
+    Response,
+)
 from openai import APIError, InternalServerError
 from openai.types.responses import ResponseStreamEvent
 from openai.types.responses.response_function_tool_call import (
@@ -2841,6 +2848,71 @@ def test_private_replay_adapter_failures_are_sanitized() -> None:
         and item.provider_payload is None
         for item in adapter_items
     )
+    terminal = _error_item(adapter_items)
+    assert cast(dict[str, Any], terminal.data)["provider_failure"] == {
+        "phase": "event_adapter",
+        "retry": {
+            "disposition": "non_retryable",
+            "retryable": False,
+            "used": 0,
+            "maximum": 2,
+        },
+        "output_seen": {"reasoning": False, "model": False},
+        "provider": {
+            "event_type": "response.output_text.delta",
+            "exception_category": "other",
+            "exception_code": "other",
+        },
+    }
+
+
+def test_private_replay_adapter_failure_reports_safe_status(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    secret = "ADAPTER_HTTP_FAILURE_PRIVATE_SENTINEL"
+    monkeypatch.setattr(
+        OpenAIStream,
+        "_provider_events_from_event",
+        MagicMock(
+            side_effect=InternalServerError(
+                secret,
+                response=Response(
+                    503,
+                    request=Request(
+                        "POST",
+                        "https://provider.invalid/responses",
+                    ),
+                ),
+                body={"message": secret},
+            )
+        ),
+    )
+    items = run(
+        _consume(
+            OpenAIStream(
+                _AsyncEvents(
+                    [
+                        {
+                            "type": "response.output_text.delta",
+                            "delta": "private",
+                        }
+                    ]
+                ),
+                request_has_replay_items=True,
+            )
+        )
+    )
+
+    terminal = _error_item(items)
+    provider_failure = cast(dict[str, Any], terminal.data)["provider_failure"]
+    assert provider_failure["phase"] == "event_adapter"
+    assert provider_failure["provider"] == {
+        "event_type": "response.output_text.delta",
+        "exception_category": "InternalServerError",
+        "exception_code": "other",
+        "status_code": 503,
+    }
+    assert secret not in repr([item.to_trace_dict() for item in items])
 
 
 def test_private_replay_iterator_failures_are_sanitized_and_closed() -> None:
@@ -3132,6 +3204,20 @@ def test_resumed_azure_private_replay_create_error_is_single_attempt() -> None:
     assert [getattr(node, "code", None) for node in nodes] == [
         "openai_provider_request_failed"
     ]
+    assert context.value.provider_failure == {
+        "phase": "request_open",
+        "retry": {
+            "disposition": "retry_budget_exhausted",
+            "retryable": True,
+            "used": 0,
+            "maximum": 0,
+        },
+        "output_seen": {"reasoning": False, "model": False},
+        "provider": {
+            "exception_category": "openai_error",
+            "exception_code": "rate_limit_exceeded",
+        },
+    }
     assert _PRIVATE_ENCRYPTED_SENTINEL not in diagnostics
     assert _PRIVATE_SUMMARY_SENTINEL not in diagnostics
     assert create.await_count == 1
@@ -3172,10 +3258,22 @@ def test_private_replay_stream_and_create_retries_share_budget() -> None:
     assert create.await_count == 2
     assert create.await_args_list[0].kwargs == create.await_args_list[1].kwargs
     terminal = _error_item(items)
-    assert (
-        cast(dict[str, Any], terminal.data)["error"]["code"]
-        == "openai_provider_request_failed"
-    )
+    terminal_data = cast(dict[str, Any], terminal.data)
+    assert terminal_data["error"]["code"] == "openai_provider_request_failed"
+    assert terminal_data["provider_failure"] == {
+        "phase": "request_open",
+        "retry": {
+            "disposition": "retry_budget_exhausted",
+            "retryable": True,
+            "used": 1,
+            "maximum": 1,
+        },
+        "output_seen": {"reasoning": False, "model": False},
+        "provider": {
+            "exception_category": "openai_error",
+            "exception_code": "rate_limit_exceeded",
+        },
+    }
     outward = repr([item.to_trace_dict() for item in items])
     assert _PRIVATE_ENCRYPTED_SENTINEL not in outward
     assert _PRIVATE_SUMMARY_SENTINEL not in outward
@@ -3258,6 +3356,168 @@ def test_private_replay_retry_factory_errors_are_sanitized() -> None:
     assert any(
         item.kind is StreamItemKind.STREAM_ERRORED for item in retry_items
     )
+
+
+def test_retry_factory_failure_without_details_reports_safe_boundary() -> None:
+    retry = AsyncMock(side_effect=openai_module._OpenAIProviderRequestError())
+    items = run(
+        _consume(
+            OpenAIStream(
+                _AsyncEvents(
+                    [
+                        {
+                            "type": "response.failed",
+                            "response": {
+                                "status": "failed",
+                                "error": None,
+                                "output": [],
+                            },
+                        }
+                    ]
+                ),
+                request_has_replay_items=True,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_awaited_once_with()
+    terminal = _error_item(items)
+    assert cast(dict[str, Any], terminal.data)["provider_failure"] == {
+        "phase": "request_open",
+        "retry": {
+            "disposition": "non_retryable",
+            "retryable": False,
+            "used": 1,
+            "maximum": 1,
+        },
+        "output_seen": {"reasoning": False, "model": False},
+        "provider": {
+            "exception_category": "provider_request_failed",
+            "exception_code": "other",
+        },
+    }
+
+
+def test_stream_http_failure_reports_safe_status_and_category() -> None:
+    secret = "STREAM_HTTP_FAILURE_PRIVATE_SENTINEL"
+    source = _FailingAsyncEvents(
+        [],
+        InternalServerError(
+            secret,
+            response=Response(
+                503,
+                request=Request(
+                    "POST",
+                    "https://provider.invalid/responses",
+                ),
+            ),
+            body={"message": secret},
+        ),
+    )
+    items = run(
+        _consume(
+            OpenAIStream(
+                source,
+                request_has_replay_items=True,
+            )
+        )
+    )
+
+    terminal = _error_item(items)
+    provider_failure = cast(dict[str, Any], terminal.data)["provider_failure"]
+    assert provider_failure["phase"] == "stream_pull"
+    assert provider_failure["retry"] == {
+        "disposition": "retry_unavailable",
+        "retryable": True,
+        "used": 0,
+        "maximum": 0,
+    }
+    assert (
+        provider_failure["provider"]["exception_category"]
+        == "InternalServerError"
+    )
+    assert provider_failure["provider"]["status_code"] == 503
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+@pytest.mark.parametrize(
+    ("error", "category", "retryable"),
+    [
+        (TimeoutError("private timeout"), "timeout", False),
+        (ReadTimeout("private timeout"), "transport_timeout", True),
+        (
+            ConnectError("private connection"),
+            "transport_connection_error",
+            True,
+        ),
+        (
+            RemoteProtocolError("private protocol"),
+            "transport_protocol_error",
+            True,
+        ),
+        (HTTPError("private transport"), "transport_error", False),
+    ],
+)
+def test_provider_exception_category_is_bounded(
+    error: Exception,
+    category: str,
+    retryable: bool,
+) -> None:
+    assert OpenAIStream._safe_provider_exception_category(error) == category
+    assert OpenAIStream._is_retryable_provider_stream_exception(error) is (
+        retryable
+    )
+
+
+def test_transport_timeout_stream_failure_retries_privately() -> None:
+    secret = "TRANSPORT_TIMEOUT_PRIVATE_SENTINEL"
+    retry = AsyncMock(return_value=_AsyncEvents([_completed_event()]))
+    items = run(
+        _consume(
+            OpenAIStream(
+                _FailingAsyncEvents([], ReadTimeout(secret)),
+                request_has_replay_items=True,
+                stream_factory=retry,
+                stream_retries=1,
+            )
+        )
+    )
+
+    retry.assert_awaited_once_with()
+    assert any(item.kind is StreamItemKind.STREAM_COMPLETED for item in items)
+    assert not any(
+        item.kind is StreamItemKind.STREAM_ERRORED for item in items
+    )
+    assert secret not in repr([item.to_trace_dict() for item in items])
+
+
+def test_transport_timeout_retry_exhaustion_reports_safe_category() -> None:
+    secret = "TRANSPORT_TIMEOUT_EXHAUSTED_PRIVATE_SENTINEL"
+    retry = AsyncMock(return_value=_AsyncEvents([_completed_event()]))
+    items = run(
+        _consume(
+            OpenAIStream(
+                _FailingAsyncEvents([], ReadTimeout(secret)),
+                request_has_replay_items=True,
+                stream_factory=retry,
+                stream_retries=0,
+            )
+        )
+    )
+
+    retry.assert_not_awaited()
+    terminal = _error_item(items)
+    provider_failure = cast(dict[str, Any], terminal.data)["provider_failure"]
+    assert provider_failure["phase"] == "stream_pull"
+    assert provider_failure["retry"]["disposition"] == "retry_budget_exhausted"
+    assert provider_failure["retry"]["retryable"] is True
+    assert (
+        provider_failure["provider"]["exception_category"]
+        == "transport_timeout"
+    )
+    assert secret not in repr([item.to_trace_dict() for item in items])
 
 
 def test_private_replay_non_stream_errors_and_usage_are_sanitized() -> None:
@@ -4040,6 +4300,7 @@ def test_pre_output_rate_limit_response_failed_retries_privately() -> None:
         (None, "invalid_request_error"),
         ("rate_limit_exceeded", "invalid_request_error"),
         ("invalid_request_error", "server_error"),
+        ("PROVIDER_PRIVATE_CODE_SENTINEL", None),
     ],
 )
 def test_invalid_or_mixed_response_failed_does_not_retry_privately(
@@ -4080,11 +4341,29 @@ def test_invalid_or_mixed_response_failed_does_not_retry_privately(
 
     retry.assert_not_awaited()
     terminal = _error_item(items)
-    assert (
-        cast(dict[str, Any], terminal.data)["error"]["code"]
-        == "openai_provider_request_failed"
-    )
-    assert secret not in repr([item.to_trace_dict() for item in items])
+    terminal_data = cast(dict[str, Any], terminal.data)
+    assert terminal_data["error"]["code"] == "openai_provider_request_failed"
+    provider_failure = terminal_data["provider_failure"]
+    assert provider_failure["phase"] == "response_failed"
+    assert provider_failure["retry"]["disposition"] == "non_retryable"
+    assert provider_failure["retry"]["retryable"] is False
+    provider = provider_failure["provider"]
+    if response_code is None:
+        assert "response_error_code" not in provider
+    else:
+        expected_response_code = (
+            "other"
+            if response_code == "PROVIDER_PRIVATE_CODE_SENTINEL"
+            else response_code
+        )
+        assert provider["response_error_code"] == expected_response_code
+    if event_code is None:
+        assert "event_error_code" not in provider
+    else:
+        assert provider["event_error_code"] == event_code
+    outward = repr([item.to_trace_dict() for item in items])
+    assert secret not in outward
+    assert "PROVIDER_PRIVATE_CODE_SENTINEL" not in outward
 
 
 def test_invalid_request_stream_exception_is_not_retried() -> None:
@@ -4120,10 +4399,22 @@ def test_invalid_request_stream_exception_is_not_retried() -> None:
 
     retry.assert_not_awaited()
     terminal = _error_item(items)
-    assert (
-        cast(dict[str, Any], terminal.data)["error"]["code"]
-        == "openai_provider_request_failed"
-    )
+    terminal_data = cast(dict[str, Any], terminal.data)
+    assert terminal_data["error"]["code"] == "openai_provider_request_failed"
+    assert terminal_data["provider_failure"] == {
+        "phase": "stream_pull",
+        "retry": {
+            "disposition": "non_retryable",
+            "retryable": False,
+            "used": 0,
+            "maximum": 1,
+        },
+        "output_seen": {"reasoning": False, "model": False},
+        "provider": {
+            "exception_category": "openai_error",
+            "exception_code": "invalid_request_error",
+        },
+    }
     assert secret not in repr([item.to_trace_dict() for item in items])
 
 
@@ -4155,7 +4446,15 @@ def test_visible_reasoning_disables_stream_exception_retry() -> None:
 
     retry.assert_not_awaited()
     assert any(item.kind is StreamItemKind.REASONING_DELTA for item in items)
-    assert any(item.kind is StreamItemKind.STREAM_ERRORED for item in items)
+    terminal = _error_item(items)
+    provider_failure = cast(dict[str, Any], terminal.data)["provider_failure"]
+    assert provider_failure["phase"] == "stream_pull"
+    assert (
+        provider_failure["retry"]["disposition"]
+        == "blocked_after_reasoning_output"
+    )
+    assert provider_failure["retry"]["retryable"] is True
+    assert provider_failure["output_seen"]["reasoning"] is True
 
 
 def test_visible_native_or_summary_reasoning_disables_retry() -> None:
@@ -4825,6 +5124,15 @@ def test_visible_summary_disables_retry() -> None:
 
     retry.assert_not_awaited()
     assert [item.text_delta for item in _reasoning_items(items)] == ["visible"]
+    terminal = _error_item(items)
+    provider_failure = cast(dict[str, Any], terminal.data)["provider_failure"]
+    assert provider_failure["phase"] == "response_failed"
+    assert (
+        provider_failure["retry"]["disposition"]
+        == "blocked_after_reasoning_output"
+    )
+    assert provider_failure["retry"]["retryable"] is True
+    assert provider_failure["output_seen"]["reasoning"] is True
     assert [
         item.kind
         for item in items
@@ -8482,7 +8790,18 @@ def test_live_summary_terminal_and_cleanup_echoes_are_sanitized() -> None:
             "code": "openai_provider_request_failed",
             "status": "failed",
             "message": "OpenAI provider request failed",
-        }
+        },
+        "provider_failure": {
+            "phase": "response_failed",
+            "retry": {
+                "disposition": "retry_unavailable",
+                "retryable": True,
+                "used": 0,
+                "maximum": 0,
+            },
+            "output_seen": {"reasoning": True, "model": False},
+            "provider": {"event_type": "response.failed"},
+        },
     }
     assert provider_secret not in outward
     assert cleanup_secret not in outward
