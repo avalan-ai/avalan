@@ -10,8 +10,8 @@
       "path": "src/avalan/model/nlp/text/vendor/openai.py",
       "from_size": 337354,
       "from_sha256": "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5",
-      "to_size": 363588,
-      "to_sha256": "cf925379d546ac052813b724fa7307d772b8ad41019cf36bfe935708507bded3"
+      "to_size": 363543,
+      "to_sha256": "ff4cc8edfc66009e72f9a511bc3035ad4f78354b0d254290db223a71a893ae1b"
     },
     {
       "path": "tests/conversation/domain_contract_test.py",
@@ -38,5 +38,5 @@
     "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_transport_timeout_retry_exhaustion_reports_safe_category",
     "tests/model/nlp/vendor_openai_reasoning_summary_test.py::test_private_replay_adapter_failure_reports_safe_status"
   ],
-  "canonical_sha256": "9b438f5c835f622352c6c7b05f65a31991fc8e30555a187fdef9eae8b4d1e9ff"
+  "canonical_sha256": "960784a4e594b7451cc75aafc4b714747c2851778c8587a21abb4458ab33cee4"
 }

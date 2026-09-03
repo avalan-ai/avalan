@@ -155,12 +155,12 @@
     {
       "name": "coverage-json",
       "path": "coverage.json",
-      "sha256": "94d196d66803209bb272b7ad9dbeb825e945690e4dd208959dcb68f777bf3a88"
+      "sha256": "a26ff7f358409b4f099fb1cbe3c49d0904a9fd22fa4b90d09ec63050c3f49f6c"
     },
     {
       "name": "coverage-xml",
       "path": "coverage.xml",
-      "sha256": "f1a7dc636a9afea5ba97c53a610c11a2035dd2f2d4719af184cbfc0961088f26"
+      "sha256": "b96bbf2172d955d8ea7a0cb73d16cd6c8877c525f079297a388015a80d5b6113"
     }
   ],
   "changed_paths": [
@@ -260,11 +260,11 @@
     "tool": "coverage.py",
     "collected_pytest_nodes": 15603,
     "nonempty_src_files": 534,
-    "statements": 163513,
-    "covered_statements": 163513,
+    "statements": 163510,
+    "covered_statements": 163510,
     "missing_statements": 0,
-    "report_sha256": "94d196d66803209bb272b7ad9dbeb825e945690e4dd208959dcb68f777bf3a88",
-    "per_file_sha256": "ba8089f722b31e88d954d15d305526bc2b4cae05adb51a6bb9fbf0d3ba5736ef"
+    "report_sha256": "a26ff7f358409b4f099fb1cbe3c49d0904a9fd22fa4b90d09ec63050c3f49f6c",
+    "per_file_sha256": "77b38b8fb909452dc61e6dd8abe277738a6107af28f9429cab9ab7ab52c11c03"
   },
   "database_lifecycle": {
     "migration_revision": "Phase 15 owned-Docker PostgreSQL migration graph passed on macOS and Linux",
@@ -2324,5 +2324,5 @@
       "ignored_active_nodes": 0
     }
   ],
-  "record_sha256": "50f2546a6d78bb4fba50b622a7e797f4495d0df07b114c34cb538f6f09607a51"
+  "record_sha256": "4c94baa8e9b81f8468749c83509d0b3a77dc8eb804c126765e60e290e70985be"
 }

@@ -9768,6 +9768,13 @@ def test_private_provider_failure_terminal_scrubs_live_frames() -> None:
         assert frame.f_locals["provider_iterator"] is None
         assert frame.f_locals["provider_events"] == ()
         assert frame.f_locals["provider_event"] is None
+        for released in (
+            "response",
+            "response_error",
+            "event_error",
+            "adapter_failure",
+        ):
+            assert released not in frame.f_locals
         assert secret not in repr(frame.f_locals)
         assert stream._stream is None
         assert stream._stream_sources == ()
