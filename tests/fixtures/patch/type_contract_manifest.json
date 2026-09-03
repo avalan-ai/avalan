@@ -976,7 +976,7 @@
         "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS"
       ],
-      "source_sha256": "ee3d7898d0e4f1ea97e08adfd0f1172fbd9f7c540a3f3fa374f0da76d451b396"
+      "source_sha256": "3a99b7eeb676c8c2815b425497f0f5e5594242604597b0091d5d9c6a0036d1a4"
     },
     {
       "id": "PATCH-TS-053",
@@ -1104,7 +1104,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b6027960470e32987b3290c81554368c2bd284f8d189e9787fb0145ef40cd445"
+      "source_sha256": "a78455eab525ac31680fd4e9fc88de7debbd905b32c1fece8840b1c4f21dfb9e"
     },
     {
       "id": "PATCH-TS-067",
@@ -1781,7 +1781,7 @@
       "symbols": [
         "test_private_replay_server_error_create_retries_after_delay"
       ],
-      "source_sha256": "bd4a6bca4a4f2408f974eb438e1b37ea0afcab54ef5c4b6f221e071c7075e63e"
+      "source_sha256": "c7cab8c49c3878a99a74955625c0f7c2520e957a2e65ce46a5707092da9862a4"
     },
     {
       "id": "PATCH-TS-134",
@@ -1903,7 +1903,7 @@
       "symbols": [
         "_OPENAI_STREAM_RETRY_MAX_DELAY_SECONDS"
       ],
-      "source_sha256": "cf925379d546ac052813b724fa7307d772b8ad41019cf36bfe935708507bded3"
+      "source_sha256": "ff4cc8edfc66009e72f9a511bc3035ad4f78354b0d254290db223a71a893ae1b"
     },
     {
       "id": "PATCH-TS-146",
@@ -1951,5 +1951,5 @@
       "source_sha256": "fe0c6acf17c1b8df38aeaa379c1a1f380744ccb1e02e3a84e99315fc670df0e6"
     }
   ],
-  "manifest_sha256": "741b1451cb1006c8747c91e04b153e7d355f972c71f544a2aae23c0b76196cdf"
+  "manifest_sha256": "19434ad9c5cea3843311baa9fc908fd863afcd8f7f5f1a063f4cfa82f71aa034"
 }

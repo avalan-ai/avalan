@@ -3883,10 +3883,7 @@ class OpenAIStream(TextGenerationVendorStream):
         sanitized_events.clear()
         sanitized_event = None
         replacement_stream = None
-        response = None
-        response_error = None
-        event_error = None
-        adapter_failure = None
+        del response, response_error, event_error, adapter_failure
         assert terminal is not None
         try:
             terminal_event = await self._finalize_provider_terminal(terminal)

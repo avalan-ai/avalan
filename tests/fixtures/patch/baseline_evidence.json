@@ -208,6 +208,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "407581219e0f006ac8dd24ff07eb70dccff7de41a4f0bc9445a748296ecfb047",
-  "evidence_sha256": "f8e0fc0e5a3e213482b355165922eaa1400bcd4e205ba1318d78f1a3f6d2851f"
+  "contract_inventory_sha256": "302c42a583affa10748826348f598d34874e87e4f1c2895c98eed08ea821f455",
+  "evidence_sha256": "5c6badc7bb5e76d81e777f7ebeb25a914ae630ccda22c1f35bf3240cae361856"
 }
