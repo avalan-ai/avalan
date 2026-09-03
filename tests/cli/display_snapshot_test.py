@@ -5,6 +5,7 @@ from typing import Any, cast
 from unittest import TestCase
 
 from avalan.cli.display import CliStreamDisplayConfig
+from avalan.cli.display_safety import MAX_SUMMARY_CHARS
 from avalan.cli.display_snapshot import (
     CliAppendOnlyTextBuffer,
     CliBoundedHistoryBuffer,
@@ -392,6 +393,41 @@ class DisplaySnapshotBuilderTestCase(TestCase):
 
         with self.assertRaises(FrozenInstanceError):
             snapshot.answer_text = "mutated"
+
+    def test_terminal_error_summary_retains_provider_failure_details(
+        self,
+    ) -> None:
+        builder = CliStreamSnapshotBuilder(_config())
+        builder.set_terminal(
+            completed=True,
+            outcome=StreamTerminalOutcome.ERRORED,
+            error={
+                "error": {
+                    "type": "server_error",
+                    "code": "openai_provider_request_failed",
+                    "status": "failed",
+                    "message": "OpenAI provider request failed",
+                },
+                "provider_failure": {
+                    "phase": "event_adapter",
+                    "retry": {
+                        "disposition": "non_retryable",
+                        "retryable": False,
+                        "used": 0,
+                        "maximum": 24,
+                    },
+                    "output_seen": {"reasoning": False, "model": False},
+                    "provider": {"exception_category": "transport_timeout"},
+                },
+            },
+        )
+
+        summary = builder.snapshot().terminal.error_summary
+        assert summary is not None
+        self.assertIn('"phase": "event_adapter"', summary)
+        self.assertIn('"disposition": "non_retryable"', summary)
+        self.assertIn('"exception_category": "transport_timeout"', summary)
+        self.assertLessEqual(len(summary), MAX_SUMMARY_CHARS * 2)
 
     def test_nested_snapshot_objects_are_immutable(self) -> None:
         builder = CliStreamSnapshotBuilder(

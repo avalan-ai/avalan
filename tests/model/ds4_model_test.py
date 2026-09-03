@@ -3704,7 +3704,8 @@ def test_ds4_stream_cancellation_invalidates_session(
         assert await asyncio.to_thread(fake.argmax_block_started.wait, 1.0)
         task.cancel()
         fake.argmax_release.set()
-        await task
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
         assert await asyncio.to_thread(fake.invalidate_event.wait, 1.0)
         second_response = await model(
@@ -3722,9 +3723,7 @@ def test_ds4_stream_cancellation_invalidates_session(
     items, second_items, fake = run(run_case())
 
     assert _answer_deltas(items) == ["A"]
-    terminal = _terminal_item(items)
-    assert terminal.kind is StreamItemKind.STREAM_CANCELLED
-    assert terminal.terminal_outcome is StreamTerminalOutcome.CANCELLED
+    assert all(item.terminal_outcome is None for item in items)
     assert fake.sessions[0].invalidate_calls == 1
     assert len(fake.sessions) == 2
     _assert_closed_success(second_items)
@@ -3770,7 +3769,8 @@ def test_ds4_stream_cancellation_restores_snapshot_when_available(
         assert await asyncio.to_thread(fake.argmax_block_started.wait, 1.0)
         task.cancel()
         fake.argmax_release.set()
-        await task
+        with pytest.raises(asyncio.CancelledError):
+            await task
 
         assert await asyncio.to_thread(fake.snapshot_loaded_event.wait, 1.0)
         model.close()
@@ -3779,9 +3779,7 @@ def test_ds4_stream_cancellation_restores_snapshot_when_available(
     items, fake = run(run_case())
 
     assert _answer_deltas(items) == ["A"]
-    terminal = _terminal_item(items)
-    assert terminal.kind is StreamItemKind.STREAM_CANCELLED
-    assert terminal.terminal_outcome is StreamTerminalOutcome.CANCELLED
+    assert all(item.terminal_outcome is None for item in items)
     assert fake.sessions[0].save_snapshot_calls == 1
     assert fake.sessions[0].load_snapshot_calls == 1
     assert fake.sessions[0].invalidate_calls == 0

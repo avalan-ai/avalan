@@ -8411,6 +8411,46 @@ class StreamContractTestCase(TestCase):
             StreamTerminalOutcome.CANCELLED,
         )
 
+    def test_provider_stream_normalizer_propagates_external_task_cancellation(
+        self,
+    ) -> None:
+        class PendingEvents:
+            def __init__(self) -> None:
+                self.started = AsyncEvent()
+                self.closed = False
+
+            def __aiter__(self) -> "PendingEvents":
+                return self
+
+            async def __anext__(self) -> StreamProviderEvent:
+                self.started.set()
+                await AsyncEvent().wait()
+                raise AssertionError("unreachable")
+
+            async def aclose(self) -> None:
+                self.closed = True
+
+        async def cancel_consumer() -> PendingEvents:
+            events = PendingEvents()
+            stream = normalize_provider_stream(
+                events,
+                stream_session_id="provider-stream",
+                run_id="provider-run",
+                turn_id="provider-turn",
+            )
+            started = await stream.__anext__()
+            self.assertIs(started.kind, StreamItemKind.STREAM_STARTED)
+            pull = create_task(stream.__anext__())
+            await wait_for(events.started.wait(), STREAM_TEST_TIMEOUT)
+            pull.cancel()
+            with self.assertRaises(CancelledError):
+                await wait_for(pull, STREAM_TEST_TIMEOUT)
+            return events
+
+        events = run(cancel_consumer())
+
+        self.assertTrue(events.closed)
+
     def test_provider_stream_normalizer_maps_provider_cancel_event(
         self,
     ) -> None:

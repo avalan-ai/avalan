@@ -217,7 +217,11 @@ class _OpenAIProviderRequestError(RuntimeError):
 
     code = "openai_provider_request_failed"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        provider_failure: dict[str, object] | None = None,
+    ) -> None:
+        self.provider_failure = provider_failure
         super().__init__("OpenAI provider request failed")
 
 
@@ -2913,6 +2917,41 @@ class OpenAIStream(TextGenerationVendorStream):
             "RateLimitError",
         }
     )
+    _SAFE_PROVIDER_ERROR_CODES = frozenset(
+        {
+            "content_filter",
+            "context_length_exceeded",
+            "insufficient_quota",
+            "invalid_request_error",
+            "rate_limit_exceeded",
+            "response_failed",
+            "server_error",
+        }
+    )
+    _SAFE_TRANSPORT_CONNECTION_ERROR_TYPES = frozenset(
+        {
+            "ConnectError",
+            "NetworkError",
+            "ReadError",
+            "WriteError",
+        }
+    )
+    _SAFE_TRANSPORT_PROTOCOL_ERROR_TYPES = frozenset(
+        {
+            "LocalProtocolError",
+            "ProtocolError",
+            "RemoteProtocolError",
+        }
+    )
+    _SAFE_TRANSPORT_TIMEOUT_ERROR_TYPES = frozenset(
+        {
+            "ConnectTimeout",
+            "PoolTimeout",
+            "ReadTimeout",
+            "TimeoutException",
+            "WriteTimeout",
+        }
+    )
     _INCOMPLETE_EVENTS = {"response.incomplete"}
     _INCOMPLETE_REASONS = {"content_filter", "max_output_tokens"}
     _stream: AsyncIterator[Any] | None
@@ -2954,6 +2993,7 @@ class OpenAIStream(TextGenerationVendorStream):
     _provider_finish_error: BaseException | None
     _provider_silent_closed: bool
     _external_finish_lock: Lock
+    _provider_failure_observability: dict[str, object] | None
 
     def __init__(
         self,
@@ -3034,6 +3074,7 @@ class OpenAIStream(TextGenerationVendorStream):
         self._provider_finish_error = None
         self._provider_silent_closed = False
         self._external_finish_lock = Lock()
+        self._provider_failure_observability = None
 
         async def generator() -> AsyncIterator[CanonicalStreamItem]:
             canonical = self.canonical_stream(
@@ -3228,7 +3269,7 @@ class OpenAIStream(TextGenerationVendorStream):
         if isinstance(error, _ReplayOwnerAssociationError):
             return _ReplayOwnerAssociationError()
         if isinstance(error, _OpenAIProviderRequestError):
-            return _OpenAIProviderRequestError()
+            return _OpenAIProviderRequestError(error.provider_failure)
         if isinstance(error, _OpenAICleanupError):
             return _OpenAICleanupError(error.cleanup_target)
         return _OpenAICleanupError("stream")
@@ -3316,6 +3357,10 @@ class OpenAIStream(TextGenerationVendorStream):
         sanitized_events: list[StreamProviderEvent] = []
         sanitized_event: StreamProviderEvent | None = None
         replacement_stream: AsyncIterator[Any] | None = None
+        response: object | None = None
+        response_error: object | None = None
+        event_error: object | None = None
+        adapter_failure: dict[str, object] | None = None
         try:
             try:
                 reasoning_output_seen = False
@@ -3346,16 +3391,50 @@ class OpenAIStream(TextGenerationVendorStream):
                         except StopAsyncIteration:
                             break
                         except Exception as error:
-                            if self._should_retry_provider_stream_exception(
-                                error,
-                                non_reasoning_output_seen=(
-                                    non_reasoning_output_seen
-                                ),
-                                reasoning_output_seen=reasoning_output_seen,
-                            ):
+                            retryable_stream_exception = (
+                                self._is_retryable_provider_stream_exception(
+                                    error
+                                )
+                            )
+                            retry_stream_exception = (
+                                self._should_retry_provider_stream_exception(
+                                    error,
+                                    non_reasoning_output_seen=(
+                                        non_reasoning_output_seen
+                                    ),
+                                    reasoning_output_seen=(
+                                        reasoning_output_seen
+                                    ),
+                                )
+                            )
+                            self._provider_failure_observability = (
+                                self._provider_failure_details(
+                                    self._stream_retry_controller,
+                                    phase="stream_pull",
+                                    retry_scheduled=retry_stream_exception,
+                                    retryable=retryable_stream_exception,
+                                    retry_available=(
+                                        self._stream_factory is not None
+                                    ),
+                                    model_output_seen=(
+                                        non_reasoning_output_seen
+                                    ),
+                                    reasoning_output_seen=(
+                                        reasoning_output_seen
+                                    ),
+                                    exception=error,
+                                )
+                            )
+                            if retry_stream_exception:
+                                provider_failure = (
+                                    self._provider_failure_observability
+                                )
+                                assert provider_failure is not None
                                 provider_events = (
                                     (
-                                        self._private_replay_provider_failure_event()
+                                        self._private_replay_provider_failure_event(
+                                            provider_failure=provider_failure
+                                        )
                                         if (
                                             self._request_has_replay_items
                                             or self._private_output_seen
@@ -3371,6 +3450,7 @@ class OpenAIStream(TextGenerationVendorStream):
                         self._raise_if_provider_interrupted()
                         provider_event_type: str | None = None
                         retryable_capability_failure = False
+                        adapter_failure = None
                         try:
                             provider_events = self._provider_events_from_event(
                                 event
@@ -3421,6 +3501,23 @@ class OpenAIStream(TextGenerationVendorStream):
                                         self._has_buffered_task_input_arguments()
                                     )
                                 )
+                                adapter_failure = {
+                                    "exception_category": (
+                                        self._safe_provider_exception_category(
+                                            exc
+                                        )
+                                    ),
+                                    "exception_code": (
+                                        self._safe_provider_error_code(exc)
+                                    ),
+                                }
+                                status_code = self._safe_provider_status_code(
+                                    exc
+                                )
+                                if status_code is not None:
+                                    adapter_failure["status_code"] = (
+                                        status_code
+                                    )
                                 provider_events = (
                                     self._private_replay_provider_failure_event(),
                                 )
@@ -3459,17 +3556,143 @@ class OpenAIStream(TextGenerationVendorStream):
                                     continue
                                 sanitized_events.append(sanitized_event)
                             provider_events = tuple(sanitized_events)
-                        if self._should_retry_stream_failure(
-                            event,
-                            provider_events,
-                            non_reasoning_output_seen=(
-                                non_reasoning_output_seen
-                            ),
-                            reasoning_output_seen=reasoning_output_seen,
-                            retryable_capability_failure=(
-                                retryable_capability_failure
-                            ),
+                        retry_stream_failure = (
+                            self._should_retry_stream_failure(
+                                event,
+                                provider_events,
+                                non_reasoning_output_seen=(
+                                    non_reasoning_output_seen
+                                ),
+                                reasoning_output_seen=reasoning_output_seen,
+                                retryable_capability_failure=(
+                                    retryable_capability_failure
+                                ),
+                            )
+                        )
+                        response_failed = any(
+                            provider_event.provider_event_type
+                            == "response.failed"
+                            for provider_event in provider_events
+                        )
+                        if response_failed and any(
+                            provider_event.kind
+                            is StreamItemKind.STREAM_ERRORED
+                            for provider_event in provider_events
                         ):
+                            response = OpenAIClient._response_field(
+                                event,
+                                "response",
+                            )
+                            response_error = OpenAIClient._response_field(
+                                response,
+                                "error",
+                            )
+                            event_error = OpenAIClient._response_field(
+                                event,
+                                "error",
+                            )
+                            retryable_response_failure = (
+                                self._is_retryable_response_failed_error_pair(
+                                    response_error,
+                                    event_error,
+                                )
+                            )
+                            model_output_blocks_retry = (
+                                non_reasoning_output_seen
+                                or any(
+                                    self._is_retry_blocking_output_event(
+                                        provider_event
+                                    )
+                                    for provider_event in provider_events
+                                )
+                            )
+                            reasoning_output_blocks_retry = (
+                                reasoning_output_seen
+                                or any(
+                                    provider_event.kind
+                                    is StreamItemKind.REASONING_DELTA
+                                    for provider_event in provider_events
+                                )
+                            )
+                            provider_failure = self._provider_failure_details(
+                                self._stream_retry_controller,
+                                phase="response_failed",
+                                retry_scheduled=retry_stream_failure,
+                                retryable=retryable_response_failure,
+                                retry_available=(
+                                    self._stream_factory is not None
+                                ),
+                                model_output_seen=(model_output_blocks_retry),
+                                reasoning_output_seen=(
+                                    reasoning_output_blocks_retry
+                                ),
+                                provider_event_type="response.failed",
+                                response_error=response_error,
+                                event_error=event_error,
+                            )
+                            self._provider_failure_observability = (
+                                provider_failure
+                            )
+                            if (
+                                self._request_has_replay_items
+                                or self._private_output_seen
+                            ):
+                                provider_events = tuple(
+                                    self._with_provider_failure_details(
+                                        provider_event,
+                                        provider_failure,
+                                    )
+                                    for provider_event in provider_events
+                                )
+                        elif adapter_failure is not None:
+                            model_output_blocks_retry = (
+                                non_reasoning_output_seen
+                                or any(
+                                    self._is_retry_blocking_output_event(
+                                        provider_event
+                                    )
+                                    for provider_event in provider_events
+                                )
+                            )
+                            reasoning_output_blocks_retry = (
+                                reasoning_output_seen
+                                or any(
+                                    provider_event.kind
+                                    is StreamItemKind.REASONING_DELTA
+                                    for provider_event in provider_events
+                                )
+                            )
+                            provider_failure = self._provider_failure_details(
+                                self._stream_retry_controller,
+                                phase="event_adapter",
+                                retry_scheduled=retry_stream_failure,
+                                retryable=retryable_capability_failure,
+                                retry_available=(
+                                    self._stream_factory is not None
+                                ),
+                                model_output_seen=(model_output_blocks_retry),
+                                reasoning_output_seen=(
+                                    reasoning_output_blocks_retry
+                                ),
+                                provider_event_type=provider_event_type,
+                            )
+                            provider_details = provider_failure.setdefault(
+                                "provider",
+                                {},
+                            )
+                            assert isinstance(provider_details, dict)
+                            provider_details.update(adapter_failure)
+                            self._provider_failure_observability = (
+                                provider_failure
+                            )
+                            provider_events = tuple(
+                                self._with_provider_failure_details(
+                                    provider_event,
+                                    provider_failure,
+                                )
+                                for provider_event in provider_events
+                            )
+                        if retry_stream_failure:
                             retry = True
                             break
                         for provider_event in provider_events:
@@ -3561,15 +3784,46 @@ class OpenAIStream(TextGenerationVendorStream):
                     if delay > 0:
                         await self._run_provider_operation(sleep(delay))
                     await self._raise_if_retry_interrupted()
-                    replacement_stream = cast(
-                        AsyncIterator[Any],
-                        await self._run_provider_operation(
-                            self._stream_factory()
-                        ),
-                    )
+                    try:
+                        replacement_stream = cast(
+                            AsyncIterator[Any],
+                            await self._run_provider_operation(
+                                self._stream_factory()
+                            ),
+                        )
+                    except Exception as error:
+                        if (
+                            isinstance(error, _OpenAIProviderRequestError)
+                            and error.provider_failure is not None
+                        ):
+                            self._provider_failure_observability = dict(
+                                error.provider_failure
+                            )
+                        else:
+                            retryable_error = (
+                                self._is_retryable_provider_stream_exception(
+                                    error
+                                )
+                            )
+                            self._provider_failure_observability = (
+                                self._provider_failure_details(
+                                    self._stream_retry_controller,
+                                    phase="request_open",
+                                    retry_scheduled=False,
+                                    retryable=retryable_error,
+                                    retry_available=True,
+                                    model_output_seen=False,
+                                    reasoning_output_seen=(
+                                        reasoning_output_seen
+                                    ),
+                                    exception=error,
+                                )
+                            )
+                        raise
                     await self._raise_if_retry_interrupted(replacement_stream)
                     self._stream = replacement_stream
                     self._stream_sources = (self._stream,)
+                    self._provider_failure_observability = None
                     event = None
                     provider_iterator = None
                     provider_event = None
@@ -3592,7 +3846,11 @@ class OpenAIStream(TextGenerationVendorStream):
                     )
                 else:
                     terminal = _OpenAIProviderTerminal(
-                        event=self._private_replay_provider_failure_event(),
+                        event=self._private_replay_provider_failure_event(
+                            provider_failure=(
+                                self._provider_failure_observability
+                            )
+                        ),
                         succeeded=False,
                         include_cleanup_diagnostic=True,
                     )
@@ -3625,6 +3883,10 @@ class OpenAIStream(TextGenerationVendorStream):
         sanitized_events.clear()
         sanitized_event = None
         replacement_stream = None
+        response = None
+        response_error = None
+        event_error = None
+        adapter_failure = None
         assert terminal is not None
         try:
             terminal_event = await self._finalize_provider_terminal(terminal)
@@ -3747,7 +4009,8 @@ class OpenAIStream(TextGenerationVendorStream):
                 succeeded = False
             elif cleanup_failed and outcome.include_cleanup_diagnostic:
                 event = self._private_replay_provider_failure_event(
-                    cleanup_failed=True
+                    cleanup_failed=True,
+                    provider_failure=self._provider_failure_observability,
                 )
 
             if succeeded:
@@ -3875,6 +4138,176 @@ class OpenAIStream(TextGenerationVendorStream):
             },
         )
 
+    @classmethod
+    def _safe_provider_error_code(cls, error: object) -> str:
+        """Return a bounded provider error-code category."""
+        assert error is not None
+        code = OpenAIClient._response_field(error, "code")
+        if type(code) is str and code in cls._SAFE_PROVIDER_ERROR_CODES:
+            return code
+        return "other"
+
+    @classmethod
+    def _safe_provider_exception_category(cls, error: Exception) -> str:
+        """Return a bounded provider exception category."""
+        if isinstance(error, _OpenAIProviderRequestError):
+            return "provider_request_failed"
+        error_type = type(error)
+        module_root = error_type.__module__.split(".", maxsplit=1)[0]
+        if isinstance(error, TimeoutError):
+            return "timeout"
+        if module_root in {"httpcore", "httpx"}:
+            if error_type.__name__ in cls._SAFE_TRANSPORT_TIMEOUT_ERROR_TYPES:
+                return "transport_timeout"
+            if (
+                error_type.__name__
+                in cls._SAFE_TRANSPORT_CONNECTION_ERROR_TYPES
+            ):
+                return "transport_connection_error"
+            if error_type.__name__ in cls._SAFE_TRANSPORT_PROTOCOL_ERROR_TYPES:
+                return "transport_protocol_error"
+            return "transport_error"
+        if module_root != "openai":
+            return "other"
+        if error_type.__name__ in cls._RETRYABLE_STREAM_ERROR_TYPES:
+            return error_type.__name__
+        return "openai_error"
+
+    @staticmethod
+    def _safe_provider_status_code(error: Exception) -> int | None:
+        """Return a bounded HTTP status code when one is available."""
+        status_code = getattr(error, "status_code", None)
+        if type(status_code) is int and 100 <= status_code <= 599:
+            return status_code
+        return None
+
+    @classmethod
+    def _safe_provider_event_type(cls, event_type: str | None) -> str | None:
+        """Return an allowlisted provider event type."""
+        if event_type in {
+            *cls._ERROR_EVENTS,
+            *cls._INCOMPLETE_EVENTS,
+            *cls._TEXT_DELTA_EVENTS,
+            *cls._TEXT_DONE_EVENTS,
+            *cls._REASONING_DELTA_EVENTS,
+            *cls._REASONING_DONE_EVENTS,
+            *cls._REASONING_SUMMARY_EVENTS,
+            *cls._TOOL_ARGUMENT_DELTA_EVENTS,
+            *cls._TOOL_ARGUMENT_DONE_EVENTS,
+            "response.completed",
+            "response.output_item.added",
+            "response.output_item.done",
+        }:
+            return event_type
+        return None
+
+    @staticmethod
+    def _retry_disposition(
+        controller: ProviderRetryController,
+        *,
+        retry_scheduled: bool,
+        retryable: bool,
+        retry_available: bool,
+        model_output_seen: bool,
+        reasoning_output_seen: bool,
+    ) -> str:
+        """Return the bounded reason a provider retry did or did not run."""
+        if retry_scheduled:
+            return "retry_scheduled"
+        if not retry_available:
+            return "retry_unavailable"
+        if model_output_seen:
+            return "blocked_after_model_output"
+        if reasoning_output_seen:
+            return "blocked_after_reasoning_output"
+        if not retryable:
+            return "non_retryable"
+        assert (
+            not controller.can_retry()
+        ), "retryable provider failure must schedule a retry"
+        return "retry_budget_exhausted"
+
+    @classmethod
+    def _provider_failure_details(
+        cls,
+        controller: ProviderRetryController,
+        *,
+        phase: str,
+        retry_scheduled: bool,
+        retryable: bool,
+        retry_available: bool,
+        model_output_seen: bool,
+        reasoning_output_seen: bool,
+        provider_event_type: str | None = None,
+        response_error: object = None,
+        event_error: object = None,
+        exception: Exception | None = None,
+    ) -> dict[str, object]:
+        """Return content-free provider failure observability."""
+        budget = controller.budget
+        retry_details: dict[str, object] = {
+            "disposition": cls._retry_disposition(
+                controller,
+                retry_scheduled=retry_scheduled,
+                retryable=retryable,
+                retry_available=retry_available,
+                model_output_seen=model_output_seen,
+                reasoning_output_seen=reasoning_output_seen,
+            ),
+            "retryable": retryable,
+            "used": budget.retries_used,
+            "maximum": budget.maximum_retries,
+        }
+        details: dict[str, object] = {
+            "phase": phase,
+            "retry": retry_details,
+            "output_seen": {
+                "reasoning": reasoning_output_seen,
+                "model": model_output_seen,
+            },
+        }
+        provider_details: dict[str, object] = {}
+        safe_event_type = cls._safe_provider_event_type(provider_event_type)
+        if safe_event_type is not None:
+            provider_details["event_type"] = safe_event_type
+        if response_error is not None:
+            provider_details["response_error_code"] = (
+                cls._safe_provider_error_code(response_error)
+            )
+        if event_error is not None:
+            provider_details["event_error_code"] = (
+                cls._safe_provider_error_code(event_error)
+            )
+        if exception is not None:
+            provider_details["exception_category"] = (
+                cls._safe_provider_exception_category(exception)
+            )
+            status_code = cls._safe_provider_status_code(exception)
+            if status_code is not None:
+                provider_details["status_code"] = status_code
+            provider_details["exception_code"] = cls._safe_provider_error_code(
+                exception
+            )
+        if provider_details:
+            details["provider"] = provider_details
+        return details
+
+    @staticmethod
+    def _with_provider_failure_details(
+        event: StreamProviderEvent,
+        details: dict[str, object],
+    ) -> StreamProviderEvent:
+        """Attach safe failure details to a sanitized terminal event."""
+        assert event.kind is StreamItemKind.STREAM_ERRORED
+        data = event.data if isinstance(event.data, dict) else {}
+        return replace(
+            event,
+            data=cast(
+                LooseJsonValue,
+                {**data, "provider_failure": dict(details)},
+            ),
+        )
+
     def _should_retry_stream_failure(
         self,
         event: object,
@@ -3946,7 +4379,14 @@ class OpenAIStream(TextGenerationVendorStream):
     ) -> bool:
         """Return whether an exception is a trusted transient OpenAI error."""
         error_type = type(error)
-        if error_type.__module__.split(".", maxsplit=1)[0] != "openai":
+        module_root = error_type.__module__.split(".", maxsplit=1)[0]
+        if module_root in {"httpcore", "httpx"}:
+            return error_type.__name__ in {
+                *cls._SAFE_TRANSPORT_CONNECTION_ERROR_TYPES,
+                *cls._SAFE_TRANSPORT_PROTOCOL_ERROR_TYPES,
+                *cls._SAFE_TRANSPORT_TIMEOUT_ERROR_TYPES,
+            }
+        if module_root != "openai":
             return False
         code = getattr(error, "code", None)
         if type(code) is str and code in cls._RETRYABLE_STREAM_ERROR_CODES:
@@ -4133,6 +4573,7 @@ class OpenAIStream(TextGenerationVendorStream):
     def _private_replay_provider_failure_event(
         *,
         cleanup_failed: bool = False,
+        provider_failure: dict[str, object] | None = None,
     ) -> StreamProviderEvent:
         data: dict[str, object] = {
             "error": {
@@ -4142,6 +4583,8 @@ class OpenAIStream(TextGenerationVendorStream):
                 "message": "OpenAI provider request failed",
             }
         }
+        if provider_failure is not None:
+            data["provider_failure"] = dict(provider_failure)
         if cleanup_failed:
             data["cleanup_error"] = {
                 "type": "server_error",
@@ -4170,24 +4613,8 @@ class OpenAIStream(TextGenerationVendorStream):
             data = OpenAIStream._private_replay_provider_failure_event().data
         else:
             data = event.data
-        safe_event_type = (
+        safe_event_type = OpenAIStream._safe_provider_event_type(
             event.provider_event_type
-            if event.provider_event_type
-            in {
-                *OpenAIStream._ERROR_EVENTS,
-                *OpenAIStream._INCOMPLETE_EVENTS,
-                *OpenAIStream._TEXT_DELTA_EVENTS,
-                *OpenAIStream._TEXT_DONE_EVENTS,
-                *OpenAIStream._REASONING_DELTA_EVENTS,
-                *OpenAIStream._REASONING_DONE_EVENTS,
-                *OpenAIStream._REASONING_SUMMARY_EVENTS,
-                *OpenAIStream._TOOL_ARGUMENT_DELTA_EVENTS,
-                *OpenAIStream._TOOL_ARGUMENT_DONE_EVENTS,
-                "response.completed",
-                "response.output_item.added",
-                "response.output_item.done",
-            }
-            else None
         )
         return StreamProviderEvent(
             kind=event.kind,
@@ -7173,6 +7600,7 @@ class OpenAIClient(TextGenerationVendor):
                 self._raise_if_closed()
                 provider_request_failed = False
                 provider_request_cancelled = False
+                provider_failure: dict[str, object] | None = None
                 created_response: Any = None
                 while True:
                     attempt_kwargs = _strict_replay_json_copy(request_kwargs)
@@ -7200,6 +7628,18 @@ class OpenAIClient(TextGenerationVendor):
                             or not stream_retry_controller.can_retry()
                             or not retryable_error
                         ):
+                            provider_failure = (
+                                OpenAIStream._provider_failure_details(
+                                    stream_retry_controller,
+                                    phase="request_open",
+                                    retry_scheduled=False,
+                                    retryable=retryable_error,
+                                    retry_available=use_async_generator,
+                                    model_output_seen=False,
+                                    reasoning_output_seen=False,
+                                    exception=error,
+                                )
+                            )
                             provider_request_failed = True
                             break
                         delay = (
@@ -7211,7 +7651,9 @@ class OpenAIClient(TextGenerationVendor):
                         continue
                     break
                 if provider_request_failed:
-                    raise _OpenAIProviderRequestError() from None
+                    raise _OpenAIProviderRequestError(
+                        provider_failure
+                    ) from None
                 if provider_request_cancelled:
                     raise CancelledError() from None
                 if getattr(self, "_closed", False):

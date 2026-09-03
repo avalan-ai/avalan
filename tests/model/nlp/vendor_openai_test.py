@@ -4508,16 +4508,36 @@ class OpenAITestCase(IsolatedAsyncioTestCase):
                 }:
                     self.assertIsNone(items[1].provider_payload)
                     self.assertEqual(
-                        error_data,
+                        error_data["error"],
                         {
-                            "error": {
-                                "type": "server_error",
-                                "code": "openai_provider_request_failed",
-                                "status": "failed",
-                                "message": "OpenAI provider request failed",
-                            }
+                            "type": "server_error",
+                            "code": "openai_provider_request_failed",
+                            "status": "failed",
+                            "message": "OpenAI provider request failed",
                         },
                     )
+                    provider_failure = error_data["provider_failure"]
+                    assert isinstance(provider_failure, dict)
+                    self.assertEqual(
+                        provider_failure["phase"], "event_adapter"
+                    )
+                    self.assertEqual(
+                        provider_failure["retry"],
+                        {
+                            "disposition": "retry_unavailable",
+                            "retryable": False,
+                            "used": 0,
+                            "maximum": 0,
+                        },
+                    )
+                    self.assertEqual(
+                        provider_failure["output_seen"],
+                        {"reasoning": False, "model": False},
+                    )
+                    provider = provider_failure["provider"]
+                    assert isinstance(provider, dict)
+                    self.assertEqual(provider["exception_category"], "other")
+                    self.assertEqual(provider["exception_code"], "other")
                 elif message == "item id":
                     error = error_data["error"]
                     assert isinstance(error, dict)

@@ -575,7 +575,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6007a495e10d46bd0495995ee6c45a3de0fd24073f5dccaa9e469321db4cbb42"
+      "source_sha256": "878a2134c07ae0e2daa5587243c1c1a9f247cc4346d9ed466d99522190ab9b5b"
     },
     {
       "id": "PATCH-TS-009",
@@ -976,7 +976,7 @@
         "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS"
       ],
-      "source_sha256": "3da78d35c11864c9ebc1199f8e4a12a124aecf2ddad288727b174c1eb702aaf4"
+      "source_sha256": "ee3d7898d0e4f1ea97e08adfd0f1172fbd9f7c540a3f3fa374f0da76d451b396"
     },
     {
       "id": "PATCH-TS-053",
@@ -1104,7 +1104,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "662ab22d3b62fd1add7e743bb6224a995c6f17bc582fcfddee25a6d929e047ed"
+      "source_sha256": "b6027960470e32987b3290c81554368c2bd284f8d189e9787fb0145ef40cd445"
     },
     {
       "id": "PATCH-TS-067",
@@ -1781,7 +1781,7 @@
       "symbols": [
         "test_private_replay_server_error_create_retries_after_delay"
       ],
-      "source_sha256": "0e40bc460c00d8c663e2c8fab2ceda103f17e984ff2ca300e34ff8d10bc9b0d2"
+      "source_sha256": "bd4a6bca4a4f2408f974eb438e1b37ea0afcab54ef5c4b6f221e071c7075e63e"
     },
     {
       "id": "PATCH-TS-134",
@@ -1817,7 +1817,7 @@
       "symbols": [
         "test_ds4_prompt_messages_reject_tool_result_images"
       ],
-      "source_sha256": "a77a3f8ce79ff47603b17452f8a8daf9bc008c9da8f9a89560fdf7ac18378514"
+      "source_sha256": "0515477a5de63586518be79eef5080131f7a2a4d648a848f0df2f46d6cfe0fb1"
     },
     {
       "id": "PATCH-TS-138",
@@ -1874,7 +1874,82 @@
         "test_typed_tool_content_rejects_invalid_text_and_image_blocks"
       ],
       "source_sha256": "bbf207058147b305eb6a3922de1873eb84d95fb2df8b3805453fe19db0c0332e"
+    },
+    {
+      "id": "PATCH-TS-143",
+      "path": "src/avalan/cli/display_snapshot.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_TERMINAL_ERROR_SUMMARY_LIMIT"
+      ],
+      "source_sha256": "cef8b7543245832c1e7d26c297a2e2b5ebbb9c5a897f422c9f45458ad5ef9b6f"
+    },
+    {
+      "id": "PATCH-TS-144",
+      "path": "src/avalan/cli/theme/basic.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT",
+        "_basic_terminal_error_entry",
+        "_basic_summary",
+        "_basic_markup_summary"
+      ],
+      "source_sha256": "4457652854c96b7cf07e85fe819d0485b6e716bda7374df6bad1063edb0a35f8"
+    },
+    {
+      "id": "PATCH-TS-145",
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_OPENAI_STREAM_RETRY_MAX_DELAY_SECONDS"
+      ],
+      "source_sha256": "cf925379d546ac052813b724fa7307d772b8ad41019cf36bfe935708507bded3"
+    },
+    {
+      "id": "PATCH-TS-146",
+      "path": "src/avalan/model/stream.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "normalize_provider_stream"
+      ],
+      "source_sha256": "c1ba17b3e881af37d6ef4b15d1b631b74ed6f5f46c33953e4e20e3c8acba8c35"
+    },
+    {
+      "id": "PATCH-TS-147",
+      "path": "tests/cli/display_snapshot_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_config"
+      ],
+      "source_sha256": "7eb69cc963c2c4e7ff92f3da4073e0162126825655be5c07632b1aa593fe83fb"
+    },
+    {
+      "id": "PATCH-TS-148",
+      "path": "tests/cli/theme_basic_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_render_text"
+      ],
+      "source_sha256": "2fbffc6c3dfe1718772b57f948a11af775df920d5de27502a06d6c9b470891f3"
+    },
+    {
+      "id": "PATCH-TS-149",
+      "path": "tests/model/model_stream_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_stream_completed"
+      ],
+      "source_sha256": "8be49a7b78fb62080c4b230b77f60e33b8dfd30eb2582c847e0ad0ad05914d83"
+    },
+    {
+      "id": "PATCH-TS-150",
+      "path": "tests/model/nlp/vendor_openai_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_sanitized_policy_catalog"
+      ],
+      "source_sha256": "fe0c6acf17c1b8df38aeaa379c1a1f380744ccb1e02e3a84e99315fc670df0e6"
     }
   ],
-  "manifest_sha256": "6a648e568b368d148766a051e69d677c96a7a1a745aa78b8e097ca01d493881f"
+  "manifest_sha256": "741b1451cb1006c8747c91e04b153e7d355f972c71f544a2aae23c0b76196cdf"
 }

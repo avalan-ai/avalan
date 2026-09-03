@@ -12,7 +12,7 @@ from ..types import LooseJsonValue
 from .provider import ProviderFamily, provider_family_value
 
 from abc import ABC, abstractmethod
-from asyncio import CancelledError
+from asyncio import CancelledError, current_task
 from collections import deque
 from collections.abc import AsyncIterable, Awaitable, Iterable, Mapping
 from dataclasses import dataclass, field, replace
@@ -3762,6 +3762,9 @@ async def normalize_provider_stream(
         return
     except CancelledError:
         await close_provider_stream()
+        task = current_task()
+        if task is not None and task.cancelling():
+            raise
         for item in normalizer.cancelled():
             yield item
     except StreamValidationError as exc:

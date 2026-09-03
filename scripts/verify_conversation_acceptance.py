@@ -468,12 +468,12 @@ _PHASE13_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase13.json"
 )
 _PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
-    "e06679f66afabf34a5ec3426c029098161837eaf30c05d33a938aa0221b9427c"
+    "9b438f5c835f622352c6c7b05f65a31991fc8e30555a187fdef9eae8b4d1e9ff"
 )
 _PHASE13_PROVIDER_TARGET_BYTE_ANCHORS = {
     "src/avalan/model/nlp/text/vendor/openai.py": (
-        343_742,
-        "fef2ebf4158a15d25f2e254abe196b104abb3a469d19c2e7d23843fdf81d0751",
+        363_588,
+        "cf925379d546ac052813b724fa7307d772b8ad41019cf36bfe935708507bded3",
     ),
     "tests/conversation/domain_contract_test.py": (
         161_490,
@@ -507,6 +507,18 @@ _PHASE13_PROVIDER_EVIDENCE_NODES = (
         "tests/model/nlp/vendor_openai_test.py::"
         "OpenAIAdditionalCoverageTestCase::"
         "test_repeated_tool_image_calls_keep_call_association"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_reasoning_summary_test.py::"
+        "test_transport_timeout_stream_failure_retries_privately"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_reasoning_summary_test.py::"
+        "test_transport_timeout_retry_exhaustion_reports_safe_category"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_reasoning_summary_test.py::"
+        "test_private_replay_adapter_failure_reports_safe_status"
     ),
 )
 _PHASE12_TRACEABILITY_CANDIDATE_PATH = (
@@ -4155,7 +4167,7 @@ def _phase13_provider_transitions(
         or payload.get("phase") != 13
         or payload.get("kind") != "reviewed_provider_source_transition"
         or payload.get("reviewed_by")
-        != "phase13-provider-retry-and-tool-image-review"
+        != "phase13-provider-retry-tool-image-and-transport-review"
     ):
         raise ConversationAcceptanceError(
             "Phase 13 provider transition header is invalid"

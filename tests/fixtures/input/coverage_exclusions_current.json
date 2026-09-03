@@ -585,8 +585,8 @@
       57
     ],
     "src/avalan/cli/theme/basic.py": [
-      65,
-      66
+      66,
+      67
     ],
     "src/avalan/cli/theme/fancy.py": [
       116,
@@ -2843,5 +2843,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "dff96b8e799dac74cbdfb0b62e3b2712b37cdfefb53266053621f99e134a24af"
+  "snapshot_sha256": "7cab93228e88fbe37ece608030c5f26b629ce822626990d51038907789e726d7"
 }

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "dff96b8e799dac74cbdfb0b62e3b2712b37cdfefb53266053621f99e134a24af",
+  "current_snapshot_sha256": "7cab93228e88fbe37ece608030c5f26b629ce822626990d51038907789e726d7",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "aa76dd7d71a97e0d8efc3d1d515b81340569f1b42bfbfe0ec3b896dd726eaac4"
   },
   "report_lines": {
-    "added": 1344,
-    "removed": 295,
-    "sha256": "90a7b70fb14bdcc9caa5710a5b76d44f35ccdebbf6cf7e824f62288482661564"
+    "added": 1345,
+    "removed": 296,
+    "sha256": "be82965d47b437cf00c0df75d11e1cdc661b14e4deda5e6ae2ecfcbdadaf3905"
   },
   "review": {
-    "reviewed_by": "durable migration coverage audit",
-    "rationale": "The current snapshot preserves the reviewed directive inventory, records parser-generated Protocol exclusions introduced by durable migration interfaces, relocates parser exclusions after shared migration-head imports, and records the Phase 10 target and sandbox-backend formatter line relocations without adding exclusions."
+    "reviewed_by": "provider transport observability coverage audit",
+    "rationale": "The current snapshot preserves the reviewed directive inventory and records the basic CLI Protocol exclusion-line relocation caused by the bounded terminal provider-failure display constant without adding an exclusion."
   },
-  "ledger_sha256": "59d0231e3231767dab51d598804def732a8753cb6521b352140b679255888a20"
+  "ledger_sha256": "f6246bcdf0709dccd8186b1c6562d151f8fd08e6a6234b1f4c54442a6f658b5a"
 }

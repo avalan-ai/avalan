@@ -150,17 +150,17 @@
     {
       "name": "pytest-facts",
       "path": ".patch-contract-pytest-facts.json",
-      "sha256": "2c10cee4b930d2eb72bd0444265f687334a9de0f1790a864c06da92d93c4946c"
+      "sha256": "0211529ff89eb84f1abf67b5ebe5ba992c8aec695d71b747bf10c74f0b2407c3"
     },
     {
       "name": "coverage-json",
       "path": "coverage.json",
-      "sha256": "178765b9cf27b3fd23189dfc67e484a0838235a129099439a08272bef50873c4"
+      "sha256": "94d196d66803209bb272b7ad9dbeb825e945690e4dd208959dcb68f777bf3a88"
     },
     {
       "name": "coverage-xml",
       "path": "coverage.xml",
-      "sha256": "97a8cef1ff499877e6f20b6bf2984f42803e29b3c7061e6fb53ea2ba6f4311c3"
+      "sha256": "f1a7dc636a9afea5ba97c53a610c11a2035dd2f2d4719af184cbfc0961088f26"
     }
   ],
   "changed_paths": [
@@ -258,13 +258,13 @@
   ],
   "coverage": {
     "tool": "coverage.py",
-    "collected_pytest_nodes": 15530,
-    "nonempty_src_files": 531,
-    "statements": 162747,
-    "covered_statements": 162747,
+    "collected_pytest_nodes": 15603,
+    "nonempty_src_files": 534,
+    "statements": 163513,
+    "covered_statements": 163513,
     "missing_statements": 0,
-    "report_sha256": "178765b9cf27b3fd23189dfc67e484a0838235a129099439a08272bef50873c4",
-    "per_file_sha256": "84d3e6f7f9b1c3053ded18b23962a0df94cad2a8ae1db6d9a782650d87331bfd"
+    "report_sha256": "94d196d66803209bb272b7ad9dbeb825e945690e4dd208959dcb68f777bf3a88",
+    "per_file_sha256": "ba8089f722b31e88d954d15d305526bc2b4cae05adb51a6bb9fbf0d3ba5736ef"
   },
   "database_lifecycle": {
     "migration_revision": "Phase 15 owned-Docker PostgreSQL migration graph passed on macOS and Linux",
@@ -2324,5 +2324,5 @@
       "ignored_active_nodes": 0
     }
   ],
-  "record_sha256": "1c1b070eebaa2ba7c162c96e15bb230b03faaf15ca55ee91cf0ac446e6ef92b1"
+  "record_sha256": "50f2546a6d78bb4fba50b622a7e797f4495d0df07b114c34cb538f6f09607a51"
 }
