@@ -388,7 +388,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.answer_chunks, 2)
         self.assertEqual(snapshot.build_stats.text_materializations, 3)
         self.assertEqual(snapshot.build_stats.reasoning_materializations, 1)
-        self.assertEqual(snapshot.build_stats.history_materializations, 8)
+        self.assertEqual(snapshot.build_stats.history_materializations, 9)
         self.assertEqual(snapshot.build_stats.retained_display_tokens, 2)
 
         with self.assertRaises(FrozenInstanceError):
@@ -428,6 +428,26 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertIn('"disposition": "non_retryable"', summary)
         self.assertIn('"exception_category": "transport_timeout"', summary)
         self.assertLessEqual(len(summary), MAX_SUMMARY_CHARS * 2)
+
+    def test_hidden_tools_suppress_inline_compaction_snapshots(self) -> None:
+        """Avoid retaining compaction activity when tool display is hidden."""
+        builder = CliStreamSnapshotBuilder(_config(display_tools=False))
+
+        builder.start_inline_compaction(
+            candidate_count=1,
+            sequence=1,
+            started_at=10.0,
+        )
+        builder.finish_inline_compaction(
+            outcome="rolled_back",
+            boundary_count=1,
+            sequence=2,
+            finished_at=12.0,
+        )
+        snapshot = builder.snapshot()
+
+        self.assertIsNone(snapshot.active_inline_compaction)
+        self.assertEqual(snapshot.inline_compaction_results, ())
 
     def test_nested_snapshot_objects_are_immutable(self) -> None:
         builder = CliStreamSnapshotBuilder(
@@ -1094,7 +1114,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.answer_chunks, 50)
         self.assertEqual(snapshot.build_stats.answer_characters, 50)
         self.assertEqual(snapshot.build_stats.text_materializations, 2)
-        self.assertEqual(snapshot.build_stats.history_materializations, 8)
+        self.assertEqual(snapshot.build_stats.history_materializations, 9)
         self.assertEqual(snapshot.build_stats.retained_completed_tools, 2)
         self.assertEqual(snapshot.build_stats.retained_events, 4)
         self.assertEqual(snapshot.build_stats.retained_display_tokens, 2)
@@ -1123,7 +1143,7 @@ class DisplaySnapshotBuilderTestCase(TestCase):
         self.assertEqual(snapshot.build_stats.answer_chunks, 10_000)
         self.assertEqual(snapshot.build_stats.answer_characters, 10_000)
         self.assertEqual(snapshot.build_stats.text_materializations, 2)
-        self.assertEqual(snapshot.build_stats.history_materializations, 8)
+        self.assertEqual(snapshot.build_stats.history_materializations, 9)
 
     def test_finite_and_unbounded_tool_history_are_bounded(self) -> None:
         finite = CliStreamSnapshotBuilder(

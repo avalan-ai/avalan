@@ -6,6 +6,8 @@ from unittest import IsolatedAsyncioTestCase, TestCase
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.cli.display_reducer import (
     CliStreamSnapshotReducer,
+    _inline_compaction_elapsed,
+    _inline_compaction_positive_int,
     default_cli_stream_clock,
     iter_cli_canonical_stream_snapshots,
     iter_cli_stream_snapshots,
@@ -1469,6 +1471,23 @@ class DisplayReducerTestCase(TestCase):
         self.assertFalse(changed)
         self.assertEqual(snapshot.tool_events, ())
 
+    def test_apply_event_inline_compaction_lifecycle_is_noop(self) -> None:
+        """Keep provider lifecycle events out of the side-channel display."""
+        reducer = CliStreamSnapshotReducer(_config(display_tools=True))
+
+        for event_type in (
+            EventType.INLINE_COMPACTION_STARTED,
+            EventType.INLINE_COMPACTION_COMMITTED,
+            EventType.INLINE_COMPACTION_ROLLED_BACK,
+            EventType.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+        ):
+            with self.subTest(event_type=event_type):
+                self.assertFalse(reducer.apply_event(Event(type=event_type)))
+
+        snapshot = reducer.snapshot()
+        self.assertEqual(snapshot.events, ())
+        self.assertEqual(snapshot.tool_events, ())
+
     def test_apply_projection_ignores_invisible_tool_arguments(self) -> None:
         reducer = CliStreamSnapshotReducer(
             _config(stats=False, display_tools=True),
@@ -1527,6 +1546,125 @@ class DisplayReducerTestCase(TestCase):
 
         self.assertTrue(changed)
         self.assertEqual(snapshot.active_model_continuations, ())
+
+    def test_inline_compaction_lifecycle_tracks_terminal_duration(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+            clock=FakeClock(10.0, 13.0),
+        )
+
+        started = reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                0,
+                data={"candidate_count": 1, "compact_threshold": 1024},
+            )
+        )
+        active = reducer.snapshot().active_inline_compaction
+        committed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                1,
+                data={
+                    "boundary_count": 1,
+                    "compact_threshold": 1024,
+                    "elapsed_seconds": 1.25,
+                },
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertTrue(started)
+        self.assertIsNotNone(active)
+        assert active is not None
+        self.assertEqual(active.candidate_count, 1)
+        self.assertEqual(active.started_at, 10.0)
+        self.assertIsNone(active.updated_at)
+        self.assertTrue(committed)
+        self.assertIsNone(snapshot.active_inline_compaction)
+        self.assertEqual(len(snapshot.inline_compaction_results), 1)
+        self.assertEqual(
+            snapshot.inline_compaction_results[0].outcome,
+            "committed",
+        )
+        self.assertEqual(
+            snapshot.inline_compaction_results[0].elapsed_seconds,
+            1.25,
+        )
+
+    def test_inline_compaction_uses_terminal_time_for_missing_duration(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+            clock=FakeClock(10.0, 12.0, 15.0),
+        )
+
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                0,
+                data={"candidate_count": 1, "compact_threshold": 1024},
+            )
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                1,
+                data={"candidate_count": 2, "compact_threshold": 1024},
+            )
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                2,
+                data={"boundary_count": 2, "compact_threshold": 1024},
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertEqual(snapshot.active_inline_compaction, None)
+        self.assertEqual(len(snapshot.inline_compaction_results), 1)
+        result = snapshot.inline_compaction_results[0]
+        self.assertEqual(result.outcome, "rolled_back")
+        self.assertEqual(result.boundary_count, 2)
+        self.assertEqual(result.elapsed_seconds, 5.0)
+
+    def test_completed_no_boundary_compaction_is_display_silent(self) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+        )
+
+        changed = reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                0,
+                data={"boundary_count": 0, "compact_threshold": 1024},
+            )
+        )
+        snapshot = reducer.snapshot()
+
+        self.assertFalse(changed)
+        self.assertIsNone(snapshot.active_inline_compaction)
+        self.assertEqual(snapshot.inline_compaction_results, ())
+
+    def test_inline_compaction_rejects_invalid_lifecycle_numbers(
+        self,
+    ) -> None:
+        """Defend reducer-only lifecycle helpers against malformed values."""
+        for key in ("candidate_count", "boundary_count"):
+            with self.subTest(key=key):
+                with self.assertRaises(ValueError):
+                    _inline_compaction_positive_int({key: 0}, key)
+
+        for elapsed_seconds in ("invalid", -0.1):
+            with self.subTest(elapsed_seconds=elapsed_seconds):
+                with self.assertRaises(ValueError):
+                    _inline_compaction_elapsed(
+                        {"elapsed_seconds": elapsed_seconds},
+                    )
 
     def test_usage_reads_nested_cached_and_reasoning_token_details(
         self,

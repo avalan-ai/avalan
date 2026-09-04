@@ -55,6 +55,7 @@ CoalescedValue = TypeVar("CoalescedValue")
 ToolStatus = Literal["active", "completed", "error", "cancelled"]
 ToolResultStatus = Literal["result", "error"]
 ModelContinuationStatus = Literal["active"]
+InlineCompactionOutcome = Literal["committed", "rolled_back"]
 
 
 class CliAppendOnlyTextBuffer:
@@ -390,6 +391,26 @@ class CliModelContinuationSnapshot:
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
+class CliInlineCompactionSnapshot:
+    """Represent one active provider-evidenced inline compaction."""
+
+    candidate_count: int
+    sequence: int | None = None
+    started_at: float | None = None
+    updated_at: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
+class CliInlineCompactionResultSnapshot:
+    """Represent one completed content-free inline compaction."""
+
+    outcome: InlineCompactionOutcome
+    boundary_count: int
+    sequence: int | None = None
+    elapsed_seconds: float | None = None
+
+
+@dataclass(frozen=True, kw_only=True, slots=True)
 class CliEventSummarySnapshot:
     event_type: str
     payload_summary: str | None = None
@@ -478,6 +499,10 @@ class CliStreamSnapshot:
         CliProjectionMetadataSummarySnapshot, ...
     ]
     build_stats: CliStreamBuildStatsSnapshot
+    active_inline_compaction: CliInlineCompactionSnapshot | None = None
+    inline_compaction_results: tuple[
+        CliInlineCompactionResultSnapshot, ...
+    ] = ()
 
 
 def display_flags_from_config(
@@ -726,6 +751,12 @@ class CliStreamSnapshotBuilder:
         self._active_model_continuations: dict[
             str, CliModelContinuationSnapshot
         ] = {}
+        self._active_inline_compaction: CliInlineCompactionSnapshot | None = (
+            None
+        )
+        self._inline_compaction_results = CliBoundedHistoryBuffer[
+            CliInlineCompactionResultSnapshot
+        ](tool_limit)
         self._events = CliBoundedHistoryBuffer[CliEventSummarySnapshot](
             self.retention.event_history_limit
         )
@@ -1298,6 +1329,67 @@ class CliStreamSnapshotBuilder:
         continuation_id = _safe_string_id(model_continuation_id)
         self._active_model_continuations.pop(continuation_id, None)
 
+    def start_inline_compaction(
+        self,
+        *,
+        candidate_count: int,
+        sequence: int | None = None,
+        started_at: float | None = None,
+    ) -> None:
+        """Record one provider-evidenced active inline compaction."""
+        assert isinstance(candidate_count, int) and candidate_count > 0
+        if not self.display.show_tools:
+            return
+        current = self._active_inline_compaction
+        self._active_inline_compaction = CliInlineCompactionSnapshot(
+            candidate_count=max(
+                candidate_count,
+                0 if current is None else current.candidate_count,
+            ),
+            sequence=sequence,
+            started_at=(
+                started_at
+                if current is None or current.started_at is None
+                else current.started_at
+            ),
+            updated_at=None,
+        )
+
+    def finish_inline_compaction(
+        self,
+        *,
+        outcome: InlineCompactionOutcome,
+        boundary_count: int,
+        sequence: int | None = None,
+        elapsed_seconds: float | None = None,
+        finished_at: float | None = None,
+    ) -> None:
+        """Record a terminal inline compaction outcome."""
+        assert outcome in ("committed", "rolled_back")
+        assert isinstance(boundary_count, int) and boundary_count > 0
+        assert elapsed_seconds is None or elapsed_seconds >= 0
+        assert finished_at is None or finished_at >= 0
+        active = self._active_inline_compaction
+        self._active_inline_compaction = None
+        if not self.display.show_tools:
+            return
+        elapsed = elapsed_seconds
+        if (
+            elapsed is None
+            and active is not None
+            and active.started_at is not None
+            and finished_at is not None
+        ):
+            elapsed = max(finished_at - active.started_at, 0.0)
+        self._inline_compaction_results.append(
+            CliInlineCompactionResultSnapshot(
+                outcome=outcome,
+                boundary_count=boundary_count,
+                sequence=sequence,
+                elapsed_seconds=elapsed,
+            )
+        )
+
     def remove_tool_events_for_tool_call(
         self,
         tool_call_id: object,
@@ -1451,6 +1543,7 @@ class CliStreamSnapshotBuilder:
         active_model_continuations = tuple(
             self._active_model_continuations.values()
         )
+        inline_compaction_results = self._inline_compaction_results.snapshot()
         events = self._events.snapshot()
         display_tokens = self._display_tokens.snapshot()
         usage_summaries = self._usage_summaries.snapshot()
@@ -1489,6 +1582,8 @@ class CliStreamSnapshotBuilder:
             usage_summaries=usage_summaries,
             projection_metadata_summaries=projection_metadata,
             build_stats=build_stats,
+            active_inline_compaction=self._active_inline_compaction,
+            inline_compaction_results=inline_compaction_results,
         )
 
     def _build_stats(
@@ -1517,6 +1612,7 @@ class CliStreamSnapshotBuilder:
             + self._tool_results.materialization_count
             + self._tool_diagnostics.materialization_count
             + self._tool_events.materialization_count
+            + self._inline_compaction_results.materialization_count
             + self._events.materialization_count
             + self._display_tokens.materialization_count
             + self._usage_summaries.materialization_count

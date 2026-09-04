@@ -36,6 +36,12 @@ class EventType(StrEnum):
     ENGINE_RUN_AFTER = "engine_run_after"
     INPUT_TOKEN_COUNT_BEFORE = "input_token_count_before"
     INPUT_TOKEN_COUNT_AFTER = "input_token_count_after"
+    INLINE_COMPACTION_STARTED = "inline_compaction_started"
+    INLINE_COMPACTION_COMMITTED = "inline_compaction_committed"
+    INLINE_COMPACTION_ROLLED_BACK = "inline_compaction_rolled_back"
+    INLINE_COMPACTION_COMPLETED_NO_BOUNDARY = (
+        "inline_compaction_completed_no_boundary"
+    )
     INTERACTION_LIFECYCLE = "interaction_lifecycle"
     MEMORY_APPEND_BEFORE = "memory_append_before"
     MEMORY_APPEND_AFTER = "memory_append_after"

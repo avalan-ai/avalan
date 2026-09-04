@@ -70,7 +70,7 @@
       "path": "src/avalan/event/__init__.py",
       "symbol": "Event",
       "artifact_class": "event",
-      "source_sha256": "6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"
+      "source_sha256": "0a70058b64ef41780ef2ae7d74bc2c6eec41f6793c3faefc4ca98312015890eb"
     },
     {
       "id": "PATCH-SYM-011",
@@ -266,7 +266,7 @@
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "af42fa0accc49c7c12196a785fa5dce2decfa3250f7657198df2402442fe2480"
+      "source_sha256": "3474f93eeef0aaca5ec8c7251ff83b3144037916c98159fb7c13b0f8b3162b5e"
     },
     {
       "id": "PATCH-SYM-039",
@@ -392,7 +392,7 @@
       "path": "src/avalan/model/nlp/text/vendor/openai.py",
       "symbol": "OpenAIClient._inline_compaction_threshold",
       "artifact_class": "openai_inline_compaction",
-      "source_sha256": "35db989c96bd9979e0939414c95879e869cef62f3ab6b31b79ee007ceb2ab6a9"
+      "source_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
     },
     {
       "id": "PATCH-SYM-057",
@@ -402,5 +402,5 @@
       "source_sha256": "ee1e0ec7aa67e8bbcaf36d1545947a1846368a7660b7d6fdfb2f465701b9e420"
     }
   ],
-  "inventory_sha256": "304f032ac4ad2f5dccdfa0f125418487489fc9137d2584f5f56a9b4c2ca27dfa"
+  "inventory_sha256": "6eca567df1e49dea6b9cc15998d2e1978702ca0fafb01836afa8c510b7c25dae"
 }

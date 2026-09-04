@@ -10,8 +10,15 @@
       "path": "src/avalan/model/nlp/text/vendor/openai.py",
       "from_size": 392855,
       "from_sha256": "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686",
-      "to_size": 395643,
-      "to_sha256": "35db989c96bd9979e0939414c95879e869cef62f3ab6b31b79ee007ceb2ab6a9"
+      "to_size": 407392,
+      "to_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
+    },
+    {
+      "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "from_size": 239540,
+      "from_sha256": "f500838d5770c0ee83a7be8eb372e48c78512ade2147994c4ef8a4951e2b03f0",
+      "to_size": 241491,
+      "to_sha256": "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9"
     },
     {
       "path": "tests/conversation/domain_contract_test.py",
@@ -33,5 +40,5 @@
     "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_transport_policy_rejects_data_flow_bypasses",
     "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_inline_compaction_retry_resets_identity_maps"
   ],
-  "canonical_sha256": "8ffa2921d1c346a47641af1be2a81216dceec825208b2c234758a2219d799544"
+  "canonical_sha256": "df53273042f8037baa9cf654794a6cca8f6d0d4732964899891f39fae4b84f71"
 }

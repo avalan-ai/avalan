@@ -26,6 +26,7 @@ from .display_safety import (
 from .display_snapshot import (
     CliStreamSnapshot,
     CliStreamSnapshotBuilder,
+    InlineCompactionOutcome,
     ToolResultStatus,
     ToolStatus,
     display_token_snapshot_from_projection,
@@ -184,6 +185,15 @@ class CliStreamSnapshotReducer:
             return False
         if event_type == EventType.TOOL_PROGRESS.value:
             return False
+        if event_type in {
+            EventType.INLINE_COMPACTION_STARTED.value,
+            EventType.INLINE_COMPACTION_COMMITTED.value,
+            EventType.INLINE_COMPACTION_ROLLED_BACK.value,
+            EventType.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY.value,
+        }:
+            # Canonical stream lifecycle items are the single CLI display
+            # source. The side channel remains available to observers.
+            return False
         if event_type.startswith("tool_"):
             return self._reduce_tool_event(event)
         self._builder.add_event(event)
@@ -293,6 +303,13 @@ class CliStreamSnapshotReducer:
             StreamItemKind.MODEL_CONTINUATION_CANCELLED,
         ):
             self._finish_model_continuation(projection, now)
+        elif kind is StreamItemKind.INLINE_COMPACTION_STARTED:
+            self._start_inline_compaction(projection, now)
+        elif kind in (
+            StreamItemKind.INLINE_COMPACTION_COMMITTED,
+            StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+        ):
+            self._finish_inline_compaction(projection, now)
         elif kind in (
             StreamItemKind.STREAM_COMPLETED,
             StreamItemKind.STREAM_ERRORED,
@@ -338,8 +355,16 @@ class CliStreamSnapshotReducer:
             StreamItemKind.MODEL_CONTINUATION_COMPLETED,
             StreamItemKind.MODEL_CONTINUATION_ERROR,
             StreamItemKind.MODEL_CONTINUATION_CANCELLED,
+            StreamItemKind.INLINE_COMPACTION_STARTED,
+            StreamItemKind.INLINE_COMPACTION_COMMITTED,
+            StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
         ):
             return self._builder.display.show_tools
+        if (
+            projection.kind
+            is StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY
+        ):
+            return False
         if projection.kind in (
             StreamItemKind.FLOW_EVENT,
             StreamItemKind.STREAM_DIAGNOSTIC,
@@ -510,6 +535,42 @@ class CliStreamSnapshotReducer:
         self._builder.finish_model_continuation(
             model_continuation_id=_model_continuation_id(projection),
             updated_at=now,
+        )
+
+    def _start_inline_compaction(
+        self,
+        projection: StreamConsumerProjection,
+        now: float | None,
+    ) -> None:
+        self._builder.start_inline_compaction(
+            candidate_count=_inline_compaction_positive_int(
+                projection.data,
+                "candidate_count",
+            ),
+            sequence=projection.sequence,
+            started_at=now,
+        )
+
+    def _finish_inline_compaction(
+        self,
+        projection: StreamConsumerProjection,
+        now: float | None,
+    ) -> None:
+        outcome: InlineCompactionOutcome = (
+            "committed"
+            if projection.kind is StreamItemKind.INLINE_COMPACTION_COMMITTED
+            else "rolled_back"
+        )
+        elapsed = _inline_compaction_elapsed(projection.data)
+        self._builder.finish_inline_compaction(
+            outcome=outcome,
+            boundary_count=_inline_compaction_positive_int(
+                projection.data,
+                "boundary_count",
+            ),
+            sequence=projection.sequence,
+            elapsed_seconds=(elapsed if elapsed is not None else None),
+            finished_at=now,
         )
 
     def _finish_stream(
@@ -775,6 +836,27 @@ def _usage_int(usage: Mapping[str, object], key: str) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def _inline_compaction_positive_int(data: object, key: str) -> int:
+    """Return one validated content-free compaction count."""
+    value = value_from(data, key)
+    if type(value) is not int or value <= 0:
+        raise ValueError(f"inline compaction {key} must be positive")
+    return value
+
+
+def _inline_compaction_elapsed(data: object) -> float | None:
+    """Return an optional non-negative compaction duration."""
+    value = value_from(data, "elapsed_seconds")
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, int | float):
+        raise ValueError("inline compaction elapsed_seconds is invalid")
+    elapsed = float(value)
+    if elapsed < 0:
+        raise ValueError("inline compaction elapsed_seconds is invalid")
+    return elapsed
 
 
 def _nested_usage_int(

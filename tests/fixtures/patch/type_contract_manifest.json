@@ -988,16 +988,17 @@
         "_phase15_provider_transitions",
         "_validate_phase15_provider_evidence_nodes"
       ],
-      "source_sha256": "df4d28e8f09af45020b4c1a5cac9d62884b5eaee7af423e1554047a28c7c6937"
+      "source_sha256": "a7b584eb114f7b852ff426c37ab58f98524d928fa7d4d04f41b9c2964a44b392"
     },
     {
       "id": "PATCH-TS-053",
       "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_TOOL_CALL_LIFECYCLE_KINDS"
+        "_TOOL_CALL_LIFECYCLE_KINDS",
+        "OrchestratorResponse._emit_inline_compaction_event"
       ],
-      "source_sha256": "f500838d5770c0ee83a7be8eb372e48c78512ade2147994c4ef8a4951e2b03f0"
+      "source_sha256": "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9"
     },
     {
       "id": "PATCH-TS-054",
@@ -1096,9 +1097,10 @@
       "path": "tests/agent/orchestrator_response_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE"
+        "PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE",
+        "OrchestratorResponseIterationTestCase.test_inline_compaction_item_emits_content_free_event"
       ],
-      "source_sha256": "6232be3c1a22a482a8892f2391f161661e07da2dd95575b0623ab4f85283ce10"
+      "source_sha256": "db988cd728132690c454fb1943f694e696d9df1082280f44a1cb48fb3920a170"
     },
     {
       "id": "PATCH-TS-065",
@@ -1116,7 +1118,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "af42fa0accc49c7c12196a785fa5dce2decfa3250f7657198df2402442fe2480"
+      "source_sha256": "3474f93eeef0aaca5ec8c7251ff83b3144037916c98159fb7c13b0f8b3162b5e"
     },
     {
       "id": "PATCH-TS-067",
@@ -1798,9 +1800,10 @@
       "path": "tests/model/nlp/vendor_openai_reasoning_summary_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "test_private_replay_server_error_create_retries_after_delay"
+        "test_private_replay_server_error_create_retries_after_delay",
+        "test_provider_events_has_typed_lifecycle_and_terminal_yields"
       ],
-      "source_sha256": "c7cab8c49c3878a99a74955625c0f7c2520e957a2e65ce46a5707092da9862a4"
+      "source_sha256": "0438fa522a65f87e664dede6c8cbb33cec572c9e30c5421747af8640ba11db12"
     },
     {
       "id": "PATCH-TS-134",
@@ -1900,9 +1903,15 @@
       "path": "src/avalan/cli/display_snapshot.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_TERMINAL_ERROR_SUMMARY_LIMIT"
+        "_TERMINAL_ERROR_SUMMARY_LIMIT",
+        "CliInlineCompactionSnapshot",
+        "CliInlineCompactionResultSnapshot",
+        "CliStreamSnapshotBuilder.start_inline_compaction",
+        "CliStreamSnapshotBuilder.finish_inline_compaction",
+        "CliStreamSnapshotBuilder.snapshot",
+        "CliStreamSnapshotBuilder._build_stats"
       ],
-      "source_sha256": "cef8b7543245832c1e7d26c297a2e2b5ebbb9c5a897f422c9f45458ad5ef9b6f"
+      "source_sha256": "696dfc005d9f160c8c668769a4eeba24a65f93bfeb07467877a32a0472f2d3fa"
     },
     {
       "id": "PATCH-TS-144",
@@ -1912,9 +1921,18 @@
         "_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT",
         "_basic_terminal_error_entry",
         "_basic_summary",
-        "_basic_markup_summary"
+        "_basic_markup_summary",
+        "BasicStreamPresenter._pre_answer_tool_frame",
+        "_basic_live_activity_frame",
+        "_basic_reasoning_followed_by_activity",
+        "_basic_tool_frame",
+        "_basic_tool_entries",
+        "_basic_active_inline_compaction_line",
+        "_basic_inline_compaction_result_line",
+        "_BasicActiveInlineCompactionSpinner",
+        "_basic_active_inline_compaction_renderable"
       ],
-      "source_sha256": "4457652854c96b7cf07e85fe819d0485b6e716bda7374df6bad1063edb0a35f8"
+      "source_sha256": "96a99e82f99f592f622d27f3e6016a09ff7d5e9e59177c2f98c3206cb369039d"
     },
     {
       "id": "PATCH-TS-145",
@@ -1996,36 +2014,50 @@
         "OpenAIClient._non_stream_result",
         "OpenAIClient._non_stream_output_item",
         "OpenAIClient._non_stream_compaction_item",
-        "OpenAIClient._non_stream_added_item"
+        "OpenAIClient._non_stream_added_item",
+        "OpenAIStream._inline_compaction_threshold",
+        "OpenAIStream._inline_compaction_candidate_count",
+        "OpenAIStream._inline_compaction_started_at",
+        "OpenAIStream._pending_inline_compaction_terminal_event",
+        "OpenAIStream._pending_final_usage_event"
       ],
-      "source_sha256": "35db989c96bd9979e0939414c95879e869cef62f3ab6b31b79ee007ceb2ab6a9"
+      "source_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
     },
     {
       "id": "PATCH-TS-146",
       "path": "src/avalan/model/stream.py",
       "scope": "integration_hunk",
       "symbols": [
-        "normalize_provider_stream"
+        "normalize_provider_stream",
+        "StreamItemKind",
+        "_STREAM_KIND_CHANNELS"
       ],
-      "source_sha256": "c1ba17b3e881af37d6ef4b15d1b631b74ed6f5f46c33953e4e20e3c8acba8c35"
+      "source_sha256": "500598d61797722131cbfa7d904e7a981e73df94c5f84d90220418162c1494fc"
     },
     {
       "id": "PATCH-TS-147",
       "path": "tests/cli/display_snapshot_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_config"
+        "_config",
+        "DisplaySnapshotBuilderTestCase.test_builder_materializes_safe_full_snapshot",
+        "DisplaySnapshotBuilderTestCase.test_repeated_appends_materialize_once_per_snapshot_and_bound_history",
+        "DisplaySnapshotBuilderTestCase.test_large_answer_stream_materializes_only_on_snapshot",
+        "DisplaySnapshotBuilderTestCase.test_hidden_tools_suppress_inline_compaction_snapshots"
       ],
-      "source_sha256": "7eb69cc963c2c4e7ff92f3da4073e0162126825655be5c07632b1aa593fe83fb"
+      "source_sha256": "545ae7abbab622e3b81909d5b733b99d25a90ebe6a8a5ae6349a4e1e4fa05462"
     },
     {
       "id": "PATCH-TS-148",
       "path": "tests/cli/theme_basic_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_render_text"
+        "_render_text",
+        "BasicStreamPresenterTestCase.test_inline_compaction_live_timer_and_committed_result",
+        "BasicStreamPresenterTestCase.test_inline_compaction_non_spinner_renderable",
+        "BasicStreamPresenterTestCase.test_live_activity_frame_uses_inline_compaction_spinner"
       ],
-      "source_sha256": "2fbffc6c3dfe1718772b57f948a11af775df920d5de27502a06d6c9b470891f3"
+      "source_sha256": "9d1d25482dce014643f7aa6ee4ba3347145c438639716b4a9bdc1a69f844320f"
     },
     {
       "id": "PATCH-TS-149",
@@ -2034,7 +2066,7 @@
       "symbols": [
         "_stream_completed"
       ],
-      "source_sha256": "8be49a7b78fb62080c4b230b77f60e33b8dfd30eb2582c847e0ad0ad05914d83"
+      "source_sha256": "2c6f776af750bab50e0d745c165f3fb78ac84928db5340a917e1d26fd8a11fa5"
     },
     {
       "id": "PATCH-TS-150",
@@ -2073,12 +2105,16 @@
         "OpenAIInlineCompactionTestCase.test_inline_compaction_status_is_scoped_to_current_request",
         "OpenAIInlineCompactionTestCase.test_compaction_replay_and_protocol_guards_fail_closed",
         "OpenAIInlineCompactionTestCase.test_inline_compaction_rejects_unenabled_and_normalization_drift",
+        "OpenAIInlineCompactionTestCase.test_inline_compaction_rejects_nonreplayable_done_item",
         "OpenAIInlineCompactionTestCase.test_azure_inline_compaction_requests_replayable_reasoning",
         "OpenAIInlineCompactionTestCase.test_inline_compaction_validation_rejects_untyped_policy",
         "OpenAIInlineCompactionTestCase.test_compaction_replay_and_protocol_guards_fail_closed.UnreadableItem",
-        "OpenAIInlineCompactionTestCase.test_compaction_replay_and_protocol_guards_fail_closed.UnreadableItem.item"
+        "OpenAIInlineCompactionTestCase.test_compaction_replay_and_protocol_guards_fail_closed.UnreadableItem.item",
+        "OpenAIInlineCompactionTestCase.test_azure_inline_compaction_emits_shared_lifecycle",
+        "OpenAIInlineCompactionTestCase.test_compaction_terminal_precedes_final_usage",
+        "OpenAIInlineCompactionTestCase.test_compaction_no_boundary_precedes_final_usage"
       ],
-      "source_sha256": "7725db60bf960a1a51ce9c189a6e7225276eb9a9dd7e8676c78572916398a4fa"
+      "source_sha256": "4dde8722d0d98c1c5ec02ae764db028a400742a03c2dd1dce0dd4c0f86c1899c"
     },
     {
       "id": "PATCH-TS-151",
@@ -2244,7 +2280,62 @@
         "test_azure_resumed_dispatch_disables_every_automatic_retry"
       ],
       "source_sha256": "f4dc0bc74b91c7ab5c7a3ee3ff299894ffa0c85c63ee42543439f271b3e83692"
+    },
+    {
+      "id": "PATCH-TS-168",
+      "path": "src/avalan/cli/display_reducer.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "CliStreamSnapshotReducer.apply_event",
+        "CliStreamSnapshotReducer._reduce_projection_kind",
+        "CliStreamSnapshotReducer._projection_changes_display",
+        "CliStreamSnapshotReducer._start_inline_compaction",
+        "CliStreamSnapshotReducer._finish_inline_compaction",
+        "_inline_compaction_positive_int",
+        "_inline_compaction_elapsed"
+      ],
+      "source_sha256": "9993b965e77ecd53109758e99eaaa23dbe846ea6b7d35c3025350ef679b6e1de"
+    },
+    {
+      "id": "PATCH-TS-169",
+      "path": "src/avalan/event/__init__.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "EventType"
+      ],
+      "source_sha256": "0a70058b64ef41780ef2ae7d74bc2c6eec41f6793c3faefc4ca98312015890eb"
+    },
+    {
+      "id": "PATCH-TS-170",
+      "path": "src/avalan/event/manager.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_STREAM_EVENT_TYPE_BY_KIND",
+        "EventManager.trigger_stream_item"
+      ],
+      "source_sha256": "9e90f8fb3f8e893316fcd420d2f5fadf5dff613aa1668139e875c51c16a53e61"
+    },
+    {
+      "id": "PATCH-TS-171",
+      "path": "tests/cli/display_reducer_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "DisplayReducerTestCase.test_inline_compaction_lifecycle_tracks_terminal_duration",
+        "DisplayReducerTestCase.test_completed_no_boundary_compaction_is_display_silent",
+        "DisplayReducerTestCase.test_apply_event_inline_compaction_lifecycle_is_noop",
+        "DisplayReducerTestCase.test_inline_compaction_rejects_invalid_lifecycle_numbers"
+      ],
+      "source_sha256": "80f44227aaeac7a9ecdadc10683407a8c54815a264528e4eb6d5e9e6b99e4ccc"
+    },
+    {
+      "id": "PATCH-TS-172",
+      "path": "tests/event/event_manager_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "EventManagerTestCase.test_trigger_stream_item_maps_inline_compaction_and_stats"
+      ],
+      "source_sha256": "b145a51bd8fa82f840386e5e343b43aed441b31e6a017f0ea81b948c30040446"
     }
   ],
-  "manifest_sha256": "3099f1bb42d4ca9b6dd27c3c923f9b95fc5440ddb269c558b2407252cd0f7c22"
+  "manifest_sha256": "42f3ec5dd08f69b3b65a661f599e937302d509daade341a6fa9b75d035eac477"
 }

@@ -118,6 +118,7 @@ from json import JSONDecodeError, dumps, loads
 from logging import getLogger
 from math import isfinite
 from mimetypes import guess_type
+from time import perf_counter
 from types import SimpleNamespace
 from typing import Any, Never, TypedDict, TypeVar, cast, get_args
 from urllib.parse import urlparse
@@ -133,7 +134,8 @@ class _OpenAIStreamOptions(TypedDict, total=False):
     capability: ModelCapabilityCatalog
     request_has_replay_items: bool
     inline_compaction_enabled: bool
-    inline_compaction_terminal: Callable[[int, bool], None]
+    inline_compaction_threshold: int
+    inline_compaction_terminal: Callable[[int, bool, float | None], None]
 
 
 Omit: type[Any] = _OmitPlaceholder
@@ -264,11 +266,16 @@ class OpenAIInlineCompactionDiagnostics:
     """Expose content-free direct Responses compaction accounting."""
 
     request_count: int = 0
+    attempt_count: int = 0
     candidate_boundary_count: int = 0
     committed_boundary_count: int = 0
     rolled_back_boundary_count: int = 0
     applied_boundary_count: int = 0
+    failure_count: int = 0
+    completed_no_boundary_count: int = 0
     requested_threshold: int | None = None
+    elapsed_seconds: float = 0.0
+    last_elapsed_seconds: float | None = None
     status: str = "disabled"
 
 
@@ -508,6 +515,7 @@ class _OpenAIOutputItemFingerprint:
 class _OpenAIProviderTerminal:
     event: StreamProviderEvent
     succeeded: bool
+    provider_terminal_observed: bool = False
     cleanup_method: str = "aclose"
     cleanup_failed: bool = False
     include_cleanup_diagnostic: bool = False
@@ -521,6 +529,7 @@ class _OpenAIProviderTerminal:
         assert self.succeeded is (
             self.event.kind is StreamItemKind.STREAM_COMPLETED
         )
+        assert isinstance(self.provider_terminal_observed, bool)
         assert self.cleanup_method in {"aclose", "cancel"}
         assert isinstance(self.cleanup_failed, bool)
         assert isinstance(self.include_cleanup_diagnostic, bool)
@@ -3193,7 +3202,14 @@ class OpenAIStream(TextGenerationVendorStream):
     )
     _replay_owner_releaser: Callable[[_OpenAIReplayOwner], None] | None
     _replay_owner_call_ids_rejecter: Callable[[tuple[str, ...]], None] | None
-    _inline_compaction_terminal: Callable[[int, bool], None] | None
+    _inline_compaction_terminal: (
+        Callable[[int, bool, float | None], None] | None
+    )
+    _inline_compaction_threshold: int | None
+    _inline_compaction_candidate_count: int
+    _inline_compaction_started_at: float | None
+    _pending_inline_compaction_terminal_event: StreamProviderEvent | None
+    _pending_final_usage_event: StreamProviderEvent | None
     _compaction_added_by_item_id: dict[str, _OpenAICompactionItemFingerprint]
     _compaction_added_by_output_index: dict[
         int, _OpenAICompactionItemFingerprint
@@ -3245,9 +3261,12 @@ class OpenAIStream(TextGenerationVendorStream):
         replay_owner_call_ids_rejecter: (
             Callable[[tuple[str, ...]], None] | None
         ) = None,
-        inline_compaction_terminal: Callable[[int, bool], None] | None = None,
+        inline_compaction_terminal: (
+            Callable[[int, bool, float | None], None] | None
+        ) = None,
         request_has_replay_items: bool = False,
         inline_compaction_enabled: bool = False,
+        inline_compaction_threshold: int | None = None,
         stream_factory: (
             Callable[[], Coroutine[object, object, AsyncIterator[object]]]
             | None
@@ -3268,6 +3287,11 @@ class OpenAIStream(TextGenerationVendorStream):
             )
         assert isinstance(supports_reasoning_summary, bool)
         assert isinstance(inline_compaction_enabled, bool)
+        assert inline_compaction_threshold is None or (
+            type(inline_compaction_threshold) is int
+            and inline_compaction_threshold > 0
+        )
+        assert inline_compaction_enabled or inline_compaction_threshold is None
         self._stream = stream
         self._supports_reasoning_summary = supports_reasoning_summary
         self._canonical_tool_calls = {}
@@ -3295,6 +3319,11 @@ class OpenAIStream(TextGenerationVendorStream):
         self._replay_owner_releaser = replay_owner_releaser
         self._replay_owner_call_ids_rejecter = replay_owner_call_ids_rejecter
         self._inline_compaction_terminal = inline_compaction_terminal
+        self._inline_compaction_threshold = inline_compaction_threshold
+        self._inline_compaction_candidate_count = 0
+        self._inline_compaction_started_at = None
+        self._pending_inline_compaction_terminal_event = None
+        self._pending_final_usage_event = None
         self._compaction_added_by_item_id = {}
         self._compaction_added_by_output_index = {}
         self._compaction_completed_by_item_id = {}
@@ -3953,6 +3982,15 @@ class OpenAIStream(TextGenerationVendorStream):
                                 provider_event
                             ):
                                 non_reasoning_output_seen = True
+                            if (
+                                provider_event.kind
+                                is StreamItemKind.USAGE_COMPLETED
+                                and self._inline_compaction_enabled
+                            ):
+                                self._pending_final_usage_event = (
+                                    provider_event
+                                )
+                                continue
                             if provider_event.kind in {
                                 StreamItemKind.STREAM_CANCELLED,
                                 StreamItemKind.STREAM_COMPLETED,
@@ -3964,6 +4002,7 @@ class OpenAIStream(TextGenerationVendorStream):
                                         provider_event.kind
                                         is StreamItemKind.STREAM_COMPLETED
                                     ),
+                                    provider_terminal_observed=True,
                                 )
                                 break
                             yield provider_event
@@ -3981,6 +4020,14 @@ class OpenAIStream(TextGenerationVendorStream):
                         break
                     if not retry:
                         self._raise_if_provider_interrupted()
+                        if self._inline_compaction_enabled:
+                            terminal = _OpenAIProviderTerminal(
+                                event=(
+                                    self._missing_provider_terminal_event()
+                                ),
+                                succeeded=False,
+                            )
+                            break
                         try:
                             self._reasoning_summary_state.close_source()
                         except _OpenAIReasoningSummaryEventError as exc:
@@ -4012,14 +4059,25 @@ class OpenAIStream(TextGenerationVendorStream):
                         rolled_back_compactions = (
                             self._rollback_response_attempt_output_items()
                         )
-                        if (
-                            rolled_back_compactions
-                            and self._inline_compaction_terminal is not None
-                        ):
-                            self._inline_compaction_terminal(
-                                rolled_back_compactions,
-                                False,
+                        provider_event_type = None
+                        if adapter_failure is None:
+                            provider_event_type = (
+                                self._inline_compaction_provider_event_type(
+                                    retry_terminal
+                                )
                             )
+                        lifecycle_event = (
+                            self._inline_compaction_terminal_event(
+                                boundary_count=max(
+                                    rolled_back_compactions,
+                                    self._inline_compaction_candidate_count,
+                                ),
+                                succeeded=False,
+                                provider_event_type=provider_event_type,
+                            )
+                        )
+                        if lifecycle_event is not None:
+                            yield lifecycle_event
                     except BaseException:
                         terminal = _OpenAIProviderTerminal(
                             event=retry_terminal,
@@ -4150,6 +4208,16 @@ class OpenAIStream(TextGenerationVendorStream):
             self._release_provider_consumer(consumer_owner)
             raise
         try:
+            pending_lifecycle_event = (
+                self._pending_inline_compaction_terminal_event
+            )
+            self._pending_inline_compaction_terminal_event = None
+            pending_final_usage_event = self._pending_final_usage_event
+            self._pending_final_usage_event = None
+            if pending_lifecycle_event is not None:
+                yield pending_lifecycle_event
+            if pending_final_usage_event is not None:
+                yield pending_final_usage_event
             if not self._provider_terminal_emitted:
                 self._provider_terminal_emitted = True
                 yield terminal_event
@@ -4247,24 +4315,30 @@ class OpenAIStream(TextGenerationVendorStream):
 
             event = outcome.event
             succeeded = outcome.succeeded
+            provider_terminal_observed = outcome.provider_terminal_observed
             external_finish_method = self._external_finish_method
             if external_finish_method == "aclose":
                 succeeded = False
+                provider_terminal_observed = False
             elif external_finish_method == "cancel":
                 event = StreamProviderEvent(
                     kind=StreamItemKind.STREAM_CANCELLED
                 )
                 succeeded = False
+                provider_terminal_observed = False
             elif consumer_cleanup_cancelled:
                 succeeded = False
+                provider_terminal_observed = False
             elif cleanup_failed and succeeded:
                 event = self._stream_cleanup_failure_event()
                 succeeded = False
+                provider_terminal_observed = False
             elif cleanup_failed and outcome.include_cleanup_diagnostic:
                 event = self._private_replay_provider_failure_event(
                     cleanup_failed=True,
                     provider_failure=self._provider_failure_observability,
                 )
+                provider_terminal_observed = False
 
             if succeeded:
                 replay_error: (
@@ -4274,7 +4348,18 @@ class OpenAIStream(TextGenerationVendorStream):
                     | None
                 ) = None
                 try:
-                    self._finish_replay_owner(succeeded=True)
+                    self._pending_inline_compaction_terminal_event = (
+                        self._finish_replay_owner(
+                            succeeded=True,
+                            provider_event_type=(
+                                self._inline_compaction_provider_event_type(
+                                    event
+                                )
+                                if provider_terminal_observed
+                                else None
+                            ),
+                        )
+                    )
                 except (
                     _OpenAIClientClosedError,
                     _ReasoningReplayRetentionError,
@@ -4289,12 +4374,19 @@ class OpenAIStream(TextGenerationVendorStream):
                         event.provider_event_type,
                     )
                     succeeded = False
+                    provider_terminal_observed = False
 
             if succeeded:
                 self._attempt_output_item_count = 0
             else:
                 cleanup_errors.extend(
-                    self._rollback_and_release_provider_attempt()
+                    self._rollback_and_release_provider_attempt(
+                        provider_event_type=(
+                            self._inline_compaction_provider_event_type(event)
+                            if provider_terminal_observed
+                            else None
+                        )
+                    )
                 )
 
             self._reasoning_summary_state.abort()
@@ -4352,6 +4444,8 @@ class OpenAIStream(TextGenerationVendorStream):
 
     def _rollback_and_release_provider_attempt(
         self,
+        *,
+        provider_event_type: str | None = None,
     ) -> list[BaseException]:
         errors: list[BaseException] = []
         try:
@@ -4359,7 +4453,12 @@ class OpenAIStream(TextGenerationVendorStream):
         except BaseException as error:
             errors.append(error)
         try:
-            self._finish_replay_owner(succeeded=False)
+            self._pending_inline_compaction_terminal_event = (
+                self._finish_replay_owner(
+                    succeeded=False,
+                    provider_event_type=provider_event_type,
+                )
+            )
         except BaseException as error:
             errors.append(error)
         return errors
@@ -4387,6 +4486,22 @@ class OpenAIStream(TextGenerationVendorStream):
                     "type": "server_error",
                     "code": _OpenAICleanupError.code,
                     "message": "OpenAI stream cleanup failed",
+                }
+            },
+        )
+
+    @staticmethod
+    def _missing_provider_terminal_event() -> StreamProviderEvent:
+        """Return a content-free failure for an incomplete provider stream."""
+        return StreamProviderEvent(
+            kind=StreamItemKind.STREAM_ERRORED,
+            data={
+                "error": {
+                    "type": "server_error",
+                    "code": _OpenAIProviderRequestError.code,
+                    "message": (
+                        "OpenAI provider stream ended before a terminal event"
+                    ),
                 }
             },
         )
@@ -4728,6 +4843,9 @@ class OpenAIStream(TextGenerationVendorStream):
         self._compaction_added_by_output_index = {}
         self._compaction_completed_by_item_id = {}
         self._compaction_completed_by_output_index = {}
+        self._inline_compaction_candidate_count = 0
+        self._inline_compaction_started_at = None
+        self._pending_final_usage_event = None
         self._cross_boundary_tool_call_ids = ()
         self._answer_text_seen = False
         self._answer_done_seen = False
@@ -4810,20 +4928,28 @@ class OpenAIStream(TextGenerationVendorStream):
         rollback(output_item_count)
         return rolled_back_compactions
 
-    def _finish_replay_owner(self, *, succeeded: bool) -> None:
+    def _finish_replay_owner(
+        self,
+        *,
+        succeeded: bool,
+        provider_event_type: str | None = None,
+    ) -> StreamProviderEvent | None:
         if self._replay_owner_terminal_handled:
-            return
+            return None
         owner = self._replay_owner
         if owner is None:
             self._replay_owner_terminal_handled = True
-            return
+            return self._inline_compaction_terminal_event(
+                boundary_count=self._inline_compaction_candidate_count,
+                succeeded=succeeded,
+                provider_event_type=provider_event_type,
+            )
         if not succeeded:
             self._replay_owner_terminal_handled = True
-            if self._inline_compaction_terminal is not None:
-                self._inline_compaction_terminal(
-                    owner.rollback_compaction_item_count,
-                    False,
-                )
+            boundary_count = max(
+                owner.rollback_compaction_item_count,
+                self._inline_compaction_candidate_count,
+            )
             if (
                 self._cross_boundary_tool_call_ids
                 and self._replay_owner_call_ids_rejecter is not None
@@ -4832,17 +4958,137 @@ class OpenAIStream(TextGenerationVendorStream):
                     self._cross_boundary_tool_call_ids
                 )
             self._release_replay_owner(owner)
-            return
+            return self._inline_compaction_terminal_event(
+                boundary_count=boundary_count,
+                succeeded=False,
+                provider_event_type=provider_event_type,
+            )
         admitted_compactions = owner.commit_attempt()
-        if self._inline_compaction_terminal is not None:
-            self._inline_compaction_terminal(admitted_compactions, True)
         call_ids = tuple(sorted(self._canonical_done_tool_call_ids))
         if not call_ids or self._replay_owner_retainer is None:
             self._replay_owner_terminal_handled = True
             self._release_replay_owner(owner)
-            return
+            return self._inline_compaction_terminal_event(
+                boundary_count=admitted_compactions,
+                succeeded=True,
+                provider_event_type=provider_event_type,
+            )
         self._replay_owner_retainer(owner, call_ids)
         self._replay_owner_terminal_handled = True
+        return self._inline_compaction_terminal_event(
+            boundary_count=admitted_compactions,
+            succeeded=True,
+            provider_event_type=provider_event_type,
+        )
+
+    def _inline_compaction_started_event(self) -> StreamProviderEvent:
+        """Return one content-free provider-evidenced lifecycle start."""
+        assert self._inline_compaction_enabled
+        self._inline_compaction_candidate_count += 1
+        if self._inline_compaction_started_at is None:
+            self._inline_compaction_started_at = perf_counter()
+        data: dict[str, LooseJsonValue] = {
+            "candidate_count": self._inline_compaction_candidate_count,
+        }
+        if self._inline_compaction_threshold is not None:
+            data["compact_threshold"] = self._inline_compaction_threshold
+        return StreamProviderEvent(
+            kind=StreamItemKind.INLINE_COMPACTION_STARTED,
+            data=cast(LooseJsonValue, data),
+            provider_payload=None,
+            provider_event_type="response.output_item.added",
+        )
+
+    def _inline_compaction_terminal_event(
+        self,
+        *,
+        boundary_count: int,
+        succeeded: bool,
+        provider_event_type: str | None = None,
+    ) -> StreamProviderEvent | None:
+        """Finalize one content-free inline compaction lifecycle."""
+        assert type(boundary_count) is int and boundary_count >= 0
+        assert isinstance(succeeded, bool)
+        if not self._inline_compaction_enabled:
+            return None
+        started_at = self._inline_compaction_started_at
+        elapsed = (
+            None
+            if started_at is None
+            else max(perf_counter() - started_at, 0.0)
+        )
+        callback = self._inline_compaction_terminal
+        if callback is not None:
+            callback(boundary_count, succeeded, elapsed)
+        self._inline_compaction_candidate_count = 0
+        self._inline_compaction_started_at = None
+        if succeeded and not boundary_count:
+            return StreamProviderEvent(
+                kind=(StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY),
+                data=cast(
+                    LooseJsonValue,
+                    self._inline_compaction_lifecycle_data(
+                        boundary_count=0,
+                        elapsed=elapsed,
+                    ),
+                ),
+                provider_payload=None,
+                provider_event_type=provider_event_type,
+            )
+        if not boundary_count:
+            return None
+        return StreamProviderEvent(
+            kind=(
+                StreamItemKind.INLINE_COMPACTION_COMMITTED
+                if succeeded
+                else StreamItemKind.INLINE_COMPACTION_ROLLED_BACK
+            ),
+            data=cast(
+                LooseJsonValue,
+                self._inline_compaction_lifecycle_data(
+                    boundary_count=boundary_count,
+                    elapsed=elapsed,
+                ),
+            ),
+            provider_payload=None,
+            provider_event_type=provider_event_type,
+        )
+
+    @staticmethod
+    def _inline_compaction_provider_event_type(
+        event: StreamProviderEvent,
+    ) -> str | None:
+        """Return a lifecycle-safe observed provider terminal type."""
+        event_type = event.provider_event_type
+        if (
+            event.kind is StreamItemKind.STREAM_COMPLETED
+            and event_type == "response.completed"
+        ):
+            return event_type
+        if event.kind is StreamItemKind.STREAM_ERRORED and event_type in {
+            "error",
+            "response.error",
+            "response.failed",
+            "response.incomplete",
+        }:
+            return event_type
+        return None
+
+    def _inline_compaction_lifecycle_data(
+        self,
+        *,
+        boundary_count: int,
+        elapsed: float | None,
+    ) -> dict[str, LooseJsonValue]:
+        """Return public-safe compaction lifecycle metadata only."""
+        data: dict[str, LooseJsonValue] = {
+            "boundary_count": boundary_count,
+        }
+        if self._inline_compaction_threshold is not None:
+            data["compact_threshold"] = self._inline_compaction_threshold
+        if elapsed is not None:
+            data["elapsed_seconds"] = elapsed
+        return data
 
     @staticmethod
     def _private_replay_provider_failure_event(
@@ -5662,7 +5908,7 @@ class OpenAIStream(TextGenerationVendorStream):
                 if not self._inline_compaction_enabled:
                     raise _OpenAIInlineCompactionCapabilityError()
                 self._record_compaction_added(event)
-                return ()
+                return (self._inline_compaction_started_event(),)
             item_type = self._reasoning_summary_state.output_item_type(
                 event, event_type
             )
@@ -6086,15 +6332,11 @@ class OpenAIStream(TextGenerationVendorStream):
             fingerprint.item_id in self._compaction_completed_by_item_id
             or fingerprint.output_index
             in self._compaction_completed_by_output_index
-            or (
-                expected_by_id is not None
-                and expected_by_id.output_index != fingerprint.output_index
-            )
-            or (
-                expected_by_index is not None
-                and expected_by_index.item_id != fingerprint.item_id
-            )
-            or (expected_by_id is None) != (expected_by_index is None)
+            or expected_by_id is None
+            or expected_by_index is None
+            or expected_by_id != expected_by_index
+            or expected_by_id.output_index != fingerprint.output_index
+            or expected_by_index.item_id != fingerprint.item_id
         ):
             raise _OpenAIInlineCompactionError()
         self._compaction_added_by_item_id.pop(fingerprint.item_id, None)
@@ -8057,10 +8299,12 @@ class OpenAIClient(TextGenerationVendor):
         def record_inline_compaction_terminal(
             boundary_count: int,
             succeeded: bool,
+            elapsed: float | None,
         ) -> None:
             self._record_inline_compaction_terminal(
                 boundary_count,
                 succeeded,
+                elapsed=elapsed,
             )
 
         try:
@@ -8223,6 +8467,8 @@ class OpenAIClient(TextGenerationVendor):
                 while True:
                     attempt_kwargs = _strict_replay_json_copy(request_kwargs)
                     assert isinstance(attempt_kwargs, dict)
+                    if inline_compaction_requested:
+                        self._record_inline_compaction_attempt()
                     try:
                         created_response = (
                             await request_client.responses.create(
@@ -8310,6 +8556,9 @@ class OpenAIClient(TextGenerationVendor):
                     stream_kwargs["request_has_replay_items"] = True
                 if inline_compaction_threshold is not None:
                     stream_kwargs["inline_compaction_enabled"] = True
+                    stream_kwargs["inline_compaction_threshold"] = (
+                        inline_compaction_threshold
+                    )
                     stream_kwargs["inline_compaction_terminal"] = (
                         record_inline_compaction_terminal
                     )
@@ -8353,6 +8602,7 @@ class OpenAIClient(TextGenerationVendor):
                     inline_compaction_enabled=(
                         inline_compaction_threshold is not None
                     ),
+                    inline_compaction_threshold=inline_compaction_threshold,
                     inline_compaction_terminal=(
                         record_inline_compaction_terminal
                         if inline_compaction_threshold is not None
@@ -8374,7 +8624,7 @@ class OpenAIClient(TextGenerationVendor):
             assert response is not None
         except BaseException:
             if inline_compaction_requested:
-                record_inline_compaction_terminal(0, False)
+                record_inline_compaction_terminal(0, False, elapsed=None)
             self._discard_replay_owner(replay_owner)
             raise
         return response
@@ -8489,14 +8739,25 @@ class OpenAIClient(TextGenerationVendor):
             threshold,
         )
 
+    def _record_inline_compaction_attempt(self) -> None:
+        """Record one actual provider dispatch for one logical request."""
+        state = self._inline_compaction_diagnostics
+        self._inline_compaction_diagnostics = replace(
+            state,
+            attempt_count=state.attempt_count + 1,
+        )
+
     def _record_inline_compaction_terminal(
         self,
         boundary_count: int,
         succeeded: bool,
+        *,
+        elapsed: float | None,
     ) -> None:
         """Record content-free candidate, commit, and rollback accounting."""
         assert type(boundary_count) is int and boundary_count >= 0
         assert isinstance(succeeded, bool)
+        assert elapsed is None or (isinstance(elapsed, float) and elapsed >= 0)
         state = self._inline_compaction_diagnostics
         status = (
             "committed"
@@ -8527,6 +8788,20 @@ class OpenAIClient(TextGenerationVendor):
                 if succeeded
                 else state.applied_boundary_count
             ),
+            failure_count=(
+                state.failure_count + 1
+                if not succeeded
+                else state.failure_count
+            ),
+            completed_no_boundary_count=(
+                state.completed_no_boundary_count + 1
+                if succeeded and not boundary_count
+                else state.completed_no_boundary_count
+            ),
+            elapsed_seconds=(
+                state.elapsed_seconds + (elapsed if elapsed is not None else 0)
+            ),
+            last_elapsed_seconds=elapsed,
             status=status,
         )
         getLogger(__name__).info(
@@ -9550,7 +9825,10 @@ class OpenAIClient(TextGenerationVendor):
         replay_owner: _OpenAIReplayOwner,
         request_has_replay_items: bool,
         inline_compaction_enabled: bool = False,
-        inline_compaction_terminal: Callable[[int, bool], None] | None = None,
+        inline_compaction_threshold: int | None = None,
+        inline_compaction_terminal: (
+            Callable[[int, bool, float | None], None] | None
+        ) = None,
     ) -> TextGenerationNonStreamResult:
         synthetic_events = self._non_stream_response_events(response)
         source = self._iterate_non_stream_events(synthetic_events)
@@ -9568,6 +9846,7 @@ class OpenAIClient(TextGenerationVendor):
             ),
             request_has_replay_items=request_has_replay_items,
             inline_compaction_enabled=inline_compaction_enabled,
+            inline_compaction_threshold=inline_compaction_threshold,
             inline_compaction_terminal=inline_compaction_terminal,
             capability=capability,
         )

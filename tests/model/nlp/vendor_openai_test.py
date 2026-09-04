@@ -56,11 +56,13 @@ from avalan.model.stream import (
     CanonicalStreamItem,
     StreamChannel,
     StreamItemKind,
+    StreamProviderEvent,
     StreamReasoningRepresentation,
     StreamRetentionPolicy,
     StreamTerminalOutcome,
     StreamVisibility,
     accumulate_canonical_stream_items,
+    stream_observability_payload,
 )
 from avalan.model.vendor import TextGenerationVendorStream
 from avalan.task.usage import (
@@ -8476,6 +8478,132 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
         self.assertIsNone(items[1].provider_payload)
         self.assertNotIn("compact-invalid", repr(items[1].data))
 
+    async def test_inline_compaction_eof_rolls_back_validated_candidate(
+        self,
+    ) -> None:
+        completed = {
+            "type": "compaction",
+            "id": "compact-eof",
+            "status": "completed",
+            "encrypted_content": "opaque-eof",
+        }
+        owner = self.mod._OpenAIDirectReplayExecutionState(
+            StreamRetentionPolicy()
+        )
+        terminals: list[tuple[int, bool]] = []
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {**completed, "status": "in_progress"},
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": completed,
+                    },
+                ]
+            ),
+            replay_owner=owner,
+            inline_compaction_enabled=True,
+            inline_compaction_terminal=(
+                lambda count, succeeded, _elapsed: terminals.append(
+                    (count, succeeded)
+                )
+            ),
+        )
+
+        events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(terminals, [(1, False)])
+        self.assertEqual(owner.replay_items(), ())
+        rollback = next(
+            event
+            for event in events
+            if event.kind is StreamItemKind.INLINE_COMPACTION_ROLLED_BACK
+        )
+        self.assertIsNone(rollback.provider_event_type)
+        self.assertNotIn(
+            "provider_event_type", stream_observability_payload(rollback)
+        )
+        self.assertNotIn(
+            StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+            [event.kind for event in events],
+        )
+        self.assertNotIn("compact-eof", repr(events))
+        self.assertNotIn("opaque-eof", repr(events))
+
+    async def test_inline_compaction_empty_eof_is_not_a_completion(
+        self,
+    ) -> None:
+        stream = self.mod.OpenAIStream(
+            AsyncIter([]),
+            inline_compaction_enabled=True,
+        )
+
+        events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertNotIn(
+            StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+            [event.kind for event in events],
+        )
+
+    async def test_inline_compaction_usage_before_eof_preserves_final_order(
+        self,
+    ) -> None:
+        stream = self.mod.OpenAIStream(
+            AsyncIter([{"type": "response.usage"}]),
+            inline_compaction_enabled=True,
+        )
+        usage_event = StreamProviderEvent(
+            kind=StreamItemKind.USAGE_COMPLETED,
+            usage={"input_tokens": 5, "output_tokens": 3},
+            provider_event_type="response.usage",
+        )
+        with patch.object(
+            type(stream),
+            "_provider_events_from_event",
+            return_value=(usage_event,),
+        ):
+            events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(
+            events[1].usage, {"input_tokens": 5, "output_tokens": 3}
+        )
+        self.assertNotIn(
+            StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+            [event.kind for event in events],
+        )
+
     async def test_compaction_done_requires_exact_completed_protocol_item(
         self,
     ) -> None:
@@ -8589,6 +8717,34 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                     "item": duplicate_item,
                 },
             ],
+            [
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 0,
+                    "item": {
+                        **duplicate_item,
+                        "id": "compact-first",
+                        "status": "in_progress",
+                    },
+                },
+                {
+                    "type": "response.output_item.added",
+                    "output_index": 1,
+                    "item": {
+                        **duplicate_item,
+                        "id": "compact-second",
+                        "status": "in_progress",
+                    },
+                },
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 1,
+                    "item": {
+                        **duplicate_item,
+                        "id": "compact-first",
+                    },
+                },
+            ],
         )
         for events in streams:
             stream = self.mod.OpenAIStream(
@@ -8598,9 +8754,77 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
 
             result = await _stream_items(stream)
 
-            self.assertEqual(result[1].kind, StreamItemKind.STREAM_ERRORED)
-            self.assertIsNone(result[1].provider_payload)
-            self.assertNotIn("compact-duplicate", repr(result[1].data))
+            error = next(
+                event
+                for event in result
+                if event.kind is StreamItemKind.STREAM_ERRORED
+            )
+            self.assertIsNone(error.provider_payload)
+            self.assertNotIn("compact-duplicate", repr(error.data))
+            self.assertNotIn(
+                StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                [event.kind for event in result],
+            )
+            self.assertNotIn(
+                StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                [event.kind for event in result],
+            )
+
+    async def test_compaction_done_without_added_fails_before_replay_admission(
+        self,
+    ) -> None:
+        base_url = "https://api.openai.com/v1"
+        self.openai_stub.AsyncOpenAI.return_value.base_url = base_url
+        completed = {
+            "type": "compaction",
+            "id": "compact-unannounced",
+            "status": "completed",
+            "encrypted_content": "opaque-unannounced",
+        }
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": completed,
+                    }
+                ]
+            )
+        )
+        client = self.mod.OpenAIClient(api_key="key", base_url=base_url)
+
+        stream = await client(
+            "gpt-5.6-sol",
+            [],
+            GenerationSettings(
+                openai_inline_compaction=InlineCompaction(
+                    compact_threshold=1024
+                )
+            ),
+        )
+        events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(client._active_replay_owners, {})
+        self.assertTrue(stream._replay_owner.released)
+        diagnostics = client.inline_compaction_diagnostics
+        self.assertEqual(diagnostics.candidate_boundary_count, 0)
+        self.assertEqual(diagnostics.committed_boundary_count, 0)
+        self.assertEqual(diagnostics.applied_boundary_count, 0)
+        self.assertEqual(diagnostics.failure_count, 1)
+        self.assertEqual(diagnostics.status, "failed")
+        self.assertNotIn("compact-unannounced", repr(events))
+        self.assertNotIn("opaque-unannounced", repr(events))
+        self.assertNotIn("compact-unannounced", repr(diagnostics))
+        self.assertNotIn("opaque-unannounced", repr(diagnostics))
 
     async def test_compaction_allows_added_to_done_opaque_evolution(
         self,
@@ -8653,14 +8877,113 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                     [event.kind for event in events],
                     [
                         StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.INLINE_COMPACTION_STARTED,
+                        StreamItemKind.INLINE_COMPACTION_COMMITTED,
                         StreamItemKind.STREAM_COMPLETED,
                         StreamItemKind.STREAM_CLOSED,
                     ],
                 )
+                self.assertEqual(events[1].data, {"candidate_count": 1})
+                self.assertEqual(events[2].data["boundary_count"], 1)
+                self.assertNotIn("opaque", repr(events[1:3]))
+                self.assertNotIn("compact-fingerprint", repr(events[1:3]))
+
+    async def test_compaction_terminal_precedes_final_usage(self) -> None:
+        completed = {
+            "type": "compaction",
+            "id": "compact-final-usage",
+            "status": "completed",
+            "encrypted_content": "opaque-final-usage",
+        }
+        usage = {"input_tokens": 5, "output_tokens": 3}
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {
+                            **completed,
+                            "status": "in_progress",
+                        },
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": completed,
+                    },
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "status": "completed",
+                            "output": [completed],
+                            "usage": usage,
+                        },
+                    },
+                ]
+            ),
+            inline_compaction_enabled=True,
+        )
+
+        events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(events[3].usage, usage)
+        self.assertEqual(events[2].data["boundary_count"], 1)
+        self.assertNotIn("opaque-final-usage", repr(events[1:4]))
+        self.assertNotIn("compact-final-usage", repr(events[1:4]))
+
+    async def test_compaction_no_boundary_precedes_final_usage(self) -> None:
+        usage = {"input_tokens": 5, "output_tokens": 3}
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "status": "completed",
+                            "output": [],
+                            "usage": usage,
+                        },
+                    },
+                ]
+            ),
+            inline_compaction_enabled=True,
+        )
+
+        events = await _stream_items(stream)
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                StreamItemKind.USAGE_COMPLETED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertEqual(events[2].usage, usage)
 
     async def test_completed_response_requires_matching_compaction_identity(
         self,
     ) -> None:
+        event_item = {
+            "type": "compaction",
+            "id": "compact-event",
+            "status": "completed",
+            "encrypted_content": "opaque-event",
+        }
         outputs = (
             [
                 {
@@ -8690,14 +9013,14 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                 AsyncIter(
                     [
                         {
+                            "type": "response.output_item.added",
+                            "output_index": 0,
+                            "item": {**event_item, "status": "in_progress"},
+                        },
+                        {
                             "type": "response.output_item.done",
                             "output_index": 0,
-                            "item": {
-                                "type": "compaction",
-                                "id": "compact-event",
-                                "status": "completed",
-                                "encrypted_content": "opaque-event",
-                            },
+                            "item": event_item,
                         },
                         {
                             "type": "response.completed",
@@ -8713,9 +9036,21 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
 
             events = await _stream_items(stream)
 
-            self.assertEqual(events[1].kind, StreamItemKind.STREAM_ERRORED)
-            self.assertIsNone(events[1].provider_payload)
-            self.assertNotIn("opaque-terminal", repr(events[1].data))
+            error = next(
+                event
+                for event in events
+                if event.kind is StreamItemKind.STREAM_ERRORED
+            )
+            self.assertEqual(
+                events[1].kind,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+            )
+            self.assertIn(
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                [event.kind for event in events],
+            )
+            self.assertIsNone(error.provider_payload)
+            self.assertNotIn("opaque-terminal", repr(error.data))
 
     async def test_completed_response_allows_compaction_content_rotation(
         self,
@@ -8739,6 +9074,14 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                     AsyncIter(
                         [
                             {
+                                "type": "response.output_item.added",
+                                "output_index": 0,
+                                "item": {
+                                    **completed,
+                                    "status": "in_progress",
+                                },
+                            },
+                            {
                                 "type": "response.output_item.done",
                                 "output_index": 0,
                                 "item": completed,
@@ -8761,6 +9104,8 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                     [event.kind for event in events],
                     [
                         StreamItemKind.STREAM_STARTED,
+                        StreamItemKind.INLINE_COMPACTION_STARTED,
+                        StreamItemKind.INLINE_COMPACTION_COMMITTED,
                         StreamItemKind.STREAM_COMPLETED,
                         StreamItemKind.STREAM_CLOSED,
                     ],
@@ -8798,9 +9143,21 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
 
             events = await _stream_items(stream)
 
-            self.assertEqual(events[1].kind, StreamItemKind.STREAM_ERRORED)
-            self.assertIsNone(events[1].provider_payload)
-            self.assertNotIn("opaque-pending", repr(events[1].data))
+            error = next(
+                event
+                for event in events
+                if event.kind is StreamItemKind.STREAM_ERRORED
+            )
+            self.assertEqual(
+                events[1].kind,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+            )
+            self.assertIn(
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                [event.kind for event in events],
+            )
+            self.assertIsNone(error.provider_payload)
+            self.assertNotIn("opaque-pending", repr(error.data))
 
     async def test_stream_rolls_back_compaction_after_terminal_failure(
         self,
@@ -8841,17 +9198,29 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
             replay_owner=owner,
             inline_compaction_enabled=True,
             inline_compaction_terminal=(
-                lambda count, succeeded: terminals.append((count, succeeded))
+                lambda count, succeeded, _elapsed: terminals.append(
+                    (count, succeeded)
+                )
             ),
         )
 
-        await _stream_items(stream)
+        events = await _stream_items(stream)
 
         self.assertEqual(owner.replay_items(), ())
         self.assertEqual(owner.compaction_item_count, 0)
         self.assertEqual(
             terminals,
             [(1, False)],
+        )
+        rollback = next(
+            event
+            for event in events
+            if event.kind is StreamItemKind.INLINE_COMPACTION_ROLLED_BACK
+        )
+        self.assertEqual(rollback.provider_event_type, "response.failed")
+        self.assertEqual(
+            stream_observability_payload(rollback)["provider_event_type"],
+            "response.failed",
         )
         self.assertNotIn("opaque-failed", repr(owner))
 
@@ -8911,6 +9280,8 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
             [event.kind for event in events],
             [
                 StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
                 StreamItemKind.STREAM_ERRORED,
                 StreamItemKind.STREAM_CLOSED,
             ],
@@ -8919,6 +9290,11 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics.applied_boundary_count, 0)
         self.assertEqual(diagnostics.committed_boundary_count, 0)
         self.assertEqual(diagnostics.rolled_back_boundary_count, 1)
+        self.assertEqual(diagnostics.request_count, 1)
+        self.assertEqual(diagnostics.attempt_count, 1)
+        self.assertEqual(diagnostics.failure_count, 1)
+        self.assertGreaterEqual(diagnostics.elapsed_seconds, 0)
+        self.assertGreaterEqual(diagnostics.last_elapsed_seconds or 0, 0)
         self.assertEqual(diagnostics.status, "rolled_back")
         self.assertNotIn("opaque-rollback", repr(diagnostics))
 
@@ -9034,6 +9410,9 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
                     diagnostics.committed_boundary_count,
                     1 if second_has_boundary else 0,
                 )
+                self.assertEqual(diagnostics.request_count, 1)
+                self.assertEqual(diagnostics.attempt_count, 2)
+                self.assertEqual(diagnostics.failure_count, 1)
                 self.assertEqual(
                     diagnostics.status,
                     (
@@ -9562,7 +9941,10 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
 
         diagnostics = client.inline_compaction_diagnostics
         self.assertEqual(diagnostics.request_count, 2)
+        self.assertEqual(diagnostics.attempt_count, 2)
         self.assertEqual(diagnostics.committed_boundary_count, 1)
+        self.assertEqual(diagnostics.completed_no_boundary_count, 1)
+        self.assertEqual(diagnostics.failure_count, 0)
         self.assertEqual(diagnostics.status, "completed_no_boundary")
 
     def test_compaction_replay_and_protocol_guards_fail_closed(self) -> None:
@@ -9724,6 +10106,60 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
             with self.assertRaises(self.mod._OpenAIInlineCompactionError):
                 stream._complete_compaction_item(done_event, done_item)
 
+    async def test_inline_compaction_rejects_nonreplayable_done_item(
+        self,
+    ) -> None:
+        """Fail closed after a matched done item loses replayable content."""
+        added_item = {
+            "type": "compaction",
+            "id": "compaction-invalid-replay",
+            "status": "in_progress",
+            "encrypted_content": "opaque-valid-replay",
+        }
+        done_item = {**added_item, "status": "completed"}
+        stream = self.mod.OpenAIStream(
+            AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": added_item,
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": done_item,
+                    },
+                ]
+            ),
+            inline_compaction_enabled=True,
+        )
+        invalid_replay_item = {
+            "type": "compaction",
+            "id": "compaction-invalid-replay",
+            "encrypted_content": "",
+        }
+
+        with patch.object(
+            self.mod.OpenAIStream,
+            "_response_input_item_payload",
+            return_value=invalid_replay_item,
+        ):
+            events = await _stream_items(stream)
+
+        self.assertEqual(
+            [item.kind for item in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                StreamItemKind.STREAM_ERRORED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertNotIn("compaction-invalid-replay", repr(events))
+        self.assertNotIn("opaque-valid-replay", repr(events))
+
     async def test_azure_inline_compaction_requests_replayable_reasoning(
         self,
     ) -> None:
@@ -9751,6 +10187,71 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
             "reasoning.encrypted_content",
             create.await_args.kwargs["include"],
         )
+
+    async def test_azure_inline_compaction_emits_shared_lifecycle(
+        self,
+    ) -> None:
+        base_url = "https://tenant.openai.azure.com/openai/v1"
+        self.openai_stub.AsyncOpenAI.return_value.base_url = base_url
+        compaction = {
+            "type": "compaction",
+            "id": "azure-compaction",
+            "status": "completed",
+            "encrypted_content": "azure-opaque",
+        }
+        self.openai_stub.AsyncOpenAI.return_value.responses.create = AsyncMock(
+            return_value=AsyncIter(
+                [
+                    {
+                        "type": "response.output_item.added",
+                        "output_index": 0,
+                        "item": {**compaction, "status": "in_progress"},
+                    },
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": 0,
+                        "item": compaction,
+                    },
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "status": "completed",
+                            "output": [compaction],
+                        },
+                    },
+                ]
+            )
+        )
+        client = self.mod.OpenAIClient(
+            api_key="key",
+            base_url=base_url,
+            azure_api_version="preview",
+        )
+
+        events = await _stream_items(
+            await client(
+                "gpt-5.6-sol",
+                [],
+                GenerationSettings(
+                    openai_inline_compaction=InlineCompaction(
+                        compact_threshold=1024
+                    )
+                ),
+            )
+        )
+
+        self.assertEqual(
+            [event.kind for event in events],
+            [
+                StreamItemKind.STREAM_STARTED,
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                StreamItemKind.STREAM_COMPLETED,
+                StreamItemKind.STREAM_CLOSED,
+            ],
+        )
+        self.assertNotIn("azure-opaque", repr(events[1:3]))
+        self.assertNotIn("azure-compaction", repr(events[1:3]))
 
     def test_inline_compaction_validation_rejects_untyped_policy(self) -> None:
         base_url = "https://api.openai.com/v1"

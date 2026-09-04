@@ -126,7 +126,7 @@
           "path": "src/avalan/event/__init__.py",
           "line": 29,
           "text": "class EventType(StrEnum):",
-          "source_sha256": "6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"
+          "source_sha256": "0a70058b64ef41780ef2ae7d74bc2c6eec41f6793c3faefc4ca98312015890eb"
         }
       ]
     },
@@ -208,6 +208,6 @@
       "provider_capability_catalog"
     ]
   },
-  "contract_inventory_sha256": "21b9d004dca05989056b2e2506e3e7ffe5ea4461199c0625632aba8e74e7e38a",
-  "evidence_sha256": "dc40d68e534aa060aad009451afac7350300153ccadde35aee595a7b5e3d3dfc"
+  "contract_inventory_sha256": "2e6d657b911162008fd3e5001ed0ce8b02c93a596dd25a9e6073de0021033527",
+  "evidence_sha256": "af7aabd19e7f7d5dc9f88deeefd35268117c9bc78aa75aa9672d64dd85a5b6b4"
 }

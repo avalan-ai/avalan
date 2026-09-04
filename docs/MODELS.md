@@ -406,6 +406,33 @@ item as opaque: never inspect, decode, print, or log it. After a successful
 provider response, that state remains part of the provider continuation across
 tool cycles; it is not a locally generated replacement for the transcript.
 
+### Lifecycle and observability
+
+Requesting `context_management` is only eligibility; it is not proof that a
+compaction happened. Avalan emits `inline_compaction.started` only after the
+native OpenAI or Azure Responses stream adds a compaction item. The basic live
+display then shows `Compacting...` with an elapsed timer. It emits
+`inline_compaction.committed` and shows `Compacted in ...` only after the
+opaque item, completed response, and whole-response replay state have all
+validated and committed. A candidate that cannot commit emits a content-free
+`inline_compaction.rolled_back` outcome instead.
+
+A completed response with no provider boundary remains silent in the normal
+basic UI. It is still available to event listeners and metrics as
+`inline_compaction.completed_no_boundary`. The lifecycle payloads contain only
+the configured threshold, counts, and elapsed duration. Event listeners receive
+those numeric values under `inline_compaction`, in addition to the ordinary
+stream observability fields. The lifecycle contract rejects any extra payload
+keys, provider correlations, opaque provider payload, encrypted compaction
+content, prompts, raw provider items, or provider IDs.
+
+An iterator ending without a validated provider terminal is not a successful
+response when inline compaction is enabled. Avalan fails that response closed,
+rolls back any candidate boundary, and preserves final usage before the error
+terminal when safely received. Diagnostics count one logical request and every
+actual provider dispatch separately; a retry therefore increments
+`attempt_count` without increasing `request_count`.
+
 ## Modalities
 
 Avalan supports text, vision, and audio workloads. Model choice and backend

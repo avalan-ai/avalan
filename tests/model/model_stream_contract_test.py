@@ -2537,6 +2537,246 @@ def _class_defines_canonical_stream(node: ClassDef) -> bool:
 
 
 class StreamContractTestCase(TestCase):
+    def test_inline_compaction_lifecycle_payload_is_strict_and_content_free(
+        self,
+    ) -> None:
+        provider = StreamProviderEvent(
+            kind=StreamItemKind.INLINE_COMPACTION_STARTED,
+            data={"candidate_count": 1, "compact_threshold": 1024},
+            provider_event_type="response.output_item.added",
+        )
+        canonical = _item(
+            StreamItemKind.INLINE_COMPACTION_COMMITTED,
+            0,
+            data={
+                "boundary_count": 2,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+            provider_event_type="response.completed",
+        )
+        projection = StreamConsumerProjection(
+            stream_session_id="stream",
+            run_id="run",
+            turn_id="turn",
+            sequence=0,
+            kind=StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+            channel=StreamChannel.CONTROL,
+            correlation=StreamItemCorrelation(),
+            data={"boundary_count": 1, "elapsed_seconds": 0.0},
+            provider_event_type="response.failed",
+        )
+
+        self.assertEqual(
+            provider.data, {"candidate_count": 1, "compact_threshold": 1024}
+        )
+        self.assertEqual(
+            stream_observability_payload(canonical)["inline_compaction"],
+            {
+                "boundary_count": 2,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+        )
+        self.assertEqual(
+            canonical_item_from_consumer_projection(projection).data,
+            {"boundary_count": 1, "elapsed_seconds": 0.0},
+        )
+
+    def test_inline_compaction_lifecycle_payload_rejects_unsafe_values(
+        self,
+    ) -> None:
+        def canonical(**overrides: Any) -> CanonicalStreamItem:
+            values: dict[str, Any] = {
+                "stream_session_id": "stream",
+                "run_id": "run",
+                "turn_id": "turn",
+                "sequence": 0,
+                "kind": StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                "channel": StreamChannel.CONTROL,
+                "data": {"boundary_count": 1, "elapsed_seconds": 0.0},
+            }
+            values.update(overrides)
+            return CanonicalStreamItem(**values)
+
+        invalid_values = (
+            {"data": {"boundary_count": 1, "encrypted_content": "opaque"}},
+            {"data": {"boundary_count": True}},
+            {"data": {"boundary_count": 0}},
+            {"data": {"boundary_count": 1, "compact_threshold": 0}},
+            {"data": {"boundary_count": 1, "elapsed_seconds": -1.0}},
+            {"data": {"boundary_count": 1, "elapsed_seconds": float("nan")}},
+            {"data": {"boundary_count": 1, "elapsed_seconds": float("inf")}},
+            {
+                "correlation": StreamItemCorrelation(
+                    provider_request_id="provider-id"
+                )
+            },
+            {"provider_payload": {"id": "provider-id"}},
+            {"metadata": {"encrypted_content": "opaque"}},
+            {"provider_event_type": "response.provider-id"},
+        )
+        for overrides in invalid_values:
+            with self.subTest(overrides=overrides):
+                with self.assertRaises(AssertionError):
+                    canonical(**overrides)
+
+        with self.assertRaises(AssertionError):
+            StreamProviderEvent(
+                kind=StreamItemKind.INLINE_COMPACTION_STARTED,
+                data={"candidate_count": 1, "provider_id": "provider-id"},
+            )
+        with self.assertRaises(AssertionError):
+            StreamConsumerProjection(
+                stream_session_id="stream",
+                run_id="run",
+                turn_id="turn",
+                sequence=0,
+                kind=StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                channel=StreamChannel.CONTROL,
+                correlation=StreamItemCorrelation(),
+                data={"boundary_count": 1},
+            )
+
+    def test_inline_compaction_lifecycle_accepts_correlated_cycles(
+        self,
+    ) -> None:
+        def lifecycle(
+            kind: StreamItemKind,
+            sequence: int,
+            count: int,
+        ) -> CanonicalStreamItem:
+            return _item(
+                kind,
+                sequence,
+                data=(
+                    {"candidate_count": count}
+                    if kind is StreamItemKind.INLINE_COMPACTION_STARTED
+                    else {"boundary_count": count}
+                ),
+            )
+
+        cases = (
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 2, 2),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_COMMITTED, 3, 2),
+                _item(
+                    StreamItemKind.USAGE_COMPLETED,
+                    4,
+                    usage={"input_tokens": 1},
+                ),
+                _stream_completed(5),
+                _item(StreamItemKind.STREAM_CLOSED, 6),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_ROLLED_BACK, 2, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 3, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_COMMITTED, 4, 1),
+                _item(
+                    StreamItemKind.USAGE_COMPLETED,
+                    5,
+                    usage={"input_tokens": 1},
+                ),
+                _stream_completed(6),
+                _item(StreamItemKind.STREAM_CLOSED, 7),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(
+                    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                    1,
+                    0,
+                ),
+                _item(
+                    StreamItemKind.USAGE_COMPLETED,
+                    2,
+                    usage={"input_tokens": 1},
+                ),
+                _stream_completed(3),
+                _item(StreamItemKind.STREAM_CLOSED, 4),
+            ),
+        )
+
+        for items in cases:
+            with self.subTest(items=items):
+                self.assertEqual(validate_canonical_stream_items(items), items)
+                accumulator = CanonicalStreamAccumulator().add_many(items)
+                self.assertEqual(accumulator.validate_complete(), items)
+
+    def test_inline_compaction_lifecycle_rejects_invalid_boundaries(
+        self,
+    ) -> None:
+        def lifecycle(
+            kind: StreamItemKind,
+            sequence: int,
+            count: int,
+        ) -> CanonicalStreamItem:
+            return _item(
+                kind,
+                sequence,
+                data=(
+                    {"candidate_count": count}
+                    if kind is StreamItemKind.INLINE_COMPACTION_STARTED
+                    else {"boundary_count": count}
+                ),
+            )
+
+        unclosed_candidate_cases = tuple(
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                terminal,
+            )
+            for terminal in (
+                _stream_errored(2),
+                _item(
+                    StreamItemKind.STREAM_COMPLETED,
+                    2,
+                    usage={"input_tokens": 1},
+                    terminal_outcome=StreamTerminalOutcome.COMPLETED,
+                ),
+                _item(StreamItemKind.STREAM_CLOSED, 2),
+            )
+        )
+        invalid_cases = (
+            *unclosed_candidate_cases,
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 2, 1),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 2, 2),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_COMMITTED, 3, 1),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_COMMITTED, 1, 1),
+            ),
+            (
+                _item(StreamItemKind.STREAM_STARTED, 0),
+                lifecycle(StreamItemKind.INLINE_COMPACTION_STARTED, 1, 1),
+                lifecycle(
+                    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                    2,
+                    0,
+                ),
+            ),
+        )
+
+        for items in invalid_cases:
+            with self.subTest(items=items):
+                with self.assertRaises(StreamValidationError):
+                    validate_canonical_stream_items(items)
+                with self.assertRaises(StreamValidationError):
+                    CanonicalStreamAccumulator().add_many(items)
+
     def test_summary_reuses_canonical_reasoning_channel(self) -> None:
         item = _item(
             StreamItemKind.REASONING_DELTA,
