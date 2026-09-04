@@ -90,6 +90,11 @@ _TERMINAL_EXECUTION_STATUSES = frozenset(
 )
 
 
+def _text_generation_response(value: object) -> TextGenerationResponse:
+    """Return the static text-response view of a model-manager result."""
+    return cast(TextGenerationResponse, value)
+
+
 class _ConversationDurableResponseState(DurableOrchestratorResponse):
     """Expose provider-neutral state for coordinated suspension staging."""
 
@@ -599,7 +604,7 @@ class EngineAgent(ABC):
         *args: object,
         settings: GenerationSettings | None = None,
         skip_special_tokens: bool = True,
-        **kwargs: Any,
+        **kwargs: object,
     ) -> TextGenerationResponse:
         context = self._model_call_context_with_capability(context)
         input_value = input
@@ -625,6 +630,10 @@ class EngineAgent(ABC):
             settings_dict.setdefault("temperature", None)
             settings_dict.setdefault("do_sample", False)
         settings_dict.update(kwargs)
+        compaction_policy = settings_dict.pop("compaction", None)
+        if compaction_policy is not None:
+            assert settings_dict.get("openai_inline_compaction") is None
+            settings_dict["openai_inline_compaction"] = compaction_policy
         settings_dict = self._normalize_generation_settings(settings_dict)
         settings = GenerationSettings(**settings_dict)
         assert settings
@@ -755,8 +764,8 @@ class EngineAgent(ABC):
             context=context,
         )
         if conversation_turn is None:
-            output = cast(
-                TextGenerationResponse, await self._model_manager(model_task)
+            output = _text_generation_response(
+                await self._model_manager(model_task)
             )
         else:
             conversation_input = context.conversation_input

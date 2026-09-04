@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from io import StringIO
 from logging import getLogger
 from pathlib import Path
-from tempfile import NamedTemporaryFile
+from tempfile import NamedTemporaryFile, TemporaryDirectory
 from types import SimpleNamespace
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, call, patch
@@ -18,6 +18,7 @@ from rich.syntax import Syntax
 
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
+from avalan.agent.loader import OrchestratorLoader
 from avalan.cli.commands import agent as agent_cmds
 from avalan.cli.display import CliStreamDisplayConfig
 from avalan.container import (
@@ -26,6 +27,7 @@ from avalan.container import (
     ContainerFakeBackendScript,
     container_backend_capability_profile,
 )
+from avalan.conversation.settings import DisabledCompaction, InlineCompaction
 from avalan.entities import (
     EngineMessage,
     EngineUri,
@@ -1378,6 +1380,43 @@ class CliAgentInitTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("[tool]", output)
         self.assertIn('format = "json"', output)
         self.assertIn('"math.calculator"', output)
+
+    async def test_agent_init_compaction_round_trips_to_typed_policy(
+        self,
+    ) -> None:
+        theme = MagicMock()
+        theme._ = lambda value: value
+        cases = (
+            (
+                "inline",
+                1024,
+                InlineCompaction(compact_threshold=1024),
+            ),
+            ("none", None, DisabledCompaction()),
+            (None, None, None),
+        )
+        for operation, threshold, expected in cases:
+            with self.subTest(operation=operation):
+                args = self._agent_init_args(
+                    run_compaction=operation,
+                    run_compact_threshold=threshold,
+                )
+                console = MagicMock()
+
+                await agent_cmds.agent_init(args, console, theme)
+
+                rendered = console.print.call_args.args[0].code
+                parsed = tomllib.loads(rendered)
+                if expected is None:
+                    self.assertNotIn("compaction", parsed["run"])
+                else:
+                    self.assertIn("compaction", parsed["run"])
+                with TemporaryDirectory() as tmp:
+                    path = Path(tmp) / "agent.toml"
+                    path.write_text(rendered, encoding="utf-8")
+                    loaded = await OrchestratorLoader.validate_agent_file(path)
+                actual = loaded.get("run", {}).get("compaction")
+                self.assertEqual(actual, expected)
 
     async def test_agent_init_tool_recovery_formats_output(self):
         args = Namespace(
@@ -3792,10 +3831,14 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
             from_file.call_args.kwargs,
         )
 
-    async def test_run_watch_reloads_when_file_changes(self):
+    async def test_run_watch_none_compaction_overrides_spec_on_reload(
+        self,
+    ) -> None:
         self.args.conversation = True
         self.args.watch = True
         self.args.run_reasoning_summary = "concise"
+        self.args.run_compaction = "none"
+        self.args.run_compact_threshold = None
         second_orch = AsyncMock()
         second_orch.engine_agent = True
         second_orch.engine = MagicMock(model_id="m")
@@ -3842,7 +3885,8 @@ class CliAgentRunTestCase(unittest.IsolatedAsyncioTestCase):
                 {
                     "reasoning": {
                         "summary": ReasoningSummaryMode.CONCISE,
-                    }
+                    },
+                    "compaction": DisabledCompaction(),
                 },
             )
 

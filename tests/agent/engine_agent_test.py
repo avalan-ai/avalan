@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 from avalan.agent import Specification
 from avalan.agent.engine import EngineAgent
+from avalan.conversation.settings import DisabledCompaction, InlineCompaction
 from avalan.entities import (
     ChatSettings,
     EngineMessage,
@@ -133,7 +134,11 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         event_manager = MagicMock(spec=EventManager)
         event_manager.trigger = AsyncMock()
         model_manager = AsyncMock(spec=ModelManager)
-        model_manager.return_value = "out"
+        model_manager.return_value = TextGenerationResponse(
+            lambda: "out",
+            logger=getLogger(),
+            use_async_generator=False,
+        )
         engine_uri = EngineUri(
             host=None,
             port=None,
@@ -200,7 +205,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(replace(task.context, capability=None), context)
         self.assertIs(task.context.capability, task.capability)
-        self.assertEqual(agent._last_output, "out")
+        self.assertEqual(await agent._last_output.to_str(), "out")
 
     async def test_run_with_settings_no_previous_response(self):
         agent, engine, memory, manager = self._make_agent()
@@ -225,6 +230,17 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         )
         self.assertEqual(replace(task.context, capability=None), context)
         self.assertIs(task.context.capability, task.capability)
+
+    async def test_run_accepts_legacy_model_manager_result(self) -> None:
+        agent, _engine, _memory, manager = self._make_agent()
+        response = object()
+        manager.return_value = response
+        message = Message(role=MessageRole.USER, content="hi")
+
+        result = await agent._run(self._make_context(message), message)
+
+        self.assertIs(result, response)
+        self.assertIs(agent._last_output, response)
 
     async def test_run_preserves_context_capability_identity(self) -> None:
         agent, _engine, _memory, manager = self._make_agent()
@@ -361,6 +377,39 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
             ),
         )
 
+    async def test_run_maps_public_compaction_to_vendor_setting(self) -> None:
+        message = Message(role=MessageRole.USER, content="hi")
+        inline = InlineCompaction(compact_threshold=1024)
+        agent, _, _, manager = self._make_agent()
+
+        await agent._run(
+            self._make_context(message),
+            message,
+            compaction=inline,
+        )
+
+        settings = manager.await_args.args[0].operation.generation_settings
+        self.assertIs(settings.openai_inline_compaction, inline)
+
+        disabled = DisabledCompaction()
+        disabled_agent, _, _, disabled_manager = self._make_agent()
+        await disabled_agent._run(
+            self._make_context(message),
+            message,
+            compaction=disabled,
+        )
+        disabled_settings = disabled_manager.await_args.args[
+            0
+        ].operation.generation_settings
+        self.assertIs(disabled_settings.openai_inline_compaction, disabled)
+
+        default_agent, _, _, default_manager = self._make_agent()
+        await default_agent._run(self._make_context(message), message)
+        default_settings = default_manager.await_args.args[
+            0
+        ].operation.generation_settings
+        self.assertIsNone(default_settings.openai_inline_compaction)
+
     async def test_run_with_list_of_strings_converts_to_user_messages(self):
         agent, _, memory, manager = self._make_agent()
         context = self._make_context("unused")
@@ -405,7 +454,7 @@ class EngineAgentRunTestCase(IsolatedAsyncioTestCase):
         self.assertIs(task.capability, capability)
         agent._tool.export_model_capability_seed.assert_not_called()
         self.assertEqual(agent.last_prompt, ([message], None, None, None))
-        self.assertEqual(agent._last_output, "out")
+        self.assertEqual(await agent._last_output.to_str(), "out")
 
     async def test_sync_messages_appends_last_output_when_memory_enabled(
         self,

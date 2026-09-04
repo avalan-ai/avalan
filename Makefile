@@ -150,7 +150,7 @@ test-coverage:
 	$(eval ARGS := $(filter-out $@,$(MAKECMDGOALS)))
 	$(eval COVERAGE_THRESHOLD := $(firstword $(ARGS)))
 	$(eval COVERAGE_PATH := $(if $(word 2,$(ARGS)),$(word 2,$(ARGS)),src/))
-	@poetry run pytest --cov=$(COVERAGE_PATH) --cov-report=json &> /dev/null
+	@poetry run pytest --cov=$(COVERAGE_PATH) --cov-report=json
 	@if [ -z "$(COVERAGE_THRESHOLD)" ]; then \
 		jq -r '.files | to_entries[] | "\(.key): \(.value.summary.percent_covered_display)%"' coverage.json; \
 	elif [ "$(COVERAGE_THRESHOLD)" -lt 0 ]; then \

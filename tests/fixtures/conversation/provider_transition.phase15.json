@@ -1,0 +1,37 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 15,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase15-strict-provider-type-boundary-review",
+  "reason": "Preserve the reviewed ordinary agent-run provider-native inline-compaction boundary while replacing selected untyped replay and transport casts with explicit normalized-map ownership; this source transition records exact bytes only and does not certify the pending Phase 15 exact gate, coverage, or live provider capability.",
+  "transitions": [
+    {
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "from_size": 392855,
+      "from_sha256": "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686",
+      "to_size": 395643,
+      "to_sha256": "35db989c96bd9979e0939414c95879e869cef62f3ab6b31b79ee007ceb2ab6a9"
+    },
+    {
+      "path": "tests/conversation/domain_contract_test.py",
+      "from_size": 161490,
+      "from_sha256": "947b9bb37208dab8de7956d4820b58ef9c3b3a40a0a9c40f996af85546a4cdc6",
+      "to_size": 162480,
+      "to_sha256": "b20ece5d940d423c41e1b393295e52efa539718b173c2a2943a1db3c6592d26b"
+    },
+    {
+      "path": "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
+      "from_size": 102661,
+      "from_sha256": "ba3d80919149dd5fe15235916eeda6173a2763531e082fb5837222213f9375e1",
+      "to_size": 104684,
+      "to_sha256": "d9167e4f3f3af6e1e3121fbebdb65d79bd32845b1cd8182bdf6be0a28eacfe4e"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_no_production_conversation_dispatch_or_advertisement",
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_transport_policy_rejects_data_flow_bypasses",
+    "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_inline_compaction_retry_resets_identity_maps"
+  ],
+  "canonical_sha256": "8ffa2921d1c346a47641af1be2a81216dceec825208b2c234758a2219d799544"
+}

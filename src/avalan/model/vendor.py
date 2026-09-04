@@ -67,6 +67,18 @@ class TextGenerationVendor(ABC):
         if settings is not None:
             validate_reasoning_summary_request(self, settings)
 
+    def _validate_inline_compaction_request(
+        self,
+        settings: GenerationSettings | None,
+    ) -> None:
+        """Reject inline compaction unless this provider overrides support."""
+        policy = (
+            None if settings is None else settings.openai_inline_compaction
+        )
+        if policy is None or getattr(policy, "operation", None) == "none":
+            return
+        raise ValueError("provider-native inline compaction is unavailable")
+
     async def __call__(
         self,
         model_id: str,

@@ -4,12 +4,13 @@ from uuid import UUID
 
 from avalan.agent.loader import OrchestratorLoader
 from avalan.cli.commands import agent as agent_cmds
+from avalan.conversation.settings import DisabledCompaction, InlineCompaction
 from avalan.entities import PermanentMemoryStoreSettings, ReasoningSummaryMode
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 
 class GetOrchestratorSettingsTestCase(unittest.TestCase):
-    def test_defaults(self):
+    def test_defaults(self) -> None:
         args = Namespace(
             name="a",
             role="r",
@@ -44,6 +45,49 @@ class GetOrchestratorSettingsTestCase(unittest.TestCase):
             result.sentence_model_id,
             OrchestratorLoader.DEFAULT_SENTENCE_MODEL_ID,
         )
+
+        args.run_compaction = "inline"
+        args.run_compact_threshold = 1024
+        inline = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(
+            inline.call_options["compaction"],
+            InlineCompaction(compact_threshold=1024),
+        )
+
+        args.run_compaction = "none"
+        args.run_compact_threshold = None
+        disabled = agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+        self.assertEqual(
+            disabled.call_options["compaction"],
+            DisabledCompaction(),
+        )
+
+        args.run_compaction = None
+        args.run_compact_threshold = 1024
+        with self.assertRaisesRegex(AssertionError, "run-compact-threshold"):
+            agent_cmds.get_orchestrator_settings(args, agent_id=uid)
+
+    def test_compaction_policy_rejects_incomplete_cli_options(self) -> None:
+        with self.assertRaisesRegex(
+            AssertionError,
+            "inline requires --run-compact-threshold",
+        ):
+            agent_cmds._agent_compaction_policy(
+                Namespace(
+                    run_compaction="inline",
+                    run_compact_threshold=None,
+                )
+            )
+        with self.assertRaisesRegex(
+            AssertionError,
+            "run-compact-threshold requires --run-compaction inline",
+        ):
+            agent_cmds._agent_compaction_policy(
+                Namespace(
+                    run_compaction="none",
+                    run_compact_threshold=1024,
+                )
+            )
 
     def test_block_repeated_tool_calls_from_cli(self):
         args = Namespace(

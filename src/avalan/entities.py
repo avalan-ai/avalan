@@ -478,6 +478,10 @@ class GenerationSettings:
     # Hosted Responses prompt cache retention. This is intentionally separate
     # from local transformer key/value cache settings above.
     prompt_cache_retention: PromptCacheRetention | str | None = None
+    # Provider-native agent-run inline compaction. This remains untyped here
+    # to avoid making the foundational entities module depend on conversation
+    # state; native providers validate the typed policy at dispatch.
+    openai_inline_compaction: object | None = None
 
     # Generation output variables --------------------------------------------
     # The number of independently computed returned sequences for each element

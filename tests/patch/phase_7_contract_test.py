@@ -7324,6 +7324,7 @@ def test_patch_phase_7_never_updates_git_index_or_head(tmp_path: Path) -> None:
     git("init", "-q")
     git("config", "user.email", "patch@example.test")
     git("config", "user.name", "Patch Test")
+    git("config", "commit.gpgsign", "false")
     sources = {
         "delete.txt": b"delete\n",
         "move.txt": b"move\n",

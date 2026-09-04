@@ -111,6 +111,14 @@ block_repeated_tool_calls = {{ orchestrator.call_options['block_repeated_tool_ca
 {{ key }} = {{ value | toml_value }}
 {% endfor %}
 {% endif %}
+{% if orchestrator.call_options.get('compaction') %}
+
+[run.compaction]
+operation = "{{ orchestrator.call_options['compaction'].operation.value }}"
+{% if orchestrator.call_options['compaction'].operation.value == 'inline' %}
+compact_threshold = {{ orchestrator.call_options['compaction'].compact_threshold }}
+{% endif %}
+{% endif %}
 
 {% if orchestrator.tools or tool_format or tool_recovery_formats or tool_name_policy %}
 [tool]

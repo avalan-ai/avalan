@@ -4,6 +4,7 @@ from ast import (
     AST,
     Add,
     AnnAssign,
+    Assert,
     Assign,
     AsyncFunctionDef,
     Attribute,
@@ -36,6 +37,9 @@ from ast import (
     walk,
 )
 from ast import Dict as DictNode
+from ast import (
+    List as ListNode,
+)
 from asyncio import run
 from dataclasses import fields
 from hashlib import sha256
@@ -99,12 +103,19 @@ _PROVIDER_CONFORMANCE_PATH = (
     / "conversation"
     / "provider_conformance.json"
 )
-_PHASE13_PROVIDER_TRANSITION_PATH = (
+_PHASE14_PROVIDER_TRANSITION_PATH = (
     _REPOSITORY_ROOT
     / "tests"
     / "fixtures"
     / "conversation"
-    / "provider_transition.phase13.json"
+    / "provider_transition.phase14.json"
+)
+_PHASE15_PROVIDER_TRANSITION_PATH = (
+    _REPOSITORY_ROOT
+    / "tests"
+    / "fixtures"
+    / "conversation"
+    / "provider_transition.phase15.json"
 )
 _ADAPTER_PATH = (
     _REPOSITORY_ROOT
@@ -125,9 +136,13 @@ _PROVIDER_CONFORMANCE_CANONICAL_SHA256 = (
 _PHASE0_PROVIDER_SOURCE_SHA256 = (
     "47d250ded5a4e0006fe3116ed51b9552f3a2b1caa313c73d77581e09e9ee5a0d"
 )
-_PRE_PHASE13_PROVIDER_SOURCE_SIZE = 337_354
-_PRE_PHASE13_PROVIDER_SOURCE_SHA256 = (
-    "7fcedb4274ecbe56134c7a921c0fa0b4adc1ee02477afb1406151ac135c6c0c5"
+_PRE_PHASE14_PROVIDER_SOURCE_SIZE = 363_543
+_PRE_PHASE14_PROVIDER_SOURCE_SHA256 = (
+    "ff4cc8edfc66009e72f9a511bc3035ad4f78354b0d254290db223a71a893ae1b"
+)
+_PRE_PHASE15_PROVIDER_SOURCE_SIZE = 392_855
+_PRE_PHASE15_PROVIDER_SOURCE_SHA256 = (
+    "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686"
 )
 _CANONICAL_JSON_ENCODING = (
     "utf-8 canonical JSON with sorted keys and compact separators"
@@ -323,9 +338,9 @@ def _phase0_provider_source_digest(source: str) -> str:
     return sha256(source.encode("utf-8")).hexdigest()
 
 
-def _phase13_provider_source_sha256() -> str:
-    transition = _load_json(_PHASE13_PROVIDER_TRANSITION_PATH)
-    assert transition["phase"] == 13
+def _phase14_provider_source_sha256() -> str:
+    transition = _load_json(_PHASE14_PROVIDER_TRANSITION_PATH)
+    assert transition["phase"] == 14
     assert transition["kind"] == "reviewed_provider_source_transition"
     payload = dict(transition)
     digest = payload.pop("canonical_sha256")
@@ -338,8 +353,30 @@ def _phase13_provider_source_sha256() -> str:
         for item in entries
         if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
     )
-    assert source["from_size"] == _PRE_PHASE13_PROVIDER_SOURCE_SIZE
-    assert source["from_sha256"] == _PRE_PHASE13_PROVIDER_SOURCE_SHA256
+    assert source["from_size"] == _PRE_PHASE14_PROVIDER_SOURCE_SIZE
+    assert source["from_sha256"] == _PRE_PHASE14_PROVIDER_SOURCE_SHA256
+    target = source["to_sha256"]
+    assert type(target) is str
+    return target
+
+
+def _phase15_provider_source_sha256() -> str:
+    transition = _load_json(_PHASE15_PROVIDER_TRANSITION_PATH)
+    assert transition["phase"] == 15
+    assert transition["kind"] == "reviewed_provider_source_transition"
+    payload = dict(transition)
+    digest = payload.pop("canonical_sha256")
+    assert digest == _canonical_digest(payload)
+    entries = [
+        _mapping(value) for value in _sequence(transition["transitions"])
+    ]
+    source = next(
+        item
+        for item in entries
+        if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
+    )
+    assert source["from_size"] == _PRE_PHASE15_PROVIDER_SOURCE_SIZE
+    assert source["from_sha256"] == _PRE_PHASE15_PROVIDER_SOURCE_SHA256
     target = source["to_sha256"]
     assert type(target) is str
     return target
@@ -348,7 +385,7 @@ def _phase13_provider_source_sha256() -> str:
 def _assert_phase0_provider_source_integrity(source: str) -> None:
     assert (
         _phase0_provider_source_digest(source)
-        == _phase13_provider_source_sha256()
+        == _phase15_provider_source_sha256()
     ), (
         "Phase 0 provider source integrity drifted; rotate the immutable "
         "anchor only through a reviewed provider phase transition"
@@ -951,20 +988,79 @@ def _assert_openai_call_transport_policy(source: str) -> None:
     ), "initial request mapping contains a forbidden provider field"
     allowed_store_key = initial_mapping.keys[store_positions[0]]
     assert allowed_store_key is not None
+    inline_compaction_assignments = [
+        node
+        for node in walk(function)
+        if isinstance(node, Assign)
+        and len(node.targets) == 1
+        and isinstance(node.targets[0], Subscript)
+        and isinstance(node.targets[0].value, Name)
+        and node.targets[0].value.id == "kwargs"
+        and _static_string(node.targets[0].slice) == "context_management"
+    ]
+    assert len(inline_compaction_assignments) == 1
+    inline_compaction_assignment = inline_compaction_assignments[0]
+    inline_compaction_target = inline_compaction_assignment.targets[0]
+    assert isinstance(inline_compaction_target, Subscript)
+    inline_compaction_key = inline_compaction_target.slice
+    inline_compaction_value = inline_compaction_assignment.value
+    assert isinstance(inline_compaction_value, Call)
+    assert isinstance(inline_compaction_value.func, Name)
+    assert inline_compaction_value.func.id == "_strict_replay_json_copy"
+    assert len(inline_compaction_value.args) == 1
+    inline_compaction_payload = inline_compaction_value.args[0]
+    assert isinstance(inline_compaction_payload, ListNode)
+    assert len(inline_compaction_payload.elts) == 1
+    inline_compaction_entry = inline_compaction_payload.elts[0]
+    assert isinstance(inline_compaction_entry, DictNode)
+    inline_compaction_keys = [
+        _static_string(key) for key in inline_compaction_entry.keys
+    ]
+    assert inline_compaction_keys == ["type", "compact_threshold"]
+    inline_compaction_type = inline_compaction_entry.values[0]
+    assert isinstance(inline_compaction_type, Constant)
+    assert inline_compaction_type.value == "compaction"
+    assert isinstance(inline_compaction_entry.values[1], Name)
+    assert (
+        inline_compaction_entry.values[1].id == "inline_compaction_threshold"
+    )
+    allowed_compact_threshold_key = inline_compaction_entry.keys[1]
+    assert allowed_compact_threshold_key is not None
+    allowed_provider_wire_keys = {
+        allowed_store_key: "store",
+        inline_compaction_key: "context_management",
+        allowed_compact_threshold_key: "compact_threshold",
+    }
     for syntax_node in walk(function):
         static_value = _static_string(syntax_node)
         if static_value not in _FORBIDDEN_PROVIDER_WIRE_ROOTS:
             continue
         assert (
-            syntax_node is allowed_store_key and static_value == "store"
+            allowed_provider_wire_keys.get(syntax_node) == static_value
         ), f"static provider wire root {static_value} is forbidden"
 
     assert (
         _strict_copy_source(normalized_mapping) == "kwargs"
     ), "normalized_request_kwargs must strictly copy kwargs"
     assert (
-        _cast_source(request_mapping) == "normalized_request_kwargs"
-    ), "request_kwargs must be the typed normalized request mapping"
+        _direct_name(request_mapping) == "normalized_request_kwargs"
+    ), "request_kwargs must retain the validated normalized mapping"
+    normalization_assertions = [
+        node
+        for node in walk(function)
+        if isinstance(node, Assert)
+        and isinstance(node.test, Call)
+        and isinstance(node.test.func, Name)
+        and node.test.func.id == "isinstance"
+        and len(node.test.args) == 2
+        and isinstance(node.test.args[0], Name)
+        and node.test.args[0].id == "normalized_request_kwargs"
+        and isinstance(node.test.args[1], Name)
+        and node.test.args[1].id == "dict"
+    ]
+    assert (
+        len(normalization_assertions) == 1
+    ), "request_kwargs must follow one explicit normalized mapping check"
     assert (
         _strict_copy_source(attempt_mapping) == "request_kwargs"
     ), "attempt_kwargs must strictly copy request_kwargs"
@@ -976,7 +1072,7 @@ def _assert_openai_call_transport_policy(source: str) -> None:
         ("attempt_kwargs", "request_kwargs"),
         ("normalized_request_kwargs", "kwargs"),
     }
-    allowed_cast_assignments = {
+    allowed_direct_assignments = {
         ("request_kwargs", "normalized_request_kwargs")
     }
     for assignment_node in assignment_nodes:
@@ -985,8 +1081,12 @@ def _assert_openai_call_transport_policy(source: str) -> None:
         targets = _assigned_names(assignment_node)
         direct_source = _direct_name(value)
         if direct_source in _TRACKED_REQUEST_MAPPINGS:
-            raise AssertionError(
-                f"tracked request mapping alias is prohibited: {direct_source}"
+            assert len(targets) == 1
+            assert (
+                targets[0],
+                direct_source,
+            ) in allowed_direct_assignments, (
+                "tracked request mapping alias is prohibited"
             )
         if direct_source == "request_client":
             raise AssertionError("request client aliases are prohibited")
@@ -1004,12 +1104,8 @@ def _assert_openai_call_transport_policy(source: str) -> None:
             )
         cast_source = _cast_source(value)
         if cast_source in _TRACKED_REQUEST_MAPPINGS:
-            assert len(targets) == 1
-            assert (
-                targets[0],
-                cast_source,
-            ) in allowed_cast_assignments, (
-                "tracked request mapping has an alternate cast alias"
+            raise AssertionError(
+                "tracked request mapping cannot use a cast alias"
             )
         for target in targets:
             assert (
@@ -1036,7 +1132,7 @@ def _assert_openai_call_transport_policy(source: str) -> None:
     assert not any(
         isinstance(node, DictComp) for node in walk(function)
     ), "closed provider gate forbids dynamic dictionary comprehensions"
-    allowed_store_entries: list[tuple[DictNode, int]] = []
+    allowed_provider_wire_entries: list[tuple[DictNode, int]] = []
     for dict_node in walk(function):
         if not isinstance(dict_node, DictNode):
             continue
@@ -1059,19 +1155,27 @@ def _assert_openai_call_transport_policy(source: str) -> None:
                 and type(value.value) is bool
                 and value.value is False
             )
+            allowed_inline_compaction = (
+                dict_node is inline_compaction_entry
+                and index == 1
+                and resolved_key == "compact_threshold"
+                and value is inline_compaction_entry.values[1]
+            )
             assert (
-                allowed_store
+                allowed_store or allowed_inline_compaction
             ), f"provider wire root {resolved_key} is forbidden"
-            allowed_store_entries.append((dict_node, index))
-    assert allowed_store_entries == [
-        (initial_mapping, store_positions[0])
-    ], "exactly one identity-known store=False mapping entry is required"
+            allowed_provider_wire_entries.append((dict_node, index))
+    assert allowed_provider_wire_entries == [
+        (initial_mapping, store_positions[0]),
+        (inline_compaction_entry, 1),
+    ], "only the exact store and inline-compaction mapping entries are allowed"
 
     for target_node in walk(function):
         if isinstance(target_node, Subscript):
             resolved_key = _static_string(target_node.slice)
             assert (
                 resolved_key not in _FORBIDDEN_PROVIDER_WIRE_ROOTS
+                or target_node is inline_compaction_target
             ), "protected provider fields cannot use subscript routes"
             root_name = _subscript_root_name(target_node.value)
             if root_name in _TRACKED_REQUEST_MAPPINGS and isinstance(
@@ -1151,7 +1255,7 @@ def _assert_openai_call_transport_policy(source: str) -> None:
         create_unpack.arg is None
     ), "Responses create must not have named provider arguments"
     assert (
-        _cast_source(create_unpack.value) == "attempt_kwargs"
+        _direct_name(create_unpack.value) == "attempt_kwargs"
     ), "Responses create must unpack the validated attempt_kwargs mapping"
 
     parent_by_node = {
@@ -1176,11 +1280,11 @@ def _assert_openai_call_transport_policy(source: str) -> None:
             "request_client Responses aliases and alternate calls "
             "are prohibited"
         )
-        assert lifecycle_attribute is create_call.func, lifecycle_route_message
+    assert lifecycle_attribute is create_call.func, lifecycle_route_message
     allowed_tracked_uses = {
-        "attempt_kwargs": {("cast", 1), ("isinstance", 0)},
+        "attempt_kwargs": {("isinstance", 0)},
         "kwargs": {("_strict_replay_json_copy", 0)},
-        "normalized_request_kwargs": {("cast", 1), ("isinstance", 0)},
+        "normalized_request_kwargs": {("isinstance", 0)},
         "request_kwargs": {("_strict_replay_json_copy", 0)},
     }
     for use_node in walk(function):
@@ -1198,6 +1302,13 @@ def _assert_openai_call_transport_policy(source: str) -> None:
             and _subscript_root_name(parent.value) == "kwargs"
             and _static_string(parent.slice) is not None
         ):
+            continue
+        if (
+            use_node.id == "normalized_request_kwargs"
+            and parent is parent_by_node[request_mapping]
+        ):
+            continue
+        if use_node.id == "attempt_kwargs" and parent is create_unpack:
             continue
         data_route_message = (
             f"tracked request mapping {use_node.id} has an "
@@ -1803,10 +1914,10 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
     }
     adapter_source = _ADAPTER_PATH.read_text(encoding="utf-8")
     assert sha256(_ADAPTER_PATH.read_bytes()).hexdigest() == (
-        _phase13_provider_source_sha256()
+        _phase15_provider_source_sha256()
     )
     assert _phase0_provider_source_digest(adapter_source) == (
-        _phase13_provider_source_sha256()
+        _phase15_provider_source_sha256()
     )
 
     typed_fields = _mapping(create_policy["typed_sdk_create_fields"])
@@ -2000,33 +2111,26 @@ def test_no_production_conversation_dispatch_or_advertisement() -> None:
             id="attempt-mapping-update",
         ),
         pytest.param(
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
+            "                                **attempt_kwargs\n",
             "                                store=False,\n"
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
+            "                                **attempt_kwargs\n",
             id="named-store-keyword",
         ),
         pytest.param(
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
+            "                                **attempt_kwargs\n",
             "                                background=False,\n"
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
+            "                                **attempt_kwargs\n",
             id="named-background-keyword",
         ),
         pytest.param(
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs),\n"
+            "                                **attempt_kwargs\n",
+            "                                **attempt_kwargs,\n"
             "                                **{},\n",
             id="extra-create-mapping-unpack",
         ),
         pytest.param(
-            "                                **cast(dict[str, Any], "
-            "attempt_kwargs)\n",
-            "                                **cast(dict[str, Any], kwargs)\n",
+            "                                **attempt_kwargs\n",
+            "                                **kwargs\n",
             id="alternate-create-unpack-source",
         ),
         pytest.param(
@@ -2289,7 +2393,7 @@ def test_every_tracked_transport_binding_rejects_tuple_rebinding(
             id="nested-function-argument",
         ),
         pytest.param(
-            "            kwargs: dict[str, Any] = {\n",
+            "            kwargs: dict[str, LooseJsonValue] = {\n",
             "            global kwargs\n",
             id="global-name",
         ),
@@ -2522,7 +2626,7 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
                 (
                     (
                         "            async def stream_factory() "
-                        "-> AsyncIterator[Any]:\n"
+                        "-> AsyncIterator[object]:\n"
                     ),
                     (
                         "            recovered_alias = next(\n               "
@@ -2533,7 +2637,7 @@ def test_reasoning_config_rejects_nonstatic_or_context_routes(
                         '       ("back", "ground")\n            )\n           '
                         " recovered_alias[recovered_field] = True\n\n         "
                         "   async def stream_factory() ->"
-                        " AsyncIterator[Any]:\n"
+                        " AsyncIterator[object]:\n"
                     ),
                 ),
             ),

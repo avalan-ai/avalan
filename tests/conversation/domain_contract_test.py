@@ -1584,24 +1584,45 @@ def test_public_core_sources_have_no_dynamic_or_synchronous_escape_hatch() -> (
     provider_source = (
         _ROOT / "src/avalan/model/nlp/text/vendor/openai.py"
     ).read_bytes()
-    transition_path = (
-        _ROOT / "tests/fixtures/conversation/provider_transition.phase13.json"
+    phase14_transition_path = (
+        _ROOT / "tests/fixtures/conversation/provider_transition.phase14.json"
     )
-    transition_payload = cast(
-        dict[str, object],
-        loads(transition_path.read_text(encoding="utf-8")),
+    phase15_transition_path = (
+        _ROOT / "tests/fixtures/conversation/provider_transition.phase15.json"
     )
-    transitions = cast(
-        list[dict[str, object]], transition_payload["transitions"]
+    phase14_transition_payload = loads(
+        phase14_transition_path.read_text(encoding="utf-8")
     )
-    assert transition_payload["phase"] == 13
-    provider_transition = next(
+    phase15_transition_payload = loads(
+        phase15_transition_path.read_text(encoding="utf-8")
+    )
+    assert isinstance(phase14_transition_payload, dict)
+    assert isinstance(phase15_transition_payload, dict)
+    phase14_transitions = phase14_transition_payload["transitions"]
+    phase15_transitions = phase15_transition_payload["transitions"]
+    assert isinstance(phase14_transitions, list)
+    assert isinstance(phase15_transitions, list)
+    assert all(isinstance(item, dict) for item in phase14_transitions)
+    assert all(isinstance(item, dict) for item in phase15_transitions)
+    assert phase14_transition_payload["phase"] == 14
+    assert phase15_transition_payload["phase"] == 15
+    phase14_provider_transition = next(
         item
-        for item in transitions
+        for item in phase14_transitions
+        if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
+    )
+    phase15_provider_transition = next(
+        item
+        for item in phase15_transitions
         if item["path"] == "src/avalan/model/nlp/text/vendor/openai.py"
     )
     assert (
-        sha256(provider_source).hexdigest() == provider_transition["to_sha256"]
+        phase14_provider_transition["to_sha256"]
+        == phase15_provider_transition["from_sha256"]
+    )
+    assert (
+        sha256(provider_source).hexdigest()
+        == phase15_provider_transition["to_sha256"]
     )
 
 

@@ -1,0 +1,53 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "phase": 14,
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "phase14-agent-run-inline-compaction-review",
+  "reason": "Preserve the ordinary agent-run provider-native inline-compaction boundary as opaque provider state, with exact replay pruning, tool-cycle correlation, retry rollback, and fail-closed native transport validation; this transition does not activate conversation-continuity production paths or make a live-capability claim.",
+  "transitions": [
+    {
+      "path": "src/avalan/agent/engine.py",
+      "from_size": 52517,
+      "from_sha256": "21d9cc1d8df4caa3d330a1b1ae67893ccbcc9b327033465e48978d4894897e7c",
+      "to_size": 52967,
+      "to_sha256": "4aa19f776e7110f51e5bc97aea7a96e2dd73954a922c5284b126d2351aa1f8b6"
+    },
+    {
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "from_size": 363543,
+      "from_sha256": "ff4cc8edfc66009e72f9a511bc3035ad4f78354b0d254290db223a71a893ae1b",
+      "to_size": 392855,
+      "to_sha256": "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686"
+    },
+    {
+      "path": "tests/conversation/domain_contract_test.py",
+      "from_size": 161490,
+      "from_sha256": "0ac0cbc3e5a1f4204829e102cd64478f06ca25e19a9ea08ef6d0a4672b032760",
+      "to_size": 161490,
+      "to_sha256": "947b9bb37208dab8de7956d4820b58ef9c3b3a40a0a9c40f996af85546a4cdc6"
+    },
+    {
+      "path": "tests/model/nlp/vendor_openai_conversation_phase0_test.py",
+      "from_size": 100430,
+      "from_sha256": "ce413aff06e5b71bc1e2e545af4f5f0fc197e7e71831ead2c0df23a379f33d61",
+      "to_size": 102661,
+      "to_sha256": "ba3d80919149dd5fe15235916eeda6173a2763531e082fb5837222213f9375e1"
+    },
+    {
+      "path": "src/avalan/sdk.py",
+      "from_size": 79420,
+      "from_sha256": "475cdbd0b3bfd54fb2d3d2184533e3f0a8accb11d99ee867d36f8e827cee075c",
+      "to_size": 80329,
+      "to_sha256": "ee1e0ec7aa67e8bbcaf36d1545947a1846368a7660b7d6fdfb2f465701b9e420"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/agent/loader_test.py::LoadJsonOrchestratorVariantsTestCase::test_run_compaction_file_normalization_and_validation",
+    "tests/input/public_sdk_coverage_test.py::test_run_agent_compaction_override_is_typed_and_precedes_mapping",
+    "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_compaction_physically_prunes_and_rollback_restores_state",
+    "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_native_inline_compaction_replays_tool_output_boundary",
+    "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_inline_compaction_retry_resets_identity_maps"
+  ],
+  "canonical_sha256": "83c4252988d6f67f099705f352544217600a114b7853a3af009bd4c944bff9ec"
+}

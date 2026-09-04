@@ -27,6 +27,7 @@ from ...container import (
     container_selection_from_mapping,
     trusted_container_runtime_from_mapping,
 )
+from ...conversation.settings import DisabledCompaction, InlineCompaction
 from ...entities import (
     Backend,
     EngineMessageScored,
@@ -105,14 +106,14 @@ from ...tool_cycles import MaximumToolCycles
 
 from argparse import Namespace
 from asyncio import Event
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from contextlib import AsyncExitStack
 from dataclasses import fields, replace
 from importlib import import_module
 from json import dumps as json_dumps
 from logging import Logger
 from os.path import dirname, getmtime, join
-from typing import Any, cast, overload
+from typing import Any, TypedDict, cast, overload
 from uuid import UUID, uuid4
 
 from jinja2 import Environment, FileSystemLoader
@@ -123,6 +124,15 @@ from rich.syntax import Syntax
 
 class _Unset:
     pass
+
+
+class _AgentFileLoadKwargs(TypedDict, total=False):
+    """Describe optional keyword arguments for spec-file loading."""
+
+    call_options_override: Mapping[
+        str,
+        Mapping[str, object] | DisabledCompaction | InlineCompaction,
+    ]
 
 
 _UNSET = _Unset()
@@ -244,6 +254,7 @@ def get_orchestrator_settings(
         if k.startswith("run_chat_") and v is not None
     }
     reasoning_settings = _agent_reasoning_overrides(args)
+    compaction_policy = _agent_compaction_policy(args)
     call_options = {
         "max_new_tokens": call_tokens,
         "skip_special_tokens": args.run_skip_special_tokens,
@@ -301,7 +312,9 @@ def get_orchestrator_settings(
         )
     if call_tool_choice is not None:
         call_options["tool_choice"] = call_tool_choice
-    engine_config: dict[str, Any] = {
+    if compaction_policy is not None:
+        call_options["compaction"] = compaction_policy
+    engine_config: dict[str, str] = {
         "backend": getattr(args, "backend", Backend.TRANSFORMERS.value)
     }
     engine_base_url = getattr(args, "engine_base_url", None)
@@ -1204,6 +1217,29 @@ def _agent_reasoning_overrides(args: Namespace) -> dict[str, object]:
     if isinstance(summary, str):
         overrides["summary"] = ReasoningSummaryMode(summary)
     return overrides
+
+
+def _agent_compaction_policy(
+    args: Namespace,
+) -> DisabledCompaction | InlineCompaction | None:
+    """Return one explicit CLI compaction override when requested."""
+    operation = getattr(args, "run_compaction", None)
+    threshold = getattr(args, "run_compact_threshold", None)
+    assert (
+        operation is not None or threshold is None
+    ), "--run-compact-threshold requires --run-compaction inline"
+    if operation is None:
+        return None
+    if operation == "none":
+        assert (
+            threshold is None
+        ), "--run-compact-threshold requires --run-compaction inline"
+        return DisabledCompaction()
+    assert operation == "inline", "--run-compaction must be none or inline"
+    assert (
+        type(threshold) is int and threshold > 0
+    ), "--run-compaction inline requires --run-compact-threshold"
+    return InlineCompaction(compact_threshold=threshold)
 
 
 def _agent_tool_format(args: Namespace) -> ToolFormat | None:
@@ -2416,11 +2452,20 @@ async def agent_run(
             )
 
             reasoning_overrides = _agent_reasoning_overrides(args)
-            file_load_kwargs: dict[str, Any] = {}
+            file_load_kwargs: _AgentFileLoadKwargs = {}
+            call_options_override: dict[
+                str,
+                Mapping[str, object] | DisabledCompaction | InlineCompaction,
+            ] = {}
             if reasoning_overrides:
-                file_load_kwargs["call_options_override"] = {
-                    "reasoning": reasoning_overrides
-                }
+                call_options_override["reasoning"] = reasoning_overrides
+            compaction_policy = _agent_compaction_policy(args)
+            if compaction_policy is not None:
+                call_options_override["compaction"] = compaction_policy
+            if call_options_override:
+                file_load_kwargs["call_options_override"] = (
+                    call_options_override
+                )
             orchestrator = await loader.from_file(
                 specs_path,
                 agent_id=agent_id,
@@ -2479,7 +2524,9 @@ async def agent_run(
                 )
         event_manager = orchestrator.event_manager
 
-        def event_manager_method(name: str) -> Any | None:
+        def event_manager_method(
+            name: str,
+        ) -> Callable[[object], object] | None:
             method = getattr(event_manager, name, None)
             has_method = callable(
                 getattr(type(event_manager), name, None)

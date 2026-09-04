@@ -351,6 +351,61 @@ echo "What is (4 + 6) * 5 / 2?" \
 
 See [TOOLS.md](TOOLS.md) for ReACT, tool formats, and tool-calling loops.
 
+## Provider-native Inline Compaction for Agent Runs
+
+Inline compaction is an opt-in, provider-managed context boundary for the
+ordinary legacy `avalan agent run` tool loop. Omitting it, or explicitly
+selecting `none`, preserves the prior request behavior: provider failures stay
+visible, Avalan does not create a local summary, and it does not automatically
+call a standalone compaction operation.
+
+The feature is accepted only for the exact native OpenAI Responses transport
+at `https://api.openai.com/v1`, or a tightly scoped Azure Responses transport.
+Azure requires HTTPS, a host ending in `.openai.azure.com` or
+`.cognitiveservices.azure.com`, and `/openai/v1` after trailing-slash
+normalization. It permits only the default or `443` port, no userinfo, params,
+query, or fragment, and `azure_api_version` omitted or exactly `preview`.
+Other providers, compatible gateways, custom base URLs, and transport shapes
+fail closed before dispatch. This transport rule does not establish live
+capability for a particular model or deployment.
+
+In agent TOML, configure one operation under `[run.compaction]`:
+
+```toml
+[run.compaction]
+operation = "inline"
+compact_threshold = 1024
+```
+
+`operation` is `inline` or `none`. `compact_threshold` is required only for
+`inline` and must be a positive integer; `none` accepts no threshold.
+
+From the CLI, set both opt-in controls for inline operation:
+
+```sh
+avalan agent run agent.toml \
+    --run-compaction inline \
+    --run-compact-threshold 1024
+```
+
+Use `--run-compaction none` to explicitly disable it. From the public SDK,
+pass the typed policy at the agent-run boundary:
+
+```python
+from avalan.sdk import InlineCompaction, run_agent
+
+result = await run_agent(
+    orchestrator,
+    agent_input,
+    compaction=InlineCompaction(compact_threshold=1024),
+)
+```
+
+The provider owns the compacted state. Avalan treats its encrypted compaction
+item as opaque: never inspect, decode, print, or log it. After a successful
+provider response, that state remains part of the provider continuation across
+tool cycles; it is not a locally generated replacement for the transcript.
+
 ## Modalities
 
 Avalan supports text, vision, and audio workloads. Model choice and backend

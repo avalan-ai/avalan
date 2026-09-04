@@ -642,6 +642,10 @@ def test_hosted_provider_omission_keeps_exact_dispatch_shape() -> None:
             model._logger = getLogger("reasoning-summary-omission")
             model._messages = MagicMock(return_value=[])
             model._model = AsyncMock(return_value="streamer")
+            validate_inline_compaction = MagicMock()
+            model._model._validate_inline_compaction_request = (
+                validate_inline_compaction
+            )
             settings = GenerationSettings()
 
             response = run(model("hello", settings=settings))

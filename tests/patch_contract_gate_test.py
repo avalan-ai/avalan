@@ -371,6 +371,68 @@ def test_patch_type_gate_keeps_integration_hunks_under_exact_structural(
         _TYPES._verify_strict_sources(tmp_path, (missing_source,), ())
 
 
+def test_patch_type_gate_resolves_qualified_nested_integration_hunks(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Resolve exact nested hunks and reject missing owner/member paths."""
+    source_path = tmp_path / "src" / "qualified.py"
+    source_path.parent.mkdir()
+    payload = b"""\
+class Owner:
+    def selected(self, value: int) -> str:
+        return str(value)
+
+    def ignored(self) -> None:
+        return None
+"""
+    source_path.write_bytes(payload)
+    source = _TYPES.StrictSource(
+        identifier="PATCH-TS-TEST-QUALIFIED-001",
+        path="src/qualified.py",
+        scope="integration_hunk",
+        symbols=("Owner.selected",),
+        source_sha256=sha256(payload).hexdigest(),
+    )
+    monkeypatch.setattr(_TYPES, "_repository_python_paths", lambda root: ())
+    monkeypatch.setattr(
+        _TYPES, "_run_strict_source_mypy", lambda root, paths: None
+    )
+
+    _TYPES._verify_strict_sources(tmp_path, (source,), ())
+
+    for symbol in (
+        "Owner.missing",
+        "Missing.selected",
+        "Owner.selected.value",
+    ):
+        mismatched = _TYPES.StrictSource(
+            identifier="PATCH-TS-TEST-QUALIFIED-002",
+            path="src/qualified.py",
+            scope="integration_hunk",
+            symbols=(symbol,),
+            source_sha256=sha256(payload).hexdigest(),
+        )
+        with pytest.raises(
+            _TYPES.PatchTypeContractError,
+            match="patch strict source symbol is missing",
+        ):
+            _TYPES._verify_strict_sources(tmp_path, (mismatched,), ())
+
+    cast_payload = payload.replace(
+        b"return str(value)", b"return cast(str, value)"
+    )
+    source_path.write_bytes(cast_payload)
+    cast_source = _TYPES.StrictSource(
+        identifier="PATCH-TS-TEST-QUALIFIED-003",
+        path="src/qualified.py",
+        scope="integration_hunk",
+        symbols=("Owner.selected",),
+        source_sha256=sha256(cast_payload).hexdigest(),
+    )
+    with pytest.raises(_TYPES.PatchTypeContractError, match="cast"):
+        _TYPES._verify_strict_sources(tmp_path, (cast_source,), ())
+
+
 def test_patch_fixture_mypy_is_hermetic_and_scopes_owned_diagnostics(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
