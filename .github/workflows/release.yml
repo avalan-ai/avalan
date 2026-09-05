@@ -68,6 +68,26 @@ jobs:
         if: steps.version_state.outputs.version_changed == 'true'
         run: poetry sync --all-extras --with test --no-interaction
 
+      - name: Pre-pull PATCH worker base image
+        if: steps.version_state.outputs.version_changed == 'true'
+        run: docker pull python:3.11-slim-bookworm@sha256:2e32f7d302adc1c37428355c1e646897c0c53f4fd60b6a551245fb90ee129f91
+
+      - name: Install Bubblewrap runtime
+        if: steps.version_state.outputs.version_changed == 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes bubblewrap libacl1
+
+      - name: Enable Bubblewrap user namespace isolation
+        if: steps.version_state.outputs.version_changed == 'true'
+        run: |
+          sudo sysctl --write kernel.apparmor_restrict_unprivileged_userns=0
+          sudo sysctl --write kernel.unprivileged_userns_clone=1
+          bwrap --die-with-parent --unshare-user --uid 0 --gid 0 \
+            --unshare-pid --unshare-ipc --unshare-uts --unshare-net \
+            --new-session --ro-bind / / --proc /proc --dev /dev \
+            -- /usr/bin/id --user | grep --fixed-strings --line-regexp 0
+
       - name: Run tests
         if: steps.version_state.outputs.version_changed == 'true'
         run: poetry run pytest --verbose -s

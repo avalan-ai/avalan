@@ -444,6 +444,40 @@ def test_test_workflow_covers_supported_matrix_and_build_gates() -> None:
     assert "path: dist/*.whl" in workflow
 
 
+def test_release_workflow_prepares_patch_runtimes_before_tests() -> None:
+    """Keep release test prerequisites aligned with the Linux test lane."""
+    workflow = _read_repository_text(".github/workflows/release.yml")
+    test_workflow = _read_repository_text(".github/workflows/test.yml")
+    condition = "steps.version_state.outputs.version_changed == 'true'"
+
+    assert _workflow_enforces_pinned_worker_image_preflight(
+        workflow, condition=condition
+    )
+    test_step = workflow.split("      - name: Run tests\n", 1)[1].split(
+        "\n      - name:", 1
+    )[0]
+    assert f"        if: {condition}\n" in test_step
+    assert "        run: poetry run pytest --verbose -s\n" in test_step
+    for name in (
+        "Pre-pull PATCH worker base image",
+        "Install Bubblewrap runtime",
+        "Enable Bubblewrap user namespace isolation",
+    ):
+        header = f"      - name: {name}\n"
+        release_step = workflow.split(header, 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        reference_step = test_workflow.split(header, 1)[1].split(
+            "\n      - name:", 1
+        )[0]
+        assert release_step == reference_step.replace(
+            "matrix.target.os == 'ubuntu-latest'", condition
+        )
+        assert workflow.index(header) < workflow.index(
+            "      - name: Run tests\n"
+        )
+
+
 def test_workflow_matrix_detection_rejects_partial_python_support() -> None:
     workflow = "matrix:\n  python: ['3.11', '3.12']\n"
 
