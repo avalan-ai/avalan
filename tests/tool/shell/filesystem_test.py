@@ -458,6 +458,21 @@ class ShellFilesystemTest(IsolatedAsyncioTestCase):
 
 
 class ShellFilesystemPrivateProbeTest(TestCase):
+    def test_metadata_accepts_signed_device_identifier(self) -> None:
+        metadata = ShellPathMetadata(
+            path=Path("input.txt"),
+            resolved_path=Path("/workspace/input.txt"),
+            mode=0,
+            size=0,
+            is_file=True,
+            is_directory=False,
+            is_symlink=False,
+            is_special_file=False,
+            device=-1,
+        )
+
+        self.assertEqual(metadata.device, -1)
+
     def test_metadata_rejects_invalid_fields(self) -> None:
         valid = {
             "path": Path("input.txt"),
@@ -475,6 +490,8 @@ class ShellFilesystemPrivateProbeTest(TestCase):
             {"mode": -1},
             {"size": -1},
             {"hardlink_count": -1},
+            {"device": "invalid"},
+            {"inode": -1},
             {"is_file": 1},
             {"is_directory": 0},
             {"is_symlink": 1},

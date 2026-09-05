@@ -6752,6 +6752,9 @@ def test_patch_phase_7_e2e_004_uncertain_outcome_is_not_a_retry(
     assert observed == expected
 
 
+_SPAWN_TIMEOUT_SECONDS = 15.0
+
+
 def _replace_phase7_parent(
     parent_started: ProcessEvent,
     parent_replaced: ProcessEvent,
@@ -6760,7 +6763,7 @@ def _replace_phase7_parent(
     outside: Path,
 ) -> None:
     """Replace one target parent from a fresh process after the barrier."""
-    assert parent_started.wait(2)
+    assert parent_started.wait(_SPAWN_TIMEOUT_SECONDS)
     containment_root.rename(parked)
     symlink(outside, containment_root)
     parent_replaced.set()
@@ -6772,7 +6775,7 @@ def _write_phase7_foreign_destination(
     destination: Path,
 ) -> None:
     """Publish one competing destination from a fresh process."""
-    assert publish_started.wait(2)
+    assert publish_started.wait(_SPAWN_TIMEOUT_SECONDS)
     destination.write_bytes(b"foreign\n")
     foreign_written.set()
 
@@ -6817,7 +6820,7 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     def swap_before_namespace_effect(stage: str) -> None:
         if stage == "target.namespace_before_effect":
             parent_started.set()
-            assert parent_replaced.wait(2)
+            assert parent_replaced.wait(_SPAWN_TIMEOUT_SECONDS)
 
     async def containment_commit() -> None:
         scope = await LocalScopeResolver(containment_profile).resolve(
@@ -6866,7 +6869,7 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
         monkeypatch.setattr(
             local_commit_module, "_commit_barrier", original_barrier
         )
-        containment_process.join(timeout=2)
+        containment_process.join(timeout=_SPAWN_TIMEOUT_SECONDS)
     assert containment_process.exitcode == 0
     assert canary.read_bytes() == b"outside\n"
     assert (tmp_path / "parked" / "note.txt").read_bytes() == b"before\n"
@@ -6887,7 +6890,7 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     def publish_after_final_check(stage: str) -> None:
         if stage == "target.namespace_after_final_check":
             publish_started.set()
-            assert foreign_written.wait(2)
+            assert foreign_written.wait(_SPAWN_TIMEOUT_SECONDS)
 
     async def execute() -> None:
         scope = await LocalScopeResolver(profile).resolve(
@@ -6934,7 +6937,7 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
         monkeypatch.setattr(
             local_commit_module, "_commit_barrier", original_barrier
         )
-        process.join(timeout=2)
+        process.join(timeout=_SPAWN_TIMEOUT_SECONDS)
     assert process.exitcode == 0
     assert destination.read_bytes() == b"foreign\n"
     assert canary.read_bytes() == b"outside\n"

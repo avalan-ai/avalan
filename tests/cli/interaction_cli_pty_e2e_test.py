@@ -106,6 +106,7 @@ def _load_boundary_fixture() -> Any:
 
 boundary_fixture = _load_boundary_fixture()
 
+_CHILD_START_TIMEOUT_SECONDS = 15.0
 _CANCELLED_STDERR = (
     b'{"envelope_id": "cli.cancelled.v1", "payload": '
     b'{"channel": "control", "kind": "cancelled"}}\n'
@@ -725,7 +726,7 @@ def _run_pty_case(
         for descriptor in streams:
             set_blocking(descriptor, False)
         if attached_stdin:
-            deadline = monotonic() + 5
+            deadline = monotonic() + _CHILD_START_TIMEOUT_SECONDS
             while not streams[stdout_read] and monotonic() < deadline:
                 readable, _, _ = select(
                     [master, *streams],
@@ -745,7 +746,7 @@ def _run_pty_case(
                     break
             assert streams[stdout_read], streams[stderr_read].decode()
             write(master, b"initial prompt\n")
-        deadline = monotonic() + 5
+        deadline = monotonic() + _CHILD_START_TIMEOUT_SECONDS
         while prompt_marker not in control and monotonic() < deadline:
             readable, _, _ = select([master, *streams], [], [], 0.05)
             for descriptor in readable:

@@ -763,11 +763,12 @@
       "scope": "integration_hunk",
       "symbols": [
         "test_patch_phase_7_never_updates_git_index_or_head",
+        "_SPAWN_TIMEOUT_SECONDS",
         "_replace_phase7_parent",
         "_write_phase7_foreign_destination",
         "test_patch_phase_7_e2e_005_process_race_never_clobbers_destination"
       ],
-      "source_sha256": "f7be671e884464efc614810c81fd3aff55e097c1580fe4cf32d9069167c1727a"
+      "source_sha256": "483a29382659a8c8dbab5030153cd02ac02d65ce013ceddd4503db32d3f401a5"
     },
     {
       "id": "PATCH-TS-030",
@@ -1121,7 +1122,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "3474f93eeef0aaca5ec8c7251ff83b3144037916c98159fb7c13b0f8b3162b5e"
+      "source_sha256": "9e02e4ba6de304ad1e296b79a8aa833be0e39e5ee1a6cf96cc69efe2428b9e81"
     },
     {
       "id": "PATCH-TS-067",
@@ -1876,9 +1877,11 @@
       "scope": "integration_hunk",
       "symbols": [
         "test_rejects_invalid_public_inputs",
-        "test_validated_reads_require_an_inspected_file_identity"
+        "test_validated_reads_require_an_inspected_file_identity",
+        "test_metadata_accepts_signed_device_identifier",
+        "test_metadata_rejects_invalid_fields"
       ],
-      "source_sha256": "9b8020f5588efcc514688fd08abbed81fad4cadef514fe7eee1caabb112b1ac1"
+      "source_sha256": "6d90518a42d0a8d3fda178c96fad3085b3956caaf18fd544403e756c2e1d19b9"
     },
     {
       "id": "PATCH-TS-141",
@@ -2364,8 +2367,17 @@
         "_run_pty_case",
         "_run_pty_child"
       ],
-      "source_sha256": "f85027a2417003453cab04ed5931c25a49438595eee2a63f615ffd1353ad2f69"
+      "source_sha256": "c864ed4e260bd7e338a85e02cd585edaab701f632e1f8ca7a649543d8bd24f89"
+    },
+    {
+      "id": "PATCH-TS-175",
+      "path": "src/avalan/tool/shell/filesystem.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "ShellPathMetadata"
+      ],
+      "source_sha256": "de4c344fac2ee3cdebba050b8538110707eda1c45e698c252c9d536cb13cc05d"
     }
   ],
-  "manifest_sha256": "6a3603d539ba9f7742b8ee6ab22a85b27bb71b5fb25faa13cdd85a8182f6115b"
+  "manifest_sha256": "95fc6e42bcb785f45dd80cace0f8c1f37bad441d4d8e86f6701ec4f98e4e1794"
 }
