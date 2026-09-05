@@ -20,6 +20,7 @@ from hmac import digest
 from io import BytesIO
 from json import dumps, loads
 from multiprocessing import get_context
+from multiprocessing.synchronize import Event as ProcessEvent
 from os import (
     O_NOFOLLOW,
     O_NONBLOCK,
@@ -6751,6 +6752,31 @@ def test_patch_phase_7_e2e_004_uncertain_outcome_is_not_a_retry(
     assert observed == expected
 
 
+def _replace_phase7_parent(
+    parent_started: ProcessEvent,
+    parent_replaced: ProcessEvent,
+    containment_root: Path,
+    parked: Path,
+    outside: Path,
+) -> None:
+    """Replace one target parent from a fresh process after the barrier."""
+    assert parent_started.wait(2)
+    containment_root.rename(parked)
+    symlink(outside, containment_root)
+    parent_replaced.set()
+
+
+def _write_phase7_foreign_destination(
+    publish_started: ProcessEvent,
+    foreign_written: ProcessEvent,
+    destination: Path,
+) -> None:
+    """Publish one competing destination from a fresh process."""
+    assert publish_started.wait(2)
+    destination.write_bytes(b"foreign\n")
+    foreign_written.set()
+
+
 def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -6761,7 +6787,7 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     races = tuple(item for item in raw_races if isinstance(item, str))
     assert len(races) == len(raw_races)
     assert races == ("rooted_containment", "no_replace")
-    context = get_context("fork")
+    context = get_context("spawn")
 
     containment_root = tmp_path / "containment"
     containment_root.mkdir()
@@ -6775,13 +6801,16 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     parent_started = context.Event()
     parent_replaced = context.Event()
 
-    def replace_parent() -> None:
-        assert parent_started.wait(2)
-        containment_root.rename(tmp_path / "parked")
-        symlink(outside, containment_root)
-        parent_replaced.set()
-
-    containment_process = context.Process(target=replace_parent)
+    containment_process = context.Process(
+        target=_replace_phase7_parent,
+        args=(
+            parent_started,
+            parent_replaced,
+            containment_root,
+            tmp_path / "parked",
+            outside,
+        ),
+    )
     containment_process.start()
     original_barrier = local_commit_module._commit_barrier
 
@@ -6849,12 +6878,10 @@ def test_patch_phase_7_e2e_005_process_race_never_clobbers_destination(
     foreign_written = context.Event()
     destination = no_replace_root / "created.txt"
 
-    def foreign_writer() -> None:
-        assert publish_started.wait(2)
-        destination.write_bytes(b"foreign\n")
-        foreign_written.set()
-
-    process = context.Process(target=foreign_writer)
+    process = context.Process(
+        target=_write_phase7_foreign_destination,
+        args=(publish_started, foreign_written, destination),
+    )
     process.start()
 
     def publish_after_final_check(stage: str) -> None:

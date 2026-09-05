@@ -762,9 +762,12 @@
       "path": "tests/patch/phase_7_contract_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "test_patch_phase_7_never_updates_git_index_or_head"
+        "test_patch_phase_7_never_updates_git_index_or_head",
+        "_replace_phase7_parent",
+        "_write_phase7_foreign_destination",
+        "test_patch_phase_7_e2e_005_process_race_never_clobbers_destination"
       ],
-      "source_sha256": "ab632fd48f874ff9a9ea165e09134263d23f5043aa95ef83e9ae54ee4e5fdaa1"
+      "source_sha256": "f7be671e884464efc614810c81fd3aff55e097c1580fe4cf32d9069167c1727a"
     },
     {
       "id": "PATCH-TS-030",
@@ -1454,9 +1457,15 @@
       "path": "tests/cli/patch_review_pty_e2e_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "test_patch_e2e_023_real_pty_review_approve_and_later_read"
+        "_spawn",
+        "test_patch_e2e_023_real_pty_review_approve_and_later_read",
+        "test_patch_e2e_024_real_pty_pending_restart_awaits_same_invocation",
+        "test_patch_cli_pty_rejects_nonexact_or_cancelled_actions",
+        "test_patch_cli_pty_sigint_restores_terminal_without_approval",
+        "test_patch_cli_pty_renderer_failure_restores_without_approval",
+        "_run_pty_child"
       ],
-      "source_sha256": "7f1285ec67dfc303de2f137dabebc35f0814a010f8741a7efeb93be08b63a687"
+      "source_sha256": "fc8712d8bde476397a44ca77c5f1988f815edbcee9ab42ad121f1e7292e3012b"
     },
     {
       "id": "PATCH-TS-103",
@@ -2335,7 +2344,28 @@
         "EventManagerTestCase.test_trigger_stream_item_maps_inline_compaction_and_stats"
       ],
       "source_sha256": "b145a51bd8fa82f840386e5e343b43aed441b31e6a017f0ea81b948c30040446"
+    },
+    {
+      "id": "PATCH-TS-173",
+      "path": "tests/cli/interaction_channel_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_run_default_channel_child",
+        "test_default_path_opens_with_piped_stdin_and_controlling_pty",
+        "_run_child_from_argv"
+      ],
+      "source_sha256": "1403b32600a162bc2e1bb1e339faa47e6f490c1841bedebf4182cba7d36cd156"
+    },
+    {
+      "id": "PATCH-TS-174",
+      "path": "tests/cli/interaction_cli_pty_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_run_pty_case",
+        "_run_pty_child"
+      ],
+      "source_sha256": "f85027a2417003453cab04ed5931c25a49438595eee2a63f615ffd1353ad2f69"
     }
   ],
-  "manifest_sha256": "42f3ec5dd08f69b3b65a661f599e937302d509daade341a6fa9b75d035eac477"
+  "manifest_sha256": "6a3603d539ba9f7742b8ee6ab22a85b27bb71b5fb25faa13cdd85a8182f6115b"
 }

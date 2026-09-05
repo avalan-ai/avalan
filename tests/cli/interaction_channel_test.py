@@ -11,13 +11,10 @@ from fcntl import ioctl
 from os import (
     _exit,
     dup2,
-    fork,
     pipe,
     set_blocking,
     setsid,
     ttyname,
-    waitpid,
-    waitstatus_to_exitcode,
 )
 from os import (
     close as close_fd,
@@ -31,7 +28,10 @@ from os import (
 from os import (
     write as write_fd,
 )
+from pathlib import Path
 from pty import openpty
+from subprocess import Popen
+from sys import argv, executable
 from tempfile import NamedTemporaryFile
 from termios import TIOCSCTTY
 from tty import setraw
@@ -40,6 +40,42 @@ from unittest.mock import MagicMock, patch
 
 from avalan.cli import interaction_channel as channel_module
 from avalan.cli.interaction_channel import CliInteractionChannel
+
+
+def _run_default_channel_child(
+    slave: int,
+    stdin_read: int,
+    result_write: int,
+) -> None:
+    """Open the default channel in one fresh PTY child interpreter."""
+    exit_code = 1
+    try:
+        setsid()
+        ioctl(slave, TIOCSCTTY, 0)
+        dup2(stdin_read, 0)
+        dup2(slave, 1)
+        dup2(slave, 2)
+        close_fd(stdin_read)
+        close_fd(slave)
+
+        async def open_default() -> bool:
+            channel = CliInteractionChannel.open()
+            if channel is None:
+                return False
+            await channel.aclose()
+            return True
+
+        opened = run(open_default())
+        write_fd(result_write, b"opened" if opened else b"unavailable")
+        exit_code = 0 if opened else 2
+    except BaseException as error:
+        write_fd(
+            result_write,
+            f"{type(error).__name__}: {error}".encode(),
+        )
+    finally:
+        close_fd(result_write)
+        _exit(exit_code)
 
 
 class CliInteractionChannelTestCase(IsolatedAsyncioTestCase):
@@ -428,53 +464,31 @@ class CliInteractionChannelOpenTestCase(TestCase):
         master, slave = openpty()
         stdin_read, stdin_write = pipe()
         result_read, result_write = pipe()
-        child = fork()
-        if child == 0:
-            exit_code = 1
-            try:
-                close_fd(master)
-                close_fd(stdin_write)
-                close_fd(result_read)
-                setsid()
-                ioctl(slave, TIOCSCTTY, 0)
-                dup2(stdin_read, 0)
-                dup2(slave, 1)
-                dup2(slave, 2)
-                close_fd(stdin_read)
-                close_fd(slave)
-
-                async def open_default() -> bool:
-                    channel = CliInteractionChannel.open()
-                    if channel is None:
-                        return False
-                    await channel.aclose()
-                    return True
-
-                opened = run(open_default())
-                write_fd(result_write, b"opened" if opened else b"unavailable")
-                exit_code = 0 if opened else 2
-            except BaseException as error:
-                write_fd(
-                    result_write,
-                    f"{type(error).__name__}: {error}".encode(),
-                )
-            finally:
-                close_fd(result_write)
-                _exit(exit_code)
+        process = Popen(
+            (
+                executable,
+                str(Path(__file__).resolve()),
+                "--default-channel-child",
+                str(slave),
+                str(stdin_read),
+                str(result_write),
+            ),
+            pass_fds=(slave, stdin_read, result_write),
+        )
 
         try:
             close_fd(slave)
             close_fd(stdin_read)
             close_fd(stdin_write)
             close_fd(result_write)
-            waited, status = waitpid(child, 0)
+            status = process.wait(timeout=15)
             result = read_fd(result_read, 4096)
-            self.assertEqual(waited, child)
-            self.assertEqual(
-                waitstatus_to_exitcode(status), 0, result.decode()
-            )
+            self.assertEqual(status, 0, result.decode())
             self.assertEqual(result, b"opened")
         finally:
+            if process.poll() is None:
+                process.kill()
+                process.wait(timeout=5)
             close_fd(master)
             close_fd(result_read)
 
@@ -629,3 +643,18 @@ class CliInteractionChannelOpenTestCase(TestCase):
                 channel_module._optional_open_flag("_AVALAN_TEST_OPEN_FLAG"),
                 0,
             )
+
+
+def _run_child_from_argv() -> None:
+    """Dispatch one fresh-interpreter channel child invocation."""
+    assert len(argv) == 5
+    assert argv[1] == "--default-channel-child"
+    _run_default_channel_child(
+        int(argv[2]),
+        int(argv[3]),
+        int(argv[4]),
+    )
+
+
+if __name__ == "__main__":
+    _run_child_from_argv()
