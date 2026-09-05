@@ -68,7 +68,7 @@ def _run_default_channel_child(
         opened = run(open_default())
         write_fd(result_write, b"opened" if opened else b"unavailable")
         exit_code = 0 if opened else 2
-    except BaseException as error:
+    except Exception as error:
         write_fd(
             result_write,
             f"{type(error).__name__}: {error}".encode(),
