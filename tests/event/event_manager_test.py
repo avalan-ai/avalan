@@ -187,6 +187,58 @@ class EventManagerTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(manager.history, [])
         self.assertEqual(manager.stats.published, 0)
 
+    async def test_trigger_stream_item_maps_inline_compaction_and_stats(
+        self,
+    ) -> None:
+        manager = EventManager(history_config=EventHistoryConfig(max_events=4))
+        called: list[Event] = []
+
+        async def listener(event: Event) -> None:
+            called.append(event)
+
+        manager.add_observability_listener(
+            listener,
+            [EventType.INLINE_COMPACTION_COMMITTED],
+        )
+        item = CanonicalStreamItem(
+            stream_session_id="session-1",
+            run_id="run-1",
+            turn_id="turn-1",
+            sequence=4,
+            kind=StreamItemKind.INLINE_COMPACTION_COMMITTED,
+            channel=StreamChannel.CONTROL,
+            data={
+                "boundary_count": 1,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+        )
+
+        await manager.trigger_stream_item(item)
+        await asyncio.sleep(0)
+
+        self.assertEqual(
+            [event.type for event in called],
+            [EventType.INLINE_COMPACTION_COMMITTED],
+        )
+        self.assertEqual(
+            manager.stats.triggers[EventType.INLINE_COMPACTION_COMMITTED],
+            1,
+        )
+        self.assertEqual(
+            called[0].payload["summary"]["data_keys"],
+            ["boundary_count", "compact_threshold", "elapsed_seconds"],
+        )
+        self.assertEqual(
+            called[0].payload["inline_compaction"],
+            {
+                "boundary_count": 1,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+        )
+        self.assertNotIn("encrypted_content", repr(called[0]))
+
     async def test_trigger_stream_item_rejects_invalid_inputs(self) -> None:
         manager = EventManager()
         item = CanonicalStreamItem(

@@ -153,6 +153,22 @@ class SkillsSettingsCliTestCase(TestCase):
         self.assertEqual(authority.workspace_id, "project")
         self.assertNotIn(root, str(settings.as_model_dict()))
 
+    def test_agent_tool_settings_disables_skill_observability(self) -> None:
+        context = agent_cmds._agent_tool_settings(
+            Namespace(
+                tool_skills_diagnostics="off",
+                tool_skills_observability="off",
+            )
+        )
+
+        settings = context.skills
+        assert isinstance(settings, TrustedSkillSettings)
+        observability = settings.observability
+        self.assertFalse(observability.enabled)
+        self.assertFalse(observability.emit_events)
+        self.assertFalse(observability.include_diagnostics)
+        self.assertFalse(observability.include_byte_counts)
+
     def test_agent_tool_settings_maps_manifest_file_and_auto_enables(
         self,
     ) -> None:

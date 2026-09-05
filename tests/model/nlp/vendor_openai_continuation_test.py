@@ -1,7 +1,7 @@
 """Test durable OpenAI Responses continuation snapshot ownership."""
 
 from asyncio import run as asyncio_run
-from collections.abc import Iterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Iterator, Mapping, Sequence
 from dataclasses import replace
 from hashlib import sha256
 from json import dumps, loads
@@ -67,6 +67,11 @@ _PROVIDER_IDEMPOTENCY_KEY = derive_provider_idempotency_key(
     _DISPATCH_ID,
 )
 _REAL_ASYNC_OPENAI = openai.AsyncOpenAI
+
+
+async def _empty_response_stream() -> AsyncIterator[object]:
+    """Yield one unused response event for stream-construction tests."""
+    yield {"type": "response.completed", "response": {"output": []}}
 
 
 class _ValidRequirementModeString(str):
@@ -805,7 +810,9 @@ def test_azure_in_process_replay_preserves_automatic_retries() -> None:
     sdk_client = MagicMock()
     sdk_client.base_url = base_url
     request_client = MagicMock()
-    request_client.responses.create = AsyncMock(return_value=object())
+    request_client.responses.create = AsyncMock(
+        return_value=_empty_response_stream()
+    )
     sdk_client.with_options.return_value = request_client
     client._client = sdk_client  # noqa: SLF001
     client._stream_response_failed_retries = 24  # noqa: SLF001
@@ -848,7 +855,9 @@ def test_azure_resumed_dispatch_disables_every_automatic_retry() -> None:
     sdk_client = MagicMock()
     sdk_client.base_url = base_url
     request_client = MagicMock()
-    request_client.responses.create = AsyncMock(return_value=object())
+    request_client.responses.create = AsyncMock(
+        return_value=_empty_response_stream()
+    )
     sdk_client.with_options.return_value = request_client
     client._client = sdk_client  # noqa: SLF001
     client._stream_response_failed_retries = 24  # noqa: SLF001

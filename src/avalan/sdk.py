@@ -1466,6 +1466,16 @@ async def resolve_input(
     )
 
 
+AgentRunCallOption: TypeAlias = (
+    InteractionRuntime
+    | Mapping[str, object]
+    | AgentConversationTurn
+    | tuple[AgentConversationChildBinding, ...]
+    | int
+    | None
+)
+
+
 @overload
 async def run_agent(
     orchestrator: "JsonOrchestrator",
@@ -1474,6 +1484,7 @@ async def run_agent(
     interaction_runtime: AgentInteractionRuntime | None = None,
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
+    compaction: CompactionPolicy | None = None,
     operation_index: int = 0,
     conversation_turn: AgentConversationTurn | None = None,
     conversation_children: tuple[AgentConversationChildBinding, ...] = (),
@@ -1488,6 +1499,7 @@ async def run_agent(
     interaction_runtime: AgentInteractionRuntime | None = None,
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
+    compaction: CompactionPolicy | None = None,
     operation_index: int = 0,
     conversation_turn: AgentConversationTurn | None = None,
     conversation_children: tuple[AgentConversationChildBinding, ...] = (),
@@ -1502,6 +1514,7 @@ async def run_agent(
     interaction_runtime: AgentInteractionRuntime | None = None,
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
+    compaction: CompactionPolicy | None = None,
     operation_index: int = 0,
     conversation_turn: AgentConversationTurn | None = None,
     conversation_children: tuple[AgentConversationChildBinding, ...] = (),
@@ -1516,6 +1529,7 @@ async def run_agent(
     interaction_runtime: AgentInteractionRuntime | None = None,
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
+    compaction: CompactionPolicy | None = None,
     operation_index: int = 0,
     conversation_turn: AgentConversationTurn | None = None,
     conversation_children: tuple[AgentConversationChildBinding, ...] = (),
@@ -1529,6 +1543,7 @@ async def run_agent(
     interaction_runtime: AgentInteractionRuntime | None = None,
     headless_policy: AgentHeadlessInputPolicy | None = None,
     generation_options_override: Mapping[str, object] | None = None,
+    compaction: CompactionPolicy | None = None,
     operation_index: int = 0,
     conversation_turn: AgentConversationTurn | None = None,
     conversation_children: tuple[AgentConversationChildBinding, ...] = (),
@@ -1538,9 +1553,20 @@ async def run_agent(
         internal_runtime = _unwrap_interaction_runtime(interaction_runtime)
         internal_policy = _unwrap_headless_policy(headless_policy)
         runtime = _runtime_for_policy(internal_runtime, internal_policy)
-        call_options: dict[str, object] = {
+        if compaction is not None and type(compaction) not in {
+            DisabledCompaction,
+            InlineCompaction,
+        }:
+            raise TypeError("compaction must be a typed compaction policy")
+        effective_generation_options = generation_options_override
+        if compaction is not None:
+            effective_generation_options = {
+                **(generation_options_override or {}),
+                "compaction": compaction,
+            }
+        call_options: dict[str, AgentRunCallOption] = {
             "interaction_runtime": runtime,
-            "generation_options_override": generation_options_override,
+            "generation_options_override": effective_generation_options,
             "operation_index": operation_index,
         }
         if conversation_turn is not None:

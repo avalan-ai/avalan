@@ -9,6 +9,7 @@ from ..event import (
 from ..model.stream import (
     CanonicalStreamItem,
     StreamChannel,
+    StreamItemKind,
     StreamTerminalOutcome,
     stream_observability_payload,
 )
@@ -38,6 +39,21 @@ from time import monotonic
 from typing import Any, AsyncIterator, Awaitable, Callable, Iterable, Literal
 
 Listener = Callable[[Event], Awaitable[None] | None]
+
+_STREAM_EVENT_TYPE_BY_KIND = {
+    StreamItemKind.INLINE_COMPACTION_STARTED: (
+        EventType.INLINE_COMPACTION_STARTED
+    ),
+    StreamItemKind.INLINE_COMPACTION_COMMITTED: (
+        EventType.INLINE_COMPACTION_COMMITTED
+    ),
+    StreamItemKind.INLINE_COMPACTION_ROLLED_BACK: (
+        EventType.INLINE_COMPACTION_ROLLED_BACK
+    ),
+    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY: (
+        EventType.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY
+    ),
+}
 
 
 class EventDeliveryPolicy(StrEnum):
@@ -467,6 +483,8 @@ class EventManager:
             or item.terminal_outcome is StreamTerminalOutcome.INPUT_REQUIRED
         ):
             event_type = EventType.INTERACTION_LIFECYCLE
+        elif event_type is EventType.TOKEN_GENERATED:
+            event_type = _STREAM_EVENT_TYPE_BY_KIND.get(item.kind, event_type)
         if not self.should_emit(event_type):
             return
         payload = EventObservabilityPayload.canonical_stream(

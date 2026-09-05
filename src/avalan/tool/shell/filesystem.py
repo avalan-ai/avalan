@@ -10,6 +10,7 @@ from ...filesystem import remove_tree as _remove_tree
 from ...filesystem import resolve_path as _resolve_path
 from ...filesystem import stat_path as _stat_path
 from ...filesystem import write_bytes as _write_bytes
+from ...types import assert_int as _assert_int
 from ...types import assert_non_negative_int as _assert_non_negative_int
 
 from collections.abc import AsyncIterator
@@ -79,10 +80,10 @@ class ShellPathMetadata:
         _assert_non_negative_int(self.mode, "mode")
         _assert_non_negative_int(self.size, "size")
         _assert_non_negative_int(self.hardlink_count, "hardlink_count")
-        for field_name in ("device", "inode"):
-            value = getattr(self, field_name)
-            if value is not None:
-                _assert_non_negative_int(value, field_name)
+        if self.device is not None:
+            _assert_int(self.device, "device")
+        if self.inode is not None:
+            _assert_non_negative_int(self.inode, "inode")
         for field_name in (
             "is_file",
             "is_directory",

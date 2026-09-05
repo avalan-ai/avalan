@@ -21,6 +21,7 @@ from contract_gate import (
     execute_pytest_nodes,
     mapping,
     object_list,
+    run_pytest,
     strict_json_path,
 )
 from verify_conversation_types import (
@@ -469,6 +470,98 @@ _PHASE13_PROVIDER_TRANSITION_PATH = (
 )
 _PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
     "960784a4e594b7451cc75aafc4b714747c2851778c8587a21abb4458ab33cee4"
+)
+_PHASE14_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase14.json"
+)
+_PHASE14_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "83c4252988d6f67f099705f352544217600a114b7853a3af009bd4c944bff9ec"
+)
+_PHASE14_PROVIDER_TARGET_BYTE_ANCHORS = {
+    "src/avalan/agent/engine.py": (
+        52_967,
+        "4aa19f776e7110f51e5bc97aea7a96e2dd73954a922c5284b126d2351aa1f8b6",
+    ),
+    "tests/conversation/domain_contract_test.py": (
+        161_490,
+        "947b9bb37208dab8de7956d4820b58ef9c3b3a40a0a9c40f996af85546a4cdc6",
+    ),
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
+        102_661,
+        "ba3d80919149dd5fe15235916eeda6173a2763531e082fb5837222213f9375e1",
+    ),
+    "src/avalan/model/nlp/text/vendor/openai.py": (
+        392_855,
+        "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686",
+    ),
+    "src/avalan/sdk.py": (
+        80_329,
+        "ee1e0ec7aa67e8bbcaf36d1545947a1846368a7660b7d6fdfb2f465701b9e420",
+    ),
+}
+_PHASE14_PROVIDER_EVIDENCE_NODES = (
+    (
+        "tests/agent/loader_test.py::LoadJsonOrchestratorVariantsTestCase::"
+        "test_run_compaction_file_normalization_and_validation"
+    ),
+    (
+        "tests/input/public_sdk_coverage_test.py::"
+        "test_run_agent_compaction_override_is_typed_and_precedes_mapping"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_test.py::"
+        "OpenAIInlineCompactionTestCase::"
+        "test_compaction_physically_prunes_and_rollback_restores_state"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_test.py::"
+        "OpenAIInlineCompactionTestCase::"
+        "test_native_inline_compaction_replays_tool_output_boundary"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_test.py::"
+        "OpenAIInlineCompactionTestCase::"
+        "test_inline_compaction_retry_resets_identity_maps"
+    ),
+)
+_PHASE15_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.phase15.json"
+)
+_PHASE15_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "df53273042f8037baa9cf654794a6cca8f6d0d4732964899891f39fae4b84f71"
+)
+_PHASE15_PROVIDER_TARGET_BYTE_ANCHORS = {
+    "src/avalan/model/nlp/text/vendor/openai.py": (
+        407_392,
+        "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5",
+    ),
+    "src/avalan/agent/orchestrator/response/orchestrator_response.py": (
+        241_491,
+        "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9",
+    ),
+    "tests/conversation/domain_contract_test.py": (
+        162_480,
+        "b20ece5d940d423c41e1b393295e52efa539718b173c2a2943a1db3c6592d26b",
+    ),
+    "tests/model/nlp/vendor_openai_conversation_phase0_test.py": (
+        104_684,
+        "d9167e4f3f3af6e1e3121fbebdb65d79bd32845b1cd8182bdf6be0a28eacfe4e",
+    ),
+}
+_PHASE15_PROVIDER_EVIDENCE_NODES = (
+    (
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::"
+        "test_no_production_conversation_dispatch_or_advertisement"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_conversation_phase0_test.py::"
+        "test_provider_transport_policy_rejects_data_flow_bypasses"
+    ),
+    (
+        "tests/model/nlp/vendor_openai_test.py::"
+        "OpenAIInlineCompactionTestCase::"
+        "test_inline_compaction_retry_resets_identity_maps"
+    ),
 )
 _PHASE13_PROVIDER_TARGET_BYTE_ANCHORS = {
     "src/avalan/model/nlp/text/vendor/openai.py": (
@@ -2211,6 +2304,16 @@ def verify_gate_source_isolation(
             if (root / _PHASE13_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
+        (
+            _phase14_provider_transitions(root)
+            if (root / _PHASE14_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase15_provider_transitions(root)
+            if (root / _PHASE15_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
     )
     transition_chains: dict[
         str,
@@ -3105,6 +3208,16 @@ def _validate_phase0_provider_byte_anchors(root: Path) -> None:
         (
             _phase13_provider_transitions(root)
             if (root / _PHASE13_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase14_provider_transitions(root)
+            if (root / _PHASE14_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _phase15_provider_transitions(root)
+            if (root / _PHASE15_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
     )
@@ -4244,6 +4357,302 @@ def _phase13_provider_transitions(
             "Phase 13 provider transition inventory is invalid"
         )
     return transitions
+
+
+def _phase14_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact ordinary-agent inline-compaction transitions."""
+    path = root / _PHASE14_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE14_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 14 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 14 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 14
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by")
+        != "phase14-agent-run-inline-compaction-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE14_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = tuple(
+        _test_node(item)
+        for item in _string_list(
+            payload.get("evidence_node_ids"),
+            "Phase 14 provider transition evidence nodes",
+        )
+    )
+    if evidence != _PHASE14_PROVIDER_EVIDENCE_NODES:
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition evidence is invalid"
+        )
+    _validate_phase14_provider_evidence_nodes(root, evidence)
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 14 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 14 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 14 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"), "transition source digest"
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"), "transition target digest"
+        )
+        if (
+            type(from_size) is not int
+            or from_size <= 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 14 provider byte transition is invalid"
+            )
+        transition = (from_size, from_sha256, to_size, to_sha256)
+        if (to_size, to_sha256) != _PHASE14_PROVIDER_TARGET_BYTE_ANCHORS.get(
+            relative
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 14 provider transition target differs from its "
+                f"independent anchor: {relative}"
+            )
+        transitions[relative] = transition
+    if set(transitions) != set(_PHASE14_PROVIDER_TARGET_BYTE_ANCHORS):
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _validate_phase14_provider_evidence_nodes(
+    root: Path,
+    evidence: tuple[str, ...],
+) -> None:
+    """Require Phase 14 evidence to resolve and collect exact pytest nodes."""
+    if not evidence or len(evidence) != len(set(evidence)):
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition evidence is empty or duplicated"
+        )
+    collection = run_pytest(
+        root,
+        ("--collect-only", "-q", *evidence),
+        timeout=180,
+        inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
+    )
+    if collection.returncode != 0:
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition evidence node collection failed"
+        )
+    collected = tuple(
+        line.strip()
+        for line in collection.stdout.splitlines()
+        if line.startswith("tests/") and "::" in line
+    )
+    if not collected or len(collected) != len(set(collected)):
+        raise ConversationAcceptanceError(
+            "Phase 14 provider transition evidence collection is invalid"
+        )
+    for node_id in evidence:
+        if not any(
+            collected_id == node_id or collected_id.startswith(f"{node_id}[")
+            for collected_id in collected
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 14 provider transition evidence node was not collected"
+            )
+
+
+def _phase15_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate exact strict-provider-type-boundary transitions."""
+    path = root / _PHASE15_PROVIDER_TRANSITION_PATH
+    if not path.is_file():
+        path = repository_root() / _PHASE15_PROVIDER_TRANSITION_PATH
+    payload = _strict_mapping(path, "Phase 15 provider transition")
+    _exact_keys(
+        payload,
+        {
+            "schema_version",
+            "feature",
+            "phase",
+            "kind",
+            "reviewed_by",
+            "reason",
+            "transitions",
+            "evidence_node_ids",
+            "canonical_sha256",
+        },
+        "Phase 15 provider transition",
+    )
+    if (
+        payload.get("schema_version") != 1
+        or payload.get("feature") != _FEATURE
+        or payload.get("phase") != 15
+        or payload.get("kind") != "reviewed_provider_source_transition"
+        or payload.get("reviewed_by")
+        != "phase15-strict-provider-type-boundary-review"
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition header is invalid"
+        )
+    canonical = dict(payload)
+    observed_digest = canonical.pop("canonical_sha256")
+    if (
+        observed_digest != canonical_sha256(canonical)
+        or observed_digest != _PHASE15_PROVIDER_TRANSITION_CANONICAL_SHA256
+    ):
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition digest is invalid"
+        )
+    _nonempty_string(payload.get("reason"), "provider transition reason")
+    evidence = tuple(
+        _test_node(item)
+        for item in _string_list(
+            payload.get("evidence_node_ids"),
+            "Phase 15 provider transition evidence nodes",
+        )
+    )
+    if evidence != _PHASE15_PROVIDER_EVIDENCE_NODES:
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition evidence is invalid"
+        )
+    _validate_phase15_provider_evidence_nodes(root, evidence)
+    transitions: dict[str, tuple[int, str, int, str]] = {}
+    for raw in object_list(
+        payload.get("transitions"),
+        "Phase 15 provider byte transitions",
+    ):
+        entry = mapping(raw, "Phase 15 provider byte transition")
+        _exact_keys(
+            entry,
+            {
+                "path",
+                "from_size",
+                "from_sha256",
+                "to_size",
+                "to_sha256",
+            },
+            "Phase 15 provider byte transition",
+        )
+        relative = _relative_path(entry.get("path"), "transition path")
+        from_size = entry.get("from_size")
+        to_size = entry.get("to_size")
+        from_sha256 = _nonempty_string(
+            entry.get("from_sha256"), "transition source digest"
+        )
+        to_sha256 = _nonempty_string(
+            entry.get("to_sha256"), "transition target digest"
+        )
+        if (
+            type(from_size) is not int
+            or from_size <= 0
+            or type(to_size) is not int
+            or to_size <= 0
+            or len(from_sha256) != 64
+            or len(to_sha256) != 64
+            or relative in transitions
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 15 provider byte transition is invalid"
+            )
+        transition = (from_size, from_sha256, to_size, to_sha256)
+        if (to_size, to_sha256) != _PHASE15_PROVIDER_TARGET_BYTE_ANCHORS.get(
+            relative
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 15 provider transition target differs from its "
+                f"independent anchor: {relative}"
+            )
+        transitions[relative] = transition
+    if set(transitions) != set(_PHASE15_PROVIDER_TARGET_BYTE_ANCHORS):
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition inventory is invalid"
+        )
+    return transitions
+
+
+def _validate_phase15_provider_evidence_nodes(
+    root: Path,
+    evidence: tuple[str, ...],
+) -> None:
+    """Require Phase 15 evidence to resolve and collect exact pytest nodes."""
+    if not evidence or len(evidence) != len(set(evidence)):
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition evidence is empty or duplicated"
+        )
+    collection = run_pytest(
+        root,
+        ("--collect-only", "-q", *evidence),
+        timeout=180,
+        inherited_names=(POSTGRESQL_TEST_DSN_ENV,),
+    )
+    if collection.returncode != 0:
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition evidence node collection failed"
+        )
+    collected = tuple(
+        line.strip()
+        for line in collection.stdout.splitlines()
+        if line.startswith("tests/") and "::" in line
+    )
+    if not collected or len(collected) != len(set(collected)):
+        raise ConversationAcceptanceError(
+            "Phase 15 provider transition evidence collection is invalid"
+        )
+    for node_id in evidence:
+        if not any(
+            collected_id == node_id or collected_id.startswith(f"{node_id}[")
+            for collected_id in collected
+        ):
+            raise ConversationAcceptanceError(
+                "Phase 15 provider transition evidence node was not collected"
+            )
 
 
 def _phase12_sha256(value: object, label: str) -> str:

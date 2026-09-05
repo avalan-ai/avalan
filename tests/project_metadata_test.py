@@ -122,6 +122,19 @@ def _makefile_enforces_coverage_fail_under(makefile: str) -> bool:
     )
 
 
+def _makefile_recipe(makefile: str, target: str) -> tuple[str, ...]:
+    """Return the tab-prefixed recipe lines for one exact Make target."""
+    target_match = re.search(rf"(?m)^{re.escape(target)}:\s*$", makefile)
+    assert target_match is not None
+    recipe: list[str] = []
+    for line in makefile[target_match.end() :].splitlines():
+        if line.startswith("\t"):
+            recipe.append(line.removeprefix("\t"))
+        elif recipe and line:
+            break
+    return tuple(recipe)
+
+
 def _workflow_enforces_input_gates(workflow: str) -> bool:
     type_gate = (
         "      - name: Verify structured-input type contracts\n"
@@ -596,6 +609,20 @@ def test_make_coverage_command_enforces_fail_under_gate() -> None:
     makefile = _read_repository_text("Makefile")
 
     assert _makefile_enforces_coverage_fail_under(makefile)
+
+
+def test_make_test_coverage_preserves_coverage_diagnostics() -> None:
+    """Keep the coverage target's pytest diagnostics observable."""
+    makefile = _read_repository_text("Makefile")
+    recipe = _makefile_recipe(makefile, "test-coverage")
+    coverage_command = next(
+        line for line in recipe if "poetry run pytest" in line
+    )
+
+    assert (
+        coverage_command
+        == "@poetry run pytest --cov=$(COVERAGE_PATH) --cov-report=json"
+    )
 
 
 def test_make_coverage_gate_detection_rejects_upload_only_coverage() -> None:

@@ -1090,6 +1090,12 @@ local runs often use `harmony`, while DS4 native tool calls use `dsml`.
 ## Safety and Control
 
 - Expose only the tools needed for the task.
+- Provider-native inline compaction is optional agent-run state, not a local
+  summary. Keep its encrypted provider item opaque: do not inspect, print, or
+  log it. It continues provider state across tool cycles only on the exact
+  supported Responses transports; unsupported endpoints fail closed. Configure
+  it with `[run.compaction]`, `--run-compaction`, or typed
+  `InlineCompaction`; see [MODELS.md](MODELS.md#provider-native-inline-compaction-for-agent-runs).
 - Use `--tools-confirm` for tools that can mutate state, query sensitive data,
   browse authenticated sessions, call remote services, or spend money.
 - Set `--maximum-tool-cycles N` to cap model/tool loops, or use

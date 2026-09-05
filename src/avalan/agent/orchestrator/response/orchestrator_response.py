@@ -201,6 +201,14 @@ _TOOL_CALL_LIFECYCLE_KINDS = frozenset(
         StreamItemKind.TOOL_CALL_DONE,
     }
 )
+_INLINE_COMPACTION_LIFECYCLE_KINDS = frozenset(
+    {
+        StreamItemKind.INLINE_COMPACTION_STARTED,
+        StreamItemKind.INLINE_COMPACTION_COMMITTED,
+        StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+        StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+    }
+)
 _PATCH_TOOL_NAMES = frozenset({"patch.edit", "patch.apply"})
 _INVALID_TOOL_CALL_ARGUMENTS = object()
 
@@ -655,7 +663,10 @@ class OrchestratorResponse(
             and event.text_delta == ""
         ):
             return None
-        correlation = self._canonical_response_correlation(event.correlation)
+        correlation = self._canonical_response_item_correlation(
+            event.kind,
+            event.correlation,
+        )
         self._validate_canonical_reasoning_segment(
             event.kind,
             visibility=event.visibility,
@@ -764,7 +775,10 @@ class OrchestratorResponse(
         self, item: CanonicalStreamItem
     ) -> CanonicalStreamItem | None:
         assert isinstance(item, CanonicalStreamItem)
-        correlation = self._canonical_response_correlation(item.correlation)
+        correlation = self._canonical_response_item_correlation(
+            item.kind,
+            item.correlation,
+        )
         self._validate_canonical_reasoning_segment(
             item.kind,
             visibility=item.visibility,
@@ -849,6 +863,18 @@ class OrchestratorResponse(
                 task_id=self._canonical_correlation.task_id,
             )
         return correlation
+
+    def _canonical_response_item_correlation(
+        self,
+        kind: StreamItemKind,
+        correlation: StreamItemCorrelation,
+    ) -> StreamItemCorrelation:
+        """Preserve lifecycle correlations while normalizing other items."""
+        assert isinstance(kind, StreamItemKind)
+        assert isinstance(correlation, StreamItemCorrelation)
+        if kind in _INLINE_COMPACTION_LIFECYCLE_KINDS:
+            return correlation
+        return self._canonical_response_correlation(correlation)
 
     def _validate_canonical_reasoning_segment(
         self,
@@ -972,6 +998,7 @@ class OrchestratorResponse(
         canonical_item = self._append_canonical_response_item(item)
         if canonical_item is None:
             return
+        await self._emit_inline_compaction_event(canonical_item)
         if (
             canonical_item.kind is StreamItemKind.ANSWER_DELTA
             and canonical_item.text_delta is not None
@@ -4489,6 +4516,7 @@ class OrchestratorResponse(
                 )
                 if appended_item is None:
                     continue
+                await self._emit_inline_compaction_event(appended_item)
                 if (
                     self._classify_completed_task_input_boundary(
                         canonical_item
@@ -4634,6 +4662,30 @@ class OrchestratorResponse(
             observability_payload=payload,
         )
         await self._event_manager.trigger(event)
+
+    async def _emit_inline_compaction_event(
+        self,
+        item: CanonicalStreamItem,
+    ) -> None:
+        """Publish one content-free inline compaction lifecycle event."""
+        event_types = {
+            StreamItemKind.INLINE_COMPACTION_STARTED: (
+                EventType.INLINE_COMPACTION_STARTED
+            ),
+            StreamItemKind.INLINE_COMPACTION_COMMITTED: (
+                EventType.INLINE_COMPACTION_COMMITTED
+            ),
+            StreamItemKind.INLINE_COMPACTION_ROLLED_BACK: (
+                EventType.INLINE_COMPACTION_ROLLED_BACK
+            ),
+            StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY: (
+                EventType.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY
+            ),
+        }
+        event_type = event_types.get(item.kind)
+        if event_type is None:
+            return
+        await self._trigger_canonical_observability_event(event_type, item)
 
     def _should_emit_token_generated_event(self) -> bool:
         if not self._event_manager:

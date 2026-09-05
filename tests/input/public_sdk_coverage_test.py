@@ -2,7 +2,7 @@
 
 from asyncio import get_running_loop, run
 from base64 import urlsafe_b64encode
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import replace
 from datetime import datetime
 from hashlib import sha256
@@ -19,6 +19,7 @@ from avalan.agent.execution import (
     ExecutionInputRequiredError,
     ExecutionTerminatedError,
 )
+from avalan.conversation.settings import DisabledCompaction, InlineCompaction
 from avalan.interaction.durable import DurableInteractionSuspension
 from avalan.interaction.entities import (
     AnswerProvenance,
@@ -1272,6 +1273,46 @@ def test_run_agent_maps_untyped_values_failures_and_input_handoff() -> None:
         assert isinstance(invalid_handoff, sdk_module.AgentRunFailed)
         assert invalid_handoff.code == InputErrorCode.INVALID_FORMAT.value
         assert not invalid_handoff.retryable
+
+    run(exercise())
+
+
+def test_run_agent_compaction_override_is_typed_and_precedes_mapping() -> None:
+    """Pass the requested agent-run compaction policy to the engine."""
+    captured: Mapping[str, object] | None = None
+
+    async def receiver(value: object, **kwargs: object) -> object:
+        nonlocal captured
+        del value
+        generation_options = kwargs.get("generation_options_override")
+        assert isinstance(generation_options, Mapping)
+        captured = generation_options
+        return "done"
+
+    async def exercise() -> None:
+        result = await sdk_module.run_agent(
+            receiver,
+            "input",
+            generation_options_override={
+                "compaction": DisabledCompaction(),
+                "temperature": 0.1,
+            },
+            compaction=InlineCompaction(compact_threshold=1024),
+        )
+
+        assert isinstance(result, sdk_module.AgentRunCompleted)
+        assert captured == {
+            "compaction": InlineCompaction(compact_threshold=1024),
+            "temperature": 0.1,
+        }
+
+        invalid = await sdk_module.run_agent(
+            receiver,
+            "input",
+            compaction=object(),
+        )
+        assert isinstance(invalid, sdk_module.AgentRunFailed)
+        assert invalid.code == "agent.execution_failed"
 
     run(exercise())
 

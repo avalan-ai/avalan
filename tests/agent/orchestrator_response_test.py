@@ -1165,6 +1165,193 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
         self.assertEqual(answer_sequences, [1])
         self.assertEqual(event_sequences, answer_sequences)
 
+    async def test_consumer_projections_preserve_inline_compaction_privacy(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        usage = {"input_tokens": 5, "output_tokens": 3}
+        cases = (
+            (
+                "committed",
+                (
+                    _canonical_item(StreamItemKind.STREAM_STARTED, 0),
+                    _canonical_item(
+                        StreamItemKind.INLINE_COMPACTION_STARTED,
+                        1,
+                        data={
+                            "candidate_count": 1,
+                            "compact_threshold": 1024,
+                        },
+                        provider_event_type="response.output_item.added",
+                    ),
+                    _canonical_item(
+                        StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                        2,
+                        data={
+                            "boundary_count": 1,
+                            "compact_threshold": 1024,
+                            "elapsed_seconds": 1.25,
+                        },
+                        provider_event_type="response.completed",
+                    ),
+                    _canonical_item(
+                        StreamItemKind.USAGE_COMPLETED,
+                        3,
+                        usage=usage,
+                    ),
+                    _canonical_item(StreamItemKind.STREAM_COMPLETED, 4),
+                    _canonical_item(StreamItemKind.STREAM_CLOSED, 5),
+                ),
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.INLINE_COMPACTION_STARTED,
+                    StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+                [
+                    EventType.INLINE_COMPACTION_STARTED,
+                    EventType.INLINE_COMPACTION_COMMITTED,
+                ],
+            ),
+            (
+                "rolled_back",
+                (
+                    _canonical_item(StreamItemKind.STREAM_STARTED, 0),
+                    _canonical_item(
+                        StreamItemKind.INLINE_COMPACTION_STARTED,
+                        1,
+                        data={"candidate_count": 1},
+                        provider_event_type="response.output_item.added",
+                    ),
+                    _canonical_item(
+                        StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                        2,
+                        data={"boundary_count": 1},
+                    ),
+                    _canonical_item(StreamItemKind.STREAM_ERRORED, 3),
+                    _canonical_item(StreamItemKind.STREAM_CLOSED, 4),
+                ),
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.INLINE_COMPACTION_STARTED,
+                    StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                    StreamItemKind.STREAM_ERRORED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+                [
+                    EventType.INLINE_COMPACTION_STARTED,
+                    EventType.INLINE_COMPACTION_ROLLED_BACK,
+                ],
+            ),
+            (
+                "completed_no_boundary",
+                (
+                    _canonical_item(StreamItemKind.STREAM_STARTED, 0),
+                    _canonical_item(
+                        StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                        1,
+                        data={
+                            "boundary_count": 0,
+                            "compact_threshold": 1024,
+                        },
+                        provider_event_type="response.completed",
+                    ),
+                    _canonical_item(
+                        StreamItemKind.USAGE_COMPLETED,
+                        2,
+                        usage=usage,
+                    ),
+                    _canonical_item(StreamItemKind.STREAM_COMPLETED, 3),
+                    _canonical_item(StreamItemKind.STREAM_CLOSED, 4),
+                ),
+                [
+                    StreamItemKind.STREAM_STARTED,
+                    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                    StreamItemKind.STREAM_COMPLETED,
+                    StreamItemKind.STREAM_CLOSED,
+                ],
+                [EventType.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY],
+            ),
+        )
+        for name, source_items, expected_kinds, expected_event_types in cases:
+            with self.subTest(path=name):
+                event_manager = MagicMock(spec=EventManager)
+                event_manager.trigger = AsyncMock()
+                response = _make_response(
+                    Message(role=MessageRole.USER, content="hi"),
+                    _response_from_items(*source_items),
+                    agent,
+                    operation,
+                    {},
+                    agent_id=uuid4(),
+                    event_manager=event_manager,
+                )
+
+                projections = [
+                    projection
+                    async for projection in response.consumer_projections(
+                        stream_session_id="stream",
+                        run_id="run",
+                        turn_id="turn",
+                    )
+                ]
+
+                self.assertEqual(
+                    [projection.kind for projection in projections],
+                    expected_kinds,
+                )
+                lifecycle = [
+                    projection
+                    for projection in projections
+                    if projection.kind
+                    in {
+                        StreamItemKind.INLINE_COMPACTION_STARTED,
+                        StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                        StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+                        StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+                    }
+                ]
+                self.assertTrue(lifecycle)
+                self.assertTrue(
+                    all(
+                        projection.correlation == StreamItemCorrelation()
+                        for projection in lifecycle
+                    )
+                )
+                if name != "rolled_back":
+                    terminal = projections[-2]
+                    terminal_usage = cast(dict[str, Any], terminal.usage)
+                    self.assertEqual(
+                        terminal_usage["totals"]["input_tokens"],
+                        usage["input_tokens"],
+                    )
+                    self.assertEqual(
+                        terminal_usage["totals"]["output_tokens"],
+                        usage["output_tokens"],
+                    )
+                    self.assertLess(
+                        lifecycle[-1].sequence,
+                        terminal.sequence,
+                    )
+                events = [
+                    call.args[0]
+                    for call in event_manager.trigger.await_args_list
+                    if call.args[0].type in set(expected_event_types)
+                ]
+                self.assertEqual(
+                    [event.type for event in events], expected_event_types
+                )
+                self.assertTrue(
+                    all(
+                        "correlation" not in event.observability.data
+                        for event in events
+                    )
+                )
+
     async def test_consumer_projections_drain_error_terminal_items(
         self,
     ) -> None:
@@ -1267,6 +1454,52 @@ class OrchestratorResponseIterationTestCase(IsolatedAsyncioTestCase):
             event.observability.data["kind"],
             StreamItemKind.ANSWER_DELTA.value,
         )
+
+    async def test_inline_compaction_item_emits_content_free_event(
+        self,
+    ) -> None:
+        engine = _DummyEngine()
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = engine
+        operation = _dummy_operation()
+        event_manager = MagicMock(spec=EventManager)
+        event_manager.trigger = AsyncMock()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _dummy_response(),
+            agent,
+            operation,
+            {},
+            event_manager=event_manager,
+        )
+        item = _canonical_item(
+            StreamItemKind.INLINE_COMPACTION_COMMITTED,
+            4,
+            data={
+                "boundary_count": 1,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+        )
+
+        await response._emit_inline_compaction_event(item)
+
+        event = event_manager.trigger.await_args.args[0]
+        self.assertIs(event.type, EventType.INLINE_COMPACTION_COMMITTED)
+        self.assertEqual(event.observability.data["sequence"], 4)
+        self.assertEqual(
+            event.observability.data["summary"]["data_keys"],
+            ["boundary_count", "compact_threshold", "elapsed_seconds"],
+        )
+        self.assertEqual(
+            event.observability.data["inline_compaction"],
+            {
+                "boundary_count": 1,
+                "compact_threshold": 1024,
+                "elapsed_seconds": 1.25,
+            },
+        )
+        self.assertNotIn("encrypted_content", repr(event))
 
     async def test_to_str_consumes_canonical_answer_without_token_events(self):
         engine = _DummyEngine()

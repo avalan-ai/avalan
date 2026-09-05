@@ -525,32 +525,7 @@ def _sealed_repository_python_path(root: Path, value: str) -> PurePosixPath:
 
 def _verify_symbols(tree: Module, source: StrictSource) -> None:
     """Require each changed integration declaration to remain addressable."""
-    if source.symbols == ("module",):
-        return
-    found = {
-        node.name
-        for node in walk(tree)
-        if isinstance(node, (AsyncFunctionDef, ClassDef, FunctionDef))
-    }
-    found.update(
-        target.id
-        for node in walk(tree)
-        if isinstance(node, AnnAssign) and isinstance(node.target, Name)
-        for target in (node.target,)
-    )
-    found.update(
-        target.id
-        for node in walk(tree)
-        if isinstance(node, Assign)
-        for target in node.targets
-        if isinstance(target, Name)
-    )
-    missing = set(source.symbols) - found
-    if missing:
-        raise PatchTypeContractError(
-            "patch strict source symbol is missing: "
-            f"{source.path}:{','.join(sorted(missing))}"
-        )
+    _strict_declarations(tree, source)
 
 
 def _verify_strict_ast(tree: Module, source: StrictSource) -> None:
@@ -586,23 +561,109 @@ def _strict_nodes(tree: Module, source: StrictSource) -> tuple[AST, ...]:
     """Return every patch script node or only the named integration hunks."""
     if source.scope in {"patch_script", "patch_domain"}:
         return tuple(walk(tree))
-    declarations = tuple(
-        node
-        for node in tree.body
-        if _declares_strict_symbol(node, source.symbols)
+    declarations = _strict_declarations(tree, source)
+    top_level = {id(node) for node in tree.body}
+    has_qualified_symbol = any("." in symbol for symbol in source.symbols)
+    return tuple(
+        item
+        for node in declarations
+        for item in (
+            walk(node)
+            if has_qualified_symbol or id(node) in top_level
+            else (node,)
+        )
     )
-    return tuple(item for node in declarations for item in walk(node))
 
 
-def _declares_strict_symbol(node: AST, symbols: tuple[str, ...]) -> bool:
-    """Return whether one node declares an inventoried hunk symbol."""
+def _strict_declarations(
+    tree: Module, source: StrictSource
+) -> tuple[AST, ...]:
+    """Resolve every named integration declaration without a vacant hunk."""
+    if source.symbols == ("module",):
+        return ()
+    declarations: list[AST] = []
+    missing: list[str] = []
+    for symbol in source.symbols:
+        resolved = _resolve_strict_symbol(tree, source, symbol)
+        if not resolved:
+            missing.append(symbol)
+            continue
+        declarations.extend(resolved)
+    if missing:
+        raise PatchTypeContractError(
+            "patch strict source symbol is missing: "
+            f"{source.path}:{','.join(sorted(missing))}"
+        )
+    if not declarations:
+        raise PatchTypeContractError(
+            "patch strict source declaration selection is empty: "
+            f"{source.path}"
+        )
+    unique: list[AST] = []
+    identities: set[int] = set()
+    for declaration in declarations:
+        identity = id(declaration)
+        if identity in identities:
+            continue
+        identities.add(identity)
+        unique.append(declaration)
+    return tuple(unique)
+
+
+def _resolve_strict_symbol(
+    tree: Module, source: StrictSource, symbol: str
+) -> tuple[AST, ...]:
+    """Resolve an exact nested declaration named by one manifest symbol."""
+    parts = _strict_symbol_parts(source, symbol)
+    if len(parts) == 1:
+        return tuple(
+            node
+            for node in walk(tree)
+            if _declares_strict_name(node, parts[0])
+        )
+    declarations: tuple[AST, ...] = tuple(tree.body)
+    for index, part in enumerate(parts):
+        matches = tuple(
+            node for node in declarations if _declares_strict_name(node, part)
+        )
+        if not matches:
+            return ()
+        if index == len(parts) - 1:
+            return matches
+        declarations = tuple(
+            child
+            for match in matches
+            for child in _strict_declaration_children(match)
+        )
+    return ()
+
+
+def _strict_symbol_parts(source: StrictSource, symbol: str) -> tuple[str, ...]:
+    """Return safe dotted declaration segments from one manifest symbol."""
+    parts = tuple(symbol.split("."))
+    if not parts or any(not part.isidentifier() for part in parts):
+        raise PatchTypeContractError(
+            f"patch strict source symbol is invalid: {source.path}:{symbol}"
+        )
+    return parts
+
+
+def _strict_declaration_children(node: AST) -> tuple[AST, ...]:
+    """Return declarations that can own one nested manifest symbol."""
     if isinstance(node, (AsyncFunctionDef, ClassDef, FunctionDef)):
-        return node.name in symbols
+        return tuple(node.body)
+    return ()
+
+
+def _declares_strict_name(node: AST, symbol: str) -> bool:
+    """Return whether one AST node declares an exact symbol segment."""
+    if isinstance(node, (AsyncFunctionDef, ClassDef, FunctionDef)):
+        return node.name == symbol
     if isinstance(node, AnnAssign) and isinstance(node.target, Name):
-        return node.target.id in symbols
+        return node.target.id == symbol
     if isinstance(node, Assign):
         return any(
-            isinstance(target, Name) and target.id in symbols
+            isinstance(target, Name) and target.id == symbol
             for target in node.targets
         )
     return False

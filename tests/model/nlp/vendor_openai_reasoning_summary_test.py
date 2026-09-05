@@ -10011,7 +10011,7 @@ def test_present_malformed_terminal_output_is_fail_closed() -> None:
             assert HostileItem.calls == 0
 
 
-def test_provider_events_has_one_typed_terminal_yield_epilogue() -> None:
+def test_provider_events_has_typed_lifecycle_and_terminal_yields() -> None:
     tree = parse(dedent(getsource(OpenAIStream._provider_events)))
     yield_names = [
         node.value.id
@@ -10021,7 +10021,16 @@ def test_provider_events_has_one_typed_terminal_yield_epilogue() -> None:
 
     assert yield_names.count("terminal_event") == 1
     assert yield_names.count("provider_event") == 1
-    assert set(yield_names) == {"provider_event", "terminal_event"}
+    assert yield_names.count("lifecycle_event") == 1
+    assert yield_names.count("pending_lifecycle_event") == 1
+    assert yield_names.count("pending_final_usage_event") == 1
+    assert set(yield_names) == {
+        "lifecycle_event",
+        "pending_final_usage_event",
+        "pending_lifecycle_event",
+        "provider_event",
+        "terminal_event",
+    }
 
 
 def test_zero_length_sparse_part_requires_completed_array_position() -> None:

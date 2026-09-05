@@ -57,6 +57,51 @@ class AgentParserOptionsTestCase(TestCase):
         self.assertTrue(args.participant)
         self.assertIsNone(args.id)
         self.assertIsNone(args.run_temperature)
+        self.assertIsNone(args.run_compaction)
+        self.assertIsNone(args.run_compact_threshold)
+
+    def test_run_parser_compaction_options(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "run",
+                "spec.toml",
+                "--run-compaction",
+                "inline",
+                "--run-compact-threshold",
+                "1024",
+            ]
+        )
+
+        self.assertEqual(args.run_compaction, "inline")
+        self.assertEqual(args.run_compact_threshold, 1024)
+
+        with self.assertRaises(SystemExit) as error:
+            self.parser.parse_args(
+                [
+                    "agent",
+                    "run",
+                    "spec.toml",
+                    "--run-compact-threshold",
+                    "0",
+                ]
+            )
+        self.assertEqual(error.exception.code, 2)
+
+    def test_init_parser_compaction_options(self) -> None:
+        args = self.parser.parse_args(
+            [
+                "agent",
+                "init",
+                "--run-compaction",
+                "inline",
+                "--run-compact-threshold",
+                "1024",
+            ]
+        )
+
+        self.assertEqual(args.run_compaction, "inline")
+        self.assertEqual(args.run_compact_threshold, 1024)
 
     def test_serve_parser_defaults(self) -> None:
         args = self.parser.parse_args(["agent", "serve", "spec.toml"])

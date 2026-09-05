@@ -718,6 +718,66 @@ def test_phase13_provider_transition_target_has_independent_byte_anchor(
         _VERIFIER._phase13_provider_transitions(tmp_path)
 
 
+def test_phase14_provider_transition_evidence_nodes_collect() -> None:
+    """Require reviewed inline-compaction evidence to collect exactly."""
+    transitions = _VERIFIER._phase14_provider_transitions(_ROOT)
+
+    assert set(transitions) == set(
+        _VERIFIER._PHASE14_PROVIDER_TARGET_BYTE_ANCHORS
+    )
+
+
+def test_phase15_provider_transition_evidence_nodes_collect() -> None:
+    """Require strict-provider type-boundary evidence to collect exactly."""
+    transitions = _VERIFIER._phase15_provider_transitions(_ROOT)
+
+    assert set(transitions) == set(
+        _VERIFIER._PHASE15_PROVIDER_TARGET_BYTE_ANCHORS
+    )
+
+
+def test_phase14_stale_evidence_cannot_self_validate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Reject matching fixture and anchor strings for a stale node."""
+    payload = _read("provider_transition.phase14.json")
+    evidence = payload["evidence_node_ids"]
+    assert isinstance(evidence, list)
+    evidence[0] = (
+        "tests/agent/loader_test.py::LoaderTomlVariantsTestCase::"
+        "test_run_compaction_file_normalization_and_validation"
+    )
+    _resign(payload, "canonical_sha256")
+    original_mapping = _VERIFIER._strict_mapping
+
+    def phase14_mapping(path: Path, label: str) -> object:
+        if label == "Phase 14 provider transition":
+            return payload
+        return original_mapping(path, label)
+
+    node_ids = tuple(
+        node_id for node_id in evidence if isinstance(node_id, str)
+    )
+    assert len(node_ids) == len(evidence)
+    monkeypatch.setattr(_VERIFIER, "_strict_mapping", phase14_mapping)
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE14_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        payload["canonical_sha256"],
+    )
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_PHASE14_PROVIDER_EVIDENCE_NODES",
+        node_ids,
+    )
+
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError,
+        match="evidence node collection failed",
+    ):
+        _VERIFIER._phase14_provider_transitions(_ROOT)
+
+
 def test_phase6_lifecycle_transition_pins_exact_bytes() -> None:
     """Bind lifecycle transition evidence to executable fallback bytes."""
     expected = (

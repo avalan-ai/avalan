@@ -31,13 +31,16 @@ from avalan.cli.theme import Theme
 from avalan.cli.theme.basic import (
     BasicStreamPresenter,
     BasicTheme,
+    _basic_active_inline_compaction_renderable,
     _basic_active_model_renderable,
     _basic_active_tool_line,
     _basic_active_tool_renderable,
     _basic_completed_model_line,
     _basic_completed_tool_line,
     _basic_has_executed_tool_frame,
+    _basic_inline_compaction_result_line,
     _basic_json_tool_answer,
+    _basic_live_activity_frame,
     _basic_open_harmony_pattern,
     _basic_reasoning_markdown,
     _basic_reasoning_renderable,
@@ -46,6 +49,7 @@ from avalan.cli.theme.basic import (
     _basic_tool_status_outcome_markup,
     _basic_tool_subject_markup,
     _basic_visible_answer_text,
+    _BasicActiveInlineCompactionSpinner,
     _BasicActiveModelSpinner,
     _BasicAnswerPresenter,
     _BasicToolLineEntry,
@@ -3032,6 +3036,86 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
             second_text,
         )
         self.assertIn("Starting tool calc", stale_text)
+
+    async def test_inline_compaction_live_timer_and_committed_result(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        now = 100.0
+
+        def clock() -> float:
+            return now
+
+        builder.start_inline_compaction(
+            candidate_count=1,
+            sequence=1,
+            started_at=99.0,
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        with patch("avalan.cli.theme.basic.perf_counter", clock):
+            active_items = await _collect_stream_items(
+                presenter,
+                _stream_request(config, builder.snapshot()),
+            )
+            active_frame = _frames(active_items)[0]
+            self.assertIsInstance(
+                active_frame.renderable,
+                _BasicActiveInlineCompactionSpinner,
+            )
+            first_text = _render_text(active_frame.renderable)
+            now = 101.25
+            second_text = _render_text(active_frame.renderable)
+
+        builder.finish_inline_compaction(
+            outcome="committed",
+            boundary_count=1,
+            sequence=2,
+            elapsed_seconds=1.25,
+        )
+        completed_items = await _collect_stream_items(
+            BasicStreamPresenter(getLogger(__name__)),
+            _stream_request(config, builder.snapshot()),
+        )
+        completed_text = "".join(
+            _render_text(frame.renderable)
+            for frame in _frames(completed_items)
+        )
+
+        self.assertIn("Compacting for 1s...", first_text)
+        self.assertIn("Compacting for 2.2s...", second_text)
+        self.assertIn("Compacted in 1.2s.", completed_text)
+
+    def test_live_activity_frame_uses_inline_compaction_spinner(self) -> None:
+        """Render provider-evidenced compaction as the live tool activity."""
+        config = _stream_config(display_tools=True, display_tools_events=8)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.start_inline_compaction(
+            candidate_count=1,
+            sequence=1,
+            started_at=99.0,
+        )
+
+        renderable = _basic_live_activity_frame(
+            _stream_request(config, builder.snapshot())
+        )
+
+        self.assertIsInstance(renderable, _BasicActiveInlineCompactionSpinner)
+
+    def test_inline_compaction_non_spinner_renderable(self) -> None:
+        renderable = _basic_active_inline_compaction_renderable(
+            started_at=1.0,
+            updated_at=2.0,
+            spinner=False,
+        )
+
+        self.assertEqual(str(renderable), "[cyan]Compacting for 1s...[/cyan]")
+
+    def test_inline_compaction_rollback_renders_elapsed_duration(self) -> None:
+        self.assertEqual(
+            _basic_inline_compaction_result_line("rolled_back", 5.0),
+            "[yellow]Compaction rolled back after 5s.[/yellow]",
+        )
 
     async def test_live_diagnostics_pause_after_visible_answer_starts(
         self,

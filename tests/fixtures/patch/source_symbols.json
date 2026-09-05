@@ -28,28 +28,28 @@
       "path": "src/avalan/entities.py",
       "symbol": "ToolCall",
       "artifact_class": "entity",
-      "source_sha256": "eddfa37414c736c2144bebed985faa4f45f2a91adea3034a27f99ea16b71f560"
+      "source_sha256": "f0ca366afdc3d9117500ed1d59cbb6d1c63ef40409c03b384e51812d20b6a2d1"
     },
     {
       "id": "PATCH-SYM-005",
       "path": "src/avalan/agent/loader.py",
       "symbol": "OrchestratorLoader",
       "artifact_class": "loader",
-      "source_sha256": "1244b79012c268c9adbf6d4865becb0a8904c7914a2dc8024305735c7512fa5a"
+      "source_sha256": "30d5ee392f3099be8b88c1ab1e348db553dcdca3fc1f5bd3cd6bcab7be9cf3fa"
     },
     {
       "id": "PATCH-SYM-006",
       "path": "src/avalan/agent/engine.py",
       "symbol": "EngineAgent",
       "artifact_class": "orchestrator",
-      "source_sha256": "21d9cc1d8df4caa3d330a1b1ae67893ccbcc9b327033465e48978d4894897e7c"
+      "source_sha256": "4aa19f776e7110f51e5bc97aea7a96e2dd73954a922c5284b126d2351aa1f8b6"
     },
     {
       "id": "PATCH-SYM-007",
       "path": "src/avalan/model/vendor.py",
       "symbol": "TextGenerationVendor",
       "artifact_class": "provider",
-      "source_sha256": "a03f432e7a48608f0faf472104bce7676c69880ac919ff092bfd0fe877666c19"
+      "source_sha256": "ad1f95d18454859e978a515bf6e2d906b47e2b1b4e08fe110f442a05a8bf0ba0"
     },
     {
       "id": "PATCH-SYM-008",
@@ -70,7 +70,7 @@
       "path": "src/avalan/event/__init__.py",
       "symbol": "Event",
       "artifact_class": "event",
-      "source_sha256": "6bbeb60b05bbe6bf064ddfb75f4615d43080aa8c5445cb2e9b6ba98d1a92f7d0"
+      "source_sha256": "0a70058b64ef41780ef2ae7d74bc2c6eec41f6793c3faefc4ca98312015890eb"
     },
     {
       "id": "PATCH-SYM-011",
@@ -266,7 +266,7 @@
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "a78455eab525ac31680fd4e9fc88de7debbd905b32c1fece8840b1c4f21dfb9e"
+      "source_sha256": "9e02e4ba6de304ad1e296b79a8aa833be0e39e5ee1a6cf96cc69efe2428b9e81"
     },
     {
       "id": "PATCH-SYM-039",
@@ -365,7 +365,42 @@
       "symbol": "build_patch_runtime_activation_factory",
       "artifact_class": "patch_runtime_activation_factory",
       "source_sha256": "ce30573cb2e7e8cb228ad2c72b06bd151ae67f43c9f1bb0ab31a9ae3669ed117"
+    },
+    {
+      "id": "PATCH-SYM-053",
+      "path": "src/avalan/cli/__main__.py",
+      "symbol": "CLI._add_agent_settings_arguments",
+      "artifact_class": "agent_cli_inline_compaction",
+      "source_sha256": "5945d5ece2dbe0cd7ea875af1afaaf8acbeabd0e211d64c6f2cadb26527ce4bb"
+    },
+    {
+      "id": "PATCH-SYM-054",
+      "path": "src/avalan/cli/commands/agent.py",
+      "symbol": "_agent_compaction_policy",
+      "artifact_class": "agent_cli_inline_compaction",
+      "source_sha256": "d97a89f0eb606a51dbe1364594904226ec9e0982782c0964cef2e27e17474b72"
+    },
+    {
+      "id": "PATCH-SYM-055",
+      "path": "src/avalan/model/nlp/text/vendor/__init__.py",
+      "symbol": "TextGenerationVendorModel.__call__",
+      "artifact_class": "vendor_inline_compaction_validation",
+      "source_sha256": "651242edb844149901e554ebbdea03c3739b72dfc59d174ed03c9bc18535093d"
+    },
+    {
+      "id": "PATCH-SYM-056",
+      "path": "src/avalan/model/nlp/text/vendor/openai.py",
+      "symbol": "OpenAIClient._inline_compaction_threshold",
+      "artifact_class": "openai_inline_compaction",
+      "source_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
+    },
+    {
+      "id": "PATCH-SYM-057",
+      "path": "src/avalan/sdk.py",
+      "symbol": "run_agent",
+      "artifact_class": "agent_sdk_inline_compaction",
+      "source_sha256": "ee1e0ec7aa67e8bbcaf36d1545947a1846368a7660b7d6fdfb2f465701b9e420"
     }
   ],
-  "inventory_sha256": "397fd660964b6916d04db31d0212d2c1a1fe8c64494eeaee96d5a0dd9bd2f628"
+  "inventory_sha256": "6091eb890e2de037629c3c74990a5f4eb3c83d1784b0464715a1f5b72f88b183"
 }

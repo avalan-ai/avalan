@@ -723,6 +723,7 @@ class BasicStreamPresenter:
         has_progress = bool(
             self._active_model_continuations
             or request.snapshot.active_model_continuations
+            or request.snapshot.active_inline_compaction is not None
             or request.snapshot.active_tools
         )
         first_visible_answer = not self._last_visible_answer_text
@@ -865,6 +866,16 @@ def _basic_live_activity_frame(
                 _basic_active_model_renderable(
                     started_at=continuation.started_at,
                     updated_at=continuation.updated_at,
+                    spinner=True,
+                ),
+            )
+        inline_compaction = request.snapshot.active_inline_compaction
+        if inline_compaction is not None:
+            append(
+                inline_compaction.sequence,
+                _basic_active_inline_compaction_renderable(
+                    started_at=inline_compaction.started_at,
+                    updated_at=inline_compaction.updated_at,
                     spinner=True,
                 ),
             )
@@ -1217,6 +1228,8 @@ def _basic_reasoning_followed_by_activity(
         or snapshot.tool_diagnostics
         or snapshot.tool_events
         or snapshot.active_model_continuations
+        or snapshot.active_inline_compaction is not None
+        or snapshot.inline_compaction_results
     )
 
 
@@ -1263,6 +1276,19 @@ def _basic_tool_frame(
         if include_model_progress
         else []
     )
+    active_inline_compaction_renderables = (
+        [
+            _basic_active_inline_compaction_renderable(
+                started_at=inline_compaction.started_at,
+                updated_at=inline_compaction.updated_at,
+                spinner=request.display_config.diagnostic_channel == "live",
+            )
+        ]
+        if include_model_progress
+        and (inline_compaction := request.snapshot.active_inline_compaction)
+        is not None
+        else []
+    )
     active_tool_renderables = (
         [
             _basic_active_tool_renderable(
@@ -1283,6 +1309,11 @@ def _basic_tool_frame(
     renderables.extend(
         active_renderable
         for active_renderable in active_model_renderables
+        if active_renderable
+    )
+    renderables.extend(
+        active_renderable
+        for active_renderable in active_inline_compaction_renderables
         if active_renderable
     )
     renderables.extend(
@@ -1376,6 +1407,17 @@ def _basic_tool_entries(
             for event in snapshot.tool_events
             if _basic_should_show_tool_event(event, canonical_tool_call_ids)
         ),
+        *(
+            _BasicToolLineEntry(
+                key=f"inline_compaction:{result.sequence}:{result.outcome}",
+                line=_basic_inline_compaction_result_line(
+                    result.outcome,
+                    result.elapsed_seconds,
+                ),
+                sequence=result.sequence,
+            )
+            for result in snapshot.inline_compaction_results
+        ),
         *completed_model_entries,
     ]
     limit = request.display_config.display_tools_events
@@ -1396,6 +1438,21 @@ def _basic_tool_entries(
                 sequence=continuation.sequence,
             )
             for continuation in snapshot.active_model_continuations
+        ),
+        *(
+            (
+                _BasicToolLineEntry(
+                    key="inline_compaction:active",
+                    line=_basic_active_inline_compaction_line(
+                        started_at=inline_compaction.started_at,
+                        updated_at=inline_compaction.updated_at,
+                    ),
+                    sequence=inline_compaction.sequence,
+                ),
+            )
+            if (inline_compaction := snapshot.active_inline_compaction)
+            is not None
+            else ()
         ),
         *(
             _BasicToolLineEntry(
@@ -1564,6 +1621,41 @@ def _basic_completed_model_line(
     )
 
 
+def _basic_active_inline_compaction_line(
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+) -> str:
+    elapsed = None
+    if started_at is not None and updated_at is not None:
+        elapsed = _basic_tool_elapsed_text(max(updated_at - started_at, 0.0))
+    suffix = f" for {escape(elapsed)}" if elapsed else ""
+    return (
+        f"[{_BASIC_TOOL_RUNNING_STYLE}]Compacting{suffix}..."
+        f"[/{_BASIC_TOOL_RUNNING_STYLE}]"
+    )
+
+
+def _basic_inline_compaction_result_line(
+    outcome: str,
+    elapsed_seconds: float | None,
+) -> str:
+    assert outcome in {"committed", "rolled_back"}
+    elapsed = (
+        None
+        if elapsed_seconds is None
+        else _basic_tool_elapsed_text(max(elapsed_seconds, 0.0))
+    )
+    if outcome == "committed":
+        suffix = f" in {escape(elapsed)}" if elapsed else ""
+        return (
+            f"[{_BASIC_TOOL_RUNNING_STYLE}]Compacted{suffix}."
+            f"[/{_BASIC_TOOL_RUNNING_STYLE}]"
+        )
+    suffix = f" after {escape(elapsed)}" if elapsed else ""
+    return f"[yellow]Compaction rolled back{suffix}.[/yellow]"
+
+
 class _BasicActiveModelSpinner(Spinner):
     """Render active model continuation text while Rich refreshes."""
 
@@ -1601,6 +1693,16 @@ class _BasicActiveModelSpinner(Spinner):
         return perf_counter()
 
 
+class _BasicActiveInlineCompactionSpinner(_BasicActiveModelSpinner):
+    """Render active inline compaction text while Rich refreshes."""
+
+    def _line(self) -> str:
+        return _basic_active_inline_compaction_line(
+            started_at=self._started_at,
+            updated_at=self._current_updated_at(),
+        )
+
+
 def _basic_active_model_renderable(
     *,
     started_at: float | None,
@@ -1613,6 +1715,23 @@ def _basic_active_model_renderable(
             updated_at=updated_at,
         )
     return _BasicActiveModelSpinner(
+        started_at=started_at,
+        updated_at=updated_at,
+    )
+
+
+def _basic_active_inline_compaction_renderable(
+    *,
+    started_at: float | None,
+    updated_at: float | None,
+    spinner: bool,
+) -> RenderableType:
+    if not spinner:
+        return _basic_active_inline_compaction_line(
+            started_at=started_at,
+            updated_at=updated_at,
+        )
+    return _BasicActiveInlineCompactionSpinner(
         started_at=started_at,
         updated_at=updated_at,
     )

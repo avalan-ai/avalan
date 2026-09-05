@@ -7,27 +7,24 @@ from datetime import UTC, datetime
 from fcntl import ioctl
 from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
-from logging import getLogger
+from logging import CRITICAL, disable, getLogger
 from os import (
-    WNOHANG,
     _exit,
     close,
     dup2,
-    fork,
-    kill,
     pipe,
     read,
     set_blocking,
     setsid,
     ttyname,
-    waitpid,
     waitstatus_to_exitcode,
     write,
 )
 from pathlib import Path
 from pty import openpty
 from select import select
-from signal import SIGKILL
+from subprocess import Popen
+from sys import argv, executable
 from sys import modules as system_modules
 from termios import TIOCSCTTY
 from time import monotonic
@@ -109,6 +106,7 @@ def _load_boundary_fixture() -> Any:
 
 boundary_fixture = _load_boundary_fixture()
 
+_CHILD_START_TIMEOUT_SECONDS = 15.0
 _CANCELLED_STDERR = (
     b'{"envelope_id": "cli.cancelled.v1", "payload": '
     b'{"channel": "control", "kind": "cancelled"}}\n'
@@ -684,32 +682,30 @@ def _run_pty_case(
     stdout_read, stdout_write = pipe()
     stderr_read, stderr_write = pipe()
     result_read, result_write = pipe()
-    child = fork()
-    if child == 0:
-        child_stdin = slave if attached_stdin else stdin_read
-        child_stdout = slave if terminal_stdout else stdout_write
-        if attached_stdin:
-            setsid()
-            ioctl(slave, TIOCSCTTY, 0)
-        for descriptor in (
-            master,
-            stdin_write,
-            stdout_read,
-            stderr_read,
-            result_read,
-        ):
-            close(descriptor)
-        if slave not in {child_stdin, child_stdout}:
-            close(slave)
-        _child(
+    process = Popen(
+        (
+            executable,
+            str(Path(__file__).resolve()),
+            "--pty-child",
             tty_path,
-            child_stdin,
-            child_stdout,
+            str(slave),
+            str(stdin_read),
+            str(stdout_write),
+            str(stderr_write),
+            str(result_write),
+            "1" if real_orchestrator else "0",
+            case,
+            "1" if attached_stdin else "0",
+            "1" if terminal_stdout else "0",
+        ),
+        pass_fds=(
+            slave,
+            stdin_read,
+            stdout_write,
             stderr_write,
             result_write,
-            real_orchestrator=real_orchestrator,
-            case=case,
-        )
+        ),
+    )
 
     status = None
     streams = {stdout_read: b"", stderr_read: b"", result_read: b""}
@@ -730,7 +726,7 @@ def _run_pty_case(
         for descriptor in streams:
             set_blocking(descriptor, False)
         if attached_stdin:
-            deadline = monotonic() + 5
+            deadline = monotonic() + _CHILD_START_TIMEOUT_SECONDS
             while not streams[stdout_read] and monotonic() < deadline:
                 readable, _, _ = select(
                     [master, *streams],
@@ -744,13 +740,13 @@ def _run_pty_case(
                         control += chunk
                     else:
                         streams[descriptor] += chunk
-                waited, child_status = waitpid(child, WNOHANG)
-                if waited:
+                child_status = process.poll()
+                if child_status is not None:
                     status = child_status
                     break
             assert streams[stdout_read], streams[stderr_read].decode()
             write(master, b"initial prompt\n")
-        deadline = monotonic() + 5
+        deadline = monotonic() + _CHILD_START_TIMEOUT_SECONDS
         while prompt_marker not in control and monotonic() < deadline:
             readable, _, _ = select([master, *streams], [], [], 0.05)
             for descriptor in readable:
@@ -759,8 +755,8 @@ def _run_pty_case(
                     control += chunk
                 else:
                     streams[descriptor] += chunk
-            waited, child_status = waitpid(child, WNOHANG)
-            if waited:
+            child_status = process.poll()
+            if child_status is not None:
                 status = child_status
                 break
         assert prompt_marker in control, {
@@ -786,8 +782,8 @@ def _run_pty_case(
                             control += data
                         else:
                             streams[descriptor] += data
-                    waited, child_status = waitpid(child, WNOHANG)
-                    if waited:
+                    child_status = process.poll()
+                    if child_status is not None:
                         status = child_status
                         child_exited = True
                         break
@@ -813,20 +809,23 @@ def _run_pty_case(
                     control += chunk
                 else:
                     streams[descriptor] += chunk
-            waited, child_status = waitpid(child, WNOHANG)
-            if waited:
+            child_status = process.poll()
+            if child_status is not None:
                 status = child_status
                 break
     finally:
         if status is None:
-            kill(child, SIGKILL)
-            waitpid(child, 0)
+            process.kill()
+            process.wait(timeout=5)
         for descriptor in (*streams, master, slave):
             if descriptor < 0:
                 continue
             close(descriptor)
 
-    return status, streams, control
+    raw_status = (
+        None if status is None else status << 8 if status >= 0 else -status
+    )
+    return raw_status, streams, control
 
 
 def test_piped_prompt_and_pty_clarification_complete_one_run() -> None:
@@ -1124,3 +1123,41 @@ def test_real_orchestrator_run_cancel_owns_containing_run_cleanup() -> None:
         "pending_tool_batch_task": False,
     }
     assert control.endswith(b"Answer yes or no:\n")
+
+
+def _run_pty_child() -> None:
+    """Dispatch one fresh-interpreter CLI PTY child invocation."""
+    assert len(argv) == 12
+    assert argv[1] == "--pty-child"
+    tty_path = argv[2]
+    slave = int(argv[3])
+    stdin_read = int(argv[4])
+    stdout_write = int(argv[5])
+    stderr_write = int(argv[6])
+    result_write = int(argv[7])
+    real_orchestrator = argv[8] == "1"
+    case = argv[9]
+    attached_stdin = argv[10] == "1"
+    terminal_stdout = argv[11] == "1"
+    child_stdin = slave if attached_stdin else stdin_read
+    child_stdout = slave if terminal_stdout else stdout_write
+    if attached_stdin:
+        setsid()
+        ioctl(slave, TIOCSCTTY, 0)
+    for descriptor in (slave, stdin_read, stdout_write):
+        if descriptor not in {child_stdin, child_stdout}:
+            close(descriptor)
+    disable(CRITICAL)
+    _child(
+        tty_path,
+        child_stdin,
+        child_stdout,
+        stderr_write,
+        result_write,
+        real_orchestrator=real_orchestrator,
+        case=case,
+    )
+
+
+if __name__ == "__main__":
+    _run_pty_child()

@@ -158,6 +158,7 @@ class TextGenerationVendorModel(TextGenerationModel, ABC):
     ) -> TextGenerationResponse:
         gen_settings = settings or GenerationSettings()
         validate_reasoning_summary_request(self, gen_settings)
+        self._model._validate_inline_compaction_request(gen_settings)
         messages = self._messages(
             input, system_prompt, developer_prompt, capability
         )

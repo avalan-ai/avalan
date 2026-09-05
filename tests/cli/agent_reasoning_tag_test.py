@@ -11,6 +11,8 @@ from avalan.model.response.parsers.reasoning import ReasoningParser
 from avalan.model.response.text import TextGenerationResponse
 from avalan.model.stream import CanonicalStreamItem
 
+_CancellationChecker = Callable[[], Awaitable[None]]
+
 
 class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
     def setUp(self) -> None:
@@ -101,15 +103,13 @@ class CliAgentReasoningTagTestCase(IsolatedAsyncioTestCase):
                     generation_settings=settings,
                     settings=settings,
                 )
-                self.cancellation_checker: (
-                    Callable[[], Awaitable[None]] | None
-                ) = None
+                self.cancellation_checker: _CancellationChecker | None = None
 
             def __aiter__(self) -> AsyncIterator[CanonicalStreamItem]:
                 return self._resp.__aiter__()
 
             def set_cancellation_checker(
-                self, checker: Callable[[], Awaitable[None]] | None
+                self, checker: _CancellationChecker | None
             ) -> None:
                 self.cancellation_checker = checker
 

@@ -21,6 +21,7 @@ from enum import StrEnum
 from hashlib import sha256
 from inspect import isawaitable
 from json import dumps, loads
+from math import isfinite
 from re import Pattern, compile
 from types import MappingProxyType
 from typing import Any, AsyncIterator, cast
@@ -55,6 +56,12 @@ class StreamItemKind(StrEnum):
     MODEL_CONTINUATION_COMPLETED = "model_continuation.completed"
     MODEL_CONTINUATION_ERROR = "model_continuation.error"
     MODEL_CONTINUATION_CANCELLED = "model_continuation.cancelled"
+    INLINE_COMPACTION_STARTED = "inline_compaction.started"
+    INLINE_COMPACTION_COMMITTED = "inline_compaction.committed"
+    INLINE_COMPACTION_ROLLED_BACK = "inline_compaction.rolled_back"
+    INLINE_COMPACTION_COMPLETED_NO_BOUNDARY = (
+        "inline_compaction.completed_no_boundary"
+    )
     FLOW_EVENT = "flow.event"
     USAGE_UPDATE = "usage.update"
     USAGE_COMPLETED = "usage.completed"
@@ -491,6 +498,122 @@ class StreamItemCorrelation:
 _EMPTY_STREAM_ITEM_CORRELATION = StreamItemCorrelation()
 REASONING_SEGMENT_BOUNDARY_METADATA_KEY = "reasoning.segment_boundary"
 
+_INLINE_COMPACTION_LIFECYCLE_KINDS = frozenset(
+    {
+        StreamItemKind.INLINE_COMPACTION_STARTED,
+        StreamItemKind.INLINE_COMPACTION_COMMITTED,
+        StreamItemKind.INLINE_COMPACTION_ROLLED_BACK,
+        StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY,
+    }
+)
+_INLINE_COMPACTION_PROVIDER_EVENT_TYPES = {
+    StreamItemKind.INLINE_COMPACTION_STARTED: frozenset(
+        {"response.output_item.added"}
+    ),
+    StreamItemKind.INLINE_COMPACTION_COMMITTED: frozenset(
+        {"response.completed"}
+    ),
+    StreamItemKind.INLINE_COMPACTION_ROLLED_BACK: frozenset(
+        {
+            "error",
+            "response.error",
+            "response.failed",
+            "response.incomplete",
+        }
+    ),
+    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY: frozenset(
+        {"response.completed"}
+    ),
+}
+
+
+def inline_compaction_lifecycle_payload(
+    kind: StreamItemKind,
+    data: LooseJsonValue | None,
+    *,
+    correlation: StreamItemCorrelation,
+    metadata: Mapping[str, LooseJsonValue],
+    provider_payload: LooseJsonValue | None,
+    provider_event_type: str | None,
+) -> dict[str, LooseJsonValue] | None:
+    """Validate and return content-free inline compaction lifecycle data."""
+    assert isinstance(kind, StreamItemKind)
+    assert isinstance(correlation, StreamItemCorrelation)
+    assert isinstance(metadata, Mapping)
+    if kind not in _INLINE_COMPACTION_LIFECYCLE_KINDS:
+        return None
+
+    assert (
+        correlation == _EMPTY_STREAM_ITEM_CORRELATION
+    ), "inline compaction lifecycle items must not carry correlations"
+    assert (
+        not metadata
+    ), "inline compaction lifecycle items must not carry metadata"
+    assert (
+        provider_payload is None
+    ), "inline compaction lifecycle items must not carry provider payloads"
+    if provider_event_type is not None:
+        assert (
+            provider_event_type
+            in _INLINE_COMPACTION_PROVIDER_EVENT_TYPES[kind]
+        ), "inline compaction lifecycle event type is invalid"
+    assert (
+        type(data) is dict
+    ), "inline compaction lifecycle data must be a dict"
+    payload = cast(dict[str, LooseJsonValue], data)
+
+    if kind is StreamItemKind.INLINE_COMPACTION_STARTED:
+        expected_keys = {"candidate_count", "compact_threshold"}
+        required_keys = {"candidate_count"}
+        count_key = "candidate_count"
+        count_must_be_positive = True
+    elif kind is StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY:
+        expected_keys = {
+            "boundary_count",
+            "compact_threshold",
+            "elapsed_seconds",
+        }
+        required_keys = {"boundary_count"}
+        count_key = "boundary_count"
+        count_must_be_positive = False
+    else:
+        expected_keys = {
+            "boundary_count",
+            "compact_threshold",
+            "elapsed_seconds",
+        }
+        required_keys = {"boundary_count"}
+        count_key = "boundary_count"
+        count_must_be_positive = True
+
+    assert required_keys <= set(
+        payload
+    ), "inline compaction lifecycle data is incomplete"
+    assert (
+        set(payload) <= expected_keys
+    ), "inline compaction lifecycle data contains unsupported keys"
+    count = payload[count_key]
+    assert (
+        type(count) is int
+    ), f"inline compaction {count_key} must be an integer"
+    if count_must_be_positive:
+        assert count > 0, f"inline compaction {count_key} must be positive"
+    else:
+        assert (
+            count == 0
+        ), "completed no-boundary compaction must have zero boundaries"
+    threshold = payload.get("compact_threshold")
+    if threshold is not None:
+        assert (
+            type(threshold) is int and threshold > 0
+        ), "inline compaction compact_threshold must be positive"
+    elapsed = payload.get("elapsed_seconds")
+    if elapsed is not None:
+        assert (
+            type(elapsed) is float and isfinite(elapsed) and elapsed >= 0
+        ), "inline compaction elapsed_seconds must be finite and non-negative"
+    return dict(payload)
+
 
 @dataclass(frozen=True, kw_only=True, slots=True)
 class StreamReasoningSegment:
@@ -728,6 +851,17 @@ class StreamProviderEvent:
             _assert_non_empty_string(
                 self.provider_event_type, "provider_event_type"
             )
+        lifecycle_payload = inline_compaction_lifecycle_payload(
+            self.kind,
+            self.data,
+            correlation=self.correlation,
+            metadata=self.metadata,
+            provider_payload=self.provider_payload,
+            provider_event_type=self.provider_event_type,
+        )
+        if lifecycle_payload is not None:
+            assert self.text_delta is None
+            assert self.usage is None
         _validate_reasoning_fields(
             self.kind,
             self.visibility,
@@ -1302,6 +1436,15 @@ class CanonicalStreamItem:
             provider_event_type=self.provider_event_type,
         )
 
+        inline_compaction_lifecycle_payload(
+            self.kind,
+            self.data,
+            correlation=self.correlation,
+            metadata=self.metadata,
+            provider_payload=self.provider_payload,
+            provider_event_type=self.provider_event_type,
+        )
+
         if self.usage is not None:
             assert self.kind in _USAGE_KINDS or (
                 self.kind is StreamItemKind.STREAM_COMPLETED
@@ -1314,6 +1457,68 @@ class CanonicalStreamItem:
             assert self.terminal_outcome is None
         else:
             assert self.terminal_outcome is expected_outcome
+
+
+@dataclass(slots=True)
+class _InlineCompactionLifecycleState:
+    """Validate correlated inline compaction lifecycle boundaries."""
+
+    active_candidate_count: int = 0
+
+    def observe(self, item: CanonicalStreamItem) -> None:
+        """Observe one lifecycle item before terminal stream validation."""
+        payload = inline_compaction_lifecycle_payload(
+            item.kind,
+            item.data,
+            correlation=item.correlation,
+            metadata=item.metadata,
+            provider_payload=item.provider_payload,
+            provider_event_type=item.provider_event_type,
+        )
+        if payload is None:
+            return
+        if item.kind is StreamItemKind.INLINE_COMPACTION_STARTED:
+            self._observe_started(payload)
+        elif (
+            item.kind is StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY
+        ):
+            if self.active_candidate_count:
+                raise StreamValidationError(
+                    "completed no-boundary compaction has active candidates"
+                )
+        else:
+            self._observe_terminal(payload)
+
+    def validate_terminal(self) -> None:
+        """Reject a stream terminal while a compaction candidate remains."""
+        if self.active_candidate_count:
+            raise StreamValidationError(
+                "inline compaction candidate remains active at stream terminal"
+            )
+
+    def _observe_started(self, payload: Mapping[str, LooseJsonValue]) -> None:
+        candidate_count = payload["candidate_count"]
+        assert type(candidate_count) is int
+        expected_count = self.active_candidate_count + 1
+        if candidate_count != expected_count:
+            raise StreamValidationError(
+                "inline compaction candidate count must increase by one"
+            )
+        self.active_candidate_count = candidate_count
+
+    def _observe_terminal(self, payload: Mapping[str, LooseJsonValue]) -> None:
+        boundary_count = payload["boundary_count"]
+        assert type(boundary_count) is int
+        if not self.active_candidate_count:
+            raise StreamValidationError(
+                "inline compaction terminal has no active candidate"
+            )
+        if boundary_count != self.active_candidate_count:
+            raise StreamValidationError(
+                "inline compaction terminal boundary count does not match "
+                "active candidates"
+            )
+        self.active_candidate_count = 0
 
 
 @dataclass(frozen=True, kw_only=True, slots=True)
@@ -1409,6 +1614,15 @@ class StreamConsumerProjection:
             metadata=self.metadata,
             provider_payload=None,
             provider_family=self.provider_family,
+            provider_event_type=self.provider_event_type,
+        )
+
+        inline_compaction_lifecycle_payload(
+            self.kind,
+            self.data,
+            correlation=self.correlation,
+            metadata=self.metadata,
+            provider_payload=None,
             provider_event_type=self.provider_event_type,
         )
 
@@ -1714,6 +1928,16 @@ def stream_observability_payload(
         payload["terminal_outcome"] = item.terminal_outcome.value
     if item.usage is not None:
         payload["usage"] = item.usage
+    inline_compaction = inline_compaction_lifecycle_payload(
+        item.kind,
+        item.data,
+        correlation=item.correlation,
+        metadata=item.metadata,
+        provider_payload=item.provider_payload,
+        provider_event_type=item.provider_event_type,
+    )
+    if inline_compaction is not None:
+        payload["inline_compaction"] = cast(LooseJsonValue, inline_compaction)
     summary = _stream_observability_summary(item)
     if summary:
         payload["summary"] = summary
@@ -1869,6 +2093,12 @@ _STREAM_KIND_CHANNELS: dict[StreamItemKind, StreamChannel] = {
     StreamItemKind.MODEL_CONTINUATION_COMPLETED: StreamChannel.CONTROL,
     StreamItemKind.MODEL_CONTINUATION_ERROR: StreamChannel.CONTROL,
     StreamItemKind.MODEL_CONTINUATION_CANCELLED: StreamChannel.CONTROL,
+    StreamItemKind.INLINE_COMPACTION_STARTED: StreamChannel.CONTROL,
+    StreamItemKind.INLINE_COMPACTION_COMMITTED: StreamChannel.CONTROL,
+    StreamItemKind.INLINE_COMPACTION_ROLLED_BACK: StreamChannel.CONTROL,
+    StreamItemKind.INLINE_COMPACTION_COMPLETED_NO_BOUNDARY: (
+        StreamChannel.CONTROL
+    ),
     StreamItemKind.FLOW_EVENT: StreamChannel.FLOW,
     StreamItemKind.USAGE_UPDATE: StreamChannel.USAGE,
     StreamItemKind.USAGE_COMPLETED: StreamChannel.USAGE,
@@ -2453,6 +2683,7 @@ def validate_canonical_stream_items(
     tool_execution_states: dict[str, _ToolExecutionBoundaryState] = {}
     model_continuation_states: dict[str, _ModelContinuationBoundaryState] = {}
     interaction_states: dict[str, _InteractionBoundaryState] = {}
+    inline_compaction = _InlineCompactionLifecycleState()
 
     for index, item in enumerate(result):
         item._validate_kind_payload()
@@ -2478,6 +2709,7 @@ def validate_canonical_stream_items(
                 )
 
         if item.kind is StreamItemKind.STREAM_CLOSED:
+            inline_compaction.validate_terminal()
             raise StreamValidationError("stream closed before terminal")
 
         if item.kind is StreamItemKind.USAGE_COMPLETED:
@@ -2498,6 +2730,7 @@ def validate_canonical_stream_items(
         _validate_reasoning_boundary(item, reasoning_boundary)
         _validate_tool_call_boundary(item, tool_call_states)
         _validate_tool_execution_boundary(item, tool_execution_states)
+        inline_compaction.observe(item)
 
         if outcome is not None:
             _validate_interaction_terminal_outcome(item, interaction_states)
@@ -2516,6 +2749,7 @@ def validate_canonical_stream_items(
                 tool_execution_states,
                 model_continuation_states,
             )
+            inline_compaction.validate_terminal()
             terminal = outcome
 
         _validate_model_continuation_boundary(item, model_continuation_states)
@@ -3325,6 +3559,7 @@ class CanonicalStreamAccumulator:
             str, _ModelContinuationBoundaryState
         ] = {}
         self._interaction_states: dict[str, _InteractionBoundaryState] = {}
+        self._inline_compaction = _InlineCompactionLifecycleState()
 
     @property
     def retention_policy(self) -> StreamRetentionPolicy:
@@ -3476,6 +3711,7 @@ class CanonicalStreamAccumulator:
             )
 
         if item.kind is StreamItemKind.STREAM_CLOSED:
+            self._inline_compaction.validate_terminal()
             raise StreamValidationError("stream closed before terminal")
 
         self._validate_usage(item)
@@ -3485,6 +3721,7 @@ class CanonicalStreamAccumulator:
         _validate_tool_call_boundary(item, self._tool_call_states)
         _validate_tool_execution_boundary(item, self._tool_execution_states)
         _validate_interaction_boundary(item, self._interaction_states)
+        self._inline_compaction.observe(item)
 
         if outcome is not None:
             _validate_interaction_terminal_outcome(
@@ -3505,6 +3742,7 @@ class CanonicalStreamAccumulator:
                 self._tool_execution_states,
                 self._model_continuation_states,
             )
+            self._inline_compaction.validate_terminal()
             self._terminal_outcome = outcome
             self._terminal_item = item
         _validate_model_continuation_boundary(

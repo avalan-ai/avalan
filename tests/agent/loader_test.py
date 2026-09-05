@@ -19,6 +19,7 @@ from avalan.agent.execution import AgentExecution
 from avalan.agent.loader import (
     OrchestratorLoader,
     _merge_shell_tool_settings,
+    _normalize_file_run_compaction,
     _normalize_file_run_reasoning,
     _shell_tool_runtime_settings,
 )
@@ -31,6 +32,7 @@ from avalan.container import (
     trusted_container_runtime_from_mapping,
     trusted_container_source,
 )
+from avalan.conversation.settings import DisabledCompaction, InlineCompaction
 from avalan.entities import (
     EngineUri,
     Message,
@@ -5147,6 +5149,54 @@ uri = "ai://local/model"
             reasoning_without_summary,
             {"run": {"reasoning": {"effort": "high"}}},
         )
+
+    async def test_run_compaction_file_normalization_and_validation(
+        self,
+    ) -> None:
+        inline = {
+            "run": {
+                "compaction": {
+                    "operation": "inline",
+                    "compact_threshold": 1024,
+                }
+            }
+        }
+        _normalize_file_run_compaction(inline)
+        self.assertEqual(
+            inline["run"]["compaction"],
+            InlineCompaction(compact_threshold=1024),
+        )
+
+        disabled = {"run": {"compaction": {"operation": "none"}}}
+        _normalize_file_run_compaction(disabled)
+        self.assertEqual(disabled["run"]["compaction"], DisabledCompaction())
+
+        for table in (
+            'operation = "inline"',
+            'operation = "inline"\ncompact_threshold = 0',
+            'operation = "none"\ncompact_threshold = 1024',
+            'operation = "standalone"\ncompact_threshold = 1024',
+        ):
+            with self.subTest(table=table), TemporaryDirectory() as tmp:
+                path = Path(tmp) / "agent.toml"
+                path.write_text(
+                    f"""
+[agent]
+role = "assistant"
+
+[engine]
+uri = "ai://local/model"
+
+[run.compaction]
+{table}
+""",
+                    encoding="utf-8",
+                )
+                with self.assertRaisesRegex(
+                    AssertionError,
+                    "run.compaction",
+                ):
+                    await OrchestratorLoader.validate_agent_file(path)
 
     async def test_permanent_memory_from_file(self):
         config_tmpl = """

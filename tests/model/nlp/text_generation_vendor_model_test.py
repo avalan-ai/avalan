@@ -8,7 +8,7 @@ from avalan.entities import (
     MessageRole,
     TransformerEngineSettings,
 )
-from avalan.model import TextGenerationResponse
+from avalan.model import ModelCapabilityCatalog, TextGenerationResponse
 from avalan.model.nlp.text.vendor import TextGenerationVendorModel
 
 
@@ -162,7 +162,7 @@ class InputTokenCountTestCase(TestCase):
 
 
 class CallTestCase(IsolatedAsyncioTestCase):
-    async def test_call(self):
+    async def test_call(self) -> None:
         settings = TransformerEngineSettings(
             auto_load_model=False,
             auto_load_tokenizer=False,
@@ -173,13 +173,13 @@ class CallTestCase(IsolatedAsyncioTestCase):
         model._messages = MagicMock(return_value=messages)
 
         async def fake_model(
-            model_id,
-            msgs,
-            opts,
+            model_id: str,
+            msgs: list[Message],
+            opts: GenerationSettings,
             *,
-            capability=None,
-            use_async_generator=True,
-        ):
+            capability: ModelCapabilityCatalog | None = None,
+            use_async_generator: bool = True,
+        ) -> str:
             self.assertEqual(model_id, "m")
             self.assertIs(msgs, messages)
             self.assertIs(opts, gen_settings)
@@ -187,6 +187,10 @@ class CallTestCase(IsolatedAsyncioTestCase):
             return "streamer"
 
         model._model = AsyncMock(side_effect=fake_model)
+        validate_inline_compaction = MagicMock()
+        model._model._validate_inline_compaction_request = (
+            validate_inline_compaction
+        )
         gen_settings = GenerationSettings()
         response = await model(
             "input",
@@ -195,6 +199,7 @@ class CallTestCase(IsolatedAsyncioTestCase):
             capability=None,
         )
         model._messages.assert_called_once_with("input", "sys", None, None)
+        validate_inline_compaction.assert_called_once_with(gen_settings)
         model._model.assert_awaited_once_with(
             "m",
             messages,

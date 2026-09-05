@@ -351,6 +351,88 @@ echo "What is (4 + 6) * 5 / 2?" \
 
 See [TOOLS.md](TOOLS.md) for ReACT, tool formats, and tool-calling loops.
 
+## Provider-native Inline Compaction for Agent Runs
+
+Inline compaction is an opt-in, provider-managed context boundary for the
+ordinary legacy `avalan agent run` tool loop. Omitting it, or explicitly
+selecting `none`, preserves the prior request behavior: provider failures stay
+visible, Avalan does not create a local summary, and it does not automatically
+call a standalone compaction operation.
+
+The feature is accepted only for the exact native OpenAI Responses transport
+at `https://api.openai.com/v1`, or a tightly scoped Azure Responses transport.
+Azure requires HTTPS, a host ending in `.openai.azure.com` or
+`.cognitiveservices.azure.com`, and `/openai/v1` after trailing-slash
+normalization. It permits only the default or `443` port, no userinfo, params,
+query, or fragment, and `azure_api_version` omitted or exactly `preview`.
+Other providers, compatible gateways, custom base URLs, and transport shapes
+fail closed before dispatch. This transport rule does not establish live
+capability for a particular model or deployment.
+
+In agent TOML, configure one operation under `[run.compaction]`:
+
+```toml
+[run.compaction]
+operation = "inline"
+compact_threshold = 1024
+```
+
+`operation` is `inline` or `none`. `compact_threshold` is required only for
+`inline` and must be a positive integer; `none` accepts no threshold.
+
+From the CLI, set both opt-in controls for inline operation:
+
+```sh
+avalan agent run agent.toml \
+    --run-compaction inline \
+    --run-compact-threshold 1024
+```
+
+Use `--run-compaction none` to explicitly disable it. From the public SDK,
+pass the typed policy at the agent-run boundary:
+
+```python
+from avalan.sdk import InlineCompaction, run_agent
+
+result = await run_agent(
+    orchestrator,
+    agent_input,
+    compaction=InlineCompaction(compact_threshold=1024),
+)
+```
+
+The provider owns the compacted state. Avalan treats its encrypted compaction
+item as opaque: never inspect, decode, print, or log it. After a successful
+provider response, that state remains part of the provider continuation across
+tool cycles; it is not a locally generated replacement for the transcript.
+
+### Lifecycle and observability
+
+Requesting `context_management` is only eligibility; it is not proof that a
+compaction happened. Avalan emits `inline_compaction.started` only after the
+native OpenAI or Azure Responses stream adds a compaction item. The basic live
+display then shows `Compacting...` with an elapsed timer. It emits
+`inline_compaction.committed` and shows `Compacted in ...` only after the
+opaque item, completed response, and whole-response replay state have all
+validated and committed. A candidate that cannot commit emits a content-free
+`inline_compaction.rolled_back` outcome instead.
+
+A completed response with no provider boundary remains silent in the normal
+basic UI. It is still available to event listeners and metrics as
+`inline_compaction.completed_no_boundary`. The lifecycle payloads contain only
+the configured threshold, counts, and elapsed duration. Event listeners receive
+those numeric values under `inline_compaction`, in addition to the ordinary
+stream observability fields. The lifecycle contract rejects any extra payload
+keys, provider correlations, opaque provider payload, encrypted compaction
+content, prompts, raw provider items, or provider IDs.
+
+An iterator ending without a validated provider terminal is not a successful
+response when inline compaction is enabled. Avalan fails that response closed,
+rolls back any candidate boundary, and preserves final usage before the error
+terminal when safely received. Diagnostics count one logical request and every
+actual provider dispatch separately; a retry therefore increments
+`attempt_count` without increasing `request_count`.
+
 ## Modalities
 
 Avalan supports text, vision, and audio workloads. Model choice and backend

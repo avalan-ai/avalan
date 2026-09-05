@@ -23,6 +23,7 @@ from ..container import (
     trusted_container_settings_from_mapping,
     trusted_container_source,
 )
+from ..conversation.settings import DisabledCompaction, InlineCompaction
 from ..entities import (
     EngineUri,
     OrchestratorSettings,
@@ -470,6 +471,40 @@ def _normalize_file_run_reasoning(config: dict[str, Any]) -> None:
     reasoning_options["summary"] = normalized_summary
 
 
+def _normalize_file_run_compaction(config: dict[str, Any]) -> None:
+    """Normalize an opt-in provider-native compaction policy."""
+    run_options = config.get("run")
+    if run_options is None:
+        return
+    assert isinstance(run_options, dict), "Run section must be a mapping"
+    compaction_options = run_options.get("compaction")
+    if compaction_options is None:
+        return
+    assert isinstance(
+        compaction_options, dict
+    ), "run.compaction section must be a mapping"
+    operation = compaction_options.get("operation")
+    assert type(operation) is str, "run.compaction.operation must be a string"
+    if operation == "none":
+        assert set(compaction_options) == {
+            "operation"
+        }, "run.compaction none cannot set compact_threshold"
+        run_options["compaction"] = DisabledCompaction()
+        return
+    assert (
+        operation == "inline"
+    ), "run.compaction.operation must be none or inline"
+    assert set(compaction_options) == {
+        "operation",
+        "compact_threshold",
+    }, "run.compaction inline requires only compact_threshold"
+    threshold = compaction_options["compact_threshold"]
+    assert (
+        type(threshold) is int and threshold > 0
+    ), "run.compaction.compact_threshold must be a positive integer"
+    run_options["compaction"] = InlineCompaction(compact_threshold=threshold)
+
+
 class OrchestratorLoader:
     DEFAULT_SENTENCE_MODEL_ID = "sentence-transformers/all-MiniLM-L6-v2"
     DEFAULT_SENTENCE_MODEL_MAX_TOKENS = 500
@@ -790,6 +825,7 @@ class OrchestratorLoader:
         )
         cls.validate_agent_config(config)
         _normalize_file_run_reasoning(config)
+        _normalize_file_run_compaction(config)
         return config
 
     @classmethod
@@ -1252,6 +1288,7 @@ class OrchestratorLoader:
             path=path,
         )
         _normalize_file_run_reasoning(config)
+        _normalize_file_run_compaction(config)
         # Validate settings
 
         assert "agent" in config, "No agent section in configuration"

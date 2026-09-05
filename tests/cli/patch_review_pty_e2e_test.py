@@ -5,16 +5,11 @@ from errno import EIO
 from fcntl import ioctl
 from json import dumps, loads
 from os import (
-    WNOHANG,
     _exit,
     close,
-    fork,
-    kill,
     pipe,
     read,
     setsid,
-    waitpid,
-    waitstatus_to_exitcode,
     write,
 )
 from pathlib import Path
@@ -22,9 +17,12 @@ from pty import openpty
 from runpy import run_path
 from select import select
 from signal import SIGINT, default_int_handler, signal
+from subprocess import Popen
+from sys import argv, executable
+from sys import path as system_path
 from termios import ECHO, ICANON, TIOCSCTTY, tcgetattr
 from time import monotonic
-from typing import Any, cast
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -320,19 +318,24 @@ def _child(
     close(result_fd)
 
 
-def _spawn(case: str) -> tuple[int, int, int]:
+def _spawn(case: str) -> tuple[Popen[bytes], int, int]:
     """Spawn one PTY child and return process, terminal, and result pipe."""
     master, slave = openpty()
     result_read, result_write = pipe()
-    pid = fork()
-    if pid == 0:
-        close(master)
-        close(result_read)
-        _child(slave, result_write, case)
-        _exit(0)
+    process = Popen(
+        (
+            executable,
+            str(Path(__file__).resolve()),
+            "--pty-child",
+            case,
+            str(slave),
+            str(result_write),
+        ),
+        pass_fds=(slave, result_write),
+    )
     close(slave)
     close(result_write)
-    return pid, master, result_read
+    return process, master, result_read
 
 
 def _read_until(fd: int, marker: bytes) -> bytes:
@@ -360,22 +363,22 @@ def _read_pty_master(fd: int) -> bytes | None:
 
 
 def _finish(
-    pid: int, master: int, result_fd: int, output: bytes
+    process: Popen[bytes], master: int, result_fd: int, output: bytes
 ) -> tuple[dict[str, object], bytes]:
     """Collect child output, status, and bounded result receipt."""
     deadline = monotonic() + 15
-    status = None
+    status: int | None = None
     while status is None and monotonic() < deadline:
         readable, _, _ = select((master,), (), (), 0.05)
         if readable:
             chunk = _read_pty_master(master)
             if chunk:
                 output += chunk
-        observed, value = waitpid(pid, WNOHANG)
-        if observed:
-            status = value
-            break
-    assert status is not None
+        status = process.poll()
+    if status is None:
+        process.kill()
+        process.wait(timeout=5)
+        pytest.fail("PTY child did not exit before the test deadline")
     while True:
         readable, _, _ = select((master,), (), (), 0)
         if not readable:
@@ -387,9 +390,9 @@ def _finish(
     payload = loads(read(result_fd, 65536).decode("utf-8"))
     close(master)
     close(result_fd)
-    assert waitstatus_to_exitcode(status) == 0
+    assert status == 0
     assert isinstance(payload, dict)
-    return cast(dict[str, object], payload), output
+    return payload, output
 
 
 def test_patch_cli_pty_eio_is_terminal_eof_and_other_errors_propagate() -> (
@@ -411,13 +414,13 @@ def test_patch_cli_pty_eio_is_terminal_eof_and_other_errors_propagate() -> (
 
 def test_patch_e2e_023_real_pty_review_approve_and_later_read() -> None:
     """Complete privileged review and approval through a real isolated PTY."""
-    pid, master, result_fd = _spawn("approve")
+    process, master, result_fd = _spawn("approve")
     output = _read_until(master, b"Review action [approve|deny|cancel]: ")
     if b"Review action [approve|deny|cancel]: " not in output:
-        payload, output = _finish(pid, master, result_fd, output)
+        payload, output = _finish(process, master, result_fd, output)
         pytest.fail(f"PTY review did not reach action prompt: {payload}")
     write(master, b"approve\n")
-    payload, output = _finish(pid, master, result_fd, output)
+    payload, output = _finish(process, master, result_fd, output)
 
     assert payload == {
         "approvals": 1,
@@ -447,10 +450,10 @@ def test_patch_e2e_024_real_pty_pending_restart_awaits_same_invocation() -> (
     None
 ):
     """Detach and resume one pending invocation without a second effect."""
-    pid, master, result_fd = _spawn("pending")
+    process, master, result_fd = _spawn("pending")
     output = _read_until(master, b"Review action [approve|deny|cancel]: ")
     write(master, b"approve\n")
-    payload, output = _finish(pid, master, result_fd, output)
+    payload, output = _finish(process, master, result_fd, output)
 
     assert payload == {
         "approvals": 1,
@@ -488,10 +491,10 @@ def test_patch_cli_pty_rejects_nonexact_or_cancelled_actions(
     expected_state: str,
 ) -> None:
     """Reject deny, raw shorthand, future approval, and EOF without writes."""
-    pid, master, result_fd = _spawn(case)
+    process, master, result_fd = _spawn(case)
     output = _read_until(master, b"Review action [approve|deny|cancel]: ")
     write(master, input_bytes)
-    payload, output = _finish(pid, master, result_fd, output)
+    payload, output = _finish(process, master, result_fd, output)
 
     assert payload["state"] == expected_state
     assert payload["invocations"] == 1
@@ -509,10 +512,10 @@ def test_patch_cli_pty_rejects_nonexact_or_cancelled_actions(
 
 def test_patch_cli_pty_sigint_restores_terminal_without_approval() -> None:
     """Cancel a real PTY review with SIGINT before any approval mutation."""
-    pid, master, result_fd = _spawn("approve")
+    process, master, result_fd = _spawn("approve")
     output = _read_until(master, b"Review action [approve|deny|cancel]: ")
-    kill(pid, SIGINT)
-    payload, output = _finish(pid, master, result_fd, output)
+    process.send_signal(SIGINT)
+    payload, output = _finish(process, master, result_fd, output)
 
     assert payload["state"] == "cancelled"
     assert payload["approvals"] == 0
@@ -529,8 +532,8 @@ def test_patch_cli_pty_sigint_restores_terminal_without_approval() -> None:
 
 def test_patch_cli_pty_renderer_failure_restores_without_approval() -> None:
     """Fail a renderer before controls without approving content."""
-    pid, master, result_fd = _spawn("renderer_failure")
-    payload, output = _finish(pid, master, result_fd, b"")
+    process, master, result_fd = _spawn("renderer_failure")
+    payload, output = _finish(process, master, result_fd, b"")
 
     assert payload["error"] == "patch CLI review renderer failed"
     assert payload["approvals"] == 0
@@ -571,3 +574,16 @@ def test_patch_cli_headless_requires_exact_authority() -> None:
         assert len(service.invocations) == 1
 
     run(detached())
+
+
+def _run_pty_child() -> None:
+    """Dispatch one fresh-interpreter PTY child invocation."""
+    assert len(argv) == 5
+    assert argv[1] == "--pty-child"
+    system_path.insert(0, str(Path(__file__).parents[1]))
+    _child(int(argv[3]), int(argv[4]), argv[2])
+    _exit(0)
+
+
+if __name__ == "__main__":
+    _run_pty_child()

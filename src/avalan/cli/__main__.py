@@ -3906,6 +3906,18 @@ class CLI:
             default=None,
         )
         group.add_argument(
+            "--run-compaction",
+            choices=("none", "inline"),
+            default=None,
+            help="Provider-native run compaction policy.",
+        )
+        group.add_argument(
+            "--run-compact-threshold",
+            type=CLI._positive_integer,
+            default=None,
+            help="Positive provider-native inline compaction threshold.",
+        )
+        group.add_argument(
             "--maximum-tool-cycles",
             "--run-maximum-tool-cycles",
             type=CLI._maximum_tool_cycles,
