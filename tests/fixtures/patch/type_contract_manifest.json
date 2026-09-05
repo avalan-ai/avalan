@@ -1255,7 +1255,7 @@
         "test_make_test_coverage_preserves_coverage_diagnostics",
         "_makefile_recipe"
       ],
-      "source_sha256": "39ac60dfb7ac82e96e4550d9bf0a52f35c601d793f5d5d76b88261af5aaffc1b"
+      "source_sha256": "108498abe3d961b9d2b35269df74765d224235b95e94c300530a0f71e079a6d4"
     },
     {
       "id": "PATCH-TS-081",
@@ -2379,5 +2379,5 @@
       "source_sha256": "de4c344fac2ee3cdebba050b8538110707eda1c45e698c252c9d536cb13cc05d"
     }
   ],
-  "manifest_sha256": "bb40fde80160c6b191bbbcc4320d8f09ea0232f5e66d785c2e2cad83071b1648"
+  "manifest_sha256": "015e20abc18a775e1dbed5944ff36c2c61b5e008f59600c6b8b91b7bd0e159a7"
 }
