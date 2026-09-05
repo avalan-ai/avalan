@@ -2357,7 +2357,7 @@
         "test_default_path_opens_with_piped_stdin_and_controlling_pty",
         "_run_child_from_argv"
       ],
-      "source_sha256": "1403b32600a162bc2e1bb1e339faa47e6f490c1841bedebf4182cba7d36cd156"
+      "source_sha256": "8b8bc91e4bdbfffcf737a8e9aa7d2764448b62a0c6ba9da021475d2f826474a7"
     },
     {
       "id": "PATCH-TS-174",
@@ -2379,5 +2379,5 @@
       "source_sha256": "de4c344fac2ee3cdebba050b8538110707eda1c45e698c252c9d536cb13cc05d"
     }
   ],
-  "manifest_sha256": "95fc6e42bcb785f45dd80cace0f8c1f37bad441d4d8e86f6701ec4f98e4e1794"
+  "manifest_sha256": "bb40fde80160c6b191bbbcc4320d8f09ea0232f5e66d785c2e2cad83071b1648"
 }
