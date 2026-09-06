@@ -1257,7 +1257,10 @@ def test_replay_requires_encrypted_content_and_preserves_provider_fields() -> (
 def test_replay_retention_policy_has_dedicated_exact_limits() -> None:
     policy = StreamRetentionPolicy()
     assert policy.openai_replay_item_limit == 4096
-    assert policy.openai_replay_serialized_byte_limit == 4194304
+    assert policy.openai_replay_serialized_byte_limit == 32 * 1024 * 1024
+    assert (
+        policy.openai_replay_client_serialized_byte_limit == 128 * 1024 * 1024
+    )
     assert policy.openai_replay_reasoning_item_limit == 1024
     assert policy.openai_replay_reasoning_summary_node_limit == 4096
     assert policy.openai_replay_reasoning_summary_character_limit == 262144
@@ -1267,6 +1270,7 @@ def test_replay_retention_policy_has_dedicated_exact_limits() -> None:
     field_names = (
         "openai_replay_item_limit",
         "openai_replay_serialized_byte_limit",
+        "openai_replay_client_serialized_byte_limit",
         "openai_replay_reasoning_item_limit",
         "openai_replay_reasoning_summary_node_limit",
         "openai_replay_reasoning_summary_character_limit",
@@ -2339,7 +2343,7 @@ def test_retainer_and_end_of_stream_failures_are_safe() -> None:
     )
     assert (
         cast(dict[str, Any], end_terminal.data)["error"]["code"]
-        == "reasoning_replay_retention_exceeded"
+        == "reasoning_replay_invalid"
     )
     assert end_owner.release_count == 1
     assert end_source.close_count == 1
@@ -8857,10 +8861,11 @@ def test_private_replay_cancellation_event_is_content_free() -> None:
     assert sanitized.provider_payload is None
     assert sanitized.data == {
         "error": {
-            "type": "server_error",
-            "code": "openai_provider_request_failed",
+            "type": "cancelled",
+            "code": "openai_request_cancelled",
             "status": "cancelled",
             "message": "OpenAI provider request cancelled",
+            "retryable": False,
         }
     }
     assert secret not in repr(sanitized)

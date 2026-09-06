@@ -945,7 +945,10 @@ class StreamRetentionPolicy:
     a2a_reasoning_text_byte_limit: int = 1048576
     replay_history_item_limit: int = 1024
     openai_replay_item_limit: int = 4096
-    openai_replay_serialized_byte_limit: int = 4194304
+    # Bound one replay suffix separately from all live suffixes/checkpoints
+    # owned by a client. These are serialized bytes, not context tokens.
+    openai_replay_serialized_byte_limit: int = 32 * 1024 * 1024
+    openai_replay_client_serialized_byte_limit: int = 128 * 1024 * 1024
     openai_replay_reasoning_item_limit: int = 1024
     openai_replay_reasoning_summary_node_limit: int = 4096
     openai_replay_reasoning_summary_character_limit: int = 262144
@@ -1032,6 +1035,10 @@ class StreamRetentionPolicy:
             (
                 "openai_replay_serialized_byte_limit",
                 self.openai_replay_serialized_byte_limit,
+            ),
+            (
+                "openai_replay_client_serialized_byte_limit",
+                self.openai_replay_client_serialized_byte_limit,
             ),
             (
                 "openai_replay_reasoning_item_limit",

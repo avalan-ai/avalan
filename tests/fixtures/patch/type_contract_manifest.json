@@ -992,7 +992,7 @@
         "_phase15_provider_transitions",
         "_validate_phase15_provider_evidence_nodes"
       ],
-      "source_sha256": "a7b584eb114f7b852ff426c37ab58f98524d928fa7d4d04f41b9c2964a44b392"
+      "source_sha256": "d4418d0b97edf6036e34d36b30e7351d687e9f3fbf2542f30ab7efcb156a7227"
     },
     {
       "id": "PATCH-TS-053",
@@ -1122,7 +1122,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "9e02e4ba6de304ad1e296b79a8aa833be0e39e5ee1a6cf96cc69efe2428b9e81"
+      "source_sha256": "4ced451345756a53ef14ef3f070a47c4a5ad5acd4a2a7a6fc4c10f989d4dfac0"
     },
     {
       "id": "PATCH-TS-067",
@@ -1813,7 +1813,7 @@
         "test_private_replay_server_error_create_retries_after_delay",
         "test_provider_events_has_typed_lifecycle_and_terminal_yields"
       ],
-      "source_sha256": "0438fa522a65f87e664dede6c8cbb33cec572c9e30c5421747af8640ba11db12"
+      "source_sha256": "d0959360d25b838dc4857c40ac27608205245d308398149ea0f33dc047be6deb"
     },
     {
       "id": "PATCH-TS-134",
@@ -2031,9 +2031,23 @@
         "OpenAIStream._inline_compaction_candidate_count",
         "OpenAIStream._inline_compaction_started_at",
         "OpenAIStream._pending_inline_compaction_terminal_event",
-        "OpenAIStream._pending_final_usage_event"
+        "OpenAIStream._pending_final_usage_event",
+        "_OpenAIReplayBudget",
+        "_OpenAIReplayBudget.resize",
+        "OpenAIReplayRetentionDiagnostics",
+        "_replay_text_sha256",
+        "_replay_json_scalar_serialized_bytes",
+        "_replay_json_scalar_serialized_bytes_chunk",
+        "_ReasoningReplayRetentionError",
+        "_ReasoningReplayRetentionError.__init__",
+        "_OpenAIDirectReplayExecutionState._resize_resident",
+        "_OpenAIDirectReplayExecutionState.reconcile_compaction",
+        "OpenAIStream._safe_replay_error_data",
+        "OpenAIStream._replay_error_event",
+        "OpenAIClient._replay_storage_budget",
+        "OpenAIClient.replay_retention_diagnostics"
       ],
-      "source_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
+      "source_sha256": "be67c3a6c2cfbe6efc3d7dc5e44191f62d521903fc8c2f64775ae1b11c70af8f"
     },
     {
       "id": "PATCH-TS-146",
@@ -2044,7 +2058,7 @@
         "StreamItemKind",
         "_STREAM_KIND_CHANNELS"
       ],
-      "source_sha256": "500598d61797722131cbfa7d904e7a981e73df94c5f84d90220418162c1494fc"
+      "source_sha256": "cfabd3b208c82bfe89d2e5bba78b028a592a49184f98dbec07e812b367cc9568"
     },
     {
       "id": "PATCH-TS-147",
@@ -2126,7 +2140,7 @@
         "OpenAIInlineCompactionTestCase.test_compaction_terminal_precedes_final_usage",
         "OpenAIInlineCompactionTestCase.test_compaction_no_boundary_precedes_final_usage"
       ],
-      "source_sha256": "4dde8722d0d98c1c5ec02ae764db028a400742a03c2dd1dce0dd4c0f86c1899c"
+      "source_sha256": "213a5c05ec21685a5bb1a21ddf67960570380c6a431725a512f802f9de66d1d2"
     },
     {
       "id": "PATCH-TS-151",
@@ -2377,7 +2391,16 @@
         "ShellPathMetadata"
       ],
       "source_sha256": "de4c344fac2ee3cdebba050b8538110707eda1c45e698c252c9d536cb13cc05d"
+    },
+    {
+      "id": "PATCH-TS-176",
+      "path": "tests/model/nlp/vendor_openai_multimodal_retention_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "bf036fb9cbbeef58bf282f8ea2f663f551e1df84973500a45d238d47531582db"
     }
   ],
-  "manifest_sha256": "015e20abc18a775e1dbed5944ff36c2c61b5e008f59600c6b8b91b7bd0e159a7"
+  "manifest_sha256": "b138ff759071c4356ea585e1540768d500cf167803df669648da2379b8657960"
 }

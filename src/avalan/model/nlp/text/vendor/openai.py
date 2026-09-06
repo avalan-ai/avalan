@@ -194,10 +194,30 @@ class _ReasoningReplayRetentionError(RuntimeError):
 
     code = "reasoning_replay_retention_exceeded"
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        resource: str | None = None,
+        observed: int | None = None,
+        allowed: int | None = None,
+    ) -> None:
+        assert (resource is None) == (observed is None) == (allowed is None)
+        if resource is not None:
+            assert resource in StreamRetentionPolicy.__dataclass_fields__
+            assert type(observed) is int and observed >= 0
+            assert type(allowed) is int and allowed >= 0
+        self.resource = resource
+        self.observed = observed
+        self.allowed = allowed
+        if resource is None:
+            self.code = "reasoning_replay_invalid"
         super().__init__(
-            "OpenAI reasoning replay state is invalid or exceeds its "
-            "retention limit."
+            "OpenAI replay state is invalid."
+            if resource is None
+            else (
+                f"OpenAI replay retention exhausted: {resource} "
+                f"observed={observed} allowed={allowed}."
+            )
         )
 
 
@@ -240,7 +260,26 @@ class _OpenAIProviderRequestError(RuntimeError):
         provider_failure: dict[str, object] | None = None,
     ) -> None:
         self.provider_failure = provider_failure
-        super().__init__("OpenAI provider request failed")
+        self.retryable: bool | None = None
+        self.status_code: int | None = None
+        provider = (
+            provider_failure.get("provider")
+            if isinstance(provider_failure, dict)
+            else None
+        )
+        if (
+            isinstance(provider, dict)
+            and provider.get("exception_code") == "string_above_max_length"
+            and type(provider.get("status_code")) is int
+            and provider["status_code"] == 400
+        ):
+            self.code = "string_above_max_length"
+            self.retryable = False
+            self.status_code = 400
+            message = "OpenAI provider rejected an input string length."
+        else:
+            message = "OpenAI provider request failed"
+        super().__init__(message)
 
 
 class _OpenAIInlineCompactionError(RuntimeError):
@@ -2616,6 +2655,20 @@ def _replay_json_integer_serialized_bytes(value: int) -> int:
 
 
 def _replay_json_scalar_serialized_bytes(value: object) -> int:
+    if type(value) is str:
+        # JSON escaping is additive between string characters. Bound the
+        # temporary serialization/UTF-8 copies even for opaque image state.
+        return 2 + sum(
+            _replay_json_scalar_serialized_bytes_chunk(
+                value[start : start + 16384]
+            )
+            - 2
+            for start in range(0, len(value), 16384)
+        )
+    return _replay_json_scalar_serialized_bytes_chunk(value)
+
+
+def _replay_json_scalar_serialized_bytes_chunk(value: object) -> int:
     serialization_failed = False
     serialized = ""
     try:
@@ -2633,6 +2686,17 @@ def _replay_json_scalar_serialized_bytes(value: object) -> int:
     if serialization_failed:
         raise _ReasoningReplayRetentionError() from None
     return len(encoded)
+
+
+def _replay_text_sha256(value: str) -> str:
+    """Hash opaque text without a payload-sized UTF-8 allocation."""
+    digest = sha256()
+    try:
+        for start in range(0, len(value), 16384):
+            digest.update(value[start : start + 16384].encode("utf-8"))
+    except UnicodeError:
+        raise _OpenAIInlineCompactionError() from None
+    return digest.hexdigest()
 
 
 def _stable_replay_json_fingerprint(
@@ -2669,6 +2733,41 @@ def _stable_replay_json_fingerprint(
     return tuple(tokens)
 
 
+@dataclass(slots=True)
+class _OpenAIReplayBudget:
+    """Account for live replay and rollback storage within one client.
+
+    Admission and release are synchronous on the client's event loop.
+    Count shared checkpoint items once; never evict another execution.
+    SDK transport buffers and caller-owned inputs are outside this quota.
+    """
+
+    limit: int
+    used: int = 0
+    peak: int = 0
+
+    def resize(self, previous: int, replacement: int) -> None:
+        assert 0 <= previous <= self.used and replacement >= 0
+        observed = self.used - previous + replacement
+        if observed > self.limit:
+            raise _ReasoningReplayRetentionError(
+                resource="openai_replay_client_serialized_byte_limit",
+                observed=observed,
+                allowed=self.limit,
+            )
+        self.used = observed
+        self.peak = max(self.peak, observed)
+
+
+@dataclass(frozen=True, slots=True)
+class OpenAIReplayRetentionDiagnostics:
+    """Report client replay storage, including rollback checkpoints."""
+
+    used_serialized_bytes: int
+    peak_serialized_bytes: int
+    allowed_serialized_bytes: int
+
+
 @dataclass(slots=True, repr=False)
 class _OpenAIDirectReplayExecutionState:
     """Own one legacy no-conversation tool-cycle execution state.
@@ -2679,6 +2778,8 @@ class _OpenAIDirectReplayExecutionState:
     """
 
     policy: StreamRetentionPolicy
+    budget: _OpenAIReplayBudget | None = field(default=None, repr=False)
+    _resident_serialized_bytes: int = 0
     _items: list[dict[str, Any]] = field(default_factory=list, repr=False)
     _ledger: list[_ReplayItemAccounting] = field(
         default_factory=list,
@@ -2717,6 +2818,15 @@ class _OpenAIDirectReplayExecutionState:
 
     def __post_init__(self) -> None:
         assert isinstance(self.policy, StreamRetentionPolicy)
+        if self.budget is None:
+            self.budget = _OpenAIReplayBudget(
+                self.policy.openai_replay_client_serialized_byte_limit
+            )
+
+    def _resize_resident(self, replacement: int) -> None:
+        assert self.budget is not None
+        self.budget.resize(self._resident_serialized_bytes, replacement)
+        self._resident_serialized_bytes = replacement
 
     @property
     def owns_conversation_state(self) -> bool:
@@ -2862,11 +2972,20 @@ class _OpenAIDirectReplayExecutionState:
                 compaction_items=1,
             )
             self._assert_compaction_fits(accounting)
+            # The checkpoint must survive replacement until terminal success.
+            # Previous candidates can be released, but not the checkpoint.
+            checkpoint_bytes = self._attempt_snapshot_counters[1]
+            self._resize_resident(
+                checkpoint_bytes + accounting.serialized_bytes
+            )
             self._discard_replay_prefix()
         else:
             return False
         if item_type != "compaction":
             self._assert_fits(accounting)
+            self._resize_resident(
+                self._resident_serialized_bytes + accounting.serialized_bytes
+            )
         self._items.append(normalized)
         self._ledger.append(accounting)
         self._apply(accounting, direction=1)
@@ -2880,9 +2999,39 @@ class _OpenAIDirectReplayExecutionState:
         compaction_items = self._attempt_compaction_item_count
         self._attempt_checkpoint = len(self._items)
         self._attempt_compaction_item_count = 0
+        self._resize_resident(self._replay_serialized_byte_count)
         self._clear_attempt_snapshot()
         self._attempt_active = False
         return compaction_items
+
+    def reconcile_compaction(self, item: dict[str, LooseJsonValue]) -> None:
+        """Retain the authoritative terminal version of the latest boundary.
+
+        Providers may rotate opaque content between output_item.done and
+        response.completed. Validate all terminal identities first, then
+        replace this candidate without creating another logical boundary.
+        """
+        if self._released or not self._attempt_active:
+            raise RuntimeError("OpenAI replay owner has no active attempt")
+        index = self._latest_compaction_index()
+        normalized = OpenAIStream._response_input_item_payload(item)
+        if (
+            index is None
+            or not OpenAIStream._is_replayable_compaction_item(normalized)
+            or normalized.get("id") != self._items[index].get("id")
+        ):
+            raise _OpenAIInlineCompactionError()
+        accounting = replace(
+            self._generic_accounting(normalized), compaction_items=1
+        )
+        previous = self._ledger[index]
+        delta = accounting.serialized_bytes - previous.serialized_bytes
+        self._assert_fits(_ReplayItemAccounting(serialized_bytes=delta))
+        self._resize_resident(self._resident_serialized_bytes + delta)
+        self._items[index] = normalized
+        self._ledger[index] = accounting
+        self._apply(previous, direction=-1)
+        self._apply(accounting, direction=1)
 
     def rollback_attempt(self) -> int:
         if self._released or not self._attempt_active:
@@ -2891,6 +3040,7 @@ class _OpenAIDirectReplayExecutionState:
         self._items[:] = self._attempt_snapshot_items
         self._ledger[:] = self._attempt_snapshot_ledger
         self._restore_counter_snapshot(self._attempt_snapshot_counters)
+        self._resize_resident(self._replay_serialized_byte_count)
         self._attempt_compaction_item_count = 0
         self._last_rolled_back_compaction_item_count = compaction_items
         self._clear_attempt_snapshot()
@@ -2905,6 +3055,7 @@ class _OpenAIDirectReplayExecutionState:
     def release(self) -> None:
         if self._released:
             return
+        self._resize_resident(0)
         self._items.clear()
         self._ledger.clear()
         self._replay_item_count = 0
@@ -2966,34 +3117,43 @@ class _OpenAIDirectReplayExecutionState:
     def _assert_fits(self, accounting: _ReplayItemAccounting) -> None:
         limits_and_values = (
             (
+                "openai_replay_item_limit",
                 self.policy.openai_replay_item_limit,
                 self._replay_item_count + accounting.items,
             ),
             (
+                "openai_replay_serialized_byte_limit",
                 self.policy.openai_replay_serialized_byte_limit,
                 self._replay_serialized_byte_count
                 + accounting.serialized_bytes,
             ),
             (
+                "openai_replay_reasoning_item_limit",
                 self.policy.openai_replay_reasoning_item_limit,
                 self._reasoning_item_count + accounting.reasoning_items,
             ),
             (
+                "openai_replay_reasoning_summary_node_limit",
                 self.policy.openai_replay_reasoning_summary_node_limit,
                 self._summary_node_count + accounting.summary_nodes,
             ),
             (
+                "openai_replay_reasoning_summary_character_limit",
                 self.policy.openai_replay_reasoning_summary_character_limit,
                 self._summary_character_count + accounting.summary_characters,
             ),
             (
+                "openai_replay_reasoning_summary_serialized_byte_limit",
                 self.policy.openai_replay_reasoning_summary_serialized_byte_limit,
                 self._summary_serialized_byte_count
                 + accounting.summary_serialized_bytes,
             ),
         )
-        if any(value > limit for limit, value in limits_and_values):
-            raise _ReasoningReplayRetentionError()
+        for resource, limit, value in limits_and_values:
+            if value > limit:
+                raise _ReasoningReplayRetentionError(
+                    resource=resource, observed=value, allowed=limit
+                )
 
     def _assert_compaction_fits(
         self,
@@ -3001,14 +3161,22 @@ class _OpenAIDirectReplayExecutionState:
     ) -> None:
         """Validate the candidate suffix that starts at a new boundary."""
         limits_and_values = (
-            (self.policy.openai_replay_item_limit, accounting.items),
             (
+                "openai_replay_item_limit",
+                self.policy.openai_replay_item_limit,
+                accounting.items,
+            ),
+            (
+                "openai_replay_serialized_byte_limit",
                 self.policy.openai_replay_serialized_byte_limit,
                 accounting.serialized_bytes,
             ),
         )
-        if any(value > limit for limit, value in limits_and_values):
-            raise _ReasoningReplayRetentionError()
+        for resource, limit, value in limits_and_values:
+            if value > limit:
+                raise _ReasoningReplayRetentionError(
+                    resource=resource, observed=value, allowed=limit
+                )
 
     def _discard_replay_prefix(self) -> None:
         """Discard the candidate prefix superseded by a compaction boundary."""
@@ -3083,9 +3251,10 @@ class _OpenAIDirectReplayCompatibilityFacade:
     @staticmethod
     def create_execution_state(
         policy: StreamRetentionPolicy,
+        budget: _OpenAIReplayBudget | None = None,
     ) -> _OpenAIDirectReplayExecutionState:
         """Create one execution-local legacy replay state owner."""
-        return _OpenAIDirectReplayExecutionState(policy)
+        return _OpenAIDirectReplayExecutionState(policy, budget)
 
 
 # Deprecated private test compatibility only. Production construction goes
@@ -3151,6 +3320,7 @@ class OpenAIStream(TextGenerationVendorStream):
             "rate_limit_exceeded",
             "response_failed",
             "server_error",
+            "string_above_max_length",
         }
     )
     _SAFE_TRANSPORT_CONNECTION_ERROR_TYPES = frozenset(
@@ -3541,7 +3711,11 @@ class OpenAIStream(TextGenerationVendorStream):
         if isinstance(error, _OpenAIClientClosedError):
             return _OpenAIClientClosedError()
         if isinstance(error, _ReasoningReplayRetentionError):
-            return _ReasoningReplayRetentionError()
+            return _ReasoningReplayRetentionError(
+                resource=error.resource,
+                observed=error.observed,
+                allowed=error.allowed,
+            )
         if isinstance(error, _ReplayOwnerAssociationError):
             return _ReplayOwnerAssociationError()
         if isinstance(error, _OpenAIProviderRequestError):
@@ -3746,18 +3920,17 @@ class OpenAIStream(TextGenerationVendorStream):
                             ) from None
                         except StreamProviderAdapterError:
                             raise
-                        except _ReasoningReplayRetentionError as exc:
+                        except (
+                            _ReasoningReplayRetentionError,
+                            _OpenAIInlineCompactionError,
+                            _OpenAIInlineCompactionCapabilityError,
+                        ) as exc:
+                            provider_event_type = self._best_effort_event_type(
+                                event
+                            )
                             provider_events = (
-                                StreamProviderEvent(
-                                    kind=StreamItemKind.STREAM_ERRORED,
-                                    data={
-                                        "error": {
-                                            "type": "server_error",
-                                            "code": exc.code,
-                                            "message": str(exc),
-                                        }
-                                    },
-                                    provider_event_type=provider_event_type,
+                                self._replay_error_event(
+                                    exc, provider_event_type
                                 ),
                             )
                         except Exception as exc:
@@ -4148,6 +4321,15 @@ class OpenAIStream(TextGenerationVendorStream):
             except StreamProviderAdapterError as error:
                 terminal = _OpenAIProviderTerminal(
                     event=self._provider_adapter_error_event(error),
+                    succeeded=False,
+                )
+            except (
+                _ReasoningReplayRetentionError,
+                _OpenAIInlineCompactionError,
+                _OpenAIInlineCompactionCapabilityError,
+            ) as error:
+                terminal = _OpenAIProviderTerminal(
+                    event=self._replay_error_event(error, None),
                     succeeded=False,
                 )
             except Exception as error:
@@ -5096,13 +5278,22 @@ class OpenAIStream(TextGenerationVendorStream):
         cleanup_failed: bool = False,
         provider_failure: dict[str, object] | None = None,
     ) -> StreamProviderEvent:
+        failure = _OpenAIProviderRequestError(provider_failure)
+        error: dict[str, object] = {
+            "type": (
+                "invalid_request_error"
+                if failure.status_code == 400
+                else "server_error"
+            ),
+            "code": failure.code,
+            "status": "failed",
+            "message": str(failure),
+        }
+        if failure.retryable is not None:
+            error["retryable"] = failure.retryable
+            error["status_code"] = failure.status_code
         data: dict[str, object] = {
-            "error": {
-                "type": "server_error",
-                "code": _OpenAIProviderRequestError.code,
-                "status": "failed",
-                "message": "OpenAI provider request failed",
-            }
+            "error": error,
         }
         if provider_failure is not None:
             data["provider_failure"] = dict(provider_failure)
@@ -5124,14 +5315,19 @@ class OpenAIStream(TextGenerationVendorStream):
         if event.kind is StreamItemKind.STREAM_CANCELLED:
             data: LooseJsonValue = {
                 "error": {
-                    "type": "server_error",
-                    "code": _OpenAIProviderRequestError.code,
+                    "type": "cancelled",
+                    "code": "openai_request_cancelled",
                     "status": "cancelled",
                     "message": "OpenAI provider request cancelled",
+                    "retryable": False,
                 }
             }
         elif event.kind is StreamItemKind.STREAM_ERRORED:
-            data = OpenAIStream._private_replay_provider_failure_event().data
+            data = OpenAIStream._safe_replay_error_data(event.data)
+            if data is None:
+                data = (
+                    OpenAIStream._private_replay_provider_failure_event().data
+                )
         else:
             data = event.data
         safe_event_type = OpenAIStream._safe_provider_event_type(
@@ -5156,31 +5352,6 @@ class OpenAIStream(TextGenerationVendorStream):
         event: StreamProviderEvent,
     ) -> StreamProviderEvent:
         sanitized = OpenAIStream._sanitize_private_replay_event(event)
-        event_data = event.data
-        error_data = (
-            event_data.get("error") if type(event_data) is dict else None
-        )
-        error_code = (
-            error_data.get("code") if type(error_data) is dict else None
-        )
-        if (
-            event.kind is StreamItemKind.STREAM_ERRORED
-            and type(error_code) is str
-            and error_code == _ReasoningReplayRetentionError.code
-        ):
-            return replace(
-                sanitized,
-                data={
-                    "error": {
-                        "type": "server_error",
-                        "code": _ReasoningReplayRetentionError.code,
-                        "message": (
-                            "OpenAI reasoning replay state is invalid or "
-                            "exceeds its retention limit."
-                        ),
-                    }
-                },
-            )
         if (
             event.kind is StreamItemKind.STREAM_ERRORED
             and event.provider_event_type in OpenAIStream._INCOMPLETE_EVENTS
@@ -5320,20 +5491,84 @@ class OpenAIStream(TextGenerationVendorStream):
             _OpenAIClientClosedError
             | _ReasoningReplayRetentionError
             | _ReplayOwnerAssociationError
+            | _OpenAIInlineCompactionError
+            | _OpenAIInlineCompactionCapabilityError
         ),
         provider_event_type: str | None,
     ) -> StreamProviderEvent:
+        details: dict[str, LooseJsonValue] = {"code": error.code}
+        if isinstance(error, _ReasoningReplayRetentionError):
+            details.update(
+                resource=error.resource,
+                observed=error.observed,
+                allowed=error.allowed,
+            )
         return StreamProviderEvent(
             kind=StreamItemKind.STREAM_ERRORED,
-            data={
-                "error": {
-                    "type": "server_error",
-                    "code": error.code,
-                    "message": str(error),
-                }
-            },
+            data=OpenAIStream._safe_replay_error_data({"error": details}),
             provider_event_type=provider_event_type,
         )
+
+    @staticmethod
+    def _safe_replay_error_data(
+        data: LooseJsonValue | None,
+    ) -> LooseJsonValue | None:
+        """Project fixed local errors and numeric capacity evidence."""
+        details = data.get("error") if type(data) is dict else None
+        code = details.get("code") if type(details) is dict else None
+        descriptions = {
+            "reasoning_replay_retention_exceeded": (
+                "resource_exhausted",
+                "OpenAI replay retention limit exceeded.",
+            ),
+            "reasoning_replay_invalid": (
+                "invalid_replay_state",
+                "OpenAI replay state is invalid.",
+            ),
+            "inline_compaction_protocol_invalid": (
+                "invalid_provider_event",
+                "OpenAI inline compaction output is invalid.",
+            ),
+            "inline_compaction_unsupported": (
+                "unsupported_capability",
+                "OpenAI inline compaction is unavailable.",
+            ),
+            "reasoning_replay_owner_ambiguous": (
+                "invalid_replay_state",
+                "OpenAI replay continuation id is ambiguous.",
+            ),
+            "openai_client_closed": (
+                "client_closed",
+                "OpenAI client is closed.",
+            ),
+        }
+        if type(code) is not str or code not in descriptions:
+            return None
+        assert isinstance(details, dict)
+        error_type, message = descriptions[code]
+        safe: dict[str, LooseJsonValue] = {
+            "type": error_type,
+            "code": code,
+            "message": message,
+            "retryable": False,
+        }
+        resource = details.get("resource")
+        if (
+            code == _ReasoningReplayRetentionError.code
+            and type(resource) is str
+            and resource in StreamRetentionPolicy.__dataclass_fields__
+        ):
+            observed, allowed = details.get("observed"), details.get("allowed")
+            if (
+                type(observed) is int
+                and observed >= 0
+                and type(allowed) is int
+                and allowed >= 0
+            ):
+                safe.update(
+                    resource=resource, observed=observed, allowed=allowed
+                )
+        return {"error": safe}
 
     def _release_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
         if self._replay_owner_releaser is None:
@@ -6276,13 +6511,13 @@ class OpenAIStream(TextGenerationVendorStream):
         elif status is not None and status not in {"in_progress", "completed"}:
             raise _OpenAIInlineCompactionError()
         return _OpenAICompactionItemFingerprint(
-            item_id=payload["id"],
+            item_id=_replay_text_sha256(payload["id"]),
             output_index=output_index,
-            encrypted_content_sha256=sha256(
-                payload["encrypted_content"].encode("utf-8")
-            ).hexdigest(),
+            encrypted_content_sha256=_replay_text_sha256(
+                payload["encrypted_content"]
+            ),
             created_by_sha256=(
-                sha256(created_by.encode("utf-8")).hexdigest()
+                _replay_text_sha256(created_by)
                 if created_by is not None
                 else None
             ),
@@ -6290,6 +6525,22 @@ class OpenAIStream(TextGenerationVendorStream):
 
     def _record_compaction_added(self, event: object) -> None:
         """Record one open provider compaction item identity."""
+        policy = (
+            self._replay_owner.policy
+            if self._replay_owner is not None
+            else StreamRetentionPolicy()
+        )
+        count = (
+            len(self._compaction_added_by_item_id)
+            + len(self._compaction_completed_by_item_id)
+            + 1
+        )
+        if count > policy.openai_replay_item_limit:
+            raise _ReasoningReplayRetentionError(
+                resource="openai_replay_item_limit",
+                observed=count,
+                allowed=policy.openai_replay_item_limit,
+            )
         fingerprint = self._compaction_item_fingerprint(
             OpenAIClient._response_field(event, "item"),
             "response.output_item.added",
@@ -6374,6 +6625,7 @@ class OpenAIStream(TextGenerationVendorStream):
             raise _OpenAIInlineCompactionError()
         observed_item_ids: set[str] = set()
         observed_output_indices: set[int] = set()
+        latest_compaction: object | None = None
         for output_index, item in enumerate(output):
             item_type = OpenAIClient._response_field(item, "type")
             if type(item_type) is not str or item_type != "compaction":
@@ -6401,12 +6653,17 @@ class OpenAIStream(TextGenerationVendorStream):
                 raise _OpenAIInlineCompactionError()
             observed_item_ids.add(fingerprint.item_id)
             observed_output_indices.add(fingerprint.output_index)
+            latest_compaction = item
         if observed_item_ids != set(
             self._compaction_completed_by_item_id
         ) or observed_output_indices != set(
             self._compaction_completed_by_output_index
         ):
             raise _OpenAIInlineCompactionError()
+        if latest_compaction is not None and self._replay_owner is not None:
+            payload = self._raw_provider_payload(latest_compaction)
+            assert isinstance(payload, dict)
+            self._replay_owner.reconcile_compaction(payload)
 
     @staticmethod
     def _response_input_item_payload(
@@ -7280,6 +7537,7 @@ class OpenAIStream(TextGenerationVendorStream):
 
 
 class OpenAIClient(TextGenerationVendor):
+    _replay_budget: _OpenAIReplayBudget | None = None
     _DEFAULT_MODEL_ID = "default"
     _CONTINUATION_SNAPSHOT_KIND = "openai.responses.reasoning"
     _STREAM_RESPONSE_FAILED_RETRIES = 24
@@ -7347,6 +7605,7 @@ class OpenAIClient(TextGenerationVendor):
             stream_retention_policy or StreamRetentionPolicy()
         )
         assert isinstance(self._stream_retention_policy, StreamRetentionPolicy)
+        self._replay_budget = None
         self._replay_owners_by_call_id = {}
         self._active_replay_owners = {}
         self._active_replay_streams = {}
@@ -7392,6 +7651,21 @@ class OpenAIClient(TextGenerationVendor):
     ) -> OpenAIInlineCompactionDiagnostics:
         """Return content-free direct inline compaction accounting."""
         return self._inline_compaction_diagnostics
+
+    def _replay_storage_budget(self) -> _OpenAIReplayBudget:
+        if self._replay_budget is None:
+            self._replay_budget = _OpenAIReplayBudget(
+                self._stream_retention_policy.openai_replay_client_serialized_byte_limit
+            )
+        return self._replay_budget
+
+    @property
+    def replay_retention_diagnostics(self) -> OpenAIReplayRetentionDiagnostics:
+        """Return content-free current and peak client replay storage."""
+        budget = self._replay_storage_budget()
+        return OpenAIReplayRetentionDiagnostics(
+            budget.used, budget.peak, budget.limit
+        )
 
     @classmethod
     def register_continuation_snapshot_codec(
@@ -7509,7 +7783,7 @@ class OpenAIClient(TextGenerationVendor):
                 "OpenAI replay destination is unavailable or ambiguous",
             )
         owner = _OpenAIDirectReplayCompatibilityFacade.create_execution_state(
-            self._stream_retention_policy
+            self._stream_retention_policy, self._replay_storage_budget()
         )
         owner.begin_attempt()
         try:
@@ -8613,6 +8887,12 @@ class OpenAIClient(TextGenerationVendor):
                 if not request_has_replay_items:
                     raise
                 non_stream_adapter_cancelled = True
+            except (
+                _ReasoningReplayRetentionError,
+                _OpenAIInlineCompactionError,
+                _OpenAIInlineCompactionCapabilityError,
+            ):
+                raise
             except Exception:
                 if not request_has_replay_items:
                     raise
@@ -8969,7 +9249,7 @@ class OpenAIClient(TextGenerationVendor):
                 active_registry[call_id] = owner
             return owner
         owner = _OpenAIDirectReplayCompatibilityFacade.create_execution_state(
-            self._stream_retention_policy
+            self._stream_retention_policy, self._replay_storage_budget()
         )
         self._activate_replay_owner(owner)
         return owner
@@ -9005,7 +9285,11 @@ class OpenAIClient(TextGenerationVendor):
         limit = max(1, self._stream_retention_policy.replay_history_item_limit)
         if len(registry) >= limit:
             owner.release()
-            raise _ReasoningReplayRetentionError()
+            raise _ReasoningReplayRetentionError(
+                resource="replay_history_item_limit",
+                observed=len(registry) + 1,
+                allowed=limit,
+            )
         registry[owner_id] = owner
 
     def _deactivate_replay_owner(self, owner: _OpenAIReplayOwner) -> None:
@@ -9120,16 +9404,20 @@ class OpenAIClient(TextGenerationVendor):
             registered_owner is owner
             for registered_owner in active_registry.values()
         )
-        if (
+        observed = (
             len(registry)
             + len(active_registry)
             - owner_active_call_id_count
             + len(call_ids)
-            > limit
-        ):
+        )
+        if observed > limit:
             self._dissociate_replay_owner(owner)
             owner.release()
-            raise _ReasoningReplayRetentionError()
+            raise _ReasoningReplayRetentionError(
+                resource="replay_history_item_limit",
+                observed=observed,
+                allowed=limit,
+            )
         self._deactivate_replay_owner(owner)
         self._dissociate_replay_owner(owner)
         for call_id in call_ids:
