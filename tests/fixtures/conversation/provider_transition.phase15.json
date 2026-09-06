@@ -4,14 +4,14 @@
   "phase": 15,
   "kind": "reviewed_provider_source_transition",
   "reviewed_by": "phase15-strict-provider-type-boundary-review",
-  "reason": "Preserve the reviewed ordinary agent-run provider-native inline-compaction boundary while replacing selected untyped replay and transport casts with explicit normalized-map ownership; this source transition records exact bytes only and does not certify the pending Phase 15 exact gate, coverage, or live provider capability.",
+  "reason": "Preserve the reviewed provider-native inline-compaction boundary and strict normalized-map ownership while adding bounded multimodal replay storage, safe failure classifications, and authoritative terminal-state reconciliation. This source transition records exact bytes only and does not certify the pending Phase 15 exact gate, coverage, or live provider capability.",
   "transitions": [
     {
       "path": "src/avalan/model/nlp/text/vendor/openai.py",
       "from_size": 392855,
       "from_sha256": "262cefd693679d1dba6c236d631e7432e5490e623a9af135ecbe0a9f02356686",
-      "to_size": 407392,
-      "to_sha256": "4287e7c0d22f3f4df7bfcb062d3830da51a017ff49afbb2614d4e649dd114aa5"
+      "to_size": 418934,
+      "to_sha256": "be67c3a6c2cfbe6efc3d7dc5e44191f62d521903fc8c2f64775ae1b11c70af8f"
     },
     {
       "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
@@ -40,5 +40,5 @@
     "tests/model/nlp/vendor_openai_conversation_phase0_test.py::test_provider_transport_policy_rejects_data_flow_bypasses",
     "tests/model/nlp/vendor_openai_test.py::OpenAIInlineCompactionTestCase::test_inline_compaction_retry_resets_identity_maps"
   ],
-  "canonical_sha256": "df53273042f8037baa9cf654794a6cca8f6d0d4732964899891f39fae4b84f71"
+  "canonical_sha256": "c4549b0f5f32880579231dacf35ffe8a7d186b68d17eb62749d02aea2701ca1e"
 }

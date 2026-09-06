@@ -9585,7 +9585,7 @@ class OpenAIInlineCompactionTestCase(IsolatedAsyncioTestCase):
             {
                 "type": "compaction",
                 "id": "compact-1",
-                "encrypted_content": "opaque-done",
+                "encrypted_content": "opaque-terminal",
             },
         )
         self.assertNotIn("pre-boundary prompt", repr(second_kwargs["input"]))

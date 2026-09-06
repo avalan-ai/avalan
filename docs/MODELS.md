@@ -433,6 +433,91 @@ terminal when safely received. Diagnostics count one logical request and every
 actual provider dispatch separately; a retry therefore increments
 `attempt_count` without increasing `request_count`.
 
+### Replay resource limits
+
+Direct OpenAI/Azure Responses tool loops retain opaque replay in memory only.
+`StreamRetentionPolicy.openai_replay_serialized_byte_limit` bounds one complete
+replay suffix (default 32 MiB). A separate
+`openai_replay_client_serialized_byte_limit` bounds all live suffixes and
+rollback checkpoints owned by one `OpenAIClient` (default 128 MiB). Both accept
+nonnegative integer byte counts; zero forbids retention. A configured smaller
+suffix limit remains a hard limit, including for a single compaction item.
+These controls are independent of output tokens and `compact_threshold`.
+
+The 32 MiB default accommodates a measured 22.49 MiB multimodal compaction
+item with approximately 9.5 MiB left for subsequent replay items. It is an
+operational default, not a provider payload-size guarantee. The aggregate
+default accommodates two executions each holding a maximum-size committed
+suffix and a maximum-size replacement. More concurrent executions share that
+quota; admission fails without evicting another execution or waiting/retrying.
+Applications should budget concurrency and client count together. Distinct
+clients have independent quotas.
+
+Admission checks the replacement before discarding any superseded candidate.
+The last committed suffix remains available for rollback until response
+validation succeeds. Providers can rotate encrypted compaction content between
+`response.output_item.done` and `response.completed`. After validating every
+terminal identity, Avalan replaces the candidate with the completed response's
+authoritative item and rechecks both quotas, including any subsequent replay
+items. This replacement does not count as another compaction boundary.
+
+Local admission does not guarantee provider acceptance. In fixture validation,
+Azure returned a terminal compaction string with 23,587,532 characters, then
+rejected its unchanged replay with a 10,485,760-character input limit. Replaying
+the terminal item correctly does not resolve that provider constraint. Avalan
+surfaces the non-retryable rejection; it cannot shorten opaque state or omit
+required images to bypass the limit.
+
+Repeated compactions retain only the latest candidate
+plus that checkpoint; commit and rollback release the unused generation.
+Cancellation and stream failure roll back before releasing the execution.
+Per-response compaction identities are bounded by `openai_replay_item_limit`
+and retain hashes, not opaque payloads. JSON size accounting and compaction
+hashing use 16,384-character chunks to bound temporary encoding allocations.
+
+These are serialized replay storage quotas, **not process RSS limits**. Python
+object overhead, caller inputs/images, provider SDK response buffers and HTTP
+request serialization have their own memory costs; the SDK materializes an
+incoming item before Avalan can reject it. No opaque data are spilled to disk,
+truncated, or replaced with a local summary. Durable conversation-ledger
+retention is a separate subsystem.
+
+Configure the direct client explicitly when tighter bounds are required:
+
+```python
+from avalan.model.nlp.text.vendor.openai import OpenAIClient
+from avalan.model.stream import StreamRetentionPolicy
+
+client = OpenAIClient(
+    api_key=api_key,
+    base_url=base_url,
+    stream_retention_policy=StreamRetentionPolicy(
+        openai_replay_serialized_byte_limit=32 * 1024 * 1024,
+        openai_replay_client_serialized_byte_limit=128 * 1024 * 1024,
+    ),
+)
+```
+
+`client.replay_retention_diagnostics` exposes current, peak, and allowed
+serialized bytes, including rollback storage. It contains no provider IDs or
+contents. Stream errors preserve safe classifications through private replay:
+
+| Code | Meaning |
+| --- | --- |
+| `reasoning_replay_retention_exceeded` | Local capacity exhaustion; includes `resource`, `observed`, `allowed`, and `retryable=false`. |
+| `reasoning_replay_invalid` | Invalid local replay structure; non-retryable. |
+| `inline_compaction_protocol_invalid` | Invalid provider compaction protocol; non-retryable. |
+| `openai_provider_request_failed` | Provider failure; consult safe `provider_failure` retry diagnostics. |
+| `string_above_max_length` | Provider HTTP 400 input-size rejection; non-retryable, with no echoed input or raw provider message. |
+| `openai_request_cancelled` | Cancellation, with the cancelled terminal outcome. |
+
+An unchanged local capacity error must not be retried as an upstream server
+failure. Applications can adjust their explicit resource budget before a new
+attempt, or surface the error. Successful compaction on a final response alone
+does not prove continuation: verify that a subsequent accepted request carries
+the committed item and completes its next task step. See the official
+[server-side compaction contract](https://developers.openai.com/api/docs/guides/compaction).
+
 ## Modalities
 
 Avalan supports text, vision, and audio workloads. Model choice and backend
