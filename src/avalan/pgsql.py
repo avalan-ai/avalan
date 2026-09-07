@@ -23,7 +23,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 PgsqlParameters = tuple[object, ...] | Mapping[str, object] | None
 PgsqlRow = Mapping[str, object]
 ModuleImporter = Callable[[str], object]
-TASK_PGSQL_HEAD_REVISION = "20260828_0001_patch_coordination"
+TASK_PGSQL_HEAD_REVISION = "20260907_0001_task_submissions"
 
 
 class PgsqlTransaction(Protocol):
@@ -120,6 +120,7 @@ class PgsqlOperationError(RuntimeError):
 class PgsqlUnitOfWork:
     connection: PgsqlConnection
     cursor: PgsqlCursor
+    database: PgsqlDatabase | None = None
 
     def __post_init__(self) -> None:
         assert hasattr(self.connection, "cursor")

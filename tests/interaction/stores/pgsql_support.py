@@ -2401,6 +2401,7 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
         self.usage: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
+        self.submissions: dict[tuple[str, str], dict[str, object]] = {}
         self.executed_queries: list[str] = []
         self.before_attempt_update = None
         self.before_last_attempt_update = None
@@ -2430,6 +2431,7 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
             usage=deepcopy(self.usage),
             artifacts=deepcopy(self.artifacts),
             idempotency=deepcopy(self.idempotency),
+            submissions=deepcopy(self.submissions),
         )
         return snapshot
 
@@ -2455,6 +2457,9 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
         self.idempotency = cast(
             dict[str, dict[str, object]],
             snapshot["idempotency"],
+        )
+        self.submissions = cast(
+            dict[tuple[str, str], dict[str, object]], snapshot["submissions"]
         )
 
 
@@ -2540,6 +2545,28 @@ class FullFakeCursor:
             and self.database.fail_on_query in query
         ):
             raise RuntimeError("backend failure includes raw details")
+        if 'SELECT "version_num"' in query:
+            self.row = {"version_num": INTERACTION_PGSQL_HEAD_REVISION}
+            self.rows = (self.row,)
+            return
+        if "transaction_isolation" in query:
+            self.row = {"isolation": "read committed"}
+            return
+        if "pg_advisory_xact_lock" in query:
+            return
+        if 'FROM "task_submissions"' in query:
+            self.row = self.database.submissions.get(
+                (cast(str, params[0]), cast(str, params[1]))
+            )
+            return
+        if 'INSERT INTO "task_submissions"' in query:
+            key = (cast(str, params[0]), cast(str, params[1]))
+            assert key not in self.database.submissions
+            self.database.submissions[key] = {
+                "run_id": params[2],
+                "payload": loads(cast(str, params[3])),
+            }
+            return
         if query == _INSERT_ATTEMPT_SEGMENT_SQL:
             self.row = self._insert_segment(params)
             return

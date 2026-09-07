@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "change": "task_submission_api",
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "task-submission-api-review",
+  "reason": "Preserve the reviewed atomic conversation suspension and fresh-worker assertions while migrating the test setup from enqueue_run to the canonical prepared task submission participant. This exact-byte transition does not activate a conversation feature or certify the pending full repository gate.",
+  "transitions": [
+    {
+      "path": "tests/interaction/stores/conversation_atomic_pgsql_test.py",
+      "from_size": 31309,
+      "from_sha256": "485056d0126b70ec0903dec3a90967cd7f999237ac1a4c1f3dde79157d9fa816",
+      "to_size": 31525,
+      "to_sha256": "7a867d2e38e75dcf6e8a5c10673f91d9f677930b655aa35a288f1cde884069da"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_rolls_back_every_durable_surface",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
+  ],
+  "canonical_sha256": "eed267d4525db38f9c648a8693a97029b72f8c10e48796469768dc8ca6188de7"
+}

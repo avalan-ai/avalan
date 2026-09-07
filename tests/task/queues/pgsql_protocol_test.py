@@ -1,13 +1,20 @@
 from asyncio import CancelledError
 from collections.abc import Mapping
 from copy import deepcopy
+from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from json import loads
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, patch
 
+from task_submission_helpers import (
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
+
 from avalan.pgsql import (
+    TASK_PGSQL_HEAD_REVISION,
     PgsqlFailure,
     PgsqlFailureCategory,
     PgsqlOperationError,
@@ -25,7 +32,6 @@ from avalan.task import (
     TaskExecutionResult,
     TaskIdempotencyDigest,
     TaskIdempotencyIdentity,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueConflictError,
     TaskQueueError,
@@ -33,10 +39,14 @@ from avalan.task import (
     TaskQueueNotFoundError,
     TaskRunState,
     TaskStoreConflictError,
+    TaskSubmissionArtifact,
+    TaskSubmissionOutcome,
+    TaskSubmissionWrite,
 )
 from avalan.task.queues import PgsqlTaskQueue
 from avalan.task.queues import pgsql as queue_pgsql
 from avalan.task.queues.pgsql import _json
+from avalan.task.stores import PgsqlTaskStore
 
 
 class SequenceClock:
@@ -91,6 +101,7 @@ class ExpiredReentryCoordinator:
 
 class FakePgsqlQueueDatabase:
     def __init__(self) -> None:
+        self.submissions: dict[tuple[str, str], dict[str, object]] = {}
         self.definitions: dict[str, dict[str, object]] = {}
         self.runs: dict[str, dict[str, object]] = {}
         self.attempts: dict[str, dict[str, object]] = {}
@@ -112,10 +123,14 @@ class FakePgsqlQueueDatabase:
         self.stale_last_attempt_update = False
         self.stale_complete_queue_item = False
         self.stale_retry_queue_item = False
+        self.connection_count = 0
+        self.commit_count = 0
+        self.lose_next_commit_ack = False
         self.open_count = 0
         self.close_count = 0
 
     def connection(self) -> "FakeConnectionContext":
+        self.connection_count += 1
         return FakeConnectionContext(self)
 
     async def open(self) -> None:
@@ -126,6 +141,7 @@ class FakePgsqlQueueDatabase:
 
     def snapshot(self) -> dict[str, object]:
         return {
+            "submissions": deepcopy(self.submissions),
             "definitions": deepcopy(self.definitions),
             "runs": deepcopy(self.runs),
             "attempts": deepcopy(self.attempts),
@@ -137,6 +153,9 @@ class FakePgsqlQueueDatabase:
         }
 
     def restore(self, snapshot: dict[str, object]) -> None:
+        self.submissions = cast(
+            dict[tuple[str, str], dict[str, object]], snapshot["submissions"]
+        )
         self.definitions = cast(
             dict[str, dict[str, object]], snapshot["definitions"]
         )
@@ -215,6 +234,11 @@ class FakeTransactionContext:
     ) -> bool:
         if exc_type is not None:
             self.database.restore(self._snapshot)
+        else:
+            self.database.commit_count += 1
+            if self.database.lose_next_commit_ack:
+                self.database.lose_next_commit_ack = False
+                raise ConnectionError("lost commit acknowledgment")
         return False
 
 
@@ -254,7 +278,27 @@ class FakeCursor:
             and self.database.fail_on_query in query
         ):
             raise RuntimeError("backend failure includes raw details")
-        if 'SELECT * FROM "task_definitions"' in query:
+        if 'SELECT "version_num"' in query:
+            self.rows = ({"version_num": TASK_PGSQL_HEAD_REVISION},)
+        elif "transaction_isolation" in query:
+            self.row = {"isolation": "read committed"}
+        elif "pg_advisory_xact_lock" in query:
+            self.row = None
+        elif 'FROM "task_submissions"' in query:
+            self.row = self.database.submissions.get(
+                (
+                    cast(str, params[0]),
+                    cast(str, params[1]),
+                )
+            )
+        elif 'INSERT INTO "task_submissions"' in query:
+            key = (cast(str, params[0]), cast(str, params[1]))
+            assert key not in self.database.submissions
+            self.database.submissions[key] = {
+                "run_id": params[2],
+                "payload": loads(cast(str, params[3])),
+            }
+        elif 'SELECT * FROM "task_definitions"' in query:
             self.row = self.database.definitions.get(cast(str, params[0]))
         elif 'INSERT INTO "task_runs"' in query:
             self.row = self._insert_run(params)
@@ -1300,9 +1344,162 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertTrue(item.queue_item_id)
         self.assertIsNotNone(item.available_at.tzinfo)
 
-    async def test_enqueue_run_persists_submission_atomically(self) -> None:
+    async def test_submission_preflight_reads_schema_without_writes(
+        self,
+    ) -> None:
+        before = self.database.snapshot()
+        await self.queue.preflight_submission()
+        self.assertEqual(self.database.snapshot(), before)
+        self.assertTrue(
+            all(
+                query.lstrip().startswith("SELECT")
+                for query in self.database.executed_queries
+            )
+        )
+        for rows in ((), ({"version_num": "incompatible"},)):
+            with (
+                self.subTest(rows=rows),
+                patch.object(FakeCursor, "fetchall", return_value=rows),
+            ):
+                with self.assertRaises(AssertionError):
+                    await self.queue.preflight_submission()
+            self.assertEqual(self.database.snapshot(), before)
+        self.database.fail_on_query = 'SELECT "version_num"'
+        with self.assertRaises(RuntimeError):
+            await self.queue.preflight_submission()
+        self.assertEqual(self.database.snapshot(), before)
+
+    async def test_submission_participant_does_not_own_connection_or_commit(
+        self,
+    ) -> None:
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+        )
+        async with self.queue.submission_transaction() as unit:
+            write = await self.queue.submit_prepared(
+                prepared, unit_of_work=unit
+            )
+            self.assertIsInstance(write, TaskSubmissionWrite)
+            self.assertFalse(hasattr(write, "outcome"))
+            self.assertEqual(self.database.connection_count, 1)
+            self.assertEqual(self.database.commit_count, 0)
+        self.assertEqual(self.database.commit_count, 1)
+        count = len(self.database.runs)
+        replayed = await persist_submission_fixture(self.queue, prepared)
+        self.assertEqual(replayed.run.run_id, write.run.run_id)
+        self.assertEqual(len(self.database.runs), count)
+        recovered = await self.queue.reconcile_submission(prepared)
+        self.assertEqual(recovered.outcome, TaskSubmissionOutcome.COMMITTED)
+        self.assertEqual(recovered.run.run_id, write.run.run_id)
+        self.assertEqual(self.database.connection_count, 3)
+
+    async def test_submission_duplicate_evidence_outlives_reservation(
+        self,
+    ) -> None:
+        first = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+            idempotency=self._identity(),
+        )
+        admitted = await persist_submission_fixture(self.queue, first)
+        duplicate = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+            idempotency=self._identity(),
+        )
+        existing = await persist_submission_fixture(self.queue, duplicate)
+        self.assertFalse(existing.created)
+        self.database.idempotency.clear()
+        recovered = await self.queue.reconcile_submission(duplicate)
+        self.assertEqual(recovered.run.run_id, admitted.run.run_id)
+        self.assertFalse(recovered.created)
+        self.assertNotEqual(duplicate.run_id, recovered.run.run_id)
+
+    async def test_submission_unknown_ack_uses_fresh_reconciliation(
+        self,
+    ) -> None:
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+        )
+        self.database.lose_next_commit_ack = True
+        with self.assertRaises(ConnectionError):
+            await persist_submission_fixture(self.queue, prepared)
+        self.assertEqual(self.database.connection_count, 1)
+        recovered = await self.queue.reconcile_submission(prepared)
+        self.assertEqual(recovered.outcome, TaskSubmissionOutcome.COMMITTED)
+        self.assertEqual(recovered.run.run_id, prepared.run_id)
+        self.assertEqual(self.database.connection_count, 2)
+
+    async def test_submission_ledger_failure_rolls_back_all_prior_writes(
+        self,
+    ) -> None:
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+            idempotency=self._identity(),
+            artifacts=(
+                TaskSubmissionArtifact(
+                    ref=TaskArtifactRef(
+                        artifact_id="new-artifact",
+                        store="local",
+                        storage_key="new-artifact",
+                    )
+                ),
+            ),
+        )
+        snapshot = self.database.snapshot()
+        self.database.fail_on_query = 'INSERT INTO "task_submissions"'
+        with self.assertRaises(TaskQueueError):
+            await persist_submission_fixture(self.queue, prepared)
+        self.assertEqual(self.database.snapshot(), snapshot)
+        self.database.fail_on_query = None
+        recovered = await self.queue.reconcile_submission(prepared)
+        self.assertEqual(
+            recovered.outcome, TaskSubmissionOutcome.NOT_COMMITTED
+        )
+
+    async def test_submission_rejects_foreign_participant_unit_and_schema(
+        self,
+    ) -> None:
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id="hash-a"),
+            queue_name="default",
+        )
+        async with self.queue.submission_transaction() as unit:
+            with self.assertRaises(AssertionError):
+                await self.queue.submit_prepared(
+                    replace(prepared, _participant=object()), unit_of_work=unit
+                )
+            with self.assertRaises(AssertionError):
+                await self.queue.submit_prepared(
+                    prepared, unit_of_work=replace(unit, database=None)
+                )
+            with patch.object(
+                unit.cursor, "fetchall", new=AsyncMock(return_value=())
+            ):
+                with self.assertRaises(AssertionError):
+                    await self.queue.submit_prepared(
+                        prepared, unit_of_work=unit
+                    )
+        self.queue.validate_submission_store(PgsqlTaskStore(self.database))
+        with self.assertRaises(AssertionError):
+            self.queue.validate_submission_store(
+                PgsqlTaskStore(FakePgsqlQueueDatabase())
+            )
+
+    async def test_submit_prepared_persists_submission_atomically(
+        self,
+    ) -> None:
         identity = self._identity()
-        artifact = TaskQueueArtifact(
+        artifact = TaskSubmissionArtifact(
             ref=TaskArtifactRef(
                 artifact_id="artifact-1",
                 store="local",
@@ -1316,21 +1513,25 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             metadata={"identity": {"digest": "<hmac-sha256>"}},
         )
 
-        submission = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id="hash-a",
-                input_summary={"privacy": "<redacted>"},
-                file_summaries=({"artifact_id": "artifact-1"},),
-                queue="default",
+        submission = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id="hash-a",
+                    input_summary={"privacy": "<redacted>"},
+                    file_summaries=({"artifact_id": "artifact-1"},),
+                    queue="default",
+                ),
+                queue_name="default",
+                priority=5,
+                available_at=self.now,
+                idempotency=identity,
+                idempotency_expires_at=self.now + timedelta(days=1),
+                artifacts=(artifact,),
+                run_metadata={"source": "sdk"},
+                queue_metadata={"tenant": "safe"},
             ),
-            queue_name="default",
-            priority=5,
-            available_at=self.now,
-            idempotency=identity,
-            idempotency_expires_at=self.now + timedelta(days=1),
-            artifacts=(artifact,),
-            run_metadata={"source": "sdk"},
-            queue_metadata={"tenant": "safe"},
         )
 
         self.assertTrue(submission.created)
@@ -1365,9 +1566,11 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             self._query_index('INSERT INTO "task_queue_items"'),
         )
 
-    async def test_enqueue_run_returns_existing_idempotent_run(self) -> None:
+    async def test_submit_prepared_returns_existing_idempotent_run(
+        self,
+    ) -> None:
         identity = self._identity()
-        artifact = TaskQueueArtifact(
+        artifact = TaskSubmissionArtifact(
             ref=TaskArtifactRef(
                 artifact_id="artifact-duplicate",
                 store="local",
@@ -1379,17 +1582,25 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             retention=TaskArtifactRetention(delete_after_days=2),
             metadata={"safe": "metadata"},
         )
-        existing = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
-            artifacts=(artifact,),
+        existing = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+                artifacts=(artifact,),
+            ),
         )
 
-        duplicate = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
+        duplicate = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+            ),
         )
 
         self.assertTrue(existing.created)
@@ -1415,21 +1626,29 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(self.database.queue_items), 1)
 
-    async def test_enqueue_run_existing_idempotent_run_without_queue_item(
+    async def test_submit_prepared_existing_idempotent_run_without_queue_item(
         self,
     ) -> None:
         identity = self._identity()
-        existing = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
+        existing = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+            ),
         )
         self.database.queue_items = {}
 
-        duplicate = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
+        duplicate = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+            ),
         )
 
         self.assertTrue(existing.created)
@@ -1439,26 +1658,34 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(duplicate.artifacts, ())
         self.assertEqual(self.database.queue_items, {})
 
-    async def test_enqueue_run_rejects_idempotency_identity_mismatch(
+    async def test_submit_prepared_rejects_idempotency_identity_mismatch(
         self,
     ) -> None:
         identity = self._identity()
         mismatched = self._identity(spec_hash="hash-other")
 
-        first = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
+        first = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+            ),
         )
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(
-                    definition_id="hash-a",
-                    queue="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a",
+                        queue="default",
+                    ),
+                    queue_name="default",
+                    idempotency=mismatched,
                 ),
-                queue_name="default",
-                idempotency=mismatched,
             )
 
         self.assertTrue(first.created)
@@ -1485,21 +1712,31 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
             first.run.run_id,
         )
 
-    async def test_enqueue_run_replaces_expired_idempotency_key(self) -> None:
+    async def test_submit_prepared_replaces_expired_idempotency_key(
+        self,
+    ) -> None:
         identity = self._identity()
         expires_at = self.now + timedelta(seconds=10)
-        first = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
-            idempotency_expires_at=expires_at,
+        first = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+                idempotency_expires_at=expires_at,
+            ),
         )
         self.clock._next = expires_at  # noqa: SLF001
 
-        second = await self.queue.enqueue_run(
-            TaskExecutionRequest(definition_id="hash-a", queue="default"),
-            queue_name="default",
-            idempotency=identity,
+        second = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(definition_id="hash-a", queue="default"),
+                queue_name="default",
+                idempotency=identity,
+            ),
         )
 
         self.assertTrue(first.created)
@@ -1511,20 +1748,26 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(self.database.queue_items), 2)
 
-    async def test_enqueue_run_rolls_back_failed_submission(self) -> None:
+    async def test_submit_prepared_rolls_back_failed_submission(self) -> None:
         self.database.fail_on_query = 'INSERT INTO "task_queue_items"'
 
         with self.assertRaises(TaskQueueError) as error:
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                idempotency=self._identity(),
-                artifacts=(
-                    TaskQueueArtifact(
-                        ref=TaskArtifactRef(
-                            artifact_id="artifact-1",
-                            store="local",
-                            storage_key="runs/run-1/input.txt",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    idempotency=self._identity(),
+                    artifacts=(
+                        TaskSubmissionArtifact(
+                            ref=TaskArtifactRef(
+                                artifact_id="artifact-1",
+                                store="local",
+                                storage_key="runs/run-1/input.txt",
+                            ),
                         ),
                     ),
                 ),
@@ -1537,32 +1780,44 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.database.idempotency, {})
         self.assertEqual(self.database.queue_items, {})
 
-    async def test_enqueue_run_rolls_back_store_outage_before_mutation(
+    async def test_submit_prepared_rolls_back_store_outage_before_mutation(
         self,
     ) -> None:
         self.database.fail_on_query = 'SELECT * FROM "task_definitions"'
         previous = self.database.snapshot()
 
         with self.assertRaises(TaskQueueError) as error:
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                idempotency=self._identity(),
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    idempotency=self._identity(),
+                ),
             )
 
         self.assertNotIn("raw details", str(error.exception))
         self.assertEqual(self.database.snapshot(), previous)
 
-    async def test_enqueue_run_rolls_back_racing_idempotency_conflict(
+    async def test_submit_prepared_rolls_back_racing_idempotency_conflict(
         self,
     ) -> None:
         self.database.race_on_idempotency_insert = True
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                idempotency=self._identity(),
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    idempotency=self._identity(),
+                ),
             )
 
         self.assertNotIn("id-1", self.database.runs)
@@ -1570,7 +1825,7 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertEqual(self.database.idempotency, {})
         self.assertEqual(self.database.queue_items, {})
 
-    async def test_enqueue_run_rejects_missing_idempotency_target(
+    async def test_submit_prepared_rejects_missing_idempotency_target(
         self,
     ) -> None:
         self.database.idempotency["identity-1"] = self._idempotency_row(
@@ -1578,13 +1833,19 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         )
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                idempotency=self._identity(),
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    idempotency=self._identity(),
+                ),
             )
 
-    async def test_enqueue_run_rolls_back_conflicted_run_id(self) -> None:
+    async def test_submit_prepared_rolls_back_conflicted_run_id(self) -> None:
         self.database.runs["id-1"] = {
             "run_id": "id-1",
             "state": TaskRunState.CREATED.value,
@@ -1592,15 +1853,23 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                ),
             )
 
         self.assertEqual(self.database.run_transitions, {})
         self.assertEqual(self.database.queue_items, {})
 
-    async def test_enqueue_run_rolls_back_conflicted_queue_item(self) -> None:
+    async def test_submit_prepared_rolls_back_conflicted_queue_item(
+        self,
+    ) -> None:
         self.database.queue_items["active"] = {
             "queue_item_id": "active",
             "run_id": "id-1",
@@ -1609,40 +1878,62 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         }
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                ),
             )
 
         self.assertNotIn("id-1", self.database.runs)
         self.assertEqual(set(self.database.queue_items), {"active"})
 
-    async def test_enqueue_run_rolls_back_idempotency_insert_gap(self) -> None:
+    async def test_submit_prepared_rolls_back_idempotency_insert_gap(
+        self,
+    ) -> None:
         self.database.drop_idempotency_insert = True
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                idempotency=self._identity(),
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    idempotency=self._identity(),
+                ),
             )
 
         self.assertNotIn("id-1", self.database.runs)
         self.assertEqual(self.database.idempotency, {})
 
-    async def test_enqueue_run_rolls_back_conflicted_artifact(self) -> None:
+    async def test_submit_prepared_rolls_back_conflicted_artifact(
+        self,
+    ) -> None:
         self.database.artifacts["artifact-1"] = {"artifact_id": "artifact-1"}
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
-                artifacts=(
-                    TaskQueueArtifact(
-                        ref=TaskArtifactRef(
-                            artifact_id="artifact-1",
-                            store="local",
-                            storage_key="runs/run-1/input.txt",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                    artifacts=(
+                        TaskSubmissionArtifact(
+                            ref=TaskArtifactRef(
+                                artifact_id="artifact-1",
+                                store="local",
+                                storage_key="runs/run-1/input.txt",
+                            ),
                         ),
                     ),
                 ),
@@ -1651,45 +1942,69 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         self.assertNotIn("id-1", self.database.runs)
         self.assertEqual(set(self.database.artifacts), {"artifact-1"})
 
-    async def test_enqueue_run_rolls_back_stale_transition(self) -> None:
+    async def test_submit_prepared_rolls_back_stale_transition(self) -> None:
         self.database.stale_transition = True
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                ),
             )
 
         self.assertNotIn("id-1", self.database.runs)
         self.assertEqual(self.database.queue_items, {})
 
-    async def test_enqueue_run_rolls_back_transition_insert_conflict(
+    async def test_submit_prepared_rolls_back_transition_insert_conflict(
         self,
     ) -> None:
         self.database.run_transitions["id-2"] = {"transition_id": "id-2"}
 
         with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="default"),
-                queue_name="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="default"
+                    ),
+                    queue_name="default",
+                ),
             )
 
         self.assertNotIn("id-1", self.database.runs)
         self.assertEqual(set(self.database.run_transitions), {"id-2"})
 
-    async def test_enqueue_run_rejects_invalid_submission_inputs(self) -> None:
-        with self.assertRaises(TaskQueueConflictError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a", queue="private"),
-                queue_name="default",
+    async def test_submit_prepared_rejects_invalid_submission_inputs(
+        self,
+    ) -> None:
+        with self.assertRaises(AssertionError):
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id="hash-a", queue="private"
+                    ),
+                    queue_name="default",
+                ),
             )
         with self.assertRaises(TaskQueueNotFoundError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="missing"),
-                queue_name="default",
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(definition_id="missing"),
+                    queue_name="default",
+                ),
             )
         with self.assertRaises(AssertionError):
-            TaskQueueArtifact(
+            TaskSubmissionArtifact(
                 ref=TaskArtifactRef(
                     artifact_id="artifact-1",
                     store="local",
@@ -1698,10 +2013,14 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
                 metadata={"raw": object()},
             )
         with self.assertRaises(AssertionError):
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(definition_id="hash-a"),
-                queue_name="default",
-                queue_metadata={"raw": object()},
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(definition_id="hash-a"),
+                    queue_name="default",
+                    queue_metadata={"raw": object()},
+                ),
             )
 
     async def test_enqueue_stores_only_safe_scheduling_metadata(self) -> None:

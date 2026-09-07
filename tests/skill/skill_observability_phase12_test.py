@@ -1,5 +1,4 @@
 from collections.abc import Mapping
-from datetime import datetime
 from json import dumps
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -8,6 +7,8 @@ from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 from uuid import uuid4
 
+from task_submission_helpers import SubmissionQueueFixture
+
 from avalan.entities import ToolCall, ToolCallContext
 from avalan.event import Event, EventObservabilityPayload, EventType
 from avalan.event.manager import (
@@ -15,6 +16,7 @@ from avalan.event.manager import (
     EventManagerMode,
     EventSubscriberClass,
 )
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.skill import (
     SkillConfiguredSource,
     SkillObservabilitySettings,
@@ -52,7 +54,6 @@ from avalan.task import (
     TaskDirectTarget,
     TaskExecutionRequest,
     TaskExecutionTarget,
-    TaskIdempotencyIdentity,
     TaskInputContract,
     TaskInputType,
     TaskKeyMaterial,
@@ -60,9 +61,8 @@ from avalan.task import (
     TaskMetadata,
     TaskObservedEvent,
     TaskOutputContract,
-    TaskQueueArtifact,
-    TaskQueueSubmission,
     TaskRunPolicy,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetRunner,
     TaskValidationContext,
@@ -80,6 +80,10 @@ from avalan.task.skills import (
     task_skills_identity,
 )
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionRequest,
+)
 from avalan.tool.skills import CheckSkillTool, MatchSkillsTool, ReadSkillTool
 
 _BODY_MARKER = "phase12-skill-body-marker"
@@ -627,7 +631,7 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
                 queue=cast(TaskQueue, queue),
                 hmac_provider=_StaticHmacProvider(),
             )
-            submission = await client.enqueue(
+            submission = await client.submit(
                 _task_definition(
                     settings,
                     execution=TaskExecutionTarget.agent("agent"),
@@ -636,7 +640,8 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
                         required=False,
                     ),
                     run=TaskRunPolicy.queued("default"),
-                )
+                ),
+                request=TaskSubmissionRequest(),
             )
 
             encoded = str(
@@ -1145,18 +1150,20 @@ class SkillObservabilityPhase12Test(IsolatedAsyncioTestCase):
                 await runner.run(_task_definition(settings))
             self.assertNotIn(_HOST_PATH_MARKER, str(runner_error.exception))
 
+            queued_store = InMemoryTaskStore()
             queued_client = TaskClient(
-                InMemoryTaskStore(),
+                queued_store,
                 target=target,
-                queue=cast(TaskQueue, object()),
+                queue=cast(TaskQueue, _RecordingQueue(queued_store)),
                 event_observer=fail,
             )
             with self.assertRaises(SkillAuditDeliveryError) as enqueue_error:
-                await queued_client.enqueue(
+                await queued_client.submit(
                     _task_definition(
                         settings,
                         run=TaskRunPolicy.queued("default"),
-                    )
+                    ),
+                    request=TaskSubmissionRequest(),
                 )
             self.assertNotIn(_HOST_PATH_MARKER, str(enqueue_error.exception))
 
@@ -1309,24 +1316,27 @@ class _DynamicSkillEventPublisher:
         return [event.type for event in self.events]
 
 
-class _RecordingQueue:
+class _RecordingQueue(SubmissionQueueFixture):
     def __init__(self, store: InMemoryTaskStore) -> None:
         self.store = store
         self.requests: list[TaskExecutionRequest] = []
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         _ = (
             queue_name,
             priority,
@@ -1338,7 +1348,11 @@ class _RecordingQueue:
         )
         self.requests.append(request)
         run = await self.store.create_run(request, metadata=run_metadata)
-        return TaskQueueSubmission(run=run, created=True)
+        return self.record_submission_write(
+            TaskSubmissionWrite(
+                submission_id=prepared.submission_id, run=run, created=True
+            )
+        )
 
 
 def _write_skill(

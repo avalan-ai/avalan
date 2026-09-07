@@ -13,6 +13,10 @@ from unittest.mock import MagicMock
 from uuid import uuid4
 
 import pytest
+from task_submission_helpers import (
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
 
 sys_path.append(str(Path(__file__).parents[2] / "conversation"))
 sys_path.append(str(Path(__file__).parents[2] / "task" / "stores"))
@@ -396,12 +400,16 @@ async def _run_worker(
         _definition(suffix),
         definition_hash=definition_id,
     )
-    await queue.enqueue_run(
-        TaskExecutionRequest(
-            definition_id=definition_id,
-            queue=_QUEUE,
+    await persist_submission_fixture(
+        queue,
+        prepared_submission_fixture(
+            queue,
+            TaskExecutionRequest(
+                definition_id=definition_id,
+                queue=_QUEUE,
+            ),
+            queue_name=_QUEUE,
         ),
-        queue_name=_QUEUE,
     )
     target = _AtomicSuspensionTarget(
         conversation_store,

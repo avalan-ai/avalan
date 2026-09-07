@@ -14,6 +14,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from a2a.types import a2a_pb2
 from google.protobuf.struct_pb2 import Struct
+from task_submission_helpers import (
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
 
 sys_path.append(str(Path(__file__).parents[2] / "task"))
 sys_path.append(str(Path(__file__).parents[2] / "task" / "stores"))
@@ -132,9 +136,9 @@ from avalan.task import (  # noqa: E402
     TaskMetadata,
     TaskOutputContract,
     TaskQueueItemState,
-    TaskQueueSubmission,
     TaskRunPolicy,
     TaskRunState,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -508,12 +512,16 @@ class PgsqlDurableInteractionE2ETest(IsolatedAsyncioTestCase):
                 ),
                 definition_hash=definition_id,
             )
-            submission = await queue.enqueue_run(
-                TaskExecutionRequest(
-                    definition_id=definition_id,
-                    queue=queue_name,
+            submission = await persist_submission_fixture(
+                queue,
+                prepared_submission_fixture(
+                    queue,
+                    TaskExecutionRequest(
+                        definition_id=definition_id,
+                        queue=queue_name,
+                    ),
+                    queue_name=queue_name,
                 ),
-                queue_name=queue_name,
             )
             child_branch_id: BranchId | None = None
             parent_branch_id: BranchId | None = None
@@ -1271,12 +1279,16 @@ WHERE "run_id" = %s
             ),
             definition_hash=definition_id,
         )
-        submission = await queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_id,
-                queue=queue_name,
+        submission = await persist_submission_fixture(
+            queue,
+            prepared_submission_fixture(
+                queue,
+                TaskExecutionRequest(
+                    definition_id=definition_id,
+                    queue=queue_name,
+                ),
+                queue_name=queue_name,
             ),
-            queue_name=queue_name,
         )
         target = _DurableWorkerTarget(
             checkpoint_id="cancel-startup-checkpoint"
@@ -1967,12 +1979,16 @@ SELECT
             _definition(),
             definition_hash="completed-provider-definition",
         )
-        submission = await queue_a.enqueue_run(
-            TaskExecutionRequest(
-                definition_id="completed-provider-definition",
-                queue=_QUEUE,
+        submission = await persist_submission_fixture(
+            queue_a,
+            prepared_submission_fixture(
+                queue_a,
+                TaskExecutionRequest(
+                    definition_id="completed-provider-definition",
+                    queue=_QUEUE,
+                ),
+                queue_name=_QUEUE,
             ),
-            queue_name=_QUEUE,
         )
         target = _DurableWorkerTarget()
         initial = await TaskWorker(
@@ -2962,7 +2978,7 @@ SELECT
         definition_hash: str,
         worker_id: str,
     ) -> tuple[
-        TaskQueueSubmission,
+        TaskSubmissionWrite,
         PgsqlInteractionStore,
         TaskWorkerProcessResult,
     ]:
@@ -2973,12 +2989,16 @@ SELECT
             _definition(),
             definition_hash=definition_hash,
         )
-        submission = await queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                queue=_QUEUE,
+        submission = await persist_submission_fixture(
+            queue,
+            prepared_submission_fixture(
+                queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    queue=_QUEUE,
+                ),
+                queue_name=_QUEUE,
             ),
-            queue_name=_QUEUE,
         )
         result = await TaskWorker(
             task_store,

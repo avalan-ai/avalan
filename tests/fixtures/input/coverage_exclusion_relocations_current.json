@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "93ff35166a62ccb2841986d63417137d0f6a7a620cba754a5d0b8605e5c8f243",
+  "current_snapshot_sha256": "7004313834051193176f8dab848de5296e1232e80d2652f1d4b7896a37f1f3c9",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "91a453248b24d38cad550f07070a4212efc579ca56602c48554ea1c5f6c996d4"
   },
   "report_lines": {
-    "added": 1362,
-    "removed": 309,
-    "sha256": "52489f7fcb574e45465d5173972da63f49d3c3a61cb27db8b006ba167de45e20"
+    "added": 1373,
+    "removed": 312,
+    "sha256": "17ce8d896d61de82cbe2af08ab5fb2968805872b5c58b3db9292120491fe5e93"
   },
   "review": {
-    "reviewed_by": "provider transport observability coverage audit",
-    "rationale": "The current snapshot preserves the reviewed directive inventory and records line relocations from agent-run inline-compaction option wiring without adding an exclusion."
+    "reviewed_by": "trigger task submission exclusion audit",
+    "rationale": "Preserve the immutable baseline and unchanged source directive inventory. Record existing default coverage exclusions after the task submission API migration: PgsqlAtomicSuspensionParticipant, TaskClientDurableLifecycleCoordinator and Alembic Protocol stubs relocate; unchanged task settlement Protocol stubs relocate; TaskQueue replaces enqueue_run with validated preparation/transaction/reconciliation Protocol signatures (five net excluded lines), and its TYPE_CHECKING imports add three type-only excluded lines. No pragma, runtime exclusion or coverage configuration is added. Exact old/new source lines and default parser rules were audited."
   },
-  "ledger_sha256": "dedc4d573664bf4bd91431018427b01402cf55d08ee4cfa449ca41ac97790e55"
+  "ledger_sha256": "4a7a32713d6b1d7746c5c45a55d7e04e5a8a9e0dd52a4a1083fa8618ea66c1d6"
 }

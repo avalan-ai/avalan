@@ -53,10 +53,8 @@ from .privacy import (
 )
 from .queue import (
     TaskQueue,
-    TaskQueueArtifact,
     TaskQueueCompletion,
     TaskQueueItemState,
-    TaskQueueSubmission,
 )
 from .runner import (
     DirectTaskRunner,
@@ -100,6 +98,17 @@ from .store import (
     freeze_snapshot_metadata,
     freeze_snapshot_value,
 )
+from .submission import (
+    _PREPARATION_AUTHORITY,
+    PreparedTaskSubmission,
+    TaskSubmissionArtifact,
+    TaskSubmissionCancelledError,
+    TaskSubmissionKeyboardInterrupt,
+    TaskSubmissionOutcome,
+    TaskSubmissionRequest,
+    TaskSubmissionResult,
+    TaskSubmissionSystemExit,
+)
 from .target import (
     CallableTaskTargetRunner,
     TaskTargetRunner,
@@ -120,15 +129,16 @@ from .validation import (
     validate_task_input,
 )
 
-from asyncio import gather
+from asyncio import CancelledError, gather, timeout
 from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
 from math import isfinite
 from pathlib import Path
 from typing import Protocol, cast
+from uuid import uuid4
 
 
 class TaskClientUnsupportedOperationError(RuntimeError):
@@ -274,6 +284,8 @@ class TaskClient:
         *,
         target: TaskDirectTarget | TaskTargetRunner,
         queue: TaskQueue | None = None,
+        owner_scope: str = "default",
+        execution_deployment_id: str | None = None,
         hmac_provider: HmacProvider | None = None,
         encryption_provider: EncryptionProvider | None = None,
         raw_storage_allowed: bool = False,
@@ -298,6 +310,13 @@ class TaskClient:
         clock: Callable[[], datetime] | None = None,
         sleep: Callable[[float], Awaitable[None]] | None = None,
     ) -> None:
+        assert_non_empty_string(owner_scope, "owner_scope")
+        self._owner_scope = owner_scope
+        if execution_deployment_id is not None:
+            assert_non_empty_string(
+                execution_deployment_id, "execution_deployment_id"
+            )
+        self._execution_deployment_id = execution_deployment_id
         self._store = store
         self._target = _target_runner(target)
         self._queue = queue
@@ -614,21 +633,124 @@ class TaskClient:
             expires_at=expires_at,
         )
 
-    async def enqueue(
+    async def submit(
         self,
         definition: TaskDefinition,
         *,
-        input_value: object = None,
-        files: tuple[TaskInputFile, ...] = (),
-        idempotency_key: str | None = None,
-        metadata: Mapping[str, object] | None = None,
-        available_at: datetime | None = None,
-        idempotency_expires_at: datetime | None = None,
-        idempotency_window: object = None,
-        owner_scope: object = "default",
-        queue_name: str | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        request: TaskSubmissionRequest,
+    ) -> TaskSubmissionResult:
+        """Own manual submission and reconcile uncertain acknowledgments."""
+        prepared = await self.prepare_submission(definition, request=request)
+        assert self._queue is not None
+        interrupted: BaseException | None = None
+        result = TaskSubmissionResult(
+            submission_id=prepared.submission_id,
+            outcome=TaskSubmissionOutcome.UNKNOWN,
+            prepared=prepared,
+        )
+        try:
+            try:
+                async with self._queue.submission_transaction() as unit:
+                    write = await self._queue.submit_prepared(
+                        prepared, unit_of_work=unit
+                    )
+                result = TaskSubmissionResult(
+                    submission_id=prepared.submission_id,
+                    outcome=TaskSubmissionOutcome.COMMITTED,
+                    write=write,
+                    prepared=prepared,
+                )
+            except (
+                Exception,
+                CancelledError,
+                KeyboardInterrupt,
+                SystemExit,
+            ) as error:
+                if isinstance(
+                    error, (CancelledError, KeyboardInterrupt, SystemExit)
+                ):
+                    interrupted = error
+                result = await self.reconcile_submission(prepared)
+            result = await self.release_unused_submission_artifacts(
+                prepared, result
+            )
+        except (CancelledError, KeyboardInterrupt, SystemExit) as error:
+            if not isinstance(interrupted, (KeyboardInterrupt, SystemExit)):
+                interrupted = error
+        if isinstance(interrupted, CancelledError):
+            raise TaskSubmissionCancelledError(result) from interrupted
+        if isinstance(interrupted, KeyboardInterrupt):
+            raise TaskSubmissionKeyboardInterrupt(result) from interrupted
+        if isinstance(interrupted, SystemExit):
+            termination = TaskSubmissionSystemExit(result)
+            termination.code = interrupted.code
+            raise termination from interrupted
+        return result
+
+    async def reconcile_submission(
+        self, prepared: PreparedTaskSubmission
+    ) -> TaskSubmissionResult:
+        """Resolve an uncertain acknowledgment through fenced SQL reads."""
+        self._assert_prepared_submission(prepared)
+        assert self._queue is not None
+        try:
+            async with timeout(30):
+                result = await self._queue.reconcile_submission(prepared)
+            return replace(result, prepared=prepared)
+        except Exception:
+            return TaskSubmissionResult(
+                submission_id=prepared.submission_id,
+                outcome=TaskSubmissionOutcome.UNKNOWN,
+                prepared=prepared,
+            )
+
+    async def release_unused_submission_artifacts(
+        self,
+        prepared: PreparedTaskSubmission,
+        result: TaskSubmissionResult,
+    ) -> TaskSubmissionResult:
+        """Release temporary ownership only after conclusive settlement."""
+        self._assert_prepared_submission(prepared)
+        unused = result.unused_artifacts(prepared)
+        pending = []
+        for ref in unused:
+            assert self._artifact_store is not None
+            try:
+                await self._artifact_store.delete(ref)
+            except Exception:
+                pending.append(ref)
+        return replace(result, cleanup_pending=tuple(pending))
+
+    def _assert_prepared_submission(
+        self, prepared: PreparedTaskSubmission
+    ) -> None:
+        assert isinstance(prepared, PreparedTaskSubmission)
+        assert prepared._participant is self._queue
+        assert prepared.owner_scope == self._owner_scope
+
+    async def prepare_submission(
+        self,
+        definition: TaskDefinition,
+        *,
+        request: TaskSubmissionRequest,
+        occurrence_id: str | None = None,
+    ) -> PreparedTaskSubmission:
+        """Validate and materialize a submission before acquiring SQL locks."""
+        assert isinstance(request, TaskSubmissionRequest)
+        if occurrence_id is not None:
+            assert_non_empty_string(occurrence_id, "occurrence_id")
+            assert request.idempotency_key is None
+            assert request.idempotency_window is None
+        input_value = _copy_submission_input(request.input_value)
+        files = request.files
+        metadata = request.metadata
+        available_at = request.available_at
+        idempotency_expires_at = request.idempotency_expires_at
+        idempotency_key = request.idempotency_key
+        idempotency_window = _copy_submission_input(request.idempotency_window)
+        owner_scope = self._owner_scope
+        queue_name = request.queue_name
+        queue_metadata = request.queue_metadata
         assert isinstance(definition, TaskDefinition)
         assert isinstance(files, tuple)
         if queue_name is not None:
@@ -638,9 +760,20 @@ class TaskClient:
         if idempotency_expires_at is not None:
             assert isinstance(idempotency_expires_at, datetime)
         if definition.run.mode != RunMode.QUEUE:
-            raise _unsupported_queue_operation("enqueue")
+            raise _unsupported_queue_operation("submit")
         if self._queue is None:
-            raise _unsupported_queue_operation("enqueue")
+            raise _unsupported_queue_operation("submit")
+        self._queue.validate_submission_store(self._store)
+        try:
+            await self._queue.preflight_submission()
+        except Exception:
+            raise TaskClientUnsupportedOperationError(
+                code="task.submission_unavailable",
+                operation="submit",
+                message=(
+                    "Task submission storage is unavailable or incompatible."
+                ),
+            ) from None
         schema_base_path = task_definition_schema_base_path(definition)
         definition = await self._resolve_definition_schemas(definition)
         skill_audit_sanitizer = self._sanitizer(definition)
@@ -699,42 +832,42 @@ class TaskClient:
             remote_url_http_client=self._remote_url_http_client,
             remote_url_resolver=self._remote_url_resolver,
         )
-        input_files = tuple(
-            materialized_file.as_input_file()
-            for materialized_file in materialized_files
-        )
-        file_entries = task_input_file_entries_for_queue(
-            files=files,
-            provider_reference_files=provider_reference_files,
-            materialized_files=materialized_files,
-        )
-        queued_files = tuple(entry.file for entry in file_entries)
-        assert queued_files == (
-            *files,
-            *provider_reference_files,
-            *input_files,
-        )
-        input_payload = self._queue_input_payload(
-            definition,
-            input_value,
-            file_entries=file_entries,
-            sanitizer=sanitizer,
-        )
-        explicit_artifacts = self._explicit_queue_artifacts(
-            definition,
-            sanitizer,
-            (*files, *provider_reference_files),
-        )
-        safe_queue_metadata = _queue_metadata_snapshot(
-            queue_metadata,
-            input_value=input_value,
-            idempotency_key=idempotency_key,
-            owner_scope=owner_scope,
-        )
-        selected_queue_name = queue_name or definition.run.queue
-        assert selected_queue_name is not None
-        input_summary_value = _input_summary_value(definition, input_value)
         try:
+            input_files = tuple(
+                materialized_file.as_input_file()
+                for materialized_file in materialized_files
+            )
+            file_entries = task_input_file_entries_for_queue(
+                files=files,
+                provider_reference_files=provider_reference_files,
+                materialized_files=materialized_files,
+            )
+            queued_files = tuple(entry.file for entry in file_entries)
+            assert queued_files == (
+                *files,
+                *provider_reference_files,
+                *input_files,
+            )
+            input_payload = self._queue_input_payload(
+                definition,
+                input_value,
+                file_entries=file_entries,
+                sanitizer=sanitizer,
+            )
+            explicit_artifacts = self._explicit_queue_artifacts(
+                definition,
+                sanitizer,
+                (*files, *provider_reference_files),
+            )
+            safe_queue_metadata = _queue_metadata_snapshot(
+                queue_metadata,
+                input_value=input_value,
+                idempotency_key=idempotency_key,
+                owner_scope=owner_scope,
+            )
+            selected_queue_name = queue_name or definition.run.queue
+            assert selected_queue_name is not None
+            input_summary_value = _input_summary_value(definition, input_value)
             idempotency = task_idempotency_identity(
                 definition,
                 definition_hash=definition_id,
@@ -742,10 +875,24 @@ class TaskClient:
                 files=queued_files,
                 owner_scope=owner_scope,
                 hmac_provider=cast(HmacProvider, self._hmac_provider),
-                window=idempotency_key or idempotency_window,
+                window=(
+                    {"occurrence_id": occurrence_id}
+                    if occurrence_id is not None
+                    else idempotency_key or idempotency_window
+                ),
             )
-            return await self._queue.enqueue_run(
-                TaskExecutionRequest(
+            return PreparedTaskSubmission(
+                submission_id=str(uuid4()),
+                run_id=str(uuid4()),
+                owner_scope=self._owner_scope,
+                occurrence_id=occurrence_id,
+                execution_deployment_id=self._execution_deployment_id,
+                _authority=_PREPARATION_AUTHORITY,
+                _participant=self._queue,
+                temporary_artifacts=tuple(
+                    file.ref for file in materialized_files
+                ),
+                execution=TaskExecutionRequest(
                     definition_id=definition_id,
                     input_summary=_snapshot_value(
                         sanitizer.sanitize(
@@ -775,7 +922,6 @@ class TaskClient:
                         )
                     ),
                 ),
-                queue_name=selected_queue_name,
                 priority=definition.run.priority or 0,
                 available_at=available_at,
                 idempotency=idempotency,
@@ -784,11 +930,12 @@ class TaskClient:
                     *explicit_artifacts,
                     *self._queue_artifacts(definition, materialized_files),
                 ),
-                run_metadata={"runner": "queue"},
+                run_metadata=freeze_snapshot_metadata({"runner": "queue"}),
                 queue_metadata=safe_queue_metadata,
             )
         except BaseException:
-            await self._delete_materialized_files(materialized_files)
+            if materialized_files:
+                await self._delete_materialized_files(materialized_files)
             raise
 
     async def wait(
@@ -1164,9 +1311,9 @@ class TaskClient:
         self,
         definition: TaskDefinition,
         files: tuple[TaskMaterializedFile, ...],
-    ) -> tuple[TaskQueueArtifact, ...]:
+    ) -> tuple[TaskSubmissionArtifact, ...]:
         return tuple(
-            TaskQueueArtifact(
+            TaskSubmissionArtifact(
                 ref=file.ref,
                 purpose=TaskArtifactPurpose.INPUT,
                 provenance=TaskArtifactProvenance(
@@ -1208,9 +1355,9 @@ class TaskClient:
         definition: TaskDefinition,
         sanitizer: PrivacySanitizer,
         files: tuple[TaskInputFile, ...],
-    ) -> tuple[TaskQueueArtifact, ...]:
+    ) -> tuple[TaskSubmissionArtifact, ...]:
         issues: list[TaskValidationIssue] = []
-        artifacts: list[TaskQueueArtifact] = []
+        artifacts: list[TaskSubmissionArtifact] = []
         for index, file in enumerate(files):
             if file.artifact_ref is None:
                 if (
@@ -1244,7 +1391,7 @@ class TaskClient:
             )
             assert isinstance(metadata, Mapping)
             artifacts.append(
-                TaskQueueArtifact(
+                TaskSubmissionArtifact(
                     ref=_sanitize_artifact_ref(
                         file.artifact_ref,
                         sanitizer,
@@ -1745,3 +1892,16 @@ def _usage_totals_value(totals: UsageTotals) -> dict[str, object]:
 
 def _datetime_value(value: datetime) -> str:
     return value.isoformat()
+
+
+def _copy_submission_input(value: object) -> object:
+    """Detach mutable JSON input before asynchronous validation begins."""
+    if isinstance(value, Mapping):
+        return {
+            key: _copy_submission_input(item) for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_copy_submission_input(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(_copy_submission_input(item) for item in value)
+    return value

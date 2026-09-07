@@ -1,4 +1,7 @@
+from asyncio import CancelledError, Task, create_task, sleep, wait_for
 from collections.abc import Mapping
+from hashlib import sha256
+from json import dumps
 from types import SimpleNamespace
 from unittest import IsolatedAsyncioTestCase, main
 
@@ -9,6 +12,10 @@ from pgsql_harness import (
     task_pgsql_psycopg_dsn,
 )
 from pytest import importorskip
+from task_submission_helpers import (
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
 
 from avalan.pgsql import (
     PsycopgAsyncDatabase,
@@ -34,11 +41,13 @@ from avalan.task import (
     TaskMetadata,
     TaskOutputContract,
     TaskPrivacyPolicy,
-    TaskQueueArtifact,
     TaskQueueItemState,
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
+    TaskSubmissionArtifact,
+    TaskSubmissionOutcome,
+    TaskSubmissionResult,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -157,23 +166,145 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
         if dsn is not None and schema is not None:
             await drop_task_pgsql_schema(dsn, schema)
 
+    async def test_submission_rollback_removes_every_atomic_record(
+        self,
+    ) -> None:
+        definition_id = "queue-e2e-rollback"
+        await self.store.register_definition(
+            _definition(), definition_hash=definition_id
+        )
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id=definition_id),
+            queue_name="pgsql-e2e",
+            idempotency=_identity(definition_id),
+            artifacts=(
+                TaskSubmissionArtifact(
+                    ref=TaskArtifactRef(
+                        artifact_id="rollback-artifact",
+                        store="local",
+                        storage_key="rollback/input",
+                    )
+                ),
+            ),
+        )
+        with self.assertRaisesRegex(RuntimeError, "rollback requested"):
+            async with self.queue.submission_transaction() as unit:
+                await self.queue.submit_prepared(prepared, unit_of_work=unit)
+                raise RuntimeError("rollback requested")
+        recovered = await self.queue.reconcile_submission(prepared)
+        self.assertEqual(
+            recovered.outcome, TaskSubmissionOutcome.NOT_COMMITTED
+        )
+        async with self.database.connection() as connection:
+            async with connection.cursor() as cursor:
+                for table in (
+                    "task_runs",
+                    "task_artifacts",
+                    "task_idempotency_keys",
+                    "task_run_transitions",
+                    "task_queue_items",
+                    "task_submissions",
+                ):
+                    await cursor.execute(
+                        f'SELECT COUNT(*) AS count FROM "{table}" '
+                        'WHERE "run_id" = %s',
+                        (prepared.run_id,),
+                    )
+                    row = await cursor.fetchone()
+                    assert row is not None
+                    self.assertEqual(row["count"], 0, table)
+
+    async def test_fresh_reconciliation_waits_for_the_real_writer_transaction(
+        self,
+    ) -> None:
+        definition_id = "queue-e2e-fence"
+        await self.store.register_definition(
+            _definition(), definition_hash=definition_id
+        )
+        prepared = prepared_submission_fixture(
+            self.queue,
+            TaskExecutionRequest(definition_id=definition_id),
+            queue_name="pgsql-e2e",
+        )
+        digest = sha256(
+            dumps(
+                (
+                    "avalan.task.submission",
+                    prepared.owner_scope,
+                    prepared.submission_id,
+                ),
+                ensure_ascii=False,
+                separators=(",", ":"),
+            ).encode()
+        ).digest()
+        key = int.from_bytes(digest[:8], "big", signed=False)
+        pending: Task[TaskSubmissionResult] | None = None
+        try:
+            async with self.queue.submission_transaction() as unit:
+                write = await self.queue.submit_prepared(
+                    prepared, unit_of_work=unit
+                )
+                pending = create_task(
+                    self.queue.reconcile_submission(prepared)
+                )
+
+                async def wait_for_database_lock() -> None:
+                    while True:
+                        assert pending is not None
+                        self.assertFalse(
+                            pending.done(),
+                            "reconciliation read before writer completion",
+                        )
+                        async with self.database.connection() as observer:
+                            async with observer.cursor() as cursor:
+                                await cursor.execute(
+                                    "SELECT EXISTS (SELECT 1 FROM pg_locks "
+                                    "WHERE locktype = 'advisory' "
+                                    "AND classid::bigint = %s "
+                                    "AND objid::bigint = %s "
+                                    "AND NOT granted) AS waiting",
+                                    (key >> 32, key & 0xFFFFFFFF),
+                                )
+                                row = await cursor.fetchone()
+                                assert row is not None
+                                if row["waiting"] is True:
+                                    return
+                        await sleep(0.01)
+
+                await wait_for(wait_for_database_lock(), timeout=5)
+            recovered = await wait_for(pending, timeout=5)
+            self.assertEqual(
+                recovered.outcome, TaskSubmissionOutcome.COMMITTED
+            )
+            self.assertEqual(recovered.run.run_id, write.run.run_id)
+        finally:
+            if pending is not None and not pending.done():
+                pending.cancel()
+                with self.assertRaises(CancelledError):
+                    await pending
+
     async def test_worker_completes_pgsql_queue_run(self) -> None:
         definition_hash = "queue-e2e-success"
         await self.store.register_definition(
             _definition(),
             definition_hash=definition_hash,
         )
-        submission = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                input_summary="safe input",
-                input_payload=_input_payload("safe input"),
-                queue="pgsql-e2e",
-                metadata={"request": "safe"},
+        submission = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    input_summary="safe input",
+                    input_payload=_input_payload("safe input"),
+                    queue="pgsql-e2e",
+                    metadata={"request": "safe"},
+                ),
+                queue_name="pgsql-e2e",
+                priority=7,
+                queue_metadata={"source": "test"},
             ),
-            queue_name="pgsql-e2e",
-            priority=7,
-            queue_metadata={"source": "test"},
         )
         target = RecordingTarget()
         worker = TaskWorker(
@@ -222,14 +353,18 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             _definition(max_attempts=2),
             definition_hash=definition_hash,
         )
-        submission = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                input_summary="retry input",
-                input_payload=_input_payload("retry input"),
-                queue="pgsql-e2e",
+        submission = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    input_summary="retry input",
+                    input_payload=_input_payload("retry input"),
+                    queue="pgsql-e2e",
+                ),
+                queue_name="pgsql-e2e",
             ),
-            queue_name="pgsql-e2e",
         )
         target = RecordingTarget(failures=1)
         worker = TaskWorker(
@@ -282,7 +417,7 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             definition_hash=definition_hash,
         )
         identity = _identity(definition_hash)
-        artifact = TaskQueueArtifact(
+        artifact = TaskSubmissionArtifact(
             ref=TaskArtifactRef(
                 artifact_id="artifact-pgsql-duplicate",
                 store="local",
@@ -295,26 +430,34 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
             metadata={"safe": "input"},
         )
 
-        first = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                input_summary="safe duplicate input",
-                input_payload=_input_payload("safe duplicate input"),
-                queue="pgsql-e2e",
+        first = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    input_summary="safe duplicate input",
+                    input_payload=_input_payload("safe duplicate input"),
+                    queue="pgsql-e2e",
+                ),
+                queue_name="pgsql-e2e",
+                idempotency=identity,
+                artifacts=(artifact,),
             ),
-            queue_name="pgsql-e2e",
-            idempotency=identity,
-            artifacts=(artifact,),
         )
-        second = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                input_summary="safe duplicate input",
-                input_payload=_input_payload("safe duplicate input"),
-                queue="pgsql-e2e",
+        second = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    input_summary="safe duplicate input",
+                    input_payload=_input_payload("safe duplicate input"),
+                    queue="pgsql-e2e",
+                ),
+                queue_name="pgsql-e2e",
+                idempotency=identity,
             ),
-            queue_name="pgsql-e2e",
-            idempotency=identity,
         )
         target = RecordingTarget()
         worker = TaskWorker(
@@ -327,15 +470,19 @@ class PgsqlQueueWorkerE2ETest(IsolatedAsyncioTestCase):
         )
 
         result = await worker.process_once()
-        third = await self.queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_hash,
-                input_summary="safe duplicate input",
-                input_payload=_input_payload("safe duplicate input"),
-                queue="pgsql-e2e",
+        third = await persist_submission_fixture(
+            self.queue,
+            prepared_submission_fixture(
+                self.queue,
+                TaskExecutionRequest(
+                    definition_id=definition_hash,
+                    input_summary="safe duplicate input",
+                    input_payload=_input_payload("safe duplicate input"),
+                    queue="pgsql-e2e",
+                ),
+                queue_name="pgsql-e2e",
+                idempotency=identity,
             ),
-            queue_name="pgsql-e2e",
-            idempotency=identity,
         )
         depth = await self.queue.depth("pgsql-e2e")
 

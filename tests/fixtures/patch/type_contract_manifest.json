@@ -805,7 +805,7 @@
         "TASK_PGSQL_HEAD_REVISION",
         "_TASK_PGSQL_REVISION_MODULES"
       ],
-      "source_sha256": "48bd4c9823e4d8ac37a8ec102bed9b90054b1dea2b9647055a415a0dcffaf645"
+      "source_sha256": "c054fb874dddb4aa881951d13f8ea2f8d038ce62b1dc322ee01803b00aeac542"
     },
     {
       "id": "PATCH-TS-034",
@@ -920,9 +920,10 @@
       "path": "src/avalan/pgsql.py",
       "scope": "integration_hunk",
       "symbols": [
+        "PgsqlUnitOfWork",
         "TASK_PGSQL_HEAD_REVISION"
       ],
-      "source_sha256": "9dd9024545b18916bb2da2a9389326d6e996b7cd8345f6937080cc18d38182c5"
+      "source_sha256": "19b1805ca3d136c6d2bb7e3af71847dba0a571d0e0e0f201d189238221dfad91"
     },
     {
       "id": "PATCH-TS-047",
@@ -947,9 +948,11 @@
       "path": "tests/cli/task_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "TASK_PGSQL_TEST_HEAD_REVISION"
+        "TASK_PGSQL_TEST_HEAD_REVISION",
+        "submit",
+        "test_enqueue_reports_uncertain_outcome_without_retry"
       ],
-      "source_sha256": "b213472568c2e4699cb4e3f18100fb3a8773c6c2ebc4a352daed46cb7e8d9eda"
+      "source_sha256": "5d4cf99a9ab5ac4c17f8496e1b878ad3041e5a5befc5164f4ce342fd58b7af94"
     },
     {
       "id": "PATCH-TS-050",
@@ -968,7 +971,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "2c0fe5d393acd8f1fe503750da0589948366cab28382fa9afebd9338ab18cb07"
+      "source_sha256": "f6aa9b5c6d5048281c323fe4417f1e754dd2cb768aeec77f79428f5c4ab4022d"
     },
     {
       "id": "PATCH-TS-052",
@@ -990,9 +993,14 @@
         "verify_gate_source_isolation",
         "_validate_phase0_provider_byte_anchors",
         "_phase15_provider_transitions",
-        "_validate_phase15_provider_evidence_nodes"
+        "_validate_phase15_provider_evidence_nodes",
+        "_TASK_SUBMISSION_PROVIDER_TRANSITION_PATH",
+        "_TASK_SUBMISSION_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        "_TASK_SUBMISSION_PROVIDER_BYTE_TRANSITIONS",
+        "_TASK_SUBMISSION_PROVIDER_EVIDENCE_NODES",
+        "_task_submission_provider_transitions"
       ],
-      "source_sha256": "d4418d0b97edf6036e34d36b30e7351d687e9f3fbf2542f30ab7efcb156a7227"
+      "source_sha256": "e0a1567908ba2eaee4fb37f947d9c3531cbe191c4ab4764b7d861d9bda81cb5a"
     },
     {
       "id": "PATCH-TS-053",
@@ -1122,7 +1130,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "14d523df404f2b537be9d86bb95164df8ddcb5c50ec8970aac4d005784447a3b"
+      "source_sha256": "7be87962ce89116f646381e7c831b8147723ffa5a690dd11726c4ec0ee5560e5"
     },
     {
       "id": "PATCH-TS-067",
@@ -1185,7 +1193,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "b6c229336cafe9928ad6d760e2bb8952a990739c1da0f174224d1e6be4dd33a7"
+      "source_sha256": "df8959ab92e7d4b14f21ae70c8fde0398a759b9541753202ced89549732ef9b6"
     },
     {
       "id": "PATCH-TS-074",
@@ -2265,9 +2273,13 @@
       "symbols": [
         "test_phase14_provider_transition_evidence_nodes_collect",
         "test_phase15_provider_transition_evidence_nodes_collect",
-        "test_phase14_stale_evidence_cannot_self_validate"
+        "test_phase14_stale_evidence_cannot_self_validate",
+        "test_task_submission_transition_evidence_collects",
+        "test_task_submission_transition_rejects_tampering",
+        "test_task_submission_transition_rejects_resigned_byte_pin",
+        "test_task_submission_transition_rejects_uncollected_evidence"
       ],
-      "source_sha256": "2db243db1bbbb9d694e805c1d7bdaddd73c8ad2fd75db4d54c823a5e6f63e30d"
+      "source_sha256": "1c79ad448b9f389f32a3a1ff97287c3f8e0244ac31aa4bef85343f3c58981f40"
     },
     {
       "id": "PATCH-TS-164",
@@ -2508,7 +2520,353 @@
         "module"
       ],
       "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "id": "PATCH-TS-189",
+      "path": "src/avalan/cli/commands/task.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_print_task_execution_error",
+        "_task_enqueue"
+      ],
+      "source_sha256": "629cd34cb73e649f6ecf5f1ab20bbcb05b72dc7a17a8729e0e91d0c34311b984"
+    },
+    {
+      "id": "PATCH-TS-190",
+      "path": "src/avalan/task/__init__.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e3aacc305a821408b932fc240fd109e8993c0be851c4a77f25f9da33abce03a1"
+    },
+    {
+      "id": "PATCH-TS-191",
+      "path": "src/avalan/task/client.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "6c49f05b1f7f5d7fcf7c6ff3d29606cce67945404a5fe73739bccd000f119b74"
+    },
+    {
+      "id": "PATCH-TS-192",
+      "path": "src/avalan/task/queue.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d456ea02d0b98ab1bbacef860634093cb06bdbcca271fac7393f7cdf41f10191"
+    },
+    {
+      "id": "PATCH-TS-193",
+      "path": "src/avalan/task/queues/pgsql.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "098d3eeb19de9a88549b1e1ef9335a955046b7efbe6da9d10e2491d2b08dc065"
+    },
+    {
+      "id": "PATCH-TS-194",
+      "path": "src/avalan/task/queues/submission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "46e34067354de1b538bfada358d66052498e6926a1cf2965f93ece967d4e9e1d"
+    },
+    {
+      "id": "PATCH-TS-195",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260907_0001_task_submissions.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b7d8efd69a7b8d2b9d2b739db1a46584e44f17335c957df2455abadb42de37e4"
+    },
+    {
+      "id": "PATCH-TS-196",
+      "path": "src/avalan/task/submission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "3ae0fbfee229e7e9ee146b41eab6407c8c6663f2b02bc0b1c6e209202130009d"
+    },
+    {
+      "id": "PATCH-TS-197",
+      "path": "tests/input/failure_matrix_task_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_attached_advisory_timeout_observation",
+        "_durable_failure_harness",
+        "_record_failure_matrix_evidence",
+        "_test_input_f_01"
+      ],
+      "source_sha256": "a05bd2cac71411e03120bd5866ac0138b9845c34078fdc0d290e4be36c7093f4"
+    },
+    {
+      "id": "PATCH-TS-198",
+      "path": "tests/interaction/stores/conversation_atomic_pgsql_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_run_worker"
+      ],
+      "source_sha256": "7a867d2e38e75dcf6e8a5c10673f91d9f677930b655aa35a288f1cde884069da"
+    },
+    {
+      "id": "PATCH-TS-199",
+      "path": "tests/interaction/stores/interaction_pgsql_e2e.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_initial_suspension",
+        "suspended",
+        "test_completed_provider_failure_replays_after_connection_loss",
+        "test_coordinator_scopes_isolate_real_corruption",
+        "test_partial_resumed_startup_cancel_recovers_after_restart"
+      ],
+      "source_sha256": "0df33e429120d01bd98fdc5cc79201842776d0c9ae63a00958db67164a2a1f9f"
+    },
+    {
+      "id": "PATCH-TS-200",
+      "path": "tests/skill/skill_observability_phase12_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "submit_prepared",
+        "test_task_client_and_runner_deliver_skill_audit_fail_closed",
+        "test_task_skill_identity_snapshots_hide_source_labels"
+      ],
+      "source_sha256": "bf91680292ca9a32333969c964152a5687f4aa13cb0644cf9541ef605b6e47a6"
+    },
+    {
+      "id": "PATCH-TS-201",
+      "path": "tests/task/client_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__init__",
+        "submit_prepared",
+        "test_cancel_requests_queued_run_cancellation",
+        "test_enqueue_accepts_durable_provider_reference",
+        "test_enqueue_deletes_materialized_file_when_idempotency_fails",
+        "test_enqueue_deletes_materialized_file_when_queue_fails",
+        "test_enqueue_materializes_files_and_waits_for_terminal_output",
+        "test_enqueue_materializes_remote_file_with_policy",
+        "test_enqueue_persists_explicit_durable_files",
+        "test_enqueue_rejects_expiring_provider_reference",
+        "test_enqueue_rejects_non_durable_explicit_files",
+        "test_enqueue_rejects_provider_reference_mime_mismatch",
+        "test_enqueue_rejects_relative_schema_ref_without_base",
+        "test_enqueue_rejects_scalar_input_without_payload_storage",
+        "test_enqueue_resolves_sdk_schema_refs_before_persistence",
+        "test_enqueue_sanitizes_sensitive_queue_metadata",
+        "test_enqueue_uses_default_definition_hash",
+        "test_enqueue_uses_explicit_queue_name",
+        "test_queued_run_and_enqueue_return_stable_diagnostic"
+      ],
+      "source_sha256": "614909e37f7c0acb9bc15a4f9442752b045866876180a5c334609e9485accff9"
+    },
+    {
+      "id": "PATCH-TS-202",
+      "path": "tests/task/container_execution_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "submit_prepared",
+        "test_client_and_worker_preserve_direct_queued_equivalence",
+        "test_queued_worker_container_backend_guards",
+        "test_queued_worker_container_no_capture_skips_events",
+        "test_queued_worker_envelope_delegates_to_trusted_runner",
+        "test_queued_worker_rejects_widened_isolation_metadata",
+        "test_queued_worker_verifies_container_metadata_before_target",
+        "test_worker_cancellation_cancels_running_container_lifecycle",
+        "test_worker_container_execution_fail_closed_edges",
+        "test_worker_container_output_does_not_run_host_target",
+        "test_worker_container_output_validation_failure",
+        "test_worker_container_result_reuses_output_handling"
+      ],
+      "source_sha256": "da9c56b5f73193ab3774f3259b2a551b42ba956f8c678e7e6fd25fa7b2637e26"
+    },
+    {
+      "id": "PATCH-TS-203",
+      "path": "tests/task/full_e2e_matrix_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "queued_client",
+        "submit_prepared",
+        "test_graph_flow_source_modes_execute_direct_and_queue",
+        "test_queued_conversion_and_provider_reference_matrix",
+        "test_queued_flow_file_conversion_requires_artifact_store",
+        "test_queued_flow_image_conversion_matrix_is_sanitized",
+        "test_queued_graph_authored_flow_file_source_executes",
+        "test_queued_invalid_graph_flow_ref_fails_before_enqueue",
+        "test_queued_strict_subflow_failure_is_sanitized",
+        "test_strict_subflow_matrix_matches_direct_and_queue"
+      ],
+      "source_sha256": "56d423ca030bfe84cc55e474b9be81d94bffc47a7c68e4476c68e5b4cdcb24a3"
+    },
+    {
+      "id": "PATCH-TS-204",
+      "path": "tests/task/queue_worker_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "_client",
+        "_enqueue_raw_input",
+        "requeue_suspended",
+        "submit_prepared",
+        "suspend_claim",
+        "test_cancelled_queued_submission_is_not_claimed",
+        "test_duplicate_submission_after_completion_reuses_result",
+        "test_duplicate_submission_reuses_queued_run",
+        "test_durable_attachment_runs_through_queue_and_inspection",
+        "test_explicit_queue_name_runs_on_matching_worker",
+        "test_file_array_task_materializes_all_inputs",
+        "test_file_conversion_runs_before_worker_target",
+        "test_file_task_runs_through_client_worker_and_inspection",
+        "test_heartbeat_claim_conflict_does_not_finalize_run",
+        "test_heartbeat_failure_does_not_finalize_run",
+        "test_invalid_structured_queue_input_is_rejected_safely",
+        "test_output_artifact_task_runs_through_queue_and_inspection",
+        "test_pdf_page_conversion_expands_before_worker_target",
+        "test_pipeline_agent_worker_fails_closed_without_opt_in",
+        "test_queued_agent_task_fails_when_ref_adds_skills_tools",
+        "test_queued_agent_task_fails_with_wrong_worker_definition_base",
+        "test_queued_agent_task_fails_without_worker_definition_base",
+        "test_queued_attachment_requires_durable_reference",
+        "test_queued_flow_rejects_unavailable_input_safely",
+        "test_queued_flow_task_fails_when_agent_ref_adds_skills_tools",
+        "test_queued_flow_task_fails_when_ref_adds_skills_tools",
+        "test_queued_task_blocks_skills_tools_when_identity_is_stale",
+        "test_queued_task_uses_skills_tools_after_revalidation",
+        "test_retry_exhaustion_records_safe_terminal_failure",
+        "test_returned_usage_output_reaches_queued_inspection",
+        "test_running_queue_task_cancellation_finalizes_safely",
+        "test_scheduled_submission_waits_until_available",
+        "test_stale_claim_before_start_waits_for_fresh_claim",
+        "test_structured_file_input_materializes_for_worker",
+        "test_structured_queue_output_contract_failure_stays_safe",
+        "test_terminal_worker_failure_is_safe_to_inspect",
+        "test_transient_structured_queue_failure_retries_to_success",
+        "test_worker_shutdown_abandons_and_reclaims_queue_task",
+        "test_worker_shutdown_after_target_return_reclaims_task"
+      ],
+      "source_sha256": "fcb71035fe8ed4164c9c2b94d2bc21f1035970c45f99f81a90f7003019d68816"
+    },
+    {
+      "id": "PATCH-TS-205",
+      "path": "tests/task/queues/pgsql_protocol_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__aexit__",
+        "__init__",
+        "connection",
+        "execute",
+        "restore",
+        "snapshot",
+        "test_submission_duplicate_evidence_outlives_reservation",
+        "test_submission_ledger_failure_rolls_back_all_prior_writes",
+        "test_submission_participant_does_not_own_connection_or_commit",
+        "test_submission_preflight_reads_schema_without_writes",
+        "test_submission_rejects_foreign_participant_unit_and_schema",
+        "test_submission_unknown_ack_uses_fresh_reconciliation",
+        "test_submit_prepared_existing_idempotent_run_without_queue_item",
+        "test_submit_prepared_persists_submission_atomically",
+        "test_submit_prepared_rejects_idempotency_identity_mismatch",
+        "test_submit_prepared_rejects_invalid_submission_inputs",
+        "test_submit_prepared_rejects_missing_idempotency_target",
+        "test_submit_prepared_replaces_expired_idempotency_key",
+        "test_submit_prepared_returns_existing_idempotent_run",
+        "test_submit_prepared_rolls_back_conflicted_artifact",
+        "test_submit_prepared_rolls_back_conflicted_queue_item",
+        "test_submit_prepared_rolls_back_conflicted_run_id",
+        "test_submit_prepared_rolls_back_failed_submission",
+        "test_submit_prepared_rolls_back_idempotency_insert_gap",
+        "test_submit_prepared_rolls_back_racing_idempotency_conflict",
+        "test_submit_prepared_rolls_back_stale_transition",
+        "test_submit_prepared_rolls_back_store_outage_before_mutation",
+        "test_submit_prepared_rolls_back_transition_insert_conflict"
+      ],
+      "source_sha256": "18b3212a4a1385b29446dc34db9fa13f1bc78752b7ff06d36bb7ea2d7a4b65ba"
+    },
+    {
+      "id": "PATCH-TS-206",
+      "path": "tests/task/stores/pgsql_queue_e2e_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_duplicate_submission_returns_pgsql_queue_context",
+        "test_fresh_reconciliation_waits_for_the_real_writer_transaction",
+        "test_submission_rollback_removes_every_atomic_record",
+        "test_worker_completes_pgsql_queue_run",
+        "test_worker_retries_pgsql_queue_run",
+        "wait_for_database_lock"
+      ],
+      "source_sha256": "6457a9cfb1955e06746a89a8b72ac5a9fe585b313dce778cb43920ace507715c"
+    },
+    {
+      "id": "PATCH-TS-207",
+      "path": "tests/task/stores/pgsql_queue_load_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "test_claim_load_profile_preserves_lease_invariants"
+      ],
+      "source_sha256": "66bc880de2927fee4e51ecf2c4b2b6919d84ced44e70ef587b5cde66a4523b9f"
+    },
+    {
+      "id": "PATCH-TS-208",
+      "path": "tests/task/submission_lifecycle_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ae18f107c838462d17d7cb830d8b48813c710c9011a15a041f22724401570ac9"
+    },
+    {
+      "id": "PATCH-TS-209",
+      "path": "tests/task/submission_pgsql_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "2be39e56b59550e236451d838b2910946f33391099e6efc656f9172ba942e8c6"
+    },
+    {
+      "id": "PATCH-TS-210",
+      "path": "tests/task/submission_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0cb01373be08650f3bc7bbcb5ace12482ac0c822d49cf30eaa5e1c9c9406b946"
+    },
+    {
+      "id": "PATCH-TS-211",
+      "path": "tests/task/worker_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "submit_prepared"
+      ],
+      "source_sha256": "4a486afdb70bd7ecfa935441074edfff6e5636956c8a5e9b8202f6b9315c246e"
+    },
+    {
+      "id": "PATCH-TS-212",
+      "path": "tests/task_submission_helpers.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9882c945e92a92317ff6d34a472e271cd00283104fadd7e241b70f155250eb98"
+    },
+    {
+      "id": "PATCH-TS-213",
+      "path": "tests/interaction/stores/pgsql_support.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__init__",
+        "execute",
+        "restore",
+        "snapshot"
+      ],
+      "source_sha256": "88c906da1bf4099d148304acc1ab7bce6b6d21fc1a21f38c6424d8c1dd31a67a"
     }
   ],
-  "manifest_sha256": "247ba4452d469ded45ba5698d55ee69cbba456dbd640c47d83162359f1ad3f4b"
+  "manifest_sha256": "fb2787f154cf4e31f3bb7b3dbb81334b25900a640dca145f533138c5e381aa54"
 }

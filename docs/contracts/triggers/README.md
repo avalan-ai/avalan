@@ -218,16 +218,40 @@ reconciliation. `TriggerScheduler.process_once() -> TriggerProcessResult` return
 admitted/skipped counts, decided ranges, conflicts, safe errors, remaining_work;
 `serve()` owns its loop and shutdown. Generic external callbacks cannot submit SQL.
 
-Replace `TaskClient.enqueue` with `submit(definition, *, request:
+`TaskClient.submit(definition, *, request:
 TaskSubmissionRequest) -> TaskSubmissionResult`. Request carries input_value,
 files, metadata, available_at, queue selection and manual idempotency options;
 owner scope is client-bound. A shared internal preparation service produces
 `PreparedTaskSubmission` (definition/deployment identity, encrypted frozen input,
 artifact ownership plan, provenance, queue and idempotency reservation). Queue
-`submit_prepared(prepared, *, unit_of_work) -> TaskSubmissionResult` is a typed
+`submit_prepared(prepared, *, unit_of_work) -> TaskSubmissionWrite` is a typed
 internal participant; it never opens/commits another connection. Manual submit
-opens the same unit of work itself. Remove enqueue_run and the superseded
-submission DTOs; ordinary execution request/state/claim types remain where useful.
+opens the same unit of work itself. The provisional write cannot establish a
+committed outcome; only transaction exit or fresh-connection reconciliation can.
+Reconciliation uses READ COMMITTED and the same transaction-scoped advisory lock
+for the stable, preallocated submission identity before reading its durable
+submission-to-run association. Absence after that completion fence establishes
+`not_committed`; failures leave `unknown`. Unknown outcomes retain prepared
+identity and temporary artifacts. Confirmed outcomes release only temporary
+physical objects not owned by the committed run; failed deletion is reported as
+`cleanup_pending` without changing commit evidence. The caller can reconcile
+and release unused resources explicitly. There is no automatic retry.
+Read-only storage preflight runs before definition registration or materialized
+artifact writes, and the supplied transaction checks the schema again. Cancellation
+and process interruptions retain their exception categories through typed
+`TaskSubmissionCancelledError`, `TaskSubmissionKeyboardInterrupt` and
+`TaskSubmissionSystemExit` exceptions. Their `result` carries the prepared recovery
+handle and latest known outcome, including when a second interruption aborts
+reconciliation or cleanup. Known commit evidence remains committed; uncertain
+resources remain retained. SystemExit preserves its original exit code.
+
+`TaskClient.prepare_submission` shares validation and materialization with manual
+submit. The bound client supplies trusted owner scope and optional host-resolved
+execution deployment identity; Phase 2 carries that identity without claiming
+Phase 5 deployment closure validation. Occurrence identity scopes ordinary task
+idempotency when enabled; it does not enable a disabled policy or substitute for
+Phase 3 occurrence uniqueness. `enqueue_run` and its submission DTOs are removed;
+ordinary execution request/state/claim types remain where useful.
 
 Persist envelopes `{format: <tag>, version: 1, payload: <closed object>}` for
 trigger definition/state/occurrence/span/event, task submission and provenance.
@@ -294,19 +318,19 @@ that run's ownership. Deletion requires zero live owners, confirmed outcome,
 staging age >= grace and a locked/rechecked tombstone before deleting bytes.
 Unknown outcomes keep staging resources until recovery proves disposition.
 
-## Integration audit at 38ae8eb5
+## Integration audit (updated through Phase 2)
 
 | Boundary | Verified source / affected callers | Replacement or gate |
 | --- | --- | --- |
-| SDK preparation | task/client.py::TaskClient.enqueue | Shared submit/preparation; schemas, skill identity, privacy, file materialization, registration and idempotency stay mandatory |
-| Transaction | task/queue.py::TaskQueue.enqueue_run, task/queues/pgsql.py::PgsqlTaskQueue.enqueue_run, pgsql.py::PgsqlUnitOfWork | Caller-owned participant, one transaction; queue-only enqueue is distinct worker transport and must be audited before removal |
-| CLI | cli/commands/task.py queue branch (client.enqueue) | Migrate to submit; sibling trigger group and shared connection config in Phase 6 |
+| SDK preparation | task/client.py::TaskClient.submit / prepare_submission | Shared submit/preparation; schemas, skill identity, privacy, file materialization, registration and idempotency stay mandatory |
+| Transaction | task/queue.py::TaskQueue.submit_prepared, task/queues/pgsql.py::PgsqlTaskQueue.submit_prepared, pgsql.py::PgsqlUnitOfWork | Caller-owned participant, one transaction; queue-only enqueue is distinct worker transport and must be audited before removal |
+| CLI | cli/commands/task.py queue branch (client.submit) | Migrated to submit; sibling trigger group and shared connection config in Phase 6 |
 | Worker | task/worker.py::_queued input handling, task/context.py::TaskTargetContext, task/store.py::TaskExecutionRequest | Typed provenance through attempt/retry/resume; retain fencing |
 | Persistence codecs | task/stores/pgsql.py::_request_to_payload/_request_from_payload, _context_to_payload/_context_from_payload; task/container.py | Versioned task submission and provenance; inspect interaction checkpoint embedding before replacement |
 | Feature gates | task/feature_gate.py; task/validation.py; task/loader.py | JSON schema/task extra, PostgreSQL/worker extras and raw storage/remote URL restrictions remain enforced; FLOW_BACKED_TASKS metadata has no production callers and is not a global Flow gate |
 | Flow target | task/targets/flow.py::FlowTaskTargetRunner.validate_definition, validate_flow_task_compatibility; cli/commands/task.py::_task_strict_flow_resolver and FlowTaskTargetRunner construction | Validate supported Flow contracts and strict graph/node capabilities; fixtures/flow.flow.toml passes the existing strict runner validator |
 | Identity / lifetime | task/canonical.py, task/skills.py, task/input.py, task/artifact.py, task/retention.py | Deployment manifest and revision ownership are new; current task hash alone is insufficient |
-| Tools and protocols | tool/a2a.py; server/mcp_tasks.py, server/routers/mcp.py, server/a2a/ | Separate protocol task abstractions; no TaskClient.enqueue caller found; no new management routes/tools in v1 |
+| Tools and protocols | tool/a2a.py; server/mcp_tasks.py, server/routers/mcp.py, server/a2a/ | Separate protocol task abstractions; no task submission caller found; no new management routes/tools in v1 |
 | False positive | server/routers/responses.py::projection adapter enqueue | Stream projection, unrelated to queue submission; preserve |
 
 Direct submission/queue callers in tests: task/client_test.py,

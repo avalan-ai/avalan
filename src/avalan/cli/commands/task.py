@@ -81,6 +81,10 @@ from ...task.stores import (
 from ...task.stores import (
     task_pgsql_upgrade as run_task_pgsql_upgrade,
 )
+from ...task.submission import (
+    TaskSubmissionRequest,
+    TaskSubmissionUnsettledError,
+)
 from ...task.targets.agent import (
     AgentOrchestratorLoader,
     AgentTaskTargetRunner,
@@ -860,11 +864,13 @@ async def _task_enqueue(
                 **client_kwargs,
             )
             async with client_context as client:
-                submission = await client.enqueue(
+                submission = await client.submit(
                     definition,
-                    input_value=task_input.value,
-                    queue_name=_task_cli_queue_name(args),
-                    queue_metadata=_safe_queue_metadata(args),
+                    request=TaskSubmissionRequest(
+                        input_value=task_input.value,
+                        queue_name=_task_cli_queue_name(args),
+                        queue_metadata=_safe_queue_metadata(args),
+                    ),
                 )
                 console.print(
                     f"Task enqueued: {submission.run.run_id}",
@@ -897,6 +903,7 @@ async def _task_enqueue(
         TaskClientUnsupportedOperationError,
         TaskClientWaitTimeoutError,
         TaskValidationError,
+        TaskSubmissionUnsettledError,
     ) as exc:
         _print_task_execution_error(console, exc)
         return False
@@ -1819,6 +1826,11 @@ def _print_task_execution_error(
     if isinstance(error, TaskValidationError):
         _print_issues(
             console, "Task definition or input is invalid.", error.issues
+        )
+        return
+    if isinstance(error, TaskSubmissionUnsettledError):
+        console.print(
+            f"error task.submission_{error.result.outcome.value}", markup=False
         )
         return
     if isinstance(error, TaskClientWaitTimeoutError):
