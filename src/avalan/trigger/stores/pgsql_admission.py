@@ -21,6 +21,7 @@ from ..coverage import TriggerDecision
 from ..error import TriggerError, TriggerErrorCode
 from ..plan import PlannedOccurrence, TriggerAdmissionPlan
 from ..records import TriggerCoverageSpan, TriggerOccurrence
+from ..search_budget import SearchWorkExhausted
 from .pgsql import PgsqlTriggerStore, _snapshot, decision_time, lock_identity
 
 from asyncio import CancelledError
@@ -285,6 +286,8 @@ VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb)
                 ),
                 resolved=resolved,
             )
+        except SearchWorkExhausted:
+            raise
         except Exception:
             return TriggerAdmissionResult(
                 plan=plan,
@@ -395,6 +398,11 @@ FOR UPDATE OF t SKIP LOCKED
                     raise
             if isinstance(error, CancelledError):
                 raise TriggerAdmissionCancelledError(result) from None
+            if (
+                isinstance(error, SearchWorkExhausted)
+                and result.outcome is TriggerCommitOutcome.NOT_COMMITTED
+            ):
+                raise error
             if not isinstance(error, Exception):
                 raise
             return replace(

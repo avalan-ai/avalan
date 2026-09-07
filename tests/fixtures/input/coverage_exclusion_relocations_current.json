@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "68a8c4417dc042cd6dfe6e0c5a14b71432f316a40d74d7d89a5f04b8a8dda288",
+  "current_snapshot_sha256": "ad207b45df0d3839287c3e2f78216a54ca6e615e1e985a6dedde7313a1a79232",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "91a453248b24d38cad550f07070a4212efc579ca56602c48554ea1c5f6c996d4"
   },
   "report_lines": {
-    "added": 1448,
+    "added": 1455,
     "removed": 312,
-    "sha256": "724d0ce6175fd4195f1e425537a2ef840e805501bce419bfcf5c90126e37867f"
+    "sha256": "cd452281d45a5b0439626c6d340450cfdb8a569ecdeda731750e4b94f775191a"
   },
   "review": {
-    "reviewed_by": "trigger store and ownership exclusion audit",
-    "rationale": "Preserve the immutable baseline, existing directives and default coverage policy. Task lifecycle and Alembic Protocol exclusions relocate unchanged. New ownership cleanup and task submission Protocol signatures, trigger store Protocol signatures, and TYPE_CHECKING-only task imports add 75 parser-excluded lines including default blank/end lines. Audit records exact old/new source lines; no executable runtime branch, pragma or exclusion configuration is added."
+    "reviewed_by": "trigger scheduler exclusion audit",
+    "rationale": "Preserve the immutable baseline, source directives and default coverage policy. Relative to the reviewed Phase 3 snapshot, the trigger store Protocol relocates and adds the discovery cursor argument plus next eligible instant signature (three parser lines); the scheduler owned-resource Protocol adds four default-ellipsis and adjacent blank lines. Total increases by seven to 2368. Exact old/new line audit is retained in Phase 4 evidence; no runtime branch, pragma or exclusion configuration is added."
   },
-  "ledger_sha256": "dd84c3469e9c4ad6e33a94d14845ea6ccdced744c3084de6c14034aa70b050f6"
+  "ledger_sha256": "de8cff66b28d5a5e1eccea7edc90a9cd4a4f7cf37b1556722b23e8198272bcde"
 }

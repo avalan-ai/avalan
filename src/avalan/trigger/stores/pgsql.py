@@ -21,7 +21,7 @@ from ..registration import (
     set_enabled,
 )
 from ..schedule import SearchLimits
-from ..store import HistoryCursor, TriggerPage
+from ..store import HistoryCursor, TriggerDiscoveryCursor, TriggerPage
 
 from collections.abc import AsyncIterator, Mapping
 from contextlib import asynccontextmanager
@@ -375,8 +375,10 @@ WHERE t.owner_scope_id = %s ORDER BY t.ordinal LIMIT %s OFFSET %s
         *,
         decision_time: datetime,
         limit: int = 100,
+        after: TriggerDiscoveryCursor | None = None,
     ) -> tuple[TriggerSnapshot, ...]:
         integer(limit, 1, 1000, "discovery.limit")
+        assert after is None or isinstance(after, TriggerDiscoveryCursor)
         now = timestamp(decision_time)
         async with self.transaction() as unit:
             await unit.cursor.execute(
@@ -387,13 +389,39 @@ FROM triggers t JOIN trigger_definitions d
      = (t.owner_scope_id, t.trigger_id, t.revision)
 WHERE t.owner_scope_id = %s AND t.status = 'active' AND t.next_at <= %s
     AND (t.retry_after IS NULL OR t.retry_after <= %s)
-ORDER BY t.last_processed_at, t.trigger_id LIMIT %s
+ORDER BY CASE WHEN t.last_processed_at > %s::timestamptz
+    THEN 1 ELSE 0 END, CASE WHEN %s::timestamptz IS NOT NULL AND
+    (t.last_processed_at, t.trigger_id) <= (%s::timestamptz, %s)
+    THEN 1 ELSE 0 END, t.last_processed_at, t.trigger_id LIMIT %s
 """,
-                (self.owner.value, now, now, limit),
+                (
+                    self.owner.value,
+                    now,
+                    now,
+                    after.round_started_at if after is not None else None,
+                    after.last_processed_at if after is not None else None,
+                    after.last_processed_at if after is not None else None,
+                    after.trigger_id if after is not None else None,
+                    limit,
+                ),
             )
             return tuple(
                 _snapshot(row) for row in await unit.cursor.fetchall()
             )
+
+    async def next_eligible_at(self) -> datetime | None:
+        """Read the earliest active cursor after its durable retry delay."""
+        async with self.transaction() as unit:
+            await unit.cursor.execute(
+                "SELECT MIN(GREATEST(next_at, retry_after)) AS eligible_at "
+                "FROM triggers WHERE owner_scope_id = %s "
+                "AND status = 'active' AND next_at IS NOT NULL",
+                (self.owner.value,),
+            )
+            row = await unit.cursor.fetchone()
+            if row is None or row["eligible_at"] is None:
+                return None
+            return timestamp(row["eligible_at"], "store.eligible_at")
 
     async def events(
         self,

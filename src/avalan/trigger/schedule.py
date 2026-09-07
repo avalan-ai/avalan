@@ -8,6 +8,7 @@ from .definition import (
 )
 from .dialect import parse_cron
 from .error import TriggerError, TriggerErrorCode
+from .search_budget import charge_schedule_work
 
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
@@ -40,6 +41,7 @@ class _Budget:
             raise TriggerError(
                 TriggerErrorCode.SEARCH_BUDGET_EXHAUSTED, "search.candidates"
             )
+        charge_schedule_work()
         self.remaining -= 1
 
 
