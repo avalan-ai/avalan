@@ -1594,6 +1594,54 @@ class DisplayReducerTestCase(TestCase):
             1.25,
         )
 
+    def test_compaction_replaces_thinking_and_next_cycle_resets_timer(
+        self,
+    ) -> None:
+        reducer = CliStreamSnapshotReducer(
+            _config(stats=False, display_tools=True),
+            clock=FakeClock(2.0, 10.0, 13.0, 14.0),
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                1,
+                model_continuation_id="compacting",
+            )
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_STARTED,
+                2,
+                data={"candidate_count": 1},
+            )
+        )
+        snapshot = reducer.snapshot()
+        self.assertEqual(snapshot.active_model_continuations, ())
+        assert snapshot.active_inline_compaction is not None
+        self.assertEqual(snapshot.active_inline_compaction.started_at, 10.0)
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.INLINE_COMPACTION_COMMITTED,
+                3,
+                data={"boundary_count": 1},
+            )
+        )
+        reducer.apply_projection(
+            _projection(
+                StreamItemKind.MODEL_CONTINUATION_STARTED,
+                4,
+                model_continuation_id="next",
+            )
+        )
+        snapshot = reducer.snapshot()
+        self.assertIsNone(snapshot.active_inline_compaction)
+        self.assertEqual(
+            snapshot.inline_compaction_results[0].elapsed_seconds, 3.0
+        )
+        self.assertEqual(
+            snapshot.active_model_continuations[-1].started_at, 14.0
+        )
+
     def test_inline_compaction_uses_terminal_time_for_missing_duration(
         self,
     ) -> None:

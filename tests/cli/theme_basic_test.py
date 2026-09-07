@@ -1096,7 +1096,7 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(_answer_chunks(first_answer), ["Answer"])
         self.assertEqual(_answer_chunks(second_answer), [" complete"])
 
-    async def test_first_answer_keeps_reasoning_with_active_progress(
+    async def test_first_answer_keeps_reasoning_without_active_progress(
         self,
     ) -> None:
         config = _stream_config(
@@ -1140,7 +1140,8 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         for reasoning_line in reasoning_lines:
             self.assertIn(reasoning_line, activity)
         self.assertGreater(len(activity.splitlines()), 6)
-        self.assertIn("Starting tool calc", activity)
+        self.assertNotIn("Starting tool calc", activity)
+        self.assertNotIn("Thinking", activity)
 
     async def test_live_reasoning_role_clears_when_no_longer_visible(
         self,
@@ -3085,6 +3086,154 @@ class BasicStreamPresenterTestCase(unittest.IsolatedAsyncioTestCase):
         self.assertIn("Compacting for 1s...", first_text)
         self.assertIn("Compacting for 2.2s...", second_text)
         self.assertIn("Compacted in 1.2s.", completed_text)
+
+    async def test_compaction_history_is_chronological_with_reasoning_hidden(
+        self,
+    ) -> None:
+        for show_reasoning in (False, True):
+            for limit in (2, 8):
+                with self.subTest(reasoning=show_reasoning, limit=limit):
+                    config = _stream_config(
+                        display_tools=True,
+                        display_reasoning=show_reasoning,
+                        display_tools_events=limit,
+                    )
+                    builder = CliStreamSnapshotBuilder(config)
+                    for sequence, name in ((1, "first"), (3, "second")):
+                        builder.add_tool_result_summary(
+                            tool_call_id=name,
+                            name=name,
+                            status="result",
+                            result="ok",
+                            arguments_count=1,
+                            sequence=sequence,
+                        )
+                    builder.finish_inline_compaction(
+                        outcome="committed",
+                        boundary_count=1,
+                        sequence=2,
+                        elapsed_seconds=5.0,
+                    )
+                    items = await _collect_stream_items(
+                        BasicStreamPresenter(getLogger(__name__)),
+                        _stream_request(config, builder.snapshot()),
+                    )
+                    output = _render_text(_frames(items)[0].renderable)
+                    self.assertLess(
+                        output.index("Compacted in 5s."),
+                        output.index("Executed tool second"),
+                    )
+                    if limit == 2:
+                        self.assertNotIn("Executed tool first", output)
+                    else:
+                        self.assertLess(
+                            output.index("Executed tool first"),
+                            output.index("Compacted in 5s."),
+                        )
+
+    async def test_answer_waits_for_compaction_and_commits_static_history(
+        self,
+    ) -> None:
+        for show_reasoning in (False, True):
+            for outcome in ("committed", "rolled_back"):
+                with self.subTest(reasoning=show_reasoning, outcome=outcome):
+                    config = _stream_config(
+                        display_tools=True,
+                        display_reasoning=show_reasoning,
+                        display_tools_events=8,
+                    )
+                    builder = CliStreamSnapshotBuilder(config)
+                    builder.add_tool_result_summary(
+                        tool_call_id="last",
+                        name="ls",
+                        status="result",
+                        result="ok",
+                        arguments_count=1,
+                        sequence=1,
+                    )
+                    builder.add_active_model_continuation(
+                        model_continuation_id="final",
+                        sequence=2,
+                        started_at=1.0,
+                    )
+                    builder.append_reasoning_text("Ready.", sequence=3)
+                    builder.start_inline_compaction(
+                        candidate_count=1, sequence=4, started_at=10.0
+                    )
+                    builder.append_answer_text("COMPACTION-OK")
+                    presenter = BasicStreamPresenter(getLogger(__name__))
+                    active = await _collect_stream_items(
+                        presenter, _stream_request(config, builder.snapshot())
+                    )
+                    self.assertEqual(_answer_chunks(active), [])
+                    self.assertIn(
+                        "Compacting",
+                        _render_text(_frames(active)[0].renderable),
+                    )
+                    builder.finish_inline_compaction(
+                        outcome=outcome,
+                        boundary_count=1,
+                        sequence=5,
+                        elapsed_seconds=3.0,
+                    )
+                    completed = await _collect_stream_items(
+                        presenter, _stream_request(config, builder.snapshot())
+                    )
+                    output = _render_text(_frames(completed)[0].renderable)
+                    self.assertNotIn("Thinking", output)
+                    self.assertNotIn("Compacting", output)
+                    expected = (
+                        "Compacted in 3s."
+                        if outcome == "committed"
+                        else "Compaction rolled back after 3s."
+                    )
+                    self.assertIn(expected, output)
+                    self.assertIn("Executed tool ls", output)
+                    self.assertEqual(
+                        _answer_chunks(completed), ["COMPACTION-OK"]
+                    )
+
+    async def test_reasoning_answer_transition_drops_active_spinners(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_reasoning=True)
+        builder = CliStreamSnapshotBuilder(config)
+        builder.append_reasoning_text("Ready.", sequence=1)
+        builder.add_active_model_continuation(
+            model_continuation_id="final", sequence=2, started_at=1.0
+        )
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        await _collect_stream_items(
+            presenter, _stream_request(config, builder.snapshot())
+        )
+        builder.append_answer_text("Done.")
+        items = await _collect_stream_items(
+            presenter, _stream_request(config, builder.snapshot())
+        )
+        output = _render_text(_frames(items)[0].renderable)
+        self.assertIn("Ready.", output)
+        self.assertNotIn("Thinking", output)
+        self.assertEqual(_answer_chunks(items), ["Done."])
+
+    async def test_compaction_answer_clears_spinner_with_history_disabled(
+        self,
+    ) -> None:
+        config = _stream_config(display_tools=True, display_tools_events=0)
+        builder = CliStreamSnapshotBuilder(config)
+        presenter = BasicStreamPresenter(getLogger(__name__))
+        builder.start_inline_compaction(candidate_count=1, started_at=1.0)
+        await _collect_stream_items(
+            presenter, _stream_request(config, builder.snapshot())
+        )
+        builder.finish_inline_compaction(
+            outcome="committed", boundary_count=1, elapsed_seconds=2.0
+        )
+        builder.append_answer_text("Done.")
+        items = await _collect_stream_items(
+            presenter, _stream_request(config, builder.snapshot())
+        )
+        self.assertEqual(_frames(items)[0].renderable, "")
+        self.assertEqual(_answer_chunks(items), ["Done."])
 
     def test_live_activity_frame_uses_inline_compaction_spinner(self) -> None:
         """Render provider-evidenced compaction as the live tool activity."""

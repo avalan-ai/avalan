@@ -30,7 +30,7 @@ from .tool_projection import (
 )
 
 from collections.abc import AsyncGenerator, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from json import JSONDecodeError, loads
 from logging import Logger
 from re import IGNORECASE, MULTILINE, Pattern, compile
@@ -434,6 +434,18 @@ class BasicStreamPresenter:
     ) -> AsyncGenerator[CliStreamPresenterItem, None]:
         """Yield Basic answer chunks before optional diagnostic frames."""
         assert isinstance(request, CliStreamPresenterRequest)
+        if (
+            request.mode != "answer"
+            and request.display_config.diagnostic_channel == "live"
+            and request.snapshot.active_inline_compaction is not None
+            and not request.snapshot.terminal.completed
+            and not self._last_visible_answer_text
+        ):
+            # Finish provider compaction before committing the live frame.
+            request = replace(
+                request,
+                snapshot=replace(request.snapshot, answer_text=""),
+            )
         _ = self._event_stats, self._logger
         if request.mode != "answer":
             reasoning_frame = self._reasoning_frame(request)
@@ -721,7 +733,8 @@ class BasicStreamPresenter:
         ):
             return None
         has_progress = bool(
-            self._active_model_continuations
+            "tools" in self._visible_roles
+            or self._active_model_continuations
             or request.snapshot.active_model_continuations
             or request.snapshot.active_inline_compaction is not None
             or request.snapshot.active_tools
@@ -741,13 +754,15 @@ class BasicStreamPresenter:
         if entries:
             renderable = self._live_tool_history_frame(entries)
             if request.snapshot.display.show_reasoning:
-                renderable = _basic_live_activity_frame(request)
+                renderable = _basic_live_activity_frame(
+                    request, include_active=False
+                )
             return self._role_frame("tools", renderable)
         if has_progress and first_visible_answer:
             if request.snapshot.display.show_reasoning:
                 return self._role_frame(
                     "tools",
-                    _basic_live_activity_frame(request),
+                    _basic_live_activity_frame(request, include_active=False),
                 )
             return self._role_frame("tools", None)
         return None
@@ -847,6 +862,7 @@ def _basic_live_activity_frame(
     request: CliStreamPresenterRequest,
     *,
     completed_model_entries: tuple[_BasicToolLineEntry, ...] = (),
+    include_active: bool = True,
 ) -> RenderableType | None:
     candidates: list[_BasicActivityEntry] = []
 
@@ -859,7 +875,7 @@ def _basic_live_activity_frame(
             )
         )
 
-    if request.snapshot.display.show_tools:
+    if include_active and request.snapshot.display.show_tools:
         for continuation in request.snapshot.active_model_continuations:
             append(
                 continuation.sequence,
@@ -890,7 +906,7 @@ def _basic_live_activity_frame(
     ):
         append(tool_entry.sequence, tool_entry.line)
 
-    if request.snapshot.display.show_tools:
+    if include_active and request.snapshot.display.show_tools:
         for tool in request.snapshot.active_tools:
             append(
                 tool.sequence,
@@ -1261,9 +1277,12 @@ def _basic_tool_frame(
 
     history_lines = [
         entry.line
-        for entry in _basic_tool_entries(request, include_active=False)
+        for entry in _basic_tool_entries(
+            request,
+            include_active=False,
+            completed_model_entries=completed_model_entries,
+        )
     ]
-    history_lines.extend(entry.line for entry in completed_model_entries)
     active_model_renderables = (
         [
             _basic_active_model_renderable(
@@ -1420,6 +1439,12 @@ def _basic_tool_entries(
         ),
         *completed_model_entries,
     ]
+    history_entries.sort(
+        key=lambda entry: (
+            entry.sequence is None,
+            entry.sequence if entry.sequence is not None else 0,
+        )
+    )
     limit = request.display_config.display_tools_events
     if limit is not None:
         history_entries = history_entries[-limit:] if limit else []

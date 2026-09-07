@@ -266,7 +266,7 @@
       "path": "src/avalan/patch/sandbox_commit.py",
       "symbol": "SandboxPatchRuntimeBinder",
       "artifact_class": "patch_sandbox_target",
-      "source_sha256": "4ced451345756a53ef14ef3f070a47c4a5ad5acd4a2a7a6fc4c10f989d4dfac0"
+      "source_sha256": "00f52d010a0a9ba6e067588484c9b1b485c8ec2f01b218fd5161464f16992888"
     },
     {
       "id": "PATCH-SYM-039",
@@ -402,5 +402,5 @@
       "source_sha256": "ee1e0ec7aa67e8bbcaf36d1545947a1846368a7660b7d6fdfb2f465701b9e420"
     }
   ],
-  "inventory_sha256": "d1d6bd2bda2ccb0840ee216528375afd789741a68f24cfc80ffe78894323e1ed"
+  "inventory_sha256": "76d3bd7e92fc7c533d3bd6caf7ca939d1bafab5b72c97bcba81ef4fcf8fac917"
 }
