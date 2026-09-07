@@ -1178,7 +1178,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7bfb47763417fcee878dcbd76205664a499b99ccde46836c30bd052f75f158c2"
+      "source_sha256": "acc0b6f43f7d43d5a440092448f2fc8e6a72631c202fc4af54e4f12e7680de48"
     },
     {
       "id": "PATCH-TS-067",
@@ -1971,36 +1971,37 @@
       "path": "src/avalan/cli/display_snapshot.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_TERMINAL_ERROR_SUMMARY_LIMIT",
-        "CliInlineCompactionSnapshot",
         "CliInlineCompactionResultSnapshot",
-        "CliStreamSnapshotBuilder.start_inline_compaction",
+        "CliInlineCompactionSnapshot",
+        "CliStreamSnapshotBuilder._build_stats",
         "CliStreamSnapshotBuilder.finish_inline_compaction",
         "CliStreamSnapshotBuilder.snapshot",
-        "CliStreamSnapshotBuilder._build_stats"
+        "CliStreamSnapshotBuilder.start_inline_compaction",
+        "_TERMINAL_ERROR_SUMMARY_LIMIT"
       ],
-      "source_sha256": "696dfc005d9f160c8c668769a4eeba24a65f93bfeb07467877a32a0472f2d3fa"
+      "source_sha256": "7b5f9536f7674538df28fa224179e23157fef1df6737a8c3b9eba8bab2c85475"
     },
     {
       "id": "PATCH-TS-144",
       "path": "src/avalan/cli/theme/basic.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT",
-        "_basic_terminal_error_entry",
-        "_basic_summary",
-        "_basic_markup_summary",
         "BasicStreamPresenter._pre_answer_tool_frame",
-        "_basic_live_activity_frame",
-        "_basic_reasoning_followed_by_activity",
-        "_basic_tool_frame",
-        "_basic_tool_entries",
-        "_basic_active_inline_compaction_line",
-        "_basic_inline_compaction_result_line",
+        "BasicStreamPresenter.present",
+        "_BASIC_TERMINAL_ERROR_SUMMARY_LIMIT",
         "_BasicActiveInlineCompactionSpinner",
-        "_basic_active_inline_compaction_renderable"
+        "_basic_active_inline_compaction_line",
+        "_basic_active_inline_compaction_renderable",
+        "_basic_inline_compaction_result_line",
+        "_basic_live_activity_frame",
+        "_basic_markup_summary",
+        "_basic_reasoning_followed_by_activity",
+        "_basic_summary",
+        "_basic_terminal_error_entry",
+        "_basic_tool_entries",
+        "_basic_tool_frame"
       ],
-      "source_sha256": "96a99e82f99f592f622d27f3e6016a09ff7d5e9e59177c2f98c3206cb369039d"
+      "source_sha256": "4363ac35ea52fe22cf8a7773d8b86447e7f16349c2aee31a219e50da54cae55d"
     },
     {
       "id": "PATCH-TS-145",
@@ -2134,12 +2135,17 @@
       "path": "tests/cli/theme_basic_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "_render_text",
+        "BasicStreamPresenterTestCase.test_answer_waits_for_compaction_and_commits_static_history",
+        "BasicStreamPresenterTestCase.test_compaction_answer_clears_spinner_with_history_disabled",
+        "BasicStreamPresenterTestCase.test_compaction_history_is_chronological_with_reasoning_hidden",
+        "BasicStreamPresenterTestCase.test_first_answer_keeps_reasoning_without_active_progress",
         "BasicStreamPresenterTestCase.test_inline_compaction_live_timer_and_committed_result",
         "BasicStreamPresenterTestCase.test_inline_compaction_non_spinner_renderable",
-        "BasicStreamPresenterTestCase.test_live_activity_frame_uses_inline_compaction_spinner"
+        "BasicStreamPresenterTestCase.test_live_activity_frame_uses_inline_compaction_spinner",
+        "BasicStreamPresenterTestCase.test_reasoning_answer_transition_drops_active_spinners",
+        "_render_text"
       ],
-      "source_sha256": "9d1d25482dce014643f7aa6ee4ba3347145c438639716b4a9bdc1a69f844320f"
+      "source_sha256": "ce8fe30196b5c473718b5e572f873f4ba6268c76a9565aac7b8c54ca1f43bc42"
     },
     {
       "id": "PATCH-TS-149",
@@ -2414,12 +2420,13 @@
       "path": "tests/cli/display_reducer_test.py",
       "scope": "integration_hunk",
       "symbols": [
-        "DisplayReducerTestCase.test_inline_compaction_lifecycle_tracks_terminal_duration",
-        "DisplayReducerTestCase.test_completed_no_boundary_compaction_is_display_silent",
         "DisplayReducerTestCase.test_apply_event_inline_compaction_lifecycle_is_noop",
+        "DisplayReducerTestCase.test_compaction_replaces_thinking_and_next_cycle_resets_timer",
+        "DisplayReducerTestCase.test_completed_no_boundary_compaction_is_display_silent",
+        "DisplayReducerTestCase.test_inline_compaction_lifecycle_tracks_terminal_duration",
         "DisplayReducerTestCase.test_inline_compaction_rejects_invalid_lifecycle_numbers"
       ],
-      "source_sha256": "80f44227aaeac7a9ecdadc10683407a8c54815a264528e4eb6d5e9e6b99e4ccc"
+      "source_sha256": "9fd8288684bef5d6c6fc90377ea2ed57bde284f2b21b70f7fa3f82a1eb1a9999"
     },
     {
       "id": "PATCH-TS-172",
@@ -4174,7 +4181,43 @@
         "module"
       ],
       "source_sha256": "ab825cb9519d767df00fd996216df04b1beda8fc0742d6084cc06e67c8f3901d"
+    },
+    {
+      "id": "PATCH-TS-347",
+      "path": "tests/task/stores/trigger_acceptance_process.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f2c3e4b812b71180f5c13bd157040b4cabff8a96d3df3d70ed7f7cbf1b56b01a"
+    },
+    {
+      "id": "PATCH-TS-348",
+      "path": "tests/task/stores/trigger_acceptance_process_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "8dd10563950f32e6f3cf5fa005386283dfaddede11a7b14d00b33bf7eaa18505"
+    },
+    {
+      "id": "PATCH-TS-349",
+      "path": "tests/task/stores/trigger_acceptance_resume.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "bbdd8a18c10d80a7712e0eaf716be7a1653f5106a634ba349841077a4820c655"
+    },
+    {
+      "id": "PATCH-TS-350",
+      "path": "tests/task/stores/trigger_acceptance_uniqueness.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "eb9bff89a99cacf5951e10d311974e77ea410fb05029db0cfd4a8fe701c6d7a1"
     }
   ],
-  "manifest_sha256": "dc0627832c233dea70a2c6f1c39faa0cdc91648864f464b415090c3882b2d010"
+  "manifest_sha256": "2c997910159354694736428c9aeaead4ee5dedc132300ef0eea36028a8a47e14"
 }
