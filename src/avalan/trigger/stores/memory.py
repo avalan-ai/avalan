@@ -228,10 +228,22 @@ class InMemoryTriggerStore:
         *,
         cursor: HistoryCursor | None = None,
         limit: int = 50,
+        newest_first: bool = False,
     ) -> TriggerPage[TriggerOccurrence]:
+        assert type(newest_first) is bool
         async with self._lock:
             self._require(name)
-            return _page(self._occurrences.get(name, ()), cursor, limit)
+            return _page(
+                tuple(
+                    sorted(
+                        self._occurrences.get(name, ()),
+                        key=lambda item: (item.revision, item.scheduled_at),
+                        reverse=newest_first,
+                    )
+                ),
+                cursor,
+                limit,
+            )
 
     async def coverage(
         self,

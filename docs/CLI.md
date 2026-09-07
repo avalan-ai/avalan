@@ -3013,9 +3013,9 @@ local artifact backend.
 
 ### avalan task pgsql
 
-Manage PostgreSQL task schema migrations. The command accepts `--dsn` and
-`--schema`, or reads `AVALAN_TASK_PGSQL_DSN` and
-`AVALAN_TASK_PGSQL_SCHEMA` when the options are omitted.
+Manage PostgreSQL task schema migrations. The command accepts `--store-dsn` and
+`--store-schema`, or reads `AVALAN_TASK_STORE_DSN` and
+`AVALAN_TASK_STORE_SCHEMA` when the options are omitted.
 
 ```bash
 avalan task pgsql status
@@ -4185,3 +4185,12 @@ plicate}
   --weight-type {auto,bool,bf16,f16,f32,f64,fp16,fp32,i8,i16,i32,i64,ui8}
                         Weight type to use (defaults to best available)
 ```
+
+## trigger
+
+`trigger validate`, `preview`, `apply`, `list`, `inspect`, `occurrences`, `events`,
+`pause`, `resume`, and `serve` operate durable time-based admission. All produce
+safe bounded JSON. `serve --once` admits one bounded batch; `task worker` executes
+queued runs in a separate invocation. See [the operator guide](TRIGGERS.md) and
+[runnable examples](examples/triggers/README.md) for canonical shared store
+configuration, encrypted input, immutable deployments, CAS control and retention.

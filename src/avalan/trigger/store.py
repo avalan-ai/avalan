@@ -124,4 +124,5 @@ class TriggerStore(Protocol):
         *,
         cursor: HistoryCursor | None = None,
         limit: int = 50,
+        newest_first: bool = False,
     ) -> TriggerPage[TriggerOccurrence]: ...

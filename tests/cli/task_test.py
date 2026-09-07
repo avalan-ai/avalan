@@ -19,6 +19,8 @@ from async_helpers import run_async
 from rich.console import Console
 
 from avalan.cli.commands import task as task_cmds
+from avalan.cli.task_privacy import TaskCliHmacProvider, task_hmac_provider
+from avalan.cli.task_store import task_store_configuration
 from avalan.entities import (
     Message,
     MessageContentFile,
@@ -2817,7 +2819,7 @@ class CliTaskCommandShellTestCase(TestCase):
                 store,
                 target=AgentTaskTargetRunner(loader, ref_base=fixture),
                 artifact_store=artifact_store,
-                hmac_provider=task_cmds._task_hmac_provider(),
+                hmac_provider=task_hmac_provider(),
                 execution_roots=(fixture,),
                 input_roots=(fixture,),
                 definition_hash=lambda task: f"cli-{task.task.name}",
@@ -4411,7 +4413,7 @@ class CliTaskCommandShellTestCase(TestCase):
 
     def test_hmac_provider_uses_environment_key(self) -> None:
         with patch.dict(task_cmds.environ, TASK_HMAC_ENV, clear=True):
-            provider = task_cmds._task_hmac_provider()
+            provider = task_hmac_provider()
 
         self.assertIsNotNone(provider)
         assert provider is not None
@@ -4459,12 +4461,12 @@ class CliTaskCommandShellTestCase(TestCase):
                     clear=True,
                 ),
             ):
-                self.assertIsNone(task_cmds._task_hmac_provider())
+                self.assertIsNone(task_hmac_provider())
 
         with self.assertRaises(AssertionError):
-            task_cmds._TaskCliHmacProvider(key_id="", secret=b"secret")
+            TaskCliHmacProvider(key_id="", secret=b"secret")
         with self.assertRaises(AssertionError):
-            task_cmds._TaskCliHmacProvider(key_id="cli-test-v1", secret=b"")
+            TaskCliHmacProvider(key_id="cli-test-v1", secret=b"")
 
     def test_agent_target_and_database_helpers_construct(self) -> None:
         stack = AsyncExitStack()
@@ -5011,7 +5013,7 @@ class CliTaskCommandShellTestCase(TestCase):
         with self.assertRaises(TaskClientUnsupportedOperationError):
             task_cmds._run_awaitable(
                 task_cmds._task_cli_inspection_target(
-                    cast(TaskTargetContext, object())
+                    _flow_task_context(TaskExecutionTarget.flow("flow.toml"))
                 )
             )
         self.assertIsNone(
@@ -5028,7 +5030,7 @@ class CliTaskCommandShellTestCase(TestCase):
             clear=True,
         ):
             self.assertEqual(
-                task_cmds._task_store_schema(Namespace()), "tasks"
+                task_store_configuration(Namespace()).schema, "tasks"
             )
             self.assertIsNotNone(task_cmds._task_artifact_store())
         with patch.dict(task_cmds.environ, {}, clear=True):
@@ -5194,8 +5196,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.object(task_cmds, "run_task_pgsql_current") as current:
             result = task_cmds.task_pgsql_status(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema="tenant_tasks",
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema="tenant_tasks",
                     verbose=True,
                 ),
                 console,
@@ -5221,8 +5223,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.object(task_cmds, "run_task_pgsql_upgrade") as upgrade:
             result = task_cmds.task_pgsql_migrate(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                     migration_revision="head",
                 ),
                 console,
@@ -5240,8 +5242,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.object(task_cmds, "run_task_pgsql_check") as check:
             result = task_cmds.task_pgsql_check(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                 ),
                 console,
                 self.theme,
@@ -5257,8 +5259,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.object(task_cmds, "run_task_pgsql_stamp") as stamp:
             result = task_cmds.task_pgsql_stamp(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                     migration_revision="20260530_0001",
                 ),
                 console,
@@ -5277,14 +5279,14 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.dict(
             task_cmds.environ,
             {
-                "AVALAN_TASK_PGSQL_DSN": (
+                "AVALAN_TASK_STORE_DSN": (
                     "postgresql://user:secret@db.example.com/tasks"
                 ),
-                "AVALAN_TASK_PGSQL_SCHEMA": "tenant_tasks",
+                "AVALAN_TASK_STORE_SCHEMA": "tenant_tasks",
             },
         ):
             result = task_cmds.task_pgsql_diagnose(
-                Namespace(dsn=None, schema=None),
+                Namespace(store_dsn=None, store_schema=None),
                 console,
                 self.theme,
             )
@@ -5302,7 +5304,7 @@ class CliTaskPgsqlTestCase(TestCase):
 
         with patch.dict(task_cmds.environ, {}, clear=True):
             result = task_cmds.task_pgsql_check(
-                Namespace(dsn=None, schema=None),
+                Namespace(store_dsn=None, store_schema=None),
                 console,
                 self.theme,
             )
@@ -5310,14 +5312,14 @@ class CliTaskPgsqlTestCase(TestCase):
         output = console.export_text()
         self.assertFalse(result)
         self.assertIn("DSN is not configured", output)
-        self.assertIn("AVALAN_TASK_PGSQL_DSN", output)
+        self.assertIn("AVALAN_TASK_STORE_DSN", output)
 
     def test_pgsql_status_requires_configured_dsn(self) -> None:
         console = Console(record=True, width=160)
 
         with patch.dict(task_cmds.environ, {}, clear=True):
             result = task_cmds.task_pgsql_status(
-                Namespace(dsn=None, schema=None, verbose=False),
+                Namespace(store_dsn=None, store_schema=None, verbose=False),
                 console,
                 self.theme,
             )
@@ -5331,8 +5333,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.dict(task_cmds.environ, {}, clear=True):
             result = task_cmds.task_pgsql_migrate(
                 Namespace(
-                    dsn=None,
-                    schema=None,
+                    store_dsn=None,
+                    store_schema=None,
                     migration_revision="head",
                 ),
                 console,
@@ -5348,8 +5350,8 @@ class CliTaskPgsqlTestCase(TestCase):
         with patch.dict(task_cmds.environ, {}, clear=True):
             result = task_cmds.task_pgsql_stamp(
                 Namespace(
-                    dsn=None,
-                    schema=None,
+                    store_dsn=None,
+                    store_schema=None,
                     migration_revision="head",
                 ),
                 console,
@@ -5371,8 +5373,8 @@ class CliTaskPgsqlTestCase(TestCase):
         ):
             result = task_cmds.task_pgsql_status(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                     verbose=False,
                 ),
                 console,
@@ -5396,8 +5398,8 @@ class CliTaskPgsqlTestCase(TestCase):
         ):
             result = task_cmds.task_pgsql_check(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                 ),
                 console,
                 self.theme,
@@ -5420,8 +5422,8 @@ class CliTaskPgsqlTestCase(TestCase):
         ):
             result = task_cmds.task_pgsql_migrate(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                     migration_revision="head",
                 ),
                 console,
@@ -5446,8 +5448,8 @@ class CliTaskPgsqlTestCase(TestCase):
         ):
             result = task_cmds.task_pgsql_stamp(
                 Namespace(
-                    dsn="postgresql://user:secret@db.example.com/tasks",
-                    schema=None,
+                    store_dsn="postgresql://user:secret@db.example.com/tasks",
+                    store_schema=None,
                     migration_revision="head",
                 ),
                 console,
@@ -5464,8 +5466,8 @@ class CliTaskPgsqlTestCase(TestCase):
 
         result = task_cmds.task_pgsql_migrate(
             Namespace(
-                dsn="postgresql://user:secret@db.example.com/tasks",
-                schema=None,
+                store_dsn="postgresql://user:secret@db.example.com/tasks",
+                store_schema=None,
                 migration_revision="head;drop",
             ),
             console,

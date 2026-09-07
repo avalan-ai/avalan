@@ -130,6 +130,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
             ):
                 first = await scheduler.process_once()
                 assert first.admitted == 1 and len(first.errors) == 1
+                assert first.admission_retries == 0
                 assert (
                     first.errors[0].code
                     == TriggerErrorCode.ADMISSION_RETRYABLE
@@ -147,6 +148,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
                 now += timedelta(seconds=1)
                 second = await restarted.process_once()
                 assert len(second.errors) == 1
+                assert second.admission_retries == 1
                 failed = await scheduler.store.inspect("bad")
                 assert (
                     failed is not None

@@ -500,7 +500,14 @@ WHERE owner_scope_id = %s AND trigger_id = %s AND revision = %s
         *,
         cursor: HistoryCursor | None = None,
         limit: int = 50,
+        newest_first: bool = False,
     ) -> TriggerPage[TriggerOccurrence]:
+        assert type(newest_first) is bool
+        order = (
+            "revision DESC, scheduled_at DESC"
+            if newest_first
+            else "revision, scheduled_at"
+        )
         integer(limit, 1, 200, "limit")
         offset = cursor.offset if cursor else 0
         async with self.transaction() as unit:
@@ -508,10 +515,10 @@ WHERE owner_scope_id = %s AND trigger_id = %s AND revision = %s
             if current is None:
                 raise TriggerError(TriggerErrorCode.CONFLICT, "name")
             await unit.cursor.execute(
-                """
+                f"""
 SELECT payload FROM trigger_occurrences
 WHERE owner_scope_id = %s AND trigger_id = %s
-ORDER BY revision, scheduled_at LIMIT %s OFFSET %s
+ORDER BY {order} LIMIT %s OFFSET %s
 """,
                 (
                     self.owner.value,

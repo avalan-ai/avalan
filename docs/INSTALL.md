@@ -195,8 +195,8 @@ the environment that runs them:
 python3 -m pip install -U alembic "SQLAlchemy>=2.0.43,<3.0.0"
 ```
 
-Set `AVALAN_TASK_PGSQL_DSN` before running migration diagnostics, and set
-`AVALAN_TASK_PGSQL_SCHEMA` when using an isolated schema.
+Set `AVALAN_TASK_STORE_DSN` before running migration diagnostics, and set
+`AVALAN_TASK_STORE_SCHEMA` when using an isolated schema.
 
 Set `AVALAN_TASK_TEST_POSTGRESQL_DSN` to run the env-gated PostgreSQL
 verification tests against an existing test database. Run `make test-pgsql` to
@@ -223,3 +223,12 @@ are optional environment-gated checks. See
 container model, and [Container execution](CONTAINERS.md) for
 container-specific setup, test gates, platform limits, fail-closed behavior,
 diagnostics, and known deferred conformance.
+
+### Durable time-trigger CLI
+
+Install `avalan[trigger,task-pgsql]` for the native Agent/strict Flow scheduler and
+worker host, including production encrypted input. This lightweight closure does
+not install local inference engines or all vendor/backend extras. Configure the
+shared `AVALAN_TASK_STORE_*` settings, migrate the schema explicitly, and retain
+operator encryption keys and deployment directories across restarts. See
+[TRIGGERS.md](TRIGGERS.md) for the supported host limits and runnable examples.

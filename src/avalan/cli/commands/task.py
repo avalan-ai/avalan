@@ -16,7 +16,6 @@ from ...task import (
     REDACTED_MARKER,
     ArtifactStoreError,
     FeatureGateDiagnostic,
-    HmacProvider,
     PrivacyField,
     PrivacySanitizationError,
     PrivacySanitizer,
@@ -30,8 +29,6 @@ from ...task import (
     TaskExecutionContext,
     TaskFeature,
     TaskInputType,
-    TaskKeyMaterial,
-    TaskKeyPurpose,
     TaskLoadIssue,
     TaskOutputType,
     TaskRetentionAction,
@@ -57,8 +54,11 @@ from ...task import (
     validate_task_definition,
     validate_task_input,
 )
+from ...task.artifact import ArtifactStore
 from ...task.artifacts import LocalArtifactStore
 from ...task.converters.registry import default_file_converters
+from ...task.deployment import ExecutionDeploymentError
+from ...task.encryption import TaskEncryptionError
 from ...task.queues import PgsqlTaskQueue
 from ...task.stores import (
     TASK_PGSQL_ALEMBIC_VERSION_TABLE,
@@ -110,6 +110,10 @@ from ...tool.shell import (
     normalize_shell_enabled_tools,
     should_append_shell_toolset,
 )
+from ..task_privacy import task_hmac_provider
+from ..task_store import task_store_configuration
+from ..trigger_runtime import encrypted_input_store
+from ..trigger_worker import deployment_worker
 from .agent import (
     _agent_container_runtime_settings,
     _agent_isolation_runtime_settings,
@@ -120,8 +124,6 @@ from .agent import (
 
 from argparse import Namespace
 from asyncio import run as asyncio_run
-from base64 import b64decode
-from binascii import Error as BinasciiError
 from collections.abc import Awaitable, Callable, Coroutine, Iterable, Mapping
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import AsyncExitStack
@@ -177,33 +179,6 @@ class TaskCliInputError(ValueError):
         self.message = message
         self.hint = hint
         super().__init__(message)
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class _TaskCliHmacProvider:
-    key_id: str
-    secret: bytes
-    algorithm: str = "hmac-sha256"
-
-    def __post_init__(self) -> None:
-        assert isinstance(self.key_id, str) and self.key_id.strip()
-        assert isinstance(self.secret, bytes) and self.secret
-        assert isinstance(self.algorithm, str) and self.algorithm.strip()
-
-    def hmac_key(
-        self,
-        *,
-        purpose: TaskKeyPurpose,
-        key_id: str | None = None,
-    ) -> TaskKeyMaterial:
-        assert isinstance(purpose, TaskKeyPurpose)
-        if key_id is not None:
-            assert isinstance(key_id, str) and key_id.strip()
-        return TaskKeyMaterial(
-            key_id=key_id or self.key_id,
-            algorithm=self.algorithm,
-            secret=self.secret,
-        )
 
 
 @dataclass(slots=True)
@@ -278,7 +253,7 @@ async def _task_validate(
 
     issues = validate_task_definition(
         load_result.definition,
-        hmac_provider=_task_hmac_provider(),
+        hmac_provider=task_hmac_provider(),
         require_configured_keys=True,
         execution_roots=(definition_path.parent,),
     )
@@ -666,25 +641,42 @@ async def _task_retention_sweep(
     args: Namespace,
     console: Console,
 ) -> bool:
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     if dsn is None:
         _print_missing_inspection_store(console)
         return False
-    artifact_store = _task_artifact_store()
-    if artifact_store is None:
+    encrypted = bool(getattr(args, "encrypted_artifacts", False))
+    artifact_store: ArtifactStore | None = (
+        None if encrypted else _task_artifact_store()
+    )
+    if artifact_store is None and not encrypted:
         _print_missing_artifact_store(console)
         return False
     try:
-        database = _task_pgsql_database(dsn, _task_store_schema(args))
+        database = _task_pgsql_database(
+            dsn, task_store_configuration(args).schema
+        )
+        if encrypted:
+            _, artifact_store = encrypted_input_store(args, database)
+        assert artifact_store is not None
         service = TaskRetentionService(
             PgsqlTaskStore(database),
-            {"local": artifact_store},
+            {"pgsql" if encrypted else "local": artifact_store},
         )
         async with database:
             sweep = await service.sweep_expired(
                 purposes=_task_retention_purposes(args),
                 limit=_task_retention_limit(args),
             )
+    except TaskEncryptionError:
+        _print_task_command_error(
+            console,
+            "Encrypted artifact storage is unavailable.",
+            "artifact.encryption",
+            "Verify explicit raw storage authorization and encryption"
+            " configuration.",
+        )
+        return False
     except (
         AssertionError,
         ArtifactStoreError,
@@ -746,7 +738,7 @@ async def _task_run(
         return False
     if not _validate_task_run_output_path(args, diagnostic_console):
         return False
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     ephemeral = bool(getattr(args, "ephemeral", False))
     if dsn is None and not ephemeral:
         _print_missing_store(diagnostic_console)
@@ -767,7 +759,7 @@ async def _task_run(
             client_context = _task_cli_client_context(
                 definition_path,
                 dsn=dsn,
-                schema=_task_store_schema(args),
+                schema=task_store_configuration(args).schema,
                 queue=False,
                 ephemeral=ephemeral,
                 hub=hub,
@@ -836,7 +828,7 @@ async def _task_enqueue(
             "Use task run for direct definitions.",
         )
         return False
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     if dsn is None:
         _print_missing_store(console)
         return False
@@ -856,7 +848,7 @@ async def _task_enqueue(
             client_context = _task_cli_client_context(
                 definition_path,
                 dsn=dsn,
-                schema=_task_store_schema(args),
+                schema=task_store_configuration(args).schema,
                 queue=True,
                 ephemeral=False,
                 hub=hub,
@@ -1063,7 +1055,7 @@ async def _task_worker(
             "Set --heartbeat-seconds lower than --lease-seconds.",
         )
         return False
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     if dsn is None:
         _print_missing_store(console)
         return False
@@ -1089,43 +1081,62 @@ async def _task_worker(
             args,
             force_shell_pipeline_closed=True,
         )
-        tool_manager = _task_flow_tool_manager(args)
-        database = _task_pgsql_database(dsn, _task_store_schema(args))
+        deployment_root = getattr(args, "deployment_root", None)
+        if deployment_root and (
+            _task_tool_settings_configured(_agent_tool_settings(args))
+            or _task_enabled_tools(args)
+        ):
+            raise ExecutionDeploymentError("cli.tool_settings_host_required")
+        database = _task_pgsql_database(
+            dsn, task_store_configuration(args).schema
+        )
         store = PgsqlTaskStore(database)
         queue = PgsqlTaskQueue(database)
         async with AsyncExitStack() as stack:
             await stack.enter_async_context(database)
-            flow_tool_resolver = await _task_flow_tool_resolver(
-                stack,
-                tool_manager,
-            )
-            agent_target = _agent_task_target(
-                Path.cwd(),
-                hub=hub,
-                logger=logger,
-                stack=stack,
-                tool_settings=tool_settings,
-                require_shell_pipeline_opt_in=True,
-            )
-            worker = TaskWorker(
-                store,
-                queue,
-                target=_task_cli_target_runner(
+            if deployment_root:
+                worker = await deployment_worker(
+                    args,
+                    database=database,
+                    stack=stack,
+                    hub=hub,
+                    logger=logger,
+                    shutdown=shutdown,
+                    hmac_provider=task_hmac_provider(),
+                )
+            else:
+                tool_manager = _task_flow_tool_manager(args)
+                flow_tool_resolver = await _task_flow_tool_resolver(
+                    stack,
+                    tool_manager,
+                )
+                agent_target = _agent_task_target(
                     Path.cwd(),
-                    agent_target=agent_target,
-                    flow_state_store=PgsqlFlowStateStore(database),
-                    flow_tool_resolver=flow_tool_resolver,
-                ),
-                hmac_provider=_task_hmac_provider(),
-                worker_id=getattr(args, "worker_id", None),
-                queue_name=getattr(args, "queue", None) or "default",
-                lease_seconds=lease_seconds,
-                skills_settings=tool_settings.skills,
-                definition_base=Path.cwd(),
-                artifact_store=_task_artifact_store(),
-                shutdown=shutdown,
-                heartbeat_seconds=heartbeat_seconds,
-            )
+                    hub=hub,
+                    logger=logger,
+                    stack=stack,
+                    tool_settings=tool_settings,
+                    require_shell_pipeline_opt_in=True,
+                )
+                worker = TaskWorker(
+                    store,
+                    queue,
+                    target=_task_cli_target_runner(
+                        Path.cwd(),
+                        agent_target=agent_target,
+                        flow_state_store=PgsqlFlowStateStore(database),
+                        flow_tool_resolver=flow_tool_resolver,
+                    ),
+                    hmac_provider=task_hmac_provider(),
+                    worker_id=getattr(args, "worker_id", None),
+                    queue_name=getattr(args, "queue", None) or "default",
+                    lease_seconds=lease_seconds,
+                    skills_settings=tool_settings.skills,
+                    definition_base=Path.cwd(),
+                    artifact_store=_task_artifact_store(),
+                    shutdown=shutdown,
+                    heartbeat_seconds=heartbeat_seconds,
+                )
             for _index in range(limit):
                 if shutdown.requested:
                     break
@@ -1166,6 +1177,15 @@ async def _task_worker(
                         markup=False,
                     )
                     break
+    except (ExecutionDeploymentError, TaskEncryptionError):
+        _print_task_command_error(
+            console,
+            "Scheduled worker host is unavailable.",
+            "worker.deployment_host",
+            "Verify the retained catalog, supported host settings and"
+            " encryption configuration.",
+        )
+        return False
     except (AssertionError, ImportError, OSError, TaskValidationError) as exc:
         _print_task_execution_error(console, exc)
         return False
@@ -1396,7 +1416,7 @@ def _task_cli_client_context(
             artifact_root,
             raw_storage_allowed=True,
         )
-    hmac_provider = _task_hmac_provider()
+    hmac_provider = task_hmac_provider()
     agent_target = _agent_task_target(
         definition_path.parent,
         hub=hub,
@@ -1485,11 +1505,11 @@ def _task_cli_inspection_client_context(
     args: Namespace,
     console: Console,
 ) -> _TaskCliClientContext | None:
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     if dsn is None:
         _print_missing_inspection_store(console)
         return None
-    database = _task_pgsql_database(dsn, _task_store_schema(args))
+    database = _task_pgsql_database(dsn, task_store_configuration(args).schema)
     return _TaskCliClientContext(
         TaskClient(
             PgsqlTaskStore(database),
@@ -1630,47 +1650,6 @@ def _task_artifact_store() -> LocalArtifactStore | None:
     if not root:
         return None
     return LocalArtifactStore(root, raw_storage_allowed=True)
-
-
-def _task_hmac_provider() -> HmacProvider | None:
-    key_id = environ.get("AVALAN_TASK_HMAC_KEY_ID")
-    key_b64 = environ.get("AVALAN_TASK_HMAC_KEY_B64")
-    if not (
-        isinstance(key_id, str)
-        and key_id.strip()
-        and isinstance(key_b64, str)
-        and key_b64.strip()
-    ):
-        return None
-    try:
-        secret = b64decode(key_b64.strip(), validate=True)
-    except (BinasciiError, ValueError):
-        return None
-    return _TaskCliHmacProvider(key_id=key_id, secret=secret)
-
-
-def _task_store_dsn(args: Namespace) -> str | None:
-    value = (
-        getattr(args, "store_dsn", None)
-        or getattr(args, "dsn", None)
-        or environ.get("AVALAN_TASK_STORE_DSN")
-        or environ.get("AVALAN_TASK_PGSQL_DSN")
-    )
-    if isinstance(value, str) and value.strip():
-        return value
-    return None
-
-
-def _task_store_schema(args: Namespace) -> str | None:
-    value = (
-        getattr(args, "store_schema", None)
-        or getattr(args, "schema", None)
-        or environ.get("AVALAN_TASK_STORE_SCHEMA")
-        or environ.get("AVALAN_TASK_PGSQL_SCHEMA")
-    )
-    if isinstance(value, str) and value.strip():
-        return value
-    return None
 
 
 def _safe_queue_metadata(args: Namespace) -> Mapping[str, object]:
@@ -2997,10 +2976,11 @@ def _print_issues(
 def _task_pgsql_settings(
     args: Namespace,
 ) -> PgsqlTaskMigrationSettings | None:
-    dsn = args.dsn or environ.get("AVALAN_TASK_PGSQL_DSN")
+    settings = task_store_configuration(args)
+    dsn = settings.dsn
     if not dsn:
         return None
-    schema = args.schema or environ.get("AVALAN_TASK_PGSQL_SCHEMA")
+    schema = settings.schema
     return PgsqlTaskMigrationSettings(url=dsn, schema=schema)
 
 
@@ -3013,7 +2993,7 @@ def _task_pgsql_revision(args: Namespace) -> str:
 def _print_pgsql_missing_dsn(console: Console) -> None:
     console.print("Task PostgreSQL DSN is not configured.", markup=False)
     console.print(
-        "Set AVALAN_TASK_PGSQL_DSN or pass --dsn.",
+        "Set AVALAN_TASK_STORE_DSN or pass --store-dsn.",
         markup=False,
     )
 

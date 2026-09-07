@@ -1,0 +1,25 @@
+[trigger]
+schema_version = 1
+name = "example-at"
+
+[task]
+ref = "task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[[input.bindings]]
+path = "/scheduled"
+source = "scheduled_at"
+[[input.bindings]]
+path = "/occurrence"
+source = "occurrence_id"
+[[input.bindings]]
+path = "/revision"
+source = "trigger_revision"
+
+[schedule]
+type = "at"
+at = "2099-01-01T12:00:00Z"
+[policy]
+misfire_grace_seconds = 3600

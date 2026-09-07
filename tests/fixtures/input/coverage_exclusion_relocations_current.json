@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "50a7ba061213bd3cd8115591e79c10ec58c416450c951c0218b795748317b9b6",
+  "current_snapshot_sha256": "a2e066399b87a92207371d5ef8f8bb46bbecef6625b3a72ea0081daa9512fca2",
   "directives": {
     "added": 12,
     "removed": 0,
-    "relocated": 13,
-    "sha256": "fac9b587c571f7bc0204667ebdfb6cacc9cd072b0b173f5d99959e08f69f2981"
+    "relocated": 17,
+    "sha256": "0806907f37fa9ab5e0914a45706519aefa1d460439b91e2a20999efd883f687d"
   },
   "report_lines": {
-    "added": 1485,
-    "removed": 334,
-    "sha256": "d6b691e277ab8fff5ea35e622620b6b4362a97b9654d2925a62abca9f150744f"
+    "added": 1506,
+    "removed": 340,
+    "sha256": "cf0ce2673a816931ad59d778d81278ace709660ba04f299378e06f0eab2ae875"
   },
   "review": {
-    "reviewed_by": "trigger execution exclusion audit",
-    "rationale": "Preserve the immutable baseline, source directives and default coverage policy. Phase 5 adds eight parser-excluded default-ellipsis and adjacent lines in three typed deployment capability Protocols. The six existing task inventories only relocate their unchanged excluded statements. Exact old/new source-line audit is recorded in Phase 5 evidence. No executable branch, pragma, or exclusion configuration is added."
+    "reviewed_by": "trigger CLI exclusion audit",
+    "rationale": "Preserve the immutable baseline, source directives and default coverage policy. Phase 6 adds fourteen parser-excluded default-ellipsis and adjacent lines in the AES capability and optional sink Protocols, plus one parameter line in the existing trigger store Protocol. The CLI main and Flow inventories only relocate unchanged directives. Exact old/new source-line audit is recorded in Phase 6 evidence. No executable branch, pragma, or exclusion configuration is added."
   },
-  "ledger_sha256": "a738a7f1e361f13e5f9d20e73d8badbdb0a6853c1052694546268d7a4988144e"
+  "ledger_sha256": "0363effb58e3b7f7a7fc7400ed74e57fc2fbb4d5b2782523685bd4828dd12325"
 }

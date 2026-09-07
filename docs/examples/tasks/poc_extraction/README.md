@@ -122,13 +122,13 @@ from the compact run summary, then inspect usage through the durable store:
 
 ```bash
 poetry run avalan task pgsql migrate \
-  --dsn "$AVALAN_TASK_STORE_DSN" \
-  --schema "$AVALAN_TASK_STORE_SCHEMA" \
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA" \
   head
 
 poetry run avalan task pgsql check \
-  --dsn "$AVALAN_TASK_STORE_DSN" \
-  --schema "$AVALAN_TASK_STORE_SCHEMA"
+  --store-dsn "$AVALAN_TASK_STORE_DSN" \
+  --store-schema "$AVALAN_TASK_STORE_SCHEMA"
 
 poetry run avalan task run task.toml \
   --store-dsn "$AVALAN_TASK_STORE_DSN" \

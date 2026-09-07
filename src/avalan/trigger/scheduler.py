@@ -70,6 +70,7 @@ class _Tick:
     ranges: dict[str, TriggerCoverageSpan] = field(default_factory=dict)
     errors: list[TriggerSchedulerDiagnostic] = field(default_factory=list)
     conflicts: int = 0
+    admission_retries: int = 0
     decisions: int = 0
     admissions: int = 0
     remaining: bool = False
@@ -447,6 +448,10 @@ class TriggerScheduler:
                 tick.decisions += len(plan.decisions)
                 tick.admissions += len(plan.admission_ids)
                 return
+            # Count one durable retry dispatch per discovered trigger,
+            # excluding internal stale-plan replans and recovered decisions.
+            if attempt == 0 and snapshot.state.failure_count:
+                tick.admission_retries += 1
             prepared = await self._call(
                 self.preparation.prepare_admission(plan),
                 SchedulerOperationKind.PREPARATION,
@@ -637,6 +642,7 @@ class TriggerScheduler:
             occurrences=tuple(tick.occurrences.values()),
             ranges=tuple(tick.ranges.values()),
             conflicts=tick.conflicts,
+            admission_retries=tick.admission_retries,
             errors=tuple(tick.errors),
             unresolved=tuple(self._unresolved),
             preparation_failures=tuple(self._preparation_failures),

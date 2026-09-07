@@ -1,0 +1,27 @@
+[trigger]
+schema_version = 1
+name = "example-interval"
+
+[task]
+ref = "task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[[input.bindings]]
+path = "/scheduled"
+source = "scheduled_at"
+[[input.bindings]]
+path = "/occurrence"
+source = "occurrence_id"
+[[input.bindings]]
+path = "/revision"
+source = "trigger_revision"
+
+[schedule]
+type = "interval"
+every_seconds = 60
+[policy]
+misfire = "latest"
+overlap = "skip"
+misfire_grace_seconds = 3600
