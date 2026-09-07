@@ -1,12 +1,13 @@
 """Define typed owner-bound trigger management and history contracts."""
 
-from .definition import integer
+from .definition import integer, timestamp
 from .records import (
     TriggerCoverageSpan,
     TriggerDefinition,
     TriggerEvent,
     TriggerOccurrence,
     TriggerSnapshot,
+    opaque,
 )
 from .registration import TriggerRegistration
 
@@ -37,6 +38,24 @@ class TriggerPage(Generic[_Item]):
         integer(len(self.items), 0, 200, "page")
         assert self.next_cursor is None or isinstance(
             self.next_cursor, HistoryCursor
+        )
+
+
+@dataclass(frozen=True, slots=True, kw_only=True)
+class TriggerDiscoveryCursor:
+    """Rotate a bounded due scan without changing durable trigger state."""
+
+    last_processed_at: datetime
+    trigger_id: str
+    round_started_at: datetime
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "last_processed_at", timestamp(self.last_processed_at)
+        )
+        opaque(self.trigger_id, "discovery.trigger_id")
+        object.__setattr__(
+            self, "round_started_at", timestamp(self.round_started_at)
         )
 
 
@@ -72,7 +91,10 @@ class TriggerStore(Protocol):
         *,
         decision_time: datetime,
         limit: int = 100,
+        after: TriggerDiscoveryCursor | None = None,
     ) -> tuple[TriggerSnapshot, ...]: ...
+
+    async def next_eligible_at(self) -> datetime | None: ...
 
     async def events(
         self,

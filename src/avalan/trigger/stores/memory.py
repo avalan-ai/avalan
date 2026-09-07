@@ -20,7 +20,7 @@ from ..registration import (
     set_enabled,
 )
 from ..schedule import SearchLimits
-from ..store import HistoryCursor, TriggerPage
+from ..store import HistoryCursor, TriggerDiscoveryCursor, TriggerPage
 
 from asyncio import Lock
 from collections.abc import Callable, Sequence
@@ -159,8 +159,10 @@ class InMemoryTriggerStore:
         *,
         decision_time: datetime,
         limit: int = 100,
+        after: TriggerDiscoveryCursor | None = None,
     ) -> tuple[TriggerSnapshot, ...]:
         integer(limit, 1, 1000, "discovery.limit")
+        assert after is None or isinstance(after, TriggerDiscoveryCursor)
         now = timestamp(decision_time)
         async with self._lock:
             candidates = (
@@ -178,10 +180,35 @@ class InMemoryTriggerStore:
                 sorted(
                     candidates,
                     key=lambda snapshot: (
+                        after is not None
+                        and snapshot.state.last_processed_at
+                        > after.round_started_at,
+                        after is not None
+                        and (
+                            snapshot.state.last_processed_at,
+                            snapshot.state.trigger_id,
+                        )
+                        <= (after.last_processed_at, after.trigger_id),
                         snapshot.state.last_processed_at,
                         snapshot.state.trigger_id,
                     ),
                 )[:limit]
+            )
+
+    async def next_eligible_at(self) -> datetime | None:
+        """Return the earliest active cursor after its durable retry delay."""
+        async with self._lock:
+            return min(
+                (
+                    max(
+                        value.state.next_at,
+                        value.state.retry_after or value.state.next_at,
+                    )
+                    for value in self._current.values()
+                    if value.state.status is TriggerStatus.ACTIVE
+                    and value.state.next_at is not None
+                ),
+                default=None,
             )
 
     async def events(

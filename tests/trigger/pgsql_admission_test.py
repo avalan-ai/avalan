@@ -29,6 +29,11 @@ from avalan.trigger.codec import record_payload
 from avalan.trigger.error import TriggerError
 from avalan.trigger.plan import TriggerAdmissionPlan, plan_admission
 from avalan.trigger.records import TriggerOccurrence
+from avalan.trigger.search_budget import (
+    SearchWorkBudget,
+    SearchWorkExhausted,
+    schedule_work,
+)
 from avalan.trigger.stores.pgsql import PgsqlTriggerStore
 from avalan.trigger.stores.pgsql_admission import PgsqlTriggerAdmissionStore
 
@@ -366,3 +371,24 @@ class PgsqlAdmissionTestCase(IsolatedAsyncioTestCase):
                 await store.admit(prepared(queue))
             if isinstance(interrupted.value, SystemExit):
                 assert interrupted.value.code == "stop"
+
+    async def test_recovery_propagates_exhausted_global_search_scope(
+        self,
+    ) -> None:
+        database = AdmissionDatabase()
+        queue = SubmissionQueue(database)
+        store = PgsqlTriggerAdmissionStore(
+            PgsqlTriggerStore(database, OWNER), queue
+        )
+        first = prepared(
+            queue, plan_admission(snapshot(), NOW + timedelta(minutes=5))
+        )
+        assert (
+            await store.admit(first)
+        ).outcome is TriggerCommitOutcome.COMMITTED
+        later = plan_admission(snapshot(), NOW + timedelta(minutes=10))
+        with schedule_work(SearchWorkBudget(remaining=10, deadline=0)):
+            with raises(SearchWorkExhausted, match="search.deadline"):
+                await store.recover(later)
+        assert len(database.cursor.occurrences) == 1
+        assert len(queue.units) == 1

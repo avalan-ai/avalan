@@ -982,7 +982,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "eff1832fbe035511d2e24507aef8f808b65a122715c8199bc1a8f84b94c0f219"
+      "source_sha256": "b2250b9cc9c09ba3c8d4a1c5ab0345dd24e5c64aadfd0bb630e2b5d85e8ab094"
     },
     {
       "id": "PATCH-TS-052",
@@ -1141,7 +1141,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "4c4ad4884f586af3f78d7787806a18c7341bfc6d8d92885bd088fcfeddb4a9a1"
+      "source_sha256": "c8c688defbda9d3f3b4fa299f056e9d0e7c0724fa52b65b5cbfcf98f240e0717"
     },
     {
       "id": "PATCH-TS-067",
@@ -2431,7 +2431,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "eb009aa45098cd6de7c158ba82ff5e2b0c057af89c99b15f30f5f568b118b149"
+      "source_sha256": "597d5aa4cbf8101e3206b01f79787bf5a7417797758037620436594bfff95f3e"
     },
     {
       "id": "PATCH-TS-178",
@@ -2485,7 +2485,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "16f5cecb2c39ff5ed5fea0e82ddfbeaf8a900d29794f93569a108ff094afb989"
+      "source_sha256": "3513dd49c717076f82025623aaa0fca5c9499d31c0958dd8e9cbc3717d62ba06"
     },
     {
       "id": "PATCH-TS-184",
@@ -3129,7 +3129,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "8516d4f2cc732a9dd4b871c8e7f58fe534c07cb16599fd01d110ec80c75c4073"
+      "source_sha256": "ae80e2816597751dedfcca4dddd3bbca78e74f4167048904cc8de3456ae4e73f"
     },
     {
       "id": "PATCH-TS-241",
@@ -3147,7 +3147,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "1df729ea5ca447f1bc3f417162b553d560513f4b56a5b7323cc2a3e606c3e4b5"
+      "source_sha256": "b80625574d25b9bada0406e70503d8bce148e4b9e470f99085893f2d88df2476"
     },
     {
       "id": "PATCH-TS-243",
@@ -3165,7 +3165,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "fce83fba29403ac45c2e0ea7098b20173a60fc981115b39918fc92c4ece3d60a"
+      "source_sha256": "284f8aefc6cca6c3897dab4d0d240aba41208bb1dff5b1ba9db3119c70aa0c26"
     },
     {
       "id": "PATCH-TS-245",
@@ -3174,7 +3174,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "95e1c2095d34ba7534e7088b849c7116eab1d14a7f585ea9bdd704dc7a0e5c1f"
+      "source_sha256": "ee053219503006e79ed705be3210c01ba81e6620e0d0b14baea3105472a81404"
     },
     {
       "id": "PATCH-TS-246",
@@ -3334,7 +3334,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "87858547a1957a7a59488a46e22553a4de18777b2ab5e1ea72f8047d48ba1ca3"
+      "source_sha256": "3a5c6f1518f3362fc07abd9eb49a5cdf8c96895ba57b62d0ac65b56a2c117790"
     },
     {
       "id": "PATCH-TS-262",
@@ -3343,7 +3343,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "424e75ddc25ee850162179dfad8cf0c751af093041541f520cc552b14ffe273d"
+      "source_sha256": "da5e39f4dfcd420b8878821be74af983cd74752d22780974bcefe55b079a2e06"
     },
     {
       "id": "PATCH-TS-263",
@@ -3434,7 +3434,151 @@
         "module"
       ],
       "source_sha256": "dc8c430983c34d8c72e7a9594ffb945ebc5a2923d4c6b5c4e86acd81e2e3e544"
+    },
+    {
+      "id": "PATCH-TS-273",
+      "path": "src/avalan/trigger/scheduler.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "38c802e2bb9d7f18ac8183ab0701393a8f50b87dfa831c7dee352f8aea1c9232"
+    },
+    {
+      "id": "PATCH-TS-274",
+      "path": "src/avalan/trigger/scheduler_operations.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "12184b3776fb4401056471fdfe9647b49c9c3fa503481657589b401d19500c46"
+    },
+    {
+      "id": "PATCH-TS-275",
+      "path": "src/avalan/trigger/scheduler_types.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "46ca27eaf02726d036d95417a7bb8dec5236110afb064bb76f1885501f03a19a"
+    },
+    {
+      "id": "PATCH-TS-276",
+      "path": "src/avalan/trigger/search_budget.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "5b5f11cfabccf0eb30c036650adc0665b929f93d93eaa12805c2b2f8b71c8bc9"
+    },
+    {
+      "id": "PATCH-TS-277",
+      "path": "tests/task/stores/trigger_scheduler_process.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e4274bbae887b4ee7cc5e45a44e19f38a4b6a62a276f00371be983cb5b744b26"
+    },
+    {
+      "id": "PATCH-TS-278",
+      "path": "tests/task/stores/trigger_scheduler_process_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f30ae14837dd80289c49d6b60a1921ad6d740d03e2656449dffe8bc16961249a"
+    },
+    {
+      "id": "PATCH-TS-279",
+      "path": "tests/trigger/scheduler_completion_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "de0b6e5c82d52a404e57d25610a6062a616bffc843ad18e649ce530abb6fe1ad"
+    },
+    {
+      "id": "PATCH-TS-280",
+      "path": "tests/trigger/scheduler_conflict_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "6112f09381382b7d1222b30c22c10e5f92ae9ac3ca09ad3f490cd9cdaa88bac7"
+    },
+    {
+      "id": "PATCH-TS-281",
+      "path": "tests/trigger/scheduler_discovery_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "4ceb195672d3b6071008f24acadc2d9238b66d33e314e90ef24a95ada6ab3d1c"
+    },
+    {
+      "id": "PATCH-TS-282",
+      "path": "tests/trigger/scheduler_fault_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "786e41cdc3ac1029236d3ae55dd87c67cb724e753f0afcd0af6414eb4ce8792c"
+    },
+    {
+      "id": "PATCH-TS-283",
+      "path": "tests/trigger/scheduler_operations_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "54efe477eb93bef084045cc500eef1236a3ef2759f6ab0a50074a6657ac9da73"
+    },
+    {
+      "id": "PATCH-TS-284",
+      "path": "tests/trigger/scheduler_shutdown_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "344c665d86bf2f5bb414a3187a56ec7a891e76e9b555a2f5ffaebfbe7e0cf3c6"
+    },
+    {
+      "id": "PATCH-TS-285",
+      "path": "tests/trigger/scheduler_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c55acb9c39436c4ab22182393db644cc551232bb13240f70485d48e85d29f20b"
+    },
+    {
+      "id": "PATCH-TS-286",
+      "path": "tests/trigger/scheduler_types_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "44ee24179ef262888df6b1956260625534d2e18125c7758cbb50249708971ff4"
+    },
+    {
+      "id": "PATCH-TS-287",
+      "path": "tests/trigger/search_budget_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "66c6f5abb6e1c2161013c79b5242d424cc15a96f5b14795fef118ee53c227754"
+    },
+    {
+      "id": "PATCH-TS-288",
+      "path": "tests/trigger/scheduler_fairness_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "013208bb8c25ffbd3c6aab90a4136ee5e30979b56a5878bb84e82460dad3cc7b"
     }
   ],
-  "manifest_sha256": "f87f422622492e3110fd0abadf0636f45c504890636a60a7947f9dc7c76bea27"
+  "manifest_sha256": "886486b85419435e49227b8ee92163ad95e340a92874076d366b9b4812860591"
 }

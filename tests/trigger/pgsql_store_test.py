@@ -215,7 +215,7 @@ class PgsqlManagementTestCase(IsolatedAsyncioTestCase):
         assert len((await store.list(cursor=page.next_cursor)).items) == 2
         assert len(await store.discover(decision_time=NOW, limit=2)) == 2
         parameters = database.cursor.calls[-1][1]
-        assert parameters == (OWNER.value, NOW, NOW, 2)
+        assert parameters == (OWNER.value, NOW, NOW, None, None, None, None, 2)
         database.cursor.rows = [{"payload": record_payload(event())}] * 2
         events = await store.events("daily", limit=1)
         assert events.items == (event(),)
@@ -323,3 +323,12 @@ class PgsqlManagementTestCase(IsolatedAsyncioTestCase):
         database.cursor.rows = [{"payload": record_payload(state())}]
         with raises(TriggerError):
             await store.occurrences("daily")
+
+    async def test_empty_next_wake_and_null_aggregate_have_no_instant(
+        self,
+    ) -> None:
+        database = Database()
+        store = PgsqlTriggerStore(database, OWNER)
+        for row in (None, {"eligible_at": None}):
+            database.cursor.row = row
+            assert await store.next_eligible_at() is None
