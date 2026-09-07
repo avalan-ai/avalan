@@ -1340,6 +1340,8 @@ class CliStreamSnapshotBuilder:
         assert isinstance(candidate_count, int) and candidate_count > 0
         if not self.display.show_tools:
             return
+        # Provider compaction replaces thinking as the stream's activity.
+        self._active_model_continuations.clear()
         current = self._active_inline_compaction
         self._active_inline_compaction = CliInlineCompactionSnapshot(
             candidate_count=max(
