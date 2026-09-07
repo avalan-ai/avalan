@@ -44,7 +44,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registered = await preparation.prepare_registration(
                 configuration(), file_task()
             )
@@ -65,7 +65,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             config = replace(
                 configuration(),
                 policy=RecurringPolicy(
@@ -105,7 +105,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registration = TriggerRegistrationService(preparation)
             for name in ("bad", "good"):
                 prepared = await preparation.prepare_registration(
@@ -162,7 +162,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            preparation = services(Path(directory))
+            preparation = await services(Path(directory))
             stop = Event()
             closed = []
 
@@ -206,7 +206,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
                     closed.append("closed")
 
             scheduler = TriggerScheduler(
-                services(Path(directory)), owned_resources=(Owned(),)
+                await services(Path(directory)), owned_resources=(Owned(),)
             )
             first = create_task(scheduler.shutdown())
             await entered.wait()
@@ -230,7 +230,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registered = await preparation.prepare_registration(
                 configuration(), file_task()
             )
@@ -260,7 +260,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registered = await preparation.prepare_registration(
                 configuration(), file_task()
             )
@@ -302,7 +302,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
             ):
                 root = Path(directory)
                 (root / "input.txt").write_text("input")
-                preparation = services(root)
+                preparation = await services(root)
                 registered = await preparation.prepare_registration(
                     replace(
                         configuration(), policy=RecurringPolicy(misfire=policy)
@@ -334,7 +334,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registered = await preparation.prepare_registration(
                 configuration(), file_task()
             )
@@ -372,7 +372,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             registered = await preparation.prepare_registration(
                 configuration(), file_task()
             )
@@ -404,7 +404,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             for name in ("first", "second"):
                 prepared = await preparation.prepare_registration(
                     replace(configuration(), name=name), file_task()
@@ -434,7 +434,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             for name in ("first", "second"):
                 prepared = await preparation.prepare_registration(
                     replace(configuration(), name=name), file_task()
@@ -469,7 +469,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             for name in ("first", "second"):
                 prepared = await preparation.prepare_registration(
                     replace(configuration(), name=name), file_task()
@@ -508,7 +508,7 @@ class TriggerSchedulerTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             prepared = await preparation.prepare_registration(
                 configuration(), file_task()
             )

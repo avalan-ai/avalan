@@ -7,6 +7,7 @@ from ..task.artifacts.ownership_memory import (
     MemoryArtifactUnit,
 )
 from ..task.artifacts.ownership_pgsql import PgsqlArtifactOwnership
+from ..task.deployment import ExecutionDeploymentError
 from ..task.submission import TaskSubmissionOutcome
 from .admission import TriggerCommitOutcome
 from .codec import encode_record
@@ -154,7 +155,10 @@ WHERE owner_scope_id = %s AND request_id = %s::uuid
         Revision and run references remain intact. Byte cleanup is a separate
         grace-checked operation; an unknown result never releases staging.
         """
-        if prepared.task_input._client is not self.preparation.client:
+        if (
+            prepared.task_input._client._preparation_authority
+            is not self.preparation.client._preparation_authority
+        ):
             raise TriggerError(
                 TriggerErrorCode.STORE_INCOMPATIBLE, "registration.owner"
             )
@@ -193,7 +197,8 @@ WHERE owner_scope_id = %s AND request_id = %s::uuid
         expected_generation: int | None,
     ) -> TriggerApplyResult:
         if (
-            prepared.task_input._client is not self.preparation.client
+            prepared.task_input._client._preparation_authority
+            is not self.preparation.client._preparation_authority
             or prepared.staging.owner_scope != self.store.owner.value
         ):
             raise TriggerError(
@@ -201,6 +206,10 @@ WHERE owner_scope_id = %s AND request_id = %s::uuid
             )
         fingerprint = _fingerprint(prepared, expected_generation)
         try:
+            await prepared.task_input._client._deployment_client(
+                prepared.registration.execution_deployment_id,
+                file_delivery=bool(prepared.task_input.materialized_files),
+            )
             if isinstance(self.store, PgsqlTriggerStore):
                 snapshot = await self._apply_pgsql(
                     self.store, prepared, fingerprint, expected_generation
@@ -224,6 +233,17 @@ WHERE owner_scope_id = %s AND request_id = %s::uuid
                     prepared=prepared, outcome=TriggerCommitOutcome.UNKNOWN
                 )
             raise TriggerApplyCancelledError(result) from error
+        except ExecutionDeploymentError:
+            recovered = await self.recover(
+                prepared, expected_generation=expected_generation
+            )
+            if recovered.outcome != TriggerCommitOutcome.NOT_COMMITTED:
+                return recovered
+            return replace(
+                recovered,
+                error_code=TriggerErrorCode.DEPLOYMENT_MISMATCH,
+                error_path="deployment",
+            )
         except TriggerError as error:
             return TriggerApplyResult(
                 prepared=prepared,

@@ -2118,9 +2118,11 @@ class OrchestratorResponse(
 
         return None
 
-    async def _watch_session_cancellation(self) -> None:
+    async def _watch_session_cancellation(
+        self, completed: AsyncioEvent
+    ) -> None:
         assert self._cancellation_checker is not None
-        while True:
+        while not completed.is_set():
             await self._raise_if_cancelled(finish_stream=False)
             await sleep(self._CANCELLATION_POLL_INTERVAL_SECONDS)
 
@@ -2132,7 +2134,10 @@ class OrchestratorResponse(
             return await awaitable
 
         operation_task = ensure_future(awaitable)
-        cancellation_task = create_task(self._watch_session_cancellation())
+        completed = AsyncioEvent()
+        cancellation_task = create_task(
+            self._watch_session_cancellation(completed)
+        )
         try:
             done, _ = await wait(
                 {operation_task, cancellation_task},
@@ -2148,6 +2153,7 @@ class OrchestratorResponse(
                 await gather(operation_task, return_exceptions=True)
             raise
         finally:
+            completed.set()
             if not cancellation_task.done():
                 cancellation_task.cancel()
                 await gather(cancellation_task, return_exceptions=True)
@@ -2176,13 +2182,14 @@ class OrchestratorResponse(
             return
 
         item_task = create_task(self._canonical_item_available.wait())
+        completed = AsyncioEvent()
         cancellation_task = (
-            create_task(self._watch_session_cancellation())
+            create_task(self._watch_session_cancellation(completed))
             if self._cancellation_checker is not None
             else None
         )
         try:
-            wait_tasks: set[Any] = {task, item_task}
+            wait_tasks: set[Task[object]] = {task, item_task}
             if cancellation_task is not None:
                 wait_tasks.add(cancellation_task)
             done, pending = await wait(
@@ -2192,6 +2199,7 @@ class OrchestratorResponse(
             if cancellation_task is not None and cancellation_task in done:
                 await cancellation_task
         except CancelledError as exc:
+            completed.set()
             item_task.cancel()
             await gather(item_task, return_exceptions=True)
             if cancellation_task is not None:
@@ -2203,6 +2211,8 @@ class OrchestratorResponse(
             except BaseException as cleanup_failure:
                 self._attach_cleanup_failures(exc, [cleanup_failure])
             raise
+        finally:
+            completed.set()
 
         if item_task in pending:
             item_task.cancel()
@@ -3227,20 +3237,22 @@ class OrchestratorResponse(
                 self._canonical_item_available.wait(),
                 name="agent-input-stream-item",
             )
+            completed = AsyncioEvent()
             cancellation = (
                 create_task(
-                    self._watch_session_cancellation(),
+                    self._watch_session_cancellation(completed),
                     name="agent-input-cancellation",
                 )
                 if self._cancellation_checker is not None
                 else None
             )
-            waits: set[Task[Any]] = {task, item_available}
+            waits: set[Task[object]] = {task, item_available}
             if cancellation is not None:
                 waits.add(cancellation)
             try:
                 done, _ = await wait(waits, return_when=FIRST_COMPLETED)
             except CancelledError as exc:
+                completed.set()
                 item_available.cancel()
                 if cancellation is not None:
                     cancellation.cancel()
@@ -3257,6 +3269,7 @@ class OrchestratorResponse(
                 except BaseException as cleanup_failure:
                     self._attach_cleanup_failures(exc, [cleanup_failure])
                 raise
+            completed.set()
             if cancellation is not None and cancellation in done:
                 item_available.cancel()
                 await gather(item_available, return_exceptions=True)

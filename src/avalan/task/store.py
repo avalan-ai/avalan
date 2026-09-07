@@ -8,7 +8,9 @@ from ..types import (
     assert_positive_int as _assert_positive_int,
 )
 from .definition import TaskDefinition
+from .deployment import ExecutionDeployment
 from .event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
+from .provenance import TriggerInvocationContext
 from .state import (
     TaskAttemptSegmentState,
     TaskAttemptState,
@@ -124,6 +126,8 @@ class TaskExecutionPayload:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskExecutionRequest:
     definition_id: str
+    trigger: TriggerInvocationContext | None = None
+    deployment: ExecutionDeployment | None = None
     input_summary: TaskSnapshotValue = None
     input_payload: TaskExecutionPayload | None = None
     file_summaries: tuple[TaskSnapshotValue, ...] = ()
@@ -135,6 +139,15 @@ class TaskExecutionRequest:
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.definition_id, "definition_id")
+        assert self.trigger is None or isinstance(
+            self.trigger, TriggerInvocationContext
+        )
+        assert self.deployment is None or isinstance(
+            self.deployment, ExecutionDeployment
+        )
+        if self.deployment is not None:
+            assert self.definition_id == self.deployment.task_hash
+
         object.__setattr__(
             self,
             "input_summary",
@@ -224,6 +237,8 @@ class TaskClaim:
 @dataclass(frozen=True, slots=True, kw_only=True)
 class TaskExecutionContext:
     run_id: str
+    trigger: TriggerInvocationContext | None = None
+    deployment: ExecutionDeployment | None = None
     attempt_id: str
     attempt_number: int
     claim: TaskClaim | None = None
@@ -233,6 +248,12 @@ class TaskExecutionContext:
 
     def __post_init__(self) -> None:
         _assert_non_empty_string(self.run_id, "run_id")
+        assert self.trigger is None or isinstance(
+            self.trigger, TriggerInvocationContext
+        )
+        assert self.deployment is None or isinstance(
+            self.deployment, ExecutionDeployment
+        )
         _assert_non_empty_string(self.attempt_id, "attempt_id")
         _assert_positive_int(self.attempt_number, "attempt_number")
         if self.claim is not None:

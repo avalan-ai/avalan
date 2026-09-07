@@ -1,0 +1,45 @@
+{
+  "schema_version": 1,
+  "feature": "conversation_continuity",
+  "change": "trigger_execution",
+  "kind": "reviewed_provider_source_transition",
+  "reviewed_by": "trigger-execution-review",
+  "reason": "Preserve the prior provider and durable conversation anchors while moving task claim predicates into the closed execution-context payload making each owned cancellation watcher observe operation completion, and selecting the admitted retained native cold-loader and target binding. Native queued continuation and unchanged atomic conversation assertions remain executable; this record does not activate a conversation feature or certify the pending full repository gate.",
+  "transitions": [
+    {
+      "path": "src/avalan/interaction/stores/pgsql.py",
+      "from_size": 295860,
+      "from_sha256": "c8924543360a49f1fa99aa3e9fae3a135edb6fb5b7ac95186c8620c3e96200b5",
+      "to_size": 295906,
+      "to_sha256": "9f7d3f66c0750e6b0687f4df4e1b424146570839af3abbbe3e2a4e8e05c236cb"
+    },
+    {
+      "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
+      "from_size": 241491,
+      "from_sha256": "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9",
+      "to_size": 241879,
+      "to_sha256": "a0cd30d189a3e30445b516d1af5d80f0882e86240769bc8be6b70ad1c153b829"
+    },
+    {
+      "path": "src/avalan/task/durable_agent.py",
+      "from_size": 10977,
+      "from_sha256": "773ce8ed457bb6e0525bd8809c79cfa5288965299d8f68fa6e72bb98133017a9",
+      "to_size": 12105,
+      "to_sha256": "d338e710235fbdb50b40d5f0eb2d52086f88d08f0bd11549ec719276f71b9f70"
+    },
+    {
+      "path": "src/avalan/task/targets/agent.py",
+      "from_size": 53920,
+      "from_sha256": "658f5ea93ca0c41c0c293251043a4b73c1e24d8da01e96f60c3271d6d0a49501",
+      "to_size": 57273,
+      "to_sha256": "430ba037ca8141e76af87f0f70738ddc33d3e8cf4168e3f18f8a60296c31406b"
+    }
+  ],
+  "evidence_node_ids": [
+    "tests/agent/orchestrator_response_additional_test.py::OrchestratorResponseAdditionalCoverageTestCase::test_completed_operation_stops_checker_that_consumes_cancel",
+    "tests/task/stores/deployment_resume_e2e_test.py::DeploymentResumeE2ETest::test_admitted_agent_resumes_old_deployment_after_replacement",
+    "tests/task/stores/deployment_resume_e2e_test.py::DeploymentResumeE2ETest::test_modified_old_deployment_rejects_resumed_dispatch",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once"
+  ],
+  "canonical_sha256": "9217c283a1756f925b39946fd569fb1521eefde64c353ae5855a4a19318cdece"
+}

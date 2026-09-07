@@ -259,82 +259,82 @@
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 570,
+      "line": 643,
       "text": "        except (KeyboardInterrupt, SystemExit):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 573,
+      "line": 646,
       "text": "            if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 597,
+      "line": 670,
       "text": "        except (KeyboardInterrupt, SystemExit):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 600,
+      "line": 673,
       "text": "            if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 684,
+      "line": 757,
       "text": "        except (KeyboardInterrupt, SystemExit):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 693,
+      "line": 766,
       "text": "            if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 751,
+      "line": 824,
       "text": "            except (KeyboardInterrupt, SystemExit):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 760,
+      "line": 833,
       "text": "                if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1356,
+      "line": 1438,
       "text": "                raise TimeoutError()  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1368,
+      "line": 1450,
       "text": "                        ):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1375,
+      "line": 1457,
       "text": "                raise _TaskWorkerShutdownRequested()  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1387,
+      "line": 1469,
       "text": "            raise _TaskWorkerShutdownRequested()  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1490,
+      "line": 1573,
       "text": "        ):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1498,
+      "line": 1581,
       "text": "            if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 1675,
+      "line": 1769,
       "text": "            if _contains_process_control(error):  # pragma: no cover"
     },
     {
       "path": "src/avalan/task/worker.py",
-      "line": 3075,
+      "line": 3188,
       "text": "            if owner is None:  # pragma: no cover"
     }
   ],
@@ -1822,9 +1822,9 @@
       57
     ],
     "src/avalan/task/client.py": [
-      180,
-      181,
-      182
+      183,
+      184,
+      185
     ],
     "src/avalan/task/context.py": [
       25,
@@ -1886,11 +1886,17 @@
       283,
       284
     ],
+    "src/avalan/task/deployment_target.py": [
+      17,
+      18,
+      19,
+      25,
+      26,
+      27,
+      34,
+      35
+    ],
     "src/avalan/task/durable_agent.py": [
-      62,
-      63,
-      64,
-      65,
       66,
       67,
       68,
@@ -1900,14 +1906,18 @@
       72,
       73,
       74,
+      75,
+      76,
+      77,
       78,
-      79,
-      80,
-      81,
       82,
       83,
       84,
-      85
+      85,
+      86,
+      87,
+      88,
+      89
     ],
     "src/avalan/task/event.py": [
       251,
@@ -2428,30 +2438,9 @@
       53
     ],
     "src/avalan/task/store.py": [
-      32,
-      33,
-      41,
-      465,
-      466,
-      467,
-      468,
-      469,
-      470,
-      471,
-      472,
-      473,
-      474,
-      475,
-      476,
-      477,
-      478,
-      479,
-      480,
-      481,
-      482,
-      483,
-      484,
-      485,
+      34,
+      35,
+      43,
       486,
       487,
       488,
@@ -2652,22 +2641,38 @@
       683,
       684,
       685,
-      686
+      686,
+      687,
+      688,
+      689,
+      690,
+      691,
+      692,
+      693,
+      694,
+      695,
+      696,
+      697,
+      698,
+      699,
+      700,
+      701,
+      702,
+      703,
+      704,
+      705,
+      706,
+      707
     ],
     "src/avalan/task/stores/pgsql.py": [
-      187,
-      188,
-      189,
-      190,
+      192,
       193,
       194,
       195,
-      196,
+      198,
+      199,
       200,
       201,
-      202,
-      203,
-      204,
       205,
       206,
       207,
@@ -2684,7 +2689,12 @@
       218,
       219,
       220,
-      221
+      221,
+      222,
+      223,
+      224,
+      225,
+      226
     ],
     "src/avalan/task/submission_participant.py": [
       11,
@@ -2718,9 +2728,6 @@
       263
     ],
     "src/avalan/task/targets/agent.py": [
-      104,
-      105,
-      106,
       107,
       108,
       109,
@@ -2735,9 +2742,9 @@
       118,
       119,
       120,
+      121,
       122,
       123,
-      124,
       125,
       126,
       127,
@@ -2745,7 +2752,10 @@
       129,
       130,
       131,
-      132
+      132,
+      133,
+      134,
+      135
     ],
     "src/avalan/task/usage.py": [
       189,
@@ -2790,41 +2800,41 @@
       189
     ],
     "src/avalan/task/worker.py": [
-      318,
-      319,
-      320,
-      321,
-      322,
-      323,
-      570,
-      571,
-      573,
-      574,
-      597,
-      598,
-      600,
-      601,
-      684,
-      685,
-      693,
-      694,
-      751,
-      752,
-      760,
-      761,
-      1356,
-      1366,
-      1369,
-      1375,
-      1387,
-      1488,
-      1491,
-      1498,
-      1499,
-      1675,
-      1676,
-      3075,
-      3076
+      329,
+      330,
+      331,
+      332,
+      333,
+      334,
+      643,
+      644,
+      646,
+      647,
+      670,
+      671,
+      673,
+      674,
+      757,
+      758,
+      766,
+      767,
+      824,
+      825,
+      833,
+      834,
+      1438,
+      1448,
+      1451,
+      1457,
+      1469,
+      1571,
+      1574,
+      1581,
+      1582,
+      1769,
+      1770,
+      3188,
+      3189
     ],
     "src/avalan/tool/browser.py": [
       22,
@@ -2949,5 +2959,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "ad207b45df0d3839287c3e2f78216a54ca6e615e1e985a6dedde7313a1a79232"
+  "snapshot_sha256": "50a7ba061213bd3cd8115591e79c10ec58c416450c951c0218b795748317b9b6"
 }

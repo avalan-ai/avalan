@@ -12,6 +12,7 @@ from signal import SIGTERM
 from unittest.mock import AsyncMock, patch
 
 from pgsql_harness import task_pgsql_psycopg_dsn
+from task_deployment_helpers import configure_fixture_deployment
 from trigger.preparation_e2e_test import ContextCipher, file_task, target
 from trigger.scheduler_fairness_test import (
     prove_advancing_rotation,
@@ -129,6 +130,7 @@ async def execute(action: str, schema: str, root: Path) -> None:
         artifact_store=backend,
         execution_roots=(root,),
     )
+    await configure_fixture_deployment(client, file_task(), root)
     service = TriggerPreparationService(
         client, admission, PgsqlArtifactOwnership(database), cipher
     )

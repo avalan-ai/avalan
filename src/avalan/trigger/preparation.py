@@ -6,8 +6,10 @@ from ..task.artifacts.object_store import ObjectArtifactStore
 from ..task.artifacts.ownership_memory import MemoryArtifactOwnership
 from ..task.artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from ..task.artifacts.pgsql import PgsqlArtifactStore
+from ..task.canonical import spec_hash
 from ..task.client import TaskClient
 from ..task.definition import TaskDefinition
+from ..task.deployment import ExecutionDeploymentError
 from ..task.materialization import task_file_descriptors_from_input
 from ..task.preparation import (
     PreparedTaskInput,
@@ -116,8 +118,8 @@ class TriggerPreparationCancelledError(CancelledError):
 class TriggerPreparationService:
     """Reuse the task client's validation with concrete store capabilities.
 
-    The configured deployment ID is an opaque host identity. This service
-    does not attest a complete execution deployment closure.
+    Resolve the retained host deployment and validate its reachable files
+    before preparing encrypted revision input.
     """
 
     def __init__(
@@ -212,6 +214,30 @@ class TriggerPreparationService:
             raise TriggerError(
                 TriggerErrorCode.DEPLOYMENT_MISMATCH, "deployment"
             )
+        try:
+            client = await client._deployment_client(
+                client._execution_deployment_id,
+                file_delivery=bool(
+                    task_file_descriptors_from_input(
+                        definition, configuration.input.value
+                    )
+                ),
+            )
+            assert client._execution_deployment is not None
+            assert client._execution_deployment_id is not None
+            definition = replace(
+                definition, definition_base=client._execution_definition_base
+            )
+            if (
+                client._execution_deployment.task_ref != configuration.task_ref
+                or await spec_hash(definition)
+                != client._execution_deployment.task_hash
+            ):
+                raise ExecutionDeploymentError("task_hash")
+        except ExecutionDeploymentError as error:
+            raise TriggerError(
+                TriggerErrorCode.DEPLOYMENT_MISMATCH, "deployment"
+            ) from error
         if (
             not client._raw_storage_allowed
             or client._encryption_provider is None
@@ -398,14 +424,18 @@ class TriggerPreparationService:
         """Revalidate occurrence inputs through TaskClient preparation."""
         await self.admission.preflight()
         definition = plan.snapshot.definition
-        if (
-            definition.owner_scope_id != self.owner
-            or definition.execution_deployment_id
-            != self.client._execution_deployment_id
-        ):
+        if definition.owner_scope_id != self.owner:
             raise TriggerError(
                 TriggerErrorCode.DEPLOYMENT_MISMATCH, "deployment"
             )
+        try:
+            client = await self.client._deployment_client(
+                definition.execution_deployment_id
+            )
+        except ExecutionDeploymentError as error:
+            raise TriggerError(
+                TriggerErrorCode.DEPLOYMENT_MISMATCH, "deployment"
+            ) from error
         decrypted = unseal_input(
             definition.input,
             self.decryption,
@@ -413,8 +443,20 @@ class TriggerPreparationService:
             name=definition.name,
             semantic_hash=definition.semantic_hash,
         )
-        task = await self.client._store.get_definition(
+        if decrypted.files:
+            try:
+                client = await client._deployment_client(
+                    definition.execution_deployment_id, file_delivery=True
+                )
+            except ExecutionDeploymentError as error:
+                raise TriggerError(
+                    TriggerErrorCode.DEPLOYMENT_MISMATCH, "deployment"
+                ) from error
+        task = await client._store.get_definition(
             definition.task_definition_id
+        )
+        task_definition = replace(
+            task.definition, definition_base=client._execution_definition_base
         )
         submissions: list[PreparedTaskSubmission] = []
         try:
@@ -429,10 +471,10 @@ class TriggerPreparationService:
                         decrypted.input, definition, decision.scheduled_at
                     )
                 )
-                self._durable_input(task.definition, value)
+                self._durable_input(task_definition, value)
                 restored = await restore_task_input(
-                    self.client,
-                    task.definition,
+                    client,
+                    task_definition,
                     input_value=value,
                     materialized_files=decrypted.files,
                 )
@@ -440,8 +482,8 @@ class TriggerPreparationService:
                     raise TriggerError(
                         TriggerErrorCode.DEPLOYMENT_MISMATCH, "task"
                     )
-                submission = await self.client.prepare_submission(
-                    task.definition,
+                submission = await client.prepare_submission(
+                    task_definition,
                     request=TaskSubmissionRequest(
                         input_value=value, available_at=decision.scheduled_at
                     ),

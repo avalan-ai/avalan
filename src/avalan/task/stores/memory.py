@@ -307,6 +307,8 @@ class InMemoryTaskStore:
                 attempt_id=attempt_id,
                 attempt_number=attempt_number,
                 claim=run.claim,
+                trigger=run.request.trigger,
+                deployment=run.request.deployment,
             )
             attempt = TaskAttempt(
                 attempt_id=attempt_id,

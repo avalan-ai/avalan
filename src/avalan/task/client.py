@@ -25,6 +25,8 @@ from .definition import (
     TaskDefinition,
     TaskInputType,
 )
+from .deployment import ExecutionDeployment, ExecutionDeploymentError
+from .deployment_catalog import ExecutionDeploymentCatalog
 from .event import SanitizedTaskEvent
 from .idempotency import task_idempotency_identity
 from .input import (
@@ -135,6 +137,7 @@ from .validation import (
 from asyncio import CancelledError, gather, timeout
 from asyncio import sleep as asyncio_sleep
 from collections.abc import Awaitable, Callable, Iterable, Mapping
+from copy import copy
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from inspect import isawaitable
@@ -289,6 +292,7 @@ class TaskClient:
         queue: TaskQueue | MemoryTaskSubmissionParticipant | None = None,
         owner_scope: str = "default",
         execution_deployment_id: str | None = None,
+        execution_deployments: ExecutionDeploymentCatalog | None = None,
         hmac_provider: HmacProvider | None = None,
         encryption_provider: EncryptionProvider | None = None,
         raw_storage_allowed: bool = False,
@@ -315,11 +319,15 @@ class TaskClient:
     ) -> None:
         assert_non_empty_string(owner_scope, "owner_scope")
         self._owner_scope = owner_scope
+        self._preparation_authority = object()
         if execution_deployment_id is not None:
             assert_non_empty_string(
                 execution_deployment_id, "execution_deployment_id"
             )
         self._execution_deployment_id = execution_deployment_id
+        self._execution_deployments = execution_deployments
+        self._execution_deployment: ExecutionDeployment | None = None
+        self._execution_definition_base: Path | None = None
         self._store = store
         self._target = _target_runner(target)
         self._queue = queue
@@ -885,6 +893,7 @@ class TaskClient:
                 ),
                 execution=TaskExecutionRequest(
                     definition_id=definition_id,
+                    deployment=self._execution_deployment,
                     input_summary=_snapshot_value(
                         sanitizer.sanitize(
                             PrivacyField.INPUT,
@@ -1165,6 +1174,28 @@ class TaskClient:
             sleep=self._sleep,
             input_roots=self._input_roots,
         )
+
+    async def _deployment_client(
+        self, identity: str, *, file_delivery: bool = False
+    ) -> "TaskClient":
+        """Select a retained deployment on an isolated client."""
+        if self._execution_deployments is None:
+            raise ExecutionDeploymentError("catalog.unavailable")
+        binding = await self._execution_deployments.resolve(identity)
+        if file_delivery:
+            await binding.verify(file_delivery=True)
+        client = copy(self)
+        client._execution_deployment_id = identity
+        client._execution_deployment = binding.manifest
+        client._execution_definition_base = (
+            binding.application_root / binding.manifest.task_ref
+        ).parent
+        client._target = binding.target
+        client._execution_roots = (binding.application_root,)
+        client._definition_hash = lambda definition: spec_hash(
+            definition, schema_base_path=client._execution_definition_base
+        )
+        return client
 
     async def _definition_hash_value(self, definition: TaskDefinition) -> str:
         value = (

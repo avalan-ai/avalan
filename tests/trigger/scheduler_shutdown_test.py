@@ -39,7 +39,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                     closed.append(True)
 
             scheduler = TriggerScheduler(
-                services(Path(directory)), owned_resources=(Owned(),)
+                await services(Path(directory)), owned_resources=(Owned(),)
             )
 
             async def clock() -> datetime:
@@ -80,7 +80,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                     closed.append(True)
 
             scheduler = TriggerScheduler(
-                services(Path(directory)),
+                await services(Path(directory)),
                 settings=TriggerSchedulerSettings(shutdown_timeout_seconds=1),
                 owned_resources=(Owned(),),
             )
@@ -119,7 +119,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                     closed.append(True)
 
             scheduler = TriggerScheduler(
-                services(Path(directory)),
+                await services(Path(directory)),
                 settings=TriggerSchedulerSettings(shutdown_timeout_seconds=1),
                 owned_resources=(Owned(),),
             )
@@ -143,7 +143,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                         raise OSError("sensitive backend details")
 
             scheduler = TriggerScheduler(
-                services(Path(directory)), owned_resources=(Owned(),)
+                await services(Path(directory)), owned_resources=(Owned(),)
             )
             result = await scheduler.shutdown()
             assert not result.settled and len(result.errors) == 1
@@ -167,7 +167,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                         raise OSError("private close failure")
 
             scheduler = TriggerScheduler(
-                services(Path(directory)),
+                await services(Path(directory)),
                 settings=TriggerSchedulerSettings(shutdown_timeout_seconds=1),
                 owned_resources=(Owned(),),
             )
@@ -185,7 +185,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
 
     async def test_serve_waits_after_tick_and_rejects_reentry(self) -> None:
         with TemporaryDirectory() as directory:
-            scheduler = TriggerScheduler(services(Path(directory)))
+            scheduler = TriggerScheduler(await services(Path(directory)))
             waiting, release, stop = Event(), Event(), Event()
             original = scheduler._wait_seconds
 
@@ -214,7 +214,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                     closed.append(True)
 
             scheduler = TriggerScheduler(
-                services(Path(directory)), owned_resources=(Owned(),)
+                await services(Path(directory)), owned_resources=(Owned(),)
             )
 
             async def failed() -> TriggerProcessResult:
@@ -229,7 +229,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
-            scheduler = TriggerScheduler(services(Path(directory)))
+            scheduler = TriggerScheduler(await services(Path(directory)))
             entered, blocked, release = Event(), Event(), Event()
 
             async def failed_after_cancel() -> TriggerProcessResult:
@@ -268,7 +268,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                     closed.append(True)
 
             scheduler = TriggerScheduler(
-                services(Path(directory)), owned_resources=(Owned(),)
+                await services(Path(directory)), owned_resources=(Owned(),)
             )
 
             async def delay(result: TriggerProcessResult) -> float:
@@ -323,7 +323,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
                         closed.append(True)
 
                 scheduler = TriggerScheduler(
-                    services(Path(directory)),
+                    await services(Path(directory)),
                     settings=TriggerSchedulerSettings(
                         shutdown_timeout_seconds=1
                     ),
@@ -367,7 +367,7 @@ class TriggerSchedulerShutdownTest(IsolatedAsyncioTestCase):
     ) -> None:
         with TemporaryDirectory() as directory:
             entered, blocked = Event(), Event()
-            scheduler = TriggerScheduler(services(Path(directory)))
+            scheduler = TriggerScheduler(await services(Path(directory)))
 
             async def lookup() -> datetime | None:
                 entered.set()

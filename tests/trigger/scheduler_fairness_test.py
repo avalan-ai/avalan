@@ -92,7 +92,7 @@ class TriggerSchedulerFairnessTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             await register_backlogs(service)
             scheduler = TriggerScheduler(
                 service,

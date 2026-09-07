@@ -41,7 +41,7 @@ class MemoryAdmissionFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             registration = TriggerRegistrationService(service)
@@ -106,7 +106,7 @@ class MemoryAdmissionFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             registered = await service.prepare_registration(
@@ -185,7 +185,7 @@ class MemoryAdmissionFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             registered = await service.prepare_registration(
@@ -214,7 +214,7 @@ class MemoryAdmissionFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             registered = await service.prepare_registration(
@@ -278,7 +278,7 @@ class MemoryAdmissionFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             registration = TriggerRegistrationService(service)

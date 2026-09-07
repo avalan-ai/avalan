@@ -21,6 +21,7 @@ from pgsql_harness import (
 )
 from pytest import importorskip
 from task.artifacts.object_store_test import FakeObjectClient
+from task_deployment_helpers import configure_fixture_deployment
 from task_submission_helpers import prepared_submission_fixture
 from trigger.preparation_e2e_test import ContextCipher, file_task, target
 from trigger.records_test import OWNER
@@ -48,13 +49,17 @@ from avalan.task.artifacts.object_store import (
 )
 from avalan.task.artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from avalan.task.client import TaskClient
+from avalan.task.context import TaskTargetContext
 from avalan.task.definition import (
     IdempotencyMode,
+    PrivacyAction,
     TaskDefinition,
     TaskExecutionTarget,
     TaskInputContract,
     TaskMetadata,
     TaskOutputContract,
+    TaskPrivacyPolicy,
+    TaskRetryPolicy,
     TaskRunPolicy,
 )
 from avalan.task.idempotency import (
@@ -78,6 +83,7 @@ from avalan.task.submission import (
     TaskSubmissionArtifact,
     TaskSubmissionOutcome,
 )
+from avalan.task.worker import TaskWorker
 from avalan.trigger.admission import (
     PreparedTriggerAdmission,
     TriggerAdmissionResult,
@@ -85,12 +91,16 @@ from avalan.trigger.admission import (
 )
 from avalan.trigger.apply import TriggerRegistrationService
 from avalan.trigger.definition import (
+    BindingSource,
+    InputBinding,
     IntervalTrigger,
+    MisfirePolicy,
+    RecurringPolicy,
     TriggerConfiguration,
     TriggerInput,
 )
 from avalan.trigger.error import TriggerError, TriggerErrorCode
-from avalan.trigger.plan import plan_admission
+from avalan.trigger.plan import AdmissionLimits, plan_admission
 from avalan.trigger.preparation import TriggerPreparationService
 from avalan.trigger.records import (
     TriggerCoverageSpan,
@@ -191,6 +201,19 @@ class PgsqlTriggerAdmissionE2ETest(IsolatedAsyncioTestCase):
         row_decision = recovered.resolved[0].decisions[0]
         assert isinstance(row_decision, TriggerOccurrence)
         assert row_decision.run_id == prepared.run_id
+        persisted_run = await self.tasks.get_run(prepared.run_id)
+        provenance = persisted_run.request.trigger
+        assert provenance is not None
+        assert provenance.trigger_id == row_decision.trigger_id
+        assert provenance.trigger_revision == row_decision.revision
+        assert provenance.occurrence_id == row_decision.occurrence_id
+        assert provenance.scheduled_at == row_decision.scheduled_at
+        assert provenance.dispatched_at == row_decision.decided_at
+        attempt = await self.tasks.create_attempt(persisted_run.run_id)
+        assert attempt.context.trigger == provenance
+        assert (
+            await self.tasks.get_attempt(attempt.attempt_id)
+        ).context.trigger == provenance
         current = await self.store.inspect("daily")
         assert current is not None
         await self.store.set_enabled(
@@ -237,6 +260,7 @@ class PgsqlTriggerAdmissionE2ETest(IsolatedAsyncioTestCase):
                 artifact_store=backend,
                 execution_roots=(root,),
             )
+            await configure_fixture_deployment(client, file_task(), root)
             preparation = TriggerPreparationService(
                 client, self.admission, ownership, cipher
             )
@@ -281,6 +305,7 @@ class PgsqlTriggerAdmissionE2ETest(IsolatedAsyncioTestCase):
                 artifact_store=backend,
                 execution_roots=(root,),
             )
+            await configure_fixture_deployment(fresh_client, file_task(), root)
             fresh = TriggerPreparationService(
                 fresh_client, self.admission, ownership, cipher
             )
@@ -1052,3 +1077,151 @@ $$
                         current.state.next_at
                         == mutation.snapshot.state.next_at
                     )
+
+    async def test_worker_retry_keeps_frozen_binding_and_provenance(
+        self,
+    ) -> None:
+        contexts: list[TaskTargetContext] = []
+        inputs: list[dict[str, object]] = []
+
+        async def execute(context: TaskTargetContext) -> str:
+            assert isinstance(context.input_value, dict)
+            contexts.append(context)
+            inputs.append(dict(context.input_value))
+            if len(contexts) == 1:
+                context.input_value["value"] = "changed inside first attempt"
+                raise OSError("retry target")
+            return "complete"
+
+        definition = TaskDefinition(
+            task=TaskMetadata(name="provenance", version="1"),
+            input=TaskInputContract.object(
+                {
+                    "type": "object",
+                    "properties": {
+                        "scheduled": {"type": "string"},
+                        "occurrence": {"type": "string"},
+                        "value": {"type": "string"},
+                    },
+                    "required": ["scheduled", "occurrence", "value"],
+                    "additionalProperties": False,
+                }
+            ),
+            output=TaskOutputContract.text(),
+            execution=TaskExecutionTarget.agent("agent.toml"),
+            run=TaskRunPolicy.queued(
+                "provenance", idempotency=IdempotencyMode.NONE
+            ),
+            retry=TaskRetryPolicy(max_attempts=2),
+            privacy=TaskPrivacyPolicy(
+                input=PrivacyAction.ENCRYPT,
+                files=PrivacyAction.DROP,
+                raw_retention_days=1,
+            ),
+        )
+        cipher = ContextCipher()
+        client = TaskClient(
+            self.tasks,
+            target=execute,
+            queue=self.queue,
+            owner_scope=OWNER.value,
+            execution_deployment_id="deployment",
+            encryption_provider=cipher,
+            raw_storage_allowed=True,
+        )
+        directory = TemporaryDirectory()
+        self.addCleanup(directory.cleanup)
+        await configure_fixture_deployment(
+            client, definition, Path(directory.name)
+        )
+        service = TriggerPreparationService(
+            client,
+            self.admission,
+            PgsqlArtifactOwnership(self.database),
+            cipher,
+        )
+        registered = await service.prepare_registration(
+            TriggerConfiguration(
+                name="provenance",
+                task_ref="task.toml",
+                schedule=IntervalTrigger(every_seconds=60),
+                policy=RecurringPolicy(misfire=MisfirePolicy.ALL),
+                input=TriggerInput(
+                    value={
+                        "scheduled": None,
+                        "occurrence": None,
+                        "value": "frozen",
+                    },
+                    bindings=(
+                        InputBinding(
+                            path="/scheduled",
+                            source=BindingSource.SCHEDULED_AT,
+                        ),
+                        InputBinding(
+                            path="/occurrence",
+                            source=BindingSource.OCCURRENCE_ID,
+                        ),
+                    ),
+                ),
+            ),
+            definition,
+        )
+        with patch(
+            "avalan.trigger.apply.decision_time",
+            AsyncMock(return_value=datetime.now(UTC) - timedelta(minutes=3)),
+        ):
+            await TriggerRegistrationService(service).apply(
+                registered, expected_generation=None
+            )
+        worker = TaskWorker(
+            self.tasks,
+            self.queue,
+            target=execute,
+            execution_deployments=client._execution_deployments,
+            queue_name="provenance",
+            encryption_provider=cipher,
+            raw_storage_allowed=True,
+        )
+        run_ids = []
+        for index in range(2):
+            snapshot = await self.store.inspect("provenance")
+            assert snapshot is not None
+            plan = plan_admission(
+                snapshot,
+                datetime.now(UTC),
+                limits=AdmissionLimits(decisions=1, admissions=1),
+            )
+            admitted = await self.admission.admit(
+                await service.prepare_admission(plan)
+            )
+            assert admitted.outcome == TriggerCommitOutcome.COMMITTED
+            decision = admitted.resolved[0].decisions[0]
+            assert (
+                isinstance(decision, TriggerOccurrence)
+                and decision.run_id is not None
+            )
+            run_ids.append(decision.run_id)
+            processed = await worker.process_once()
+            if index == 0:
+                assert processed.retry is not None
+                processed = await worker.process_once()
+            assert processed.completion is not None
+            assert (
+                await self.tasks.get_run(decision.run_id)
+            ).state == TaskRunState.SUCCEEDED
+            assert contexts[-1].execution.trigger is not None
+            assert (
+                contexts[-1].execution.trigger.dispatched_at
+                == decision.decided_at
+            )
+            assert inputs[-1]["occurrence"] == decision.occurrence_id
+        assert run_ids[0] != run_ids[1]
+        assert inputs[0] == inputs[1]
+        assert contexts[0].execution.trigger == contexts[1].execution.trigger
+        assert contexts[0].execution.run_id == contexts[1].execution.run_id
+        assert (
+            contexts[0].execution.attempt_id
+            != contexts[1].execution.attempt_id
+        )
+        assert contexts[2].execution.trigger != contexts[1].execution.trigger
+        assert all(value["value"] == "frozen" for value in inputs)

@@ -1177,7 +1177,7 @@
       },
       {
         "path": "src/avalan/agent/orchestrator/response/orchestrator_response.py",
-        "source_sha256": "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9"
+        "source_sha256": "a0cd30d189a3e30445b516d1af5d80f0882e86240769bc8be6b70ad1c153b829"
       },
       {
         "path": "src/avalan/agent/orchestrator_contract.py",
@@ -1713,7 +1713,7 @@
       },
       {
         "path": "src/avalan/interaction/stores/pgsql.py",
-        "source_sha256": "c8924543360a49f1fa99aa3e9fae3a135edb6fb5b7ac95186c8620c3e96200b5"
+        "source_sha256": "9f7d3f66c0750e6b0687f4df4e1b424146570839af3abbbe3e2a4e8e05c236cb"
       },
       {
         "path": "src/avalan/interaction/validation.py",
@@ -2221,7 +2221,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "c8c688defbda9d3f3b4fa299f056e9d0e7c0724fa52b65b5cbfcf98f240e0717"
+        "source_sha256": "037e79f4da7e44cc8c808281ab5c487131937ed997d5b7184599734f264ed8d4"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -2489,11 +2489,19 @@
       },
       {
         "path": "src/avalan/task/client.py",
-        "source_sha256": "5210f48b9d8a9d64ba008d890f7b452a33881872c02b4a6441bc66a2f70407ce"
+        "source_sha256": "a1e3fa34b63d41c629c4df6c972231bfcd2e92a38bfca1a7d1c2e6296b6dc5b1"
       },
       {
         "path": "src/avalan/task/container.py",
         "source_sha256": "9d34e9029d714423bc0407a2d3885a5d6cab9498891b1a4ea880df1109b13fb2"
+      },
+      {
+        "path": "src/avalan/task/container_invocation.py",
+        "source_sha256": "1d1b9430ec79a58b065c6b9ffe1f966f1c66fb43e3654b1616b67d893209aa2f"
+      },
+      {
+        "path": "src/avalan/task/container_transport.py",
+        "source_sha256": "5f75b233d58688d449dc7c43f0aa0f4b84b5c282ae4a26d39ed9e98d526eb37a"
       },
       {
         "path": "src/avalan/task/context.py",
@@ -2528,16 +2536,40 @@
         "source_sha256": "df04b05721b32f5bd9eed36e0c8d68baccedb6ab6c392bcdee8ff4a883501d5c"
       },
       {
+        "path": "src/avalan/task/deployment.py",
+        "source_sha256": "52d00d5a746f77f9480ec5e1ee85048115c784426e9aa632e5a1a1054defa5c9"
+      },
+      {
+        "path": "src/avalan/task/deployment_catalog.py",
+        "source_sha256": "1d2a0feaabc706174ac755ceeddac7f95169d9fe6b4639302267ebc3102b5524"
+      },
+      {
+        "path": "src/avalan/task/deployment_closure.py",
+        "source_sha256": "8fbfc5dfa5f675dcf500c614472712a8f2b33cdfcb09c11142a90355946456ee"
+      },
+      {
+        "path": "src/avalan/task/deployment_requirements.py",
+        "source_sha256": "3d7512cf605053507152011bd066f27440025347f0f8a136b56b93e15bdfd737"
+      },
+      {
+        "path": "src/avalan/task/deployment_target.py",
+        "source_sha256": "32e57b0a77d08de65a571205b9ee8cddd4b49d7c0c841c52091bb2670b9d43b8"
+      },
+      {
         "path": "src/avalan/task/durable_agent.py",
-        "source_sha256": "773ce8ed457bb6e0525bd8809c79cfa5288965299d8f68fa6e72bb98133017a9"
+        "source_sha256": "d338e710235fbdb50b40d5f0eb2d52086f88d08f0bd11549ec719276f71b9f70"
       },
       {
         "path": "src/avalan/task/error.py",
-        "source_sha256": "df0df1d286917c82babd4172eb5a0fb3a349ead38d02958d54f004d8363f15f5"
+        "source_sha256": "662e3f524bcc9b1edec7af11aabe2a8a24a11a2cacbf4ecfdb54181b0ca47732"
       },
       {
         "path": "src/avalan/task/event.py",
         "source_sha256": "a32a524383b8be0c3d3acc29a0cc65a8a78626edec74486139686a2983dac079"
+      },
+      {
+        "path": "src/avalan/task/execution_codec.py",
+        "source_sha256": "17fb304f03e8a298ae3417119369f09632051e03370ddf2b15d7b8ab00284508"
       },
       {
         "path": "src/avalan/task/feature_gate.py",
@@ -2572,6 +2604,10 @@
         "source_sha256": "df59550794121279fabd610d07a9d260e8851b6f57b0e08349bb868453b355b1"
       },
       {
+        "path": "src/avalan/task/provenance.py",
+        "source_sha256": "f318cd9e3d9a91ea8205b4c13732df1010d6a4c7b34d8b45d803ed2168255566"
+      },
+      {
         "path": "src/avalan/task/queue.py",
         "source_sha256": "d456ea02d0b98ab1bbacef860634093cb06bdbcca271fac7393f7cdf41f10191"
       },
@@ -2585,7 +2621,7 @@
       },
       {
         "path": "src/avalan/task/queues/pgsql.py",
-        "source_sha256": "b798daaccac4c228f22444e618dc0ba8586b16d7b012db06c71930674e24fa49"
+        "source_sha256": "519aa848d6c80d7dc3028fe11f7bdb79c6bcb3d01d840643dbee786040a792f3"
       },
       {
         "path": "src/avalan/task/queues/submission.py",
@@ -2601,7 +2637,7 @@
       },
       {
         "path": "src/avalan/task/runner.py",
-        "source_sha256": "dd9a86a9d9f11b0d120c61d5061610c4225c1cb75297550a8221a93e9f0172a0"
+        "source_sha256": "9636a2d06dcd700f438444c7f97c6d64fa55a3f3b309df7593b257844c7f58ac"
       },
       {
         "path": "src/avalan/task/schema.py",
@@ -2645,7 +2681,7 @@
       },
       {
         "path": "src/avalan/task/store.py",
-        "source_sha256": "619fe44c6176881b76d574c3471d9f92645d03135afd4524c7a7098117e2462f"
+        "source_sha256": "f0f705302b3eaaee3f4d03b407de802e61f95ce8fe5c04eb68b911b5679ec0ed"
       },
       {
         "path": "src/avalan/task/stores/__init__.py",
@@ -2653,11 +2689,11 @@
       },
       {
         "path": "src/avalan/task/stores/memory.py",
-        "source_sha256": "48aee869a00f86fafb8da2ffc8f6712d64d5e3f668f38f0652e50801680eb97d"
+        "source_sha256": "4c643977d304dc2fa4d72513180d01a8d9e4e1b480f1ba11c1f6090655031c3c"
       },
       {
         "path": "src/avalan/task/stores/pgsql.py",
-        "source_sha256": "52b41b2a872b2c1fd14c89871ddd3f8f8410b2a1753bbd8f919df57b00566562"
+        "source_sha256": "5818e03a94c65d7f140db6e087e9cd752bb9c3fbec38f58d2c5511edbe4d9500"
       },
       {
         "path": "src/avalan/task/stores/pgsql_benchmark.py",
@@ -2725,11 +2761,15 @@
       },
       {
         "path": "src/avalan/task/targets/agent.py",
-        "source_sha256": "658f5ea93ca0c41c0c293251043a4b73c1e24d8da01e96f60c3271d6d0a49501"
+        "source_sha256": "430ba037ca8141e76af87f0f70738ddc33d3e8cf4168e3f18f8a60296c31406b"
+      },
+      {
+        "path": "src/avalan/task/targets/file_flow.py",
+        "source_sha256": "43fec45c41926873576b7e0944c6a63ebdeeb3c2129267353d3bd9d6b981ead0"
       },
       {
         "path": "src/avalan/task/targets/flow.py",
-        "source_sha256": "ee687483f6bda40a8c38d010f60d3094c489141de0c5d5b396cdf3b7c56c047a"
+        "source_sha256": "7b53dcd9a534d8d7d4c516ad43354066e917ff34507f7bbfac818b269a52f075"
       },
       {
         "path": "src/avalan/task/targets/flow_constants.py",
@@ -2749,7 +2789,7 @@
       },
       {
         "path": "src/avalan/task/worker.py",
-        "source_sha256": "40eea68a307588ed0b7da403f467dace7df7e90a1f55c9268fc5963308abc07d"
+        "source_sha256": "f765b496280167b7682a32291969e747fdd2c072008d0a2d21b984acea29c965"
       },
       {
         "path": "src/avalan/tool/__init__.py",
@@ -3289,15 +3329,15 @@
       },
       {
         "path": "src/avalan/trigger/__init__.py",
-        "source_sha256": "597d5aa4cbf8101e3206b01f79787bf5a7417797758037620436594bfff95f3e"
+        "source_sha256": "cb2dec650520da8ff29c53b293969d54086c55ce641bf51e12476b77472879eb"
       },
       {
         "path": "src/avalan/trigger/admission.py",
-        "source_sha256": "36bf6b7efb5f9a26da99744b18701e6969b94a8c3e56c90e4c9f9e88339e78e2"
+        "source_sha256": "10f385670da8680ae1088d40689cdf0fa721be6dba834036c07e212608197daf"
       },
       {
         "path": "src/avalan/trigger/apply.py",
-        "source_sha256": "9cf3664bfbfe856094cb7e68ef298aeee71c92c715e9578959e778f0f971b663"
+        "source_sha256": "747c1465893ad50f8a4f53a8f4fa81b77f662e68e732000fb44edd0d8125ba35"
       },
       {
         "path": "src/avalan/trigger/bindings.py",
@@ -3337,7 +3377,7 @@
       },
       {
         "path": "src/avalan/trigger/preparation.py",
-        "source_sha256": "51160417cb070f135f84ea1ed708166a33f8e319513d2f66d055f21e387d28c4"
+        "source_sha256": "96d0b1d10ca9f3026265e729675c5232ec4a08388aa4a7d7195d60f264244175"
       },
       {
         "path": "src/avalan/trigger/records.py",
@@ -3415,7 +3455,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "bc5068e6acb2b7fa428afe00e2cda8dd60bf5a39f127af1b6d545466908c9bf8"
+        "source_sha256": "37c0d4a7d79146b2baae1b24eeace41494e40c0dae2520ed961e25b925a8d4b6"
       }
     ],
     "public_tools": [
@@ -3461,6 +3501,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "f4d960d76cc4bf9f10a7bff3cb93c519fb5183a524e6d4f49b30f43d4e3f7779",
-  "record_sha256": "bf5af219a38bb3dd13b8606d4d898a2d5ce42f4615d35684b9e4def528444043"
+  "inventory_sha256": "8175d2ece1d73eaa1a009d00fcdb9531d3b7d9248cf698df213b5dde6ebb604d",
+  "record_sha256": "0635ad8275c48548147133501eab876ad362fc542241dcfe5216716736e77d77"
 }

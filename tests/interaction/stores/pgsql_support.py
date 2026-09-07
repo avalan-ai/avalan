@@ -1352,9 +1352,14 @@ class FakeCursor:
             else None
         )
         attempt_context = attempt.get("context")
-        attempt_claim = (
-            attempt_context.get("claim")
+        attempt_payload = (
+            attempt_context.get("payload")
             if isinstance(attempt_context, Mapping)
+            else None
+        )
+        attempt_claim = (
+            attempt_payload.get("claim")
+            if isinstance(attempt_payload, Mapping)
             else None
         )
         attempt_claim_token = (
@@ -1413,7 +1418,8 @@ class FakeCursor:
         context = attempt.get("context")
         if not isinstance(context, Mapping):
             return None
-        claim = context.get("claim")
+        payload = context.get("payload")
+        claim = payload.get("claim") if isinstance(payload, Mapping) else None
         if not isinstance(claim, Mapping):
             return None
         claim_token = claim.get("claim_token")
@@ -1629,7 +1635,9 @@ class FakeCursor:
         if row is None or row["state"] != expected:
             return None
         context = dict(cast(Mapping[str, object], row["context"]))
-        context["claim"] = None
+        payload = dict(cast(Mapping[str, object], context["payload"]))
+        payload["claim"] = None
+        context["payload"] = payload
         row.update(
             state=state,
             result=loads(cast(str, result)),
@@ -2037,7 +2045,9 @@ class FakeCursor:
         ):
             return None
         context = dict(cast(Mapping[str, object], row["context"]))
-        context["claim"] = None
+        payload = dict(cast(Mapping[str, object], context["payload"]))
+        payload["claim"] = None
+        context["payload"] = payload
         row.update(
             context=context,
             metadata={
@@ -2145,7 +2155,9 @@ class FakeCursor:
         ):
             return None
         context = dict(cast(Mapping[str, object], row["context"]))
-        context["claim"] = None
+        payload = dict(cast(Mapping[str, object], context["payload"]))
+        payload["claim"] = None
+        context["payload"] = payload
         row.update(
             state=state,
             result=loads(cast(str, result)),
@@ -2279,7 +2291,9 @@ class FakeCursor:
         ):
             return None
         context = dict(cast(Mapping[str, object], row["context"]))
-        context["claim"] = None
+        payload = dict(cast(Mapping[str, object], context["payload"]))
+        payload["claim"] = None
+        context["payload"] = payload
         row.update(
             state=state,
             result=None,
@@ -2612,7 +2626,10 @@ class FullFakeCursor:
             return
         if 'FROM "task_submissions"' in query:
             self.row = self.database.submissions.get(
-                (cast(str, params[0]), cast(str, params[1]))
+                (
+                    cast(str, params[0]),
+                    cast(str, params[1]),
+                )
             )
             return
         if 'INSERT INTO "task_submissions"' in query:
@@ -2954,7 +2971,8 @@ class FullFakeCursor:
         ):
             return None
         context = cast(dict[str, object], attempt["context"])
-        context["claim"] = loads(cast(str, params[0]))
+        payload = cast(dict[str, object], context["payload"])
+        payload["claim"] = loads(cast(str, params[0]))
         attempt["updated_at"] = params[1]
         return attempt
 

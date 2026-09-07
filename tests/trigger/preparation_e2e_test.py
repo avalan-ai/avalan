@@ -13,6 +13,7 @@ from unittest import IsolatedAsyncioTestCase
 
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from task.artifacts.object_store_test import FakeObjectClient
+from task_deployment_helpers import configure_fixture_deployment
 
 from avalan.task.artifacts.object_store import (
     ObjectArtifactEncryption,
@@ -183,6 +184,7 @@ class TriggerPreparationE2ETest(IsolatedAsyncioTestCase):
                 execution_roots=(root,),
                 clock=lambda: clock[0],
             )
+            await configure_fixture_deployment(client, file_task(), root)
             store = InMemoryTriggerStore(OWNER, clock=lambda: clock[0])
             admission = MemoryTriggerAdmissionStore(store, queue, ownership)
             preparation = TriggerPreparationService(

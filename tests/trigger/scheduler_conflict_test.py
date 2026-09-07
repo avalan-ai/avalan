@@ -144,7 +144,7 @@ class TriggerSchedulerConflictTest(IsolatedAsyncioTestCase):
         # Persist distinct management fixtures; preparation fails before any
         # task invocation, so this proves bounded scheduler accounting only.
         with TemporaryDirectory() as directory:
-            preparation = services(Path(directory))
+            preparation = await services(Path(directory))
             scheduler = TriggerScheduler(
                 preparation,
                 settings=TriggerSchedulerSettings(
