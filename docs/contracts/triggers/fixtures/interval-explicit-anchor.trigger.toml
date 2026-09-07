@@ -1,0 +1,14 @@
+[trigger]
+schema_version = 1
+name = "contract-trigger"
+
+[task]
+ref = "queued.task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[schedule]
+type = "interval"
+every_seconds = 900
+start_at = "2026-10-01T12:00:00.123456Z"
