@@ -1,0 +1,28 @@
+[flow]
+name = "trigger-contract-flow"
+version = "1"
+
+[[inputs]]
+name = "scheduled"
+type = "string"
+
+[[outputs]]
+name = "answer"
+type = "json"
+
+[entry]
+type = "node"
+node = "echo"
+
+[output_behavior]
+type = "map"
+
+[output_behavior.outputs]
+answer = "echo.value"
+
+[nodes.echo]
+type = "pass-through"
+
+[nodes.echo.mapping.value]
+type = "select"
+source = "input.scheduled"

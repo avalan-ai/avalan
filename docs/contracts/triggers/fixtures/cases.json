@@ -1,0 +1,212 @@
+[
+  {
+    "file": "cron.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "interval-implicit-anchor.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "interval-explicit-anchor.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "at.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "bindings.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-skip-skip.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-skip-allow.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-latest-skip.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-latest-allow.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-all-skip.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "policy-all-allow.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "loader"
+  },
+  {
+    "file": "unknown-field.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "wrong-version.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.unsupported_version",
+    "boundary": "loader"
+  },
+  {
+    "file": "boolean-interval.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "zero-interval.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "mixed-schedule.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "naive-at.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "at-recurrence-policy.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "at-overlap-policy.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "negative-grace.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "unknown-policy.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "cron-seconds.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "cron-alias.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "unknown-zone.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.unknown_timezone",
+    "boundary": "loader"
+  },
+  {
+    "file": "excess-precision.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_schedule",
+    "boundary": "loader"
+  },
+  {
+    "file": "past-at.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.past_schedule",
+    "boundary": "registration"
+  },
+  {
+    "file": "direct-task.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.queue_required",
+    "boundary": "task"
+  },
+  {
+    "file": "flow-task.trigger.toml",
+    "valid": true,
+    "error_code": null,
+    "boundary": "task"
+  },
+  {
+    "file": "owner-in-config.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "nonfinite-input.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_config",
+    "boundary": "loader"
+  },
+  {
+    "file": "binding-clock.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_binding",
+    "boundary": "loader"
+  },
+  {
+    "file": "binding-missing.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_binding",
+    "boundary": "loader"
+  },
+  {
+    "file": "binding-root.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_binding",
+    "boundary": "loader"
+  },
+  {
+    "file": "binding-escape.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_binding",
+    "boundary": "loader"
+  },
+  {
+    "file": "binding-duplicate.trigger.toml",
+    "valid": false,
+    "error_code": "trigger.invalid_binding",
+    "boundary": "loader"
+  }
+]
