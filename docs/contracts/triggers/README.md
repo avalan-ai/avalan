@@ -318,18 +318,18 @@ that run's ownership. Deletion requires zero live owners, confirmed outcome,
 staging age >= grace and a locked/rechecked tombstone before deleting bytes.
 Unknown outcomes keep staging resources until recovery proves disposition.
 
-## Integration audit (updated through Phase 2)
+## Integration audit (updated through Phase 6; audited in Phase 7)
 
 | Boundary | Verified source / affected callers | Replacement or gate |
 | --- | --- | --- |
-| SDK preparation | task/client.py::TaskClient.submit / prepare_submission | Shared submit/preparation; schemas, skill identity, privacy, file materialization, registration and idempotency stay mandatory |
+| SDK preparation | task/client.py::TaskClient.submit / prepare_submission; task/preparation.py::prepare_task_input | Shared submit/preparation; schemas, skill identity, privacy, file materialization, registration and idempotency stay mandatory |
 | Transaction | task/queue.py::TaskQueue.submit_prepared, task/queues/pgsql.py::PgsqlTaskQueue.submit_prepared, pgsql.py::PgsqlUnitOfWork | Caller-owned participant, one transaction; queue-only enqueue is distinct worker transport and must be audited before removal |
-| CLI | cli/commands/task.py queue branch (client.submit) | Migrated to submit; sibling trigger group and shared connection config in Phase 6 |
+| CLI | cli/commands/task.py queue branch (client.submit) | Shared cli/task_store.py configuration; cli/commands/trigger.py management and cli/trigger_worker.py retained host composition |
 | Worker | task/worker.py::_queued input handling, task/context.py::TaskTargetContext, task/store.py::TaskExecutionRequest | Typed provenance through attempt/retry/resume; retain fencing |
-| Persistence codecs | task/stores/pgsql.py::_request_to_payload/_request_from_payload, _context_to_payload/_context_from_payload; task/container.py | Versioned task submission and provenance; inspect interaction checkpoint embedding before replacement |
+| Persistence codecs | task/execution_codec.py request/context codecs; task/provenance.py; task/deployment.py; task/container.py | Closed versioned task submission/context/provenance codecs; interaction JSON predicates and task claim updates use payload.claim |
 | Feature gates | task/feature_gate.py; task/validation.py; task/loader.py | JSON schema/task extra, PostgreSQL/worker extras and raw storage/remote URL restrictions remain enforced; FLOW_BACKED_TASKS metadata has no production callers and is not a global Flow gate |
 | Flow target | task/targets/flow.py::FlowTaskTargetRunner.validate_definition, validate_flow_task_compatibility; cli/commands/task.py::_task_strict_flow_resolver and FlowTaskTargetRunner construction | Validate supported Flow contracts and strict graph/node capabilities; fixtures/flow.flow.toml passes the existing strict runner validator |
-| Identity / lifetime | task/canonical.py, task/skills.py, task/input.py, task/artifact.py, task/retention.py | Deployment manifest and revision ownership are new; current task hash alone is insufficient |
+| Identity / lifetime | task/canonical.py, task/skills.py, task/input.py, task/artifact.py, task/retention.py | ExecutionDeployment manifests and retained catalog bindings verify closure; revision/run/staging ownership guards physical deletion; task hash alone remains insufficient |
 | Tools and protocols | tool/a2a.py; server/mcp_tasks.py, server/routers/mcp.py, server/a2a/ | Separate protocol task abstractions; no task submission caller found; no new management routes/tools in v1 |
 | False positive | server/routers/responses.py::projection adapter enqueue | Stream projection, unrelated to queue submission; preserve |
 
