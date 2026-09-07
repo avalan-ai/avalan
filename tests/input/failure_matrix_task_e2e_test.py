@@ -1,6 +1,6 @@
-# mypy: disable-error-code=import-not-found
 """Exercise canonical input failures across a suspended task boundary."""
 
+# mypy: disable-error-code=import-not-found
 from asyncio import Event, Task, create_task, wait_for
 from asyncio import run as run_async
 from collections.abc import (
@@ -9,6 +9,7 @@ from collections.abc import (
     Callable,
     Iterator,
     Mapping,
+    Sequence,
 )
 from contextlib import AsyncExitStack
 from dataclasses import dataclass
@@ -23,6 +24,13 @@ from unittest.mock import MagicMock, patch
 from uuid import uuid4
 
 import pytest
+from task_submission_helpers import (
+    FailureEvidenceRow,
+    TaskFailureEvidence,
+    task_failure_evidence,
+)
+
+from avalan.task.submission import TaskSubmissionRequest
 
 sys_path.append(str(Path(__file__).parents[1] / "interaction" / "stores"))
 
@@ -1308,7 +1316,7 @@ def _client_cancel_evidence(
 
 def _record_failure_matrix_evidence(
     record_property: Callable[[str, object], None],
-    evidence: list[dict[str, object]],
+    evidence: Sequence[FailureEvidenceRow],
     surface_id: str,
 ) -> None:
     """Attach dynamic cell evidence to the pytest call report."""
@@ -1369,8 +1377,9 @@ def test_input_f_01(
     _record_failure_matrix_evidence(record_property, evidence, surface_id)
 
 
-async def _test_input_f_01() -> list[dict[str, object]]:
+async def _test_input_f_01() -> list[TaskFailureEvidence]:
     database = FullFakePgsqlDatabase()
+    database_protocol: PgsqlDatabase = database
     clock = _TestClock()
     interaction_store = await _open_interaction_store(
         database,
@@ -1417,7 +1426,7 @@ async def _test_input_f_01() -> list[dict[str, object]]:
         runtime=runtime,
     )
     task_store = PgsqlTaskStore(
-        cast(PgsqlDatabase, database),
+        database_protocol,
         clock=lambda: _NOW,
     )
     client = TaskClient(
@@ -1463,8 +1472,12 @@ async def _test_input_f_01() -> list[dict[str, object]]:
     assert function_calls[0]["call_id"] == "input-call-1"
     assert function_outputs[0]["call_id"] == "input-call-1"
     assert function_calls[0]["name"] == "request_user_input"
-    assert loads(cast(str, function_calls[0]["arguments"])) == arguments
-    unavailable = loads(cast(str, function_outputs[0]["output"]))
+    encoded_arguments = function_calls[0]["arguments"]
+    assert isinstance(encoded_arguments, str)
+    assert loads(encoded_arguments) == arguments
+    encoded_output = function_outputs[0]["output"]
+    assert isinstance(encoded_output, str)
+    unavailable = loads(encoded_output)
     assert set(unavailable) == {
         "kind",
         "provenance",
@@ -1487,21 +1500,24 @@ async def _test_input_f_01() -> list[dict[str, object]]:
     assert len(inspection.attempts) == 1
     assert inspection.attempts[0].state is TaskAttemptState.SUCCEEDED
     assert inspection.artifacts == ()
-    direct_evidence = _task_evidence(
-        condition_id="INPUT-F-01",
-        surface_id="task-target-agent-direct",
-        transition_from=RequestState.CREATED,
-        transition_to=RequestState(records[0]["request_state"]),
-        public_result_id="task.interaction_unavailable_completed.v1",
-        task_state=inspection.run.state,
-        provider_call_count=len(manager.calls),
-        domain_side_effect_count=len(inspection.artifacts),
+    direct_evidence = task_failure_evidence(
+        _task_evidence(
+            condition_id="INPUT-F-01",
+            surface_id="task-target-agent-direct",
+            transition_from=RequestState.CREATED,
+            transition_to=RequestState(records[0]["request_state"]),
+            public_result_id="task.interaction_unavailable_completed.v1",
+            task_state=inspection.run.state,
+            provider_call_count=len(manager.calls),
+            domain_side_effect_count=len(inspection.artifacts),
+        )
     )
     await broker.aclose()
     await stack.aclose()
     temporary.cleanup()
 
     queue_database = FullFakePgsqlDatabase()
+    queue_database_protocol: PgsqlDatabase = queue_database
     queue_clock = _TestClock()
     queue_temporary = TemporaryDirectory()
     queue_root = Path(queue_temporary.name)
@@ -1542,11 +1558,11 @@ async def _test_input_f_01() -> list[dict[str, object]]:
         use_openai_transport=True,
     )
     queue_store = PgsqlTaskStore(
-        cast(PgsqlDatabase, queue_database),
+        queue_database_protocol,
         clock=lambda: queue_clock.now,
     )
     queue = PgsqlTaskQueue(
-        cast(PgsqlDatabase, queue_database),
+        queue_database_protocol,
         clock=lambda: queue_clock.now,
     )
     queue_client = TaskClient(
@@ -1559,9 +1575,9 @@ async def _test_input_f_01() -> list[dict[str, object]]:
         definition_hash=lambda _: "task-failure-matrix-queue-unavailable",
         clock=lambda: queue_clock.now,
     )
-    submission = await queue_client.enqueue(
+    submission = await queue_client.submit(
         _queued_definition(),
-        input_value="private",
+        request=TaskSubmissionRequest(input_value="private"),
     )
     worker = TaskWorker(
         queue_store,
@@ -1573,7 +1589,7 @@ async def _test_input_f_01() -> list[dict[str, object]]:
         raw_storage_allowed=True,
         clock=lambda: queue_clock.now,
     )
-    queue_evidence: dict[str, object] | None = None
+    queue_evidence: TaskFailureEvidence | None = None
     try:
         with patch(
             "avalan.agent.loader.ModelManager",
@@ -1600,15 +1616,17 @@ async def _test_input_f_01() -> list[dict[str, object]]:
         queue_inspection = await queue_client.inspect(submission.run.run_id)
         assert queue_inspection.run.state is TaskRunState.SUCCEEDED
         assert queue_inspection.artifacts == ()
-        queue_evidence = _task_evidence(
-            condition_id="INPUT-F-01",
-            surface_id="task-target-agent-queue",
-            transition_from=RequestState.CREATED,
-            transition_to=RequestState(queue_record["request_state"]),
-            public_result_id="task.interaction_unavailable_completed.v1",
-            task_state=queue_inspection.run.state,
-            provider_call_count=_provider_call_count(queue_model_factory),
-            domain_side_effect_count=len(queue_inspection.artifacts),
+        queue_evidence = task_failure_evidence(
+            _task_evidence(
+                condition_id="INPUT-F-01",
+                surface_id="task-target-agent-queue",
+                transition_from=RequestState.CREATED,
+                transition_to=RequestState(queue_record["request_state"]),
+                public_result_id="task.interaction_unavailable_completed.v1",
+                task_state=queue_inspection.run.state,
+                provider_call_count=_provider_call_count(queue_model_factory),
+                domain_side_effect_count=len(queue_inspection.artifacts),
+            )
         )
     finally:
         await queue_broker.aclose()
@@ -2986,6 +3004,7 @@ async def _attached_advisory_timeout_observation(
 ) -> _AdvisoryTimeoutObservation:
     """Observe a task while an advisory timeout enters model continuation."""
     database = FullFakePgsqlDatabase()
+    database_protocol: PgsqlDatabase = database
     clock = _TestClock()
     interaction_store = await _open_interaction_store(
         database,
@@ -3033,12 +3052,12 @@ async def _attached_advisory_timeout_observation(
         },
     )
     task_store = PgsqlTaskStore(
-        cast(PgsqlDatabase, database),
+        database_protocol,
         clock=lambda: clock.now,
     )
     queue = (
         PgsqlTaskQueue(
-            cast(PgsqlDatabase, database),
+            database_protocol,
             clock=lambda: clock.now,
         )
         if queued
@@ -3058,7 +3077,7 @@ async def _attached_advisory_timeout_observation(
         ),
         clock=lambda: clock.now,
     )
-    running: object | None = None
+    running: Task[TaskWorkerProcessResult] | Task[TaskRunResult] | None = None
     task: Task[TaskWorkerProcessResult] | Task[TaskRunResult]
     try:
         with patch(
@@ -3067,9 +3086,9 @@ async def _attached_advisory_timeout_observation(
         ):
             if queued:
                 assert queue is not None
-                submission = await client.enqueue(
+                submission = await client.submit(
                     _queued_definition(),
-                    input_value="private",
+                    request=TaskSubmissionRequest(input_value="private"),
                 )
                 worker = TaskWorker(
                     task_store,
@@ -3150,10 +3169,9 @@ async def _attached_advisory_timeout_observation(
     finally:
         model_factory.release.set()
         if running is not None:
-            task = cast(Any, running)
-            if not task.done():
+            if not running.done():
                 await wait_for(
-                    task,
+                    running,
                     timeout=_ASYNC_TEST_TIMEOUT_SECONDS,
                 )
         await broker.aclose()
@@ -3183,12 +3201,12 @@ async def _durable_failure_harness(
     mode: RequirementMode = RequirementMode.REQUIRED,
 ) -> _DurableFailureHarness:
     database = FullFakePgsqlDatabase()
+    database_protocol: PgsqlDatabase = database
     clock = _TestClock()
     interaction_store = await _open_interaction_store(
         database,
         clock=clock,
     )
-    database_protocol = cast(PgsqlDatabase, database)
     task_store = PgsqlTaskStore(
         database_protocol,
         clock=lambda: clock.now,
@@ -3248,9 +3266,9 @@ async def _durable_failure_harness(
         durable_lifecycle_coordinator=coordinator,
         clock=lambda: clock.now,
     )
-    submission = await client.enqueue(
+    submission = await client.submit(
         _queued_definition(),
-        input_value="private",
+        request=TaskSubmissionRequest(input_value="private"),
     )
     worker = TaskWorker(
         task_store,

@@ -8,6 +8,8 @@ from types import SimpleNamespace
 from typing import Any, BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
+from task_submission_helpers import SubmissionQueueFixture
+
 from avalan.cli.commands import task as task_cmds
 from avalan.entities import (
     Message,
@@ -53,6 +55,7 @@ from avalan.flow import (
     parse_flow_selector,
 )
 from avalan.flow.flow import Flow
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.task import (
     ENCRYPTED_MARKER,
     HASHED_MARKER,
@@ -65,7 +68,6 @@ from avalan.task import (
     TaskAttemptState,
     TaskClient,
     TaskDefinition,
-    TaskExecutionRequest,
     TaskExecutionResult,
     TaskExecutionTarget,
     TaskFileConversionPageCollection,
@@ -85,7 +87,6 @@ from avalan.task import (
     TaskProviderReferenceKind,
     TaskQueue,
     TaskQueueAbandonment,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueDepth,
@@ -93,10 +94,10 @@ from avalan.task import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueRetry,
-    TaskQueueSubmission,
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -107,8 +108,11 @@ from avalan.task import (
     completed_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
-from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionRequest,
+)
 from avalan.task.targets import (
     AgentTaskTargetRunner,
     FlowTaskTargetRunner,
@@ -504,32 +508,41 @@ class MatrixVendorToolResolver:
         )
 
 
-class MatrixQueue:
+class MatrixQueue(SubmissionQueueFixture):
     def __init__(self, store: InMemoryTaskStore, clock: MatrixClock) -> None:
         self.store = store
         self.clock = clock
         self.items: dict[str, TaskQueueItem] = {}
         self.next_id = 1
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         _ = idempotency_expires_at
         if idempotency is not None:
             existing = await self.store.lookup_idempotency_key(idempotency)
             if existing is not None:
                 run = await self.store.get_run(existing.run_id)
-                return TaskQueueSubmission(run=run, created=False)
+                return self.record_submission_write(
+                    TaskSubmissionWrite(
+                        submission_id=prepared.submission_id,
+                        run=run,
+                        created=False,
+                    )
+                )
         run = await self.store.create_run(request, metadata=run_metadata)
         artifact_records = tuple(
             [
@@ -579,12 +592,15 @@ class MatrixQueue:
         )
         self.next_id += 1
         self.items[item.queue_item_id] = item
-        return TaskQueueSubmission(
-            run=run,
-            created=True,
-            queue_item=item,
-            idempotency=idempotency_result,
-            artifacts=artifact_records,
+        return self.record_submission_write(
+            TaskSubmissionWrite(
+                submission_id=prepared.submission_id,
+                run=run,
+                created=True,
+                queue_item=item,
+                idempotency=idempotency_result,
+                artifacts=artifact_records,
+            )
         )
 
     async def enqueue(
@@ -998,10 +1014,12 @@ file_delivery_profile = "multimodal"
         self,
         target: TaskTargetRunner,
         *,
+        owner_scope: str = "default",
         file_converters: Mapping[str, FileConverter] | None = None,
     ) -> TaskClient:
         return TaskClient(
             self.store,
+            owner_scope=owner_scope,
             target=target,
             queue=cast(TaskQueue, self.queue),
             hmac_provider=self.hmac_provider,
@@ -1298,7 +1316,10 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
     ) -> None:
         with MatrixWorkspace() as workspace:
             reading_target = MatrixReadingTarget()
-            queued_client = workspace.queued_client(reading_target)
+            queued_client = workspace.queued_client(
+                reading_target,
+                owner_scope="matrix-private-owner",
+            )
             reading_worker = workspace.worker(
                 reading_target,
                 file_converters={"text": PrefixConverter()},
@@ -1310,16 +1331,17 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
                     mime_types=("text/plain",),
                 ),
             )
-            conversion_submission = await queued_client.enqueue(
+            conversion_submission = await queued_client.submit(
                 conversion_definition,
-                input_value=TaskClient.local_file(
-                    "uploads/small.txt",
-                    mime_type="text/plain",
-                    conversions=(TaskFileConversionRequest(name="text"),),
-                    metadata={"filename": "small.txt"},
+                request=TaskSubmissionRequest(
+                    input_value=TaskClient.local_file(
+                        "uploads/small.txt",
+                        mime_type="text/plain",
+                        conversions=(TaskFileConversionRequest(name="text"),),
+                        metadata={"filename": "small.txt"},
+                    ),
+                    idempotency_key="matrix-private-idempotency",
                 ),
-                idempotency_key="matrix-private-idempotency",
-                owner_scope="matrix-private-owner",
             )
             conversion_processed = await reading_worker.process_once()
             conversion_output = await queued_client.output(
@@ -1332,7 +1354,7 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
             provider_target = workspace.agent_target(provider_loader)
             provider_client = workspace.queued_client(provider_target)
             provider_worker = workspace.worker(provider_target)
-            provider_submission = await provider_client.enqueue(
+            provider_submission = await provider_client.submit(
                 _queued_definition(
                     name="queued_provider_matrix",
                     input_contract=TaskInputContract.object(
@@ -1350,22 +1372,26 @@ class FullE2EMatrixTest(IsolatedAsyncioTestCase):
                         "agents/provider.toml"
                     ),
                 ),
-                input_value={
-                    "prompt": "matrix private queued prompt",
-                    "document": {
-                        "source_kind": "provider_reference",
-                        "reference": "file-private",
-                        "mime_type": "application/pdf",
-                        "size_bytes": 128,
-                        "provider_reference": {
-                            "kind": TaskProviderReferenceKind.PROVIDER_FILE_ID,
-                            "provider": "openai",
+                request=TaskSubmissionRequest(
+                    input_value={
+                        "prompt": "matrix private queued prompt",
+                        "document": {
+                            "source_kind": "provider_reference",
                             "reference": "file-private",
                             "mime_type": "application/pdf",
-                            "owner_scope": "matrix-private-owner",
+                            "size_bytes": 128,
+                            "provider_reference": {
+                                "kind": TaskProviderReferenceKind[
+                                    "PROVIDER_FILE_ID"
+                                ],
+                                "provider": "openai",
+                                "reference": "file-private",
+                                "mime_type": "application/pdf",
+                                "owner_scope": "matrix-private-owner",
+                            },
                         },
-                    },
-                },
+                    }
+                ),
             )
             provider_processed = await provider_worker.process_once()
             provider_output = await provider_client.output(
@@ -1524,6 +1550,7 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
             client = workspace.queued_client(
                 flow_target,
                 file_converters={"pdf_image": converter},
+                owner_scope="matrix-private-flow-owner",
             )
             worker = workspace.worker(
                 flow_target,
@@ -1548,15 +1575,16 @@ uri = "ai://env:KEY@openai/gpt-4o-mini"
                 execution=TaskExecutionTarget.flow("flows/image.toml"),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition_value,
-                input_value=TaskClient.local_file(
-                    "uploads/document.pdf",
-                    mime_type="application/pdf",
-                    metadata={"filename": "matrix-private-document.pdf"},
+                request=TaskSubmissionRequest(
+                    input_value=TaskClient.local_file(
+                        "uploads/document.pdf",
+                        mime_type="application/pdf",
+                        metadata={"filename": "matrix-private-document.pdf"},
+                    ),
+                    idempotency_key="matrix-private-flow-window",
                 ),
-                idempotency_key="matrix-private-flow-window",
-                owner_scope="matrix-private-flow-owner",
             )
             processed = await worker.process_once()
             output = await client.output(submission.run.run_id)
@@ -1723,9 +1751,9 @@ source = "start.value"
                 execution=TaskExecutionTarget.flow("flows/file_graph.toml"),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition_value,
-                input_value="ready",
+                request=TaskSubmissionRequest(input_value="ready"),
             )
             processed = await worker.process_once()
             output = await client.output(submission.run.run_id)
@@ -1790,7 +1818,10 @@ source = "start.value"
                 ),
             )
             direct_client = workspace.direct_client(target)
-            queued_client = workspace.queued_client(target)
+            queued_client = workspace.queued_client(
+                target,
+                owner_scope="matrix-private-graph-inline-owner",
+            )
             worker = workspace.worker(target)
 
             direct_result = await direct_client.run(
@@ -1800,16 +1831,17 @@ source = "start.value"
                 ),
                 input_value="direct-ready",
             )
-            submission = await queued_client.enqueue(
+            submission = await queued_client.submit(
                 _queued_definition(
                     name="queued_graph_inline_flow",
                     execution=TaskExecutionTarget.flow(
                         "flows/queued_inline_graph.toml"
                     ),
                 ),
-                input_value="queued-ready",
-                idempotency_key="matrix-private-graph-inline-window",
-                owner_scope="matrix-private-graph-inline-owner",
+                request=TaskSubmissionRequest(
+                    input_value="queued-ready",
+                    idempotency_key="matrix-private-graph-inline-window",
+                ),
             )
             processed = await worker.process_once()
             direct_inspection = await direct_client.inspect(
@@ -1905,20 +1937,24 @@ type = "pass-through"
                     workspace.root
                 ),
             )
-            client = workspace.queued_client(target)
+            client = workspace.queued_client(
+                target,
+                owner_scope="matrix-private-invalid-graph-owner",
+            )
             worker = workspace.worker(target)
 
             with self.assertRaises(TaskValidationError) as error:
-                await client.enqueue(
+                await client.submit(
                     _queued_definition(
                         name="queued_invalid_graph_file_flow",
                         execution=TaskExecutionTarget.flow(
                             "flows/invalid_graph.toml"
                         ),
                     ),
-                    input_value="ready",
-                    idempotency_key="matrix-private-invalid-graph-window",
-                    owner_scope="matrix-private-invalid-graph-owner",
+                    request=TaskSubmissionRequest(
+                        input_value="ready",
+                        idempotency_key="matrix-private-invalid-graph-window",
+                    ),
                 )
             processed = await worker.process_once()
 
@@ -1966,10 +2002,11 @@ type = "pass-through"
                 definition_hash=lambda task: f"matrix-{task.task.name}",
                 clock=lambda: workspace.clock.now,
                 sleep=workspace.clock.sleep,
+                owner_scope="matrix-private-no-store-owner",
             )
 
             with self.assertRaises(TaskValidationError) as error:
-                await client.enqueue(
+                await client.submit(
                     _queued_definition(
                         name="queued_flow_image_no_store",
                         input_contract=TaskInputContract.file(
@@ -1977,13 +2014,16 @@ type = "pass-through"
                         ),
                         execution=TaskExecutionTarget.flow("flows/image.toml"),
                     ),
-                    input_value=TaskClient.local_file(
-                        "uploads/document.pdf",
-                        mime_type="application/pdf",
-                        metadata={"filename": "matrix-private-document.pdf"},
+                    request=TaskSubmissionRequest(
+                        input_value=TaskClient.local_file(
+                            "uploads/document.pdf",
+                            mime_type="application/pdf",
+                            metadata={
+                                "filename": "matrix-private-document.pdf"
+                            },
+                        ),
+                        idempotency_key="matrix-private-no-store-window",
                     ),
-                    idempotency_key="matrix-private-no-store-window",
-                    owner_scope="matrix-private-no-store-owner",
                 )
 
         self.assertEqual(workspace.queue.items, {})
@@ -2192,21 +2232,25 @@ type = "pass-through"
                 strict_resolver=lambda _: _strict_matrix_subflow_plan()
             )
             direct_client = workspace.direct_client(flow_target)
-            queued_client = workspace.queued_client(flow_target)
+            queued_client = workspace.queued_client(
+                flow_target,
+                owner_scope="matrix-private-subflow-owner",
+            )
             worker = workspace.worker(flow_target)
 
             direct_result = await direct_client.run(
                 _direct_flow_definition(name="direct_subflow_matrix"),
                 input_value="matrix private subflow prompt",
             )
-            submission = await queued_client.enqueue(
+            submission = await queued_client.submit(
                 _queued_definition(
                     name="queued_subflow_matrix",
                     execution=TaskExecutionTarget.flow("flows/subflow.toml"),
                 ),
-                input_value="matrix private subflow prompt",
-                idempotency_key="matrix-private-subflow-idempotency",
-                owner_scope="matrix-private-subflow-owner",
+                request=TaskSubmissionRequest(
+                    input_value="matrix private subflow prompt",
+                    idempotency_key="matrix-private-subflow-idempotency",
+                ),
             )
             processed = await worker.process_once()
             queued_output = await queued_client.output(submission.run.run_id)
@@ -2248,17 +2292,21 @@ type = "pass-through"
                     failing=True
                 )
             )
-            queued_client = workspace.queued_client(flow_target)
+            queued_client = workspace.queued_client(
+                flow_target,
+                owner_scope="matrix-private-subflow-failure-owner",
+            )
             worker = workspace.worker(flow_target)
 
-            submission = await queued_client.enqueue(
+            submission = await queued_client.submit(
                 _queued_definition(
                     name="queued_subflow_failure_matrix",
                     execution=TaskExecutionTarget.flow("flows/subflow.toml"),
                 ),
-                input_value="matrix private failing subflow prompt",
-                idempotency_key="matrix-private-subflow-failure",
-                owner_scope="matrix-private-subflow-failure-owner",
+                request=TaskSubmissionRequest(
+                    input_value="matrix private failing subflow prompt",
+                    idempotency_key="matrix-private-subflow-failure",
+                ),
             )
             processed = await worker.process_once()
             result = await queued_client.output(submission.run.run_id)

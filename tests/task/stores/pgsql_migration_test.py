@@ -720,7 +720,34 @@ class PgsqlMigrationRevisionTest(TestCase):
         )
         self.assertIn('"ix_interaction_branches_scope"', schema)
 
-    def test_patch_coordination_revision_is_registered_as_schema_head(
+    def test_submission_revision_is_registered_as_schema_head(self) -> None:
+        revision_module = import_module(
+            "avalan.task.stores.pgsql_migrations.versions."
+            "v20260907_0001_task_submissions"
+        )
+        fake_op = FakeRevisionOp()
+        old_op = getattr(revision_module, "op")
+        setattr(revision_module, "op", fake_op)
+        try:
+            revision_module.upgrade()
+        finally:
+            setattr(revision_module, "op", old_op)
+        self.assertEqual(TASK_PGSQL_HEAD_REVISION, revision_module.revision)
+        self.assertEqual(
+            revision_module.down_revision,
+            "20260828_0001_patch_coordination",
+        )
+        self.assertEqual(
+            fake_op.bind.statements,
+            list(revision_module.TASK_SCHEMA_STATEMENTS),
+        )
+        schema = "\n".join(task_pgsql_schema_statements())
+        self.assertIn('CREATE TABLE IF NOT EXISTS "task_submissions"', schema)
+        self.assertIn('PRIMARY KEY ("owner_scope", "submission_id")', schema)
+        self.assertIn('"fk_task_submissions_run"', schema)
+        self.assertIn('"ix_task_submissions_run"', schema)
+
+    def test_patch_coordination_revision_extends_schema(
         self,
     ) -> None:
         revision_module = import_module(
@@ -735,7 +762,9 @@ class PgsqlMigrationRevisionTest(TestCase):
         finally:
             setattr(revision_module, "op", old_op)
 
-        self.assertEqual(TASK_PGSQL_HEAD_REVISION, revision_module.revision)
+        self.assertEqual(
+            "20260828_0001_patch_coordination", revision_module.revision
+        )
         self.assertEqual(
             fake_op.bind.statements,
             list(revision_module.TASK_SCHEMA_STATEMENTS),
@@ -805,6 +834,7 @@ class PgsqlMigrationRevisionTest(TestCase):
             "v20260809_0001_patch_durable_store",
             "v20260811_0002_patch_worker_reaping",
             "v20260828_0001_patch_coordination",
+            "v20260907_0001_task_submissions",
         ):
             with self.subTest(revision=revision):
                 revision_module = import_module(

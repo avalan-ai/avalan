@@ -9,6 +9,12 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from task_submission_helpers import (
+    SubmissionQueueFixture,
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
+
 from avalan.container import (
     ContainerBackend,
     ContainerBackendCapabilities,
@@ -35,6 +41,7 @@ from avalan.container import (
     ContainerTrustLevel,
     run_container_managed_lifecycle,
 )
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.task import (
     DirectTaskRunner,
     IdempotencyMode,
@@ -63,7 +70,6 @@ from avalan.task import (
     TaskProviderReference,
     TaskProviderReferenceKind,
     TaskQueueAbandonment,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueDepth,
@@ -71,10 +77,10 @@ from avalan.task import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueRetry,
-    TaskQueueSubmission,
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -106,11 +112,14 @@ from avalan.task.container import (
     verify_task_container_request,
 )
 from avalan.task.event import task_event_category
-from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.runner import TaskContainerAttemptResult
 from avalan.task.state import TaskAttemptState
 from avalan.task.store import TaskStoreConflictError
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionRequest,
+)
 from avalan.task.validation import validate_task_definition
 
 _IMAGE = "registry.example/task@sha256:" + ("1" * 64)
@@ -241,7 +250,7 @@ class Clock:
         self.now = datetime(2027, 1, 1, tzinfo=UTC)
 
 
-class SingleItemQueue:
+class SingleItemQueue(SubmissionQueueFixture):
     def __init__(self, store: InMemoryTaskStore, clock: Clock) -> None:
         self.store = store
         self.clock = clock
@@ -250,19 +259,22 @@ class SingleItemQueue:
         self.retried: TaskQueueRetry | None = None
         self.abandoned: TaskQueueAbandonment | None = None
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         _ = idempotency
         _ = idempotency_expires_at
         run = await self.store.create_run(request, metadata=run_metadata)
@@ -305,11 +317,14 @@ class SingleItemQueue:
             run_state=run.state,
             metadata=queue_metadata or {},
         )
-        return TaskQueueSubmission(
-            run=run,
-            created=True,
-            queue_item=self.item,
-            artifacts=tuple(records),
+        return self.record_submission_write(
+            TaskSubmissionWrite(
+                submission_id=prepared.submission_id,
+                run=run,
+                created=True,
+                queue_item=self.item,
+                artifacts=tuple(records),
+            )
         )
 
     async def enqueue(
@@ -2052,7 +2067,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 worker_envelope=_effective_settings(),
             ),
         )
-        submission = await client.enqueue(definition)
+        submission = await client.submit(
+            definition, request=TaskSubmissionRequest()
+        )
         envelope_runner = FakeWorkerEnvelopeRunner()
         worker = TaskWorker(
             store,
@@ -2202,7 +2219,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                     hmac_provider=StaticHmacProvider(),
                     container_backend=_backend(),
                 )
-                await client.enqueue(definition)
+                await client.submit(
+                    definition, request=TaskSubmissionRequest()
+                )
                 worker = TaskWorker(
                     store,
                     queue,
@@ -2246,7 +2265,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             hmac_provider=StaticHmacProvider(),
             container_backend=_backend(),
         )
-        submission = await client.enqueue(definition)
+        submission = await client.submit(
+            definition, request=TaskSubmissionRequest()
+        )
         worker = TaskWorker(
             store,
             queue,
@@ -2310,10 +2331,14 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             definition_id=await spec_hash(definition),
             metadata={"container": {"attempt": {"policy_version": "stale"}}},
         )
-        submission = await queue.enqueue_run(
-            request,
-            queue_name="tasks",
-            run_metadata={"runner": "queue"},
+        submission = await persist_submission_fixture(
+            queue,
+            prepared_submission_fixture(
+                queue,
+                request,
+                queue_name="tasks",
+                run_metadata={"runner": "queue"},
+            ),
         )
         target = RecordingTarget()
         worker = TaskWorker(
@@ -2370,13 +2395,17 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
         attempt["scope"] = "runtime_envelope"
         isolation[TASK_CONTAINER_ATTEMPT_KEY] = attempt
         container[TASK_CONTAINER_ISOLATION_KEY] = isolation
-        await queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id=definition_id,
-                metadata={TASK_CONTAINER_METADATA_KEY: container},
+        await persist_submission_fixture(
+            queue,
+            prepared_submission_fixture(
+                queue,
+                TaskExecutionRequest(
+                    definition_id=definition_id,
+                    metadata={TASK_CONTAINER_METADATA_KEY: container},
+                ),
+                queue_name="tasks",
+                run_metadata={"runner": "queue"},
             ),
-            queue_name="tasks",
-            run_metadata={"runner": "queue"},
         )
         target = RecordingTarget()
         backend = _backend(output_result=_container_output_result())
@@ -2440,9 +2469,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 output_result=_container_output_result()
             ),
         )
-        submission = await client.enqueue(
+        submission = await client.submit(
             queued_definition,
-            metadata={"user": "visible"},
+            request=TaskSubmissionRequest(metadata={"user": "visible"}),
         )
         worker = TaskWorker(
             queued_store,
@@ -2552,7 +2581,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                     artifact_store=_artifact_store(self),
                     container_backend=_backend(),
                 )
-                await client.enqueue(definition)
+                await client.submit(
+                    definition, request=TaskSubmissionRequest()
+                )
                 worker = TaskWorker(
                     store,
                     queue,
@@ -2600,7 +2631,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             queue=queue,
             hmac_provider=StaticHmacProvider(),
         )
-        await client.enqueue(definition)
+        await client.submit(definition, request=TaskSubmissionRequest())
         worker = TaskWorker(
             store,
             queue,
@@ -2639,7 +2670,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             queue=queue,
             hmac_provider=StaticHmacProvider(),
         )
-        await client.enqueue(definition)
+        await client.submit(definition, request=TaskSubmissionRequest())
         worker = TaskWorker(
             store,
             queue,
@@ -2773,7 +2804,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
                 output_result=_container_output_result()
             ),
         )
-        await client.enqueue(definition)
+        await client.submit(definition, request=TaskSubmissionRequest())
         worker = TaskWorker(
             store,
             queue,
@@ -2812,7 +2843,9 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             hmac_provider=StaticHmacProvider(),
             container_backend=_backend(),
         )
-        submission = await client.enqueue(definition)
+        submission = await client.submit(
+            definition, request=TaskSubmissionRequest()
+        )
         worker = TaskWorker(
             store,
             queue,

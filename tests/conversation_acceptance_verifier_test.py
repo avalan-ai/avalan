@@ -6,6 +6,7 @@ from importlib.util import module_from_spec, spec_from_file_location
 from json import dumps, loads
 from pathlib import Path
 from shutil import copy2, copytree
+from subprocess import CompletedProcess
 from sys import modules
 from sys import path as sys_path
 from types import ModuleType
@@ -2044,3 +2045,107 @@ def test_phase12_candidate_rejects_resigned_active_evidence_overclaim(
         match="labels inactive evidence active",
     ):
         _VERIFIER._validate_phase12_traceability_candidate(_ROOT, manifest)
+
+
+def test_task_submission_transition_evidence_collects() -> None:
+    """Collect the unchanged atomic conversation assertions after migration."""
+    assert _VERIFIER._task_submission_provider_transitions(_ROOT) == (
+        _VERIFIER._TASK_SUBMISSION_PROVIDER_BYTE_TRANSITIONS
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "resign", "message"),
+    [
+        ("schema_version", True, True, "header is invalid"),
+        ("change", "unreviewed", True, "header is invalid"),
+        ("reason", "changed", False, "digest is invalid"),
+        ("reason", "", True, "non-empty"),
+        ("transitions", [], True, "independent byte anchors"),
+        ("evidence_node_ids", [], True, "evidence"),
+        ("extra", "unreviewed", True, "invalid keys"),
+    ],
+)
+def test_task_submission_transition_rejects_tampering(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+    value: object,
+    resign: bool,
+    message: str,
+) -> None:
+    """Keep schema, independent byte pins and evidence closed."""
+    payload = _read("provider_transition.task_submission.json")
+    payload[field] = value
+    if resign:
+        _resign(payload, "canonical_sha256")
+        monkeypatch.setattr(
+            _VERIFIER,
+            "_TASK_SUBMISSION_PROVIDER_TRANSITION_CANONICAL_SHA256",
+            payload["canonical_sha256"],
+        )
+    destination = (
+        tmp_path / _VERIFIER._TASK_SUBMISSION_PROVIDER_TRANSITION_PATH
+    )
+    destination.parent.mkdir(parents=True)
+    _write(destination, payload)
+    with pytest.raises(_VERIFIER.ConversationAcceptanceError, match=message):
+        _VERIFIER._task_submission_provider_transitions(tmp_path)
+
+
+@pytest.mark.parametrize(
+    "field", ["from_size", "from_sha256", "to_size", "to_sha256"]
+)
+def test_task_submission_transition_rejects_resigned_byte_pin(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    """Reject endpoint replacement even when the fixture is re-signed."""
+    payload = _read("provider_transition.task_submission.json")
+    transitions = payload["transitions"]
+    assert isinstance(transitions, list)
+    transition = transitions[0]
+    assert isinstance(transition, dict)
+    transition[field] = 0 if field.endswith("size") else "0" * 64
+    _resign(payload, "canonical_sha256")
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_TASK_SUBMISSION_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        payload["canonical_sha256"],
+    )
+    destination = (
+        tmp_path / _VERIFIER._TASK_SUBMISSION_PROVIDER_TRANSITION_PATH
+    )
+    destination.parent.mkdir(parents=True)
+    _write(destination, payload)
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError, match="independent byte anchors"
+    ):
+        _VERIFIER._task_submission_provider_transitions(tmp_path)
+
+
+@pytest.mark.parametrize("mode", ["failure", "missing", "duplicate"])
+def test_task_submission_transition_rejects_uncollected_evidence(
+    monkeypatch: pytest.MonkeyPatch,
+    mode: str,
+) -> None:
+    """Reject unavailable or ambiguous executable evidence."""
+    evidence = _VERIFIER._TASK_SUBMISSION_PROVIDER_EVIDENCE_NODES
+    output = "\n".join(evidence)
+    if mode == "missing":
+        output = "\n".join(evidence[1:])
+    elif mode == "duplicate":
+        output += "\n" + evidence[0]
+    result = CompletedProcess(
+        args=[],
+        returncode=1 if mode == "failure" else 0,
+        stdout=output,
+    )
+    monkeypatch.setattr(
+        _VERIFIER, "run_pytest", lambda *args, **kwargs: result
+    )
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError, match="evidence"
+    ):
+        _VERIFIER._task_submission_provider_transitions(_ROOT)

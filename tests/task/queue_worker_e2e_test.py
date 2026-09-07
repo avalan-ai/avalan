@@ -12,6 +12,12 @@ from typing import cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import patch
 
+from task_submission_helpers import (
+    SubmissionQueueFixture,
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
+
 from avalan.entities import ToolCall, ToolCallContext, ToolCallResult
 from avalan.event import Event, EventType
 from avalan.flow import (
@@ -42,6 +48,7 @@ from avalan.flow import (
 )
 from avalan.flow.flow import Flow
 from avalan.flow.node import Node
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.skill import (
     SkillSourceConfig,
     TrustedSkillSettings,
@@ -85,7 +92,6 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskQueue,
     TaskQueueAbandonment,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueConflictError,
@@ -95,11 +101,11 @@ from avalan.task import (
     TaskQueueItem,
     TaskQueueItemState,
     TaskQueueRetry,
-    TaskQueueSubmission,
     TaskRetryPolicy,
     TaskRunPolicy,
     TaskRunState,
     TaskStoreNotFoundError,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -112,12 +118,17 @@ from avalan.task import (
     completed_task_target_outcome,
 )
 from avalan.task.artifacts import LocalArtifactStore
-from avalan.task.idempotency import TaskIdempotencyIdentity
+from avalan.task.queue import TaskQueueReentry, TaskQueueSuspension
 from avalan.task.skills import (
     TASK_SKILLS_METADATA_KEY,
     build_task_skill_registry,
 )
+from avalan.task.store import freeze_snapshot_value
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionRequest,
+)
 from avalan.task.targets import (
     FLOW_TASK_INPUT_KEY,
     AgentTaskTargetRunner,
@@ -656,7 +667,7 @@ class ShutdownReturningOnceTarget(TaskTargetRunner):
         return completed_task_target_outcome("public answer")
 
 
-class InMemoryTaskQueue:
+class InMemoryTaskQueue(SubmissionQueueFixture):
     def __init__(
         self,
         store: InMemoryTaskStore,
@@ -672,33 +683,39 @@ class InMemoryTaskQueue:
         self.heartbeats: list[datetime] = []
         self.abandon_after_claim = False
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         if idempotency is not None:
             existing = await self.store.lookup_idempotency_key(idempotency)
             if existing is not None:
                 run = await self.store.get_run(existing.run_id)
                 queue_item_id = self.items_by_run_id.get(run.run_id)
-                return TaskQueueSubmission(
-                    run=run,
-                    created=False,
-                    queue_item=(
-                        self.items[queue_item_id]
-                        if queue_item_id is not None
-                        else None
-                    ),
-                    artifacts=await self.store.list_artifacts(run.run_id),
+                return self.record_submission_write(
+                    TaskSubmissionWrite(
+                        submission_id=prepared.submission_id,
+                        run=run,
+                        created=False,
+                        queue_item=(
+                            self.items[queue_item_id]
+                            if queue_item_id is not None
+                            else None
+                        ),
+                        artifacts=await self.store.list_artifacts(run.run_id),
+                    )
                 )
 
         run = await self.store.create_run(request, metadata=run_metadata)
@@ -752,13 +769,44 @@ class InMemoryTaskQueue:
         )
         self.items[item.queue_item_id] = item
         self.items_by_run_id[run.run_id] = item.queue_item_id
-        return TaskQueueSubmission(
-            run=run,
-            created=True,
-            queue_item=item,
-            idempotency=idempotency_result,
-            artifacts=tuple(artifact_records),
+        return self.record_submission_write(
+            TaskSubmissionWrite(
+                submission_id=prepared.submission_id,
+                run=run,
+                created=True,
+                queue_item=item,
+                idempotency=idempotency_result,
+                artifacts=tuple(artifact_records),
+            )
         )
+
+    async def suspend_claim(
+        self,
+        queue_item_id: str,
+        *,
+        claim_token: str,
+        segment_id: str,
+        request_id: str,
+        continuation_id: str,
+        checkpoint_id: str | None = None,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueSuspension:
+        raise NotImplementedError(
+            "Fixture does not implement durable suspension"
+        )
+
+    async def requeue_suspended(
+        self,
+        run_id: str,
+        *,
+        request_id: str,
+        continuation_id: str,
+        resolution_revision: int,
+        now: datetime | None = None,
+        metadata: Mapping[str, object] | None = None,
+    ) -> TaskQueueReentry:
+        raise NotImplementedError("Fixture does not implement durable reentry")
 
     async def enqueue(
         self,
@@ -1203,9 +1251,9 @@ allow_pipelines = true
                 retry=TaskRetryPolicy(max_attempts=1),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             processed = await worker.process_once()
             output = await client.output(submission.run.run_id)
@@ -1253,9 +1301,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             queued_run = await store.get_run(submission.run.run_id)
             processed = await worker.process_once()
@@ -1305,9 +1353,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             _write_skill(skill_path, body="# PDF Body\nCHANGED\n")
             processed = await worker.process_once()
@@ -1361,9 +1409,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             _write_agent(agent_path, enable_skills=True)
             processed = await worker.process_once()
@@ -1407,9 +1455,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             _write_flow(flow_path, enable_skills=True)
             processed = await worker.process_once()
@@ -1458,9 +1506,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             _write_agent(agent_path, enable_skills=True)
             processed = await worker.process_once()
@@ -1507,9 +1555,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             processed = await worker.process_once()
             output = await client.output(submission.run.run_id)
@@ -1556,9 +1604,9 @@ allow_pipelines = true
                 skills=settings,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             processed = await worker.process_once()
             output = await client.output(submission.run.run_id)
@@ -1590,6 +1638,7 @@ allow_pipelines = true
                 artifact_store=artifact_store,
                 execution_roots=(root,),
                 clock=clock,
+                owner_scope="customer-123",
             )
             worker = _worker(
                 store,
@@ -1604,16 +1653,17 @@ allow_pipelines = true
                 )
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value=TaskFileDescriptor.local_path(
-                    "private.txt",
-                    mime_type="text/plain",
-                    metadata={"filename": "private.txt"},
+                request=TaskSubmissionRequest(
+                    input_value=TaskFileDescriptor.local_path(
+                        "private.txt",
+                        mime_type="text/plain",
+                        metadata={"filename": "private.txt"},
+                    ),
+                    idempotency_key="private-idempotency-key",
+                    queue_metadata={"tenant": "safe"},
                 ),
-                idempotency_key="private-idempotency-key",
-                owner_scope="customer-123",
-                queue_metadata={"tenant": "safe"},
             )
             processed = await worker.process_once()
             waited = await client.wait(
@@ -1673,9 +1723,9 @@ allow_pipelines = true
         worker = _worker(store, queue, target=target, clock=clock)
         definition = _definition()
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             definition,
-            input_value="private prompt",
+            request=TaskSubmissionRequest(input_value="private prompt"),
         )
         processed = await worker.process_once()
         inspection = await client.inspect(submission.run.run_id)
@@ -1741,19 +1791,21 @@ allow_pipelines = true
                 artifact=TaskArtifactPolicy(max_count=2),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value=(
-                    TaskFileDescriptor.local_path(
-                        "first.txt",
-                        mime_type="text/plain",
-                        metadata={"filename": "first.txt"},
-                    ),
-                    TaskFileDescriptor.local_path(
-                        "second.txt",
-                        mime_type="text/plain",
-                        metadata={"filename": "second.txt"},
-                    ),
+                request=TaskSubmissionRequest(
+                    input_value=(
+                        TaskFileDescriptor.local_path(
+                            "first.txt",
+                            mime_type="text/plain",
+                            metadata={"filename": "first.txt"},
+                        ),
+                        TaskFileDescriptor.local_path(
+                            "second.txt",
+                            mime_type="text/plain",
+                            metadata={"filename": "second.txt"},
+                        ),
+                    )
                 ),
             )
             processed = await worker.process_once()
@@ -1816,13 +1868,17 @@ allow_pipelines = true
                 )
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value=TaskFileDescriptor.local_path(
-                    "document.txt",
-                    mime_type="text/plain",
-                    conversions=(TaskFileConversionRequest(name="prefix"),),
-                    metadata={"filename": "document.txt"},
+                request=TaskSubmissionRequest(
+                    input_value=TaskFileDescriptor.local_path(
+                        "document.txt",
+                        mime_type="text/plain",
+                        conversions=(
+                            TaskFileConversionRequest(name="prefix"),
+                        ),
+                        metadata={"filename": "document.txt"},
+                    )
                 ),
             )
             processed = await worker.process_once()
@@ -1881,20 +1937,26 @@ allow_pipelines = true
                 )
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value=TaskFileDescriptor.local_path(
-                    "document.pdf",
-                    mime_type="application/pdf",
-                    conversions=(TaskFileConversionRequest(name="pdf_image"),),
-                    metadata={"filename": "document.pdf"},
-                ),
-                files=(
-                    TaskInputFile(
-                        logical_path=f"artifact:{explicit_ref.artifact_id}",
-                        artifact_ref=explicit_ref,
-                        media_type="image/png",
-                        size_bytes=explicit_ref.size_bytes,
+                request=TaskSubmissionRequest(
+                    input_value=TaskFileDescriptor.local_path(
+                        "document.pdf",
+                        mime_type="application/pdf",
+                        conversions=(
+                            TaskFileConversionRequest(name="pdf_image"),
+                        ),
+                        metadata={"filename": "document.pdf"},
+                    ),
+                    files=(
+                        TaskInputFile(
+                            logical_path=(
+                                f"artifact:{explicit_ref.artifact_id}"
+                            ),
+                            artifact_ref=explicit_ref,
+                            media_type="image/png",
+                            size_bytes=explicit_ref.size_bytes,
+                        ),
                     ),
                 ),
             )
@@ -1978,16 +2040,18 @@ allow_pipelines = true
                 artifact=TaskArtifactPolicy(max_count=1),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value={
-                    "prompt": "Review the document.",
-                    "document": {
-                        "source_kind": "local_path",
-                        "reference": "document.txt",
-                        "mime_type": "text/plain",
-                    },
-                },
+                request=TaskSubmissionRequest(
+                    input_value={
+                        "prompt": "Review the document.",
+                        "document": {
+                            "source_kind": "local_path",
+                            "reference": "document.txt",
+                            "mime_type": "text/plain",
+                        },
+                    }
+                ),
             )
             processed = await worker.process_once()
             inspection = await client.inspect(submission.run.run_id)
@@ -2015,21 +2079,27 @@ allow_pipelines = true
         store = InMemoryTaskStore(clock=lambda: clock.now)
         queue = InMemoryTaskQueue(store, clock=clock)
         target = TextTarget()
-        client = _client(store, queue, target=target, clock=clock)
+        client = _client(
+            store,
+            queue,
+            target=target,
+            clock=clock,
+            owner_scope="same-owner",
+        )
         worker = _worker(store, queue, target=target, clock=clock)
         definition = _definition()
 
-        first = await client.enqueue(
+        first = await client.submit(
             definition,
-            input_value="same prompt",
-            idempotency_key="same-window",
-            owner_scope="same-owner",
+            request=TaskSubmissionRequest(
+                input_value="same prompt", idempotency_key="same-window"
+            ),
         )
-        second = await client.enqueue(
+        second = await client.submit(
             definition,
-            input_value="same prompt",
-            idempotency_key="same-window",
-            owner_scope="same-owner",
+            request=TaskSubmissionRequest(
+                input_value="same prompt", idempotency_key="same-window"
+            ),
         )
         before_work = await queue.depth("default")
         processed = await worker.process_once()
@@ -2089,11 +2159,13 @@ allow_pipelines = true
             clock=clock,
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private priority prompt",
-            queue_name="priority-documents",
-            queue_metadata={"tenant": "safe"},
+            request=TaskSubmissionRequest(
+                input_value="private priority prompt",
+                queue_name="priority-documents",
+                queue_metadata={"tenant": "safe"},
+            ),
         )
         default_depth = await queue.depth("default")
         priority_depth = await queue.depth("priority-documents")
@@ -2146,22 +2218,30 @@ allow_pipelines = true
         store = InMemoryTaskStore(clock=lambda: clock.now)
         queue = InMemoryTaskQueue(store, clock=clock)
         target = TextTarget()
-        client = _client(store, queue, target=target, clock=clock)
+        client = _client(
+            store,
+            queue,
+            target=target,
+            clock=clock,
+            owner_scope="same-completed-owner",
+        )
         worker = _worker(store, queue, target=target, clock=clock)
         definition = _definition()
 
-        first = await client.enqueue(
+        first = await client.submit(
             definition,
-            input_value="same completed prompt",
-            idempotency_key="same-completed-window",
-            owner_scope="same-completed-owner",
+            request=TaskSubmissionRequest(
+                input_value="same completed prompt",
+                idempotency_key="same-completed-window",
+            ),
         )
         processed = await worker.process_once()
-        second = await client.enqueue(
+        second = await client.submit(
             definition,
-            input_value="same completed prompt",
-            idempotency_key="same-completed-window",
-            owner_scope="same-completed-owner",
+            request=TaskSubmissionRequest(
+                input_value="same completed prompt",
+                idempotency_key="same-completed-window",
+            ),
         )
         output = await client.output(second.run.run_id)
         inspection = await client.inspect(second.run.run_id)
@@ -2200,15 +2280,17 @@ allow_pipelines = true
         client = _client(store, queue, target=target, clock=clock)
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _definition(),
-                input_value="safe prompt",
-                files=(
-                    TaskInputFile(
-                        logical_path="volatile/private.txt",
-                        media_type="text/plain",
-                        size_bytes=7,
-                        metadata={"filename": "private.txt"},
+                request=TaskSubmissionRequest(
+                    input_value="safe prompt",
+                    files=(
+                        TaskInputFile(
+                            logical_path="volatile/private.txt",
+                            media_type="text/plain",
+                            size_bytes=7,
+                            metadata={"filename": "private.txt"},
+                        ),
                     ),
                 ),
             )
@@ -2260,16 +2342,18 @@ allow_pipelines = true
                 clock=clock,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 _definition(),
-                input_value="private prompt with attachment",
-                files=(
-                    TaskInputFile(
-                        logical_path="provided/private.txt",
-                        artifact_ref=explicit_ref,
-                        media_type="text/plain",
-                        size_bytes=explicit_ref.size_bytes,
-                        metadata={"filename": "private.txt"},
+                request=TaskSubmissionRequest(
+                    input_value="private prompt with attachment",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provided/private.txt",
+                            artifact_ref=explicit_ref,
+                            media_type="text/plain",
+                            size_bytes=explicit_ref.size_bytes,
+                            metadata={"filename": "private.txt"},
+                        ),
                     ),
                 ),
             )
@@ -2336,9 +2420,11 @@ allow_pipelines = true
                 ),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value="private artifact prompt",
+                request=TaskSubmissionRequest(
+                    input_value="private artifact prompt"
+                ),
             )
             processed = await worker.process_once()
             output = await client.wait(
@@ -2389,9 +2475,11 @@ allow_pipelines = true
         client = _client(store, queue, target=target, clock=clock)
         worker = _worker(store, queue, target=target, clock=clock)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private cancelled prompt",
+            request=TaskSubmissionRequest(
+                input_value="private cancelled prompt"
+            ),
         )
         cancelled = await client.cancel(submission.run.run_id)
         idle = await worker.process_once()
@@ -2423,9 +2511,11 @@ allow_pipelines = true
         client_ref.append(client)
         worker = _worker(store, queue, target=target, clock=clock)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private running prompt",
+            request=TaskSubmissionRequest(
+                input_value="private running prompt"
+            ),
         )
         result = await worker.process_once()
         output = await client.output(submission.run.run_id)
@@ -2463,9 +2553,11 @@ allow_pipelines = true
         )
         queue.heartbeat_error = TaskQueueConflictError("private stale token")
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private heartbeat prompt",
+            request=TaskSubmissionRequest(
+                input_value="private heartbeat prompt"
+            ),
         )
         result = await worker.process_once()
         inspection = await client.inspect(submission.run.run_id)
@@ -2503,9 +2595,11 @@ allow_pipelines = true
         second_worker = _worker(store, queue, target=target, clock=clock)
         queue.abandon_after_claim = True
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private stale claim prompt",
+            request=TaskSubmissionRequest(
+                input_value="private stale claim prompt"
+            ),
         )
         stale = await first_worker.process_once()
         pending = await client.inspect(submission.run.run_id)
@@ -2564,9 +2658,9 @@ allow_pipelines = true
         )
         queue.heartbeat_error = TaskQueueError("private heartbeat outage")
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private outage prompt",
+            request=TaskSubmissionRequest(input_value="private outage prompt"),
         )
         result = await worker.process_once()
         inspection = await client.inspect(submission.run.run_id)
@@ -2615,9 +2709,11 @@ allow_pipelines = true
             clock=clock,
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private shutdown prompt",
+            request=TaskSubmissionRequest(
+                input_value="private shutdown prompt"
+            ),
         )
         abandoned = await stopping_worker.process_once()
         pending = await client.inspect(submission.run.run_id)
@@ -2676,9 +2772,11 @@ allow_pipelines = true
             clock=clock,
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="private late shutdown prompt",
+            request=TaskSubmissionRequest(
+                input_value="private late shutdown prompt"
+            ),
         )
         with patch("avalan.task.worker.wait", new=_target_done_wait):
             abandoned = await stopping_worker.process_once()
@@ -2725,10 +2823,11 @@ allow_pipelines = true
         worker = _worker(store, queue, target=target, clock=clock)
         available_at = clock.now + timedelta(seconds=30)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(),
-            input_value="scheduled prompt",
-            available_at=available_at,
+            request=TaskSubmissionRequest(
+                input_value="scheduled prompt", available_at=available_at
+            ),
         )
         idle = await worker.process_once()
         scheduled_depth = await queue.depth("default")
@@ -2769,10 +2868,11 @@ allow_pipelines = true
         worker = _worker(store, queue, target=target, clock=clock)
         definition = _definition(retry=TaskRetryPolicy(max_attempts=1))
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             definition,
-            input_value="private prompt",
-            queue_metadata={"tenant": "safe"},
+            request=TaskSubmissionRequest(
+                input_value="private prompt", queue_metadata={"tenant": "safe"}
+            ),
         )
         result = await worker.process_once()
         output = await client.wait(
@@ -2806,9 +2906,9 @@ allow_pipelines = true
         client = _client(store, queue, target=target, clock=clock)
         worker = _worker(store, queue, target=target, clock=clock)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(retry=TaskRetryPolicy(max_attempts=2)),
-            input_value="private retry prompt",
+            request=TaskSubmissionRequest(input_value="private retry prompt"),
         )
         retry = await worker.process_once()
         terminal = await worker.process_once()
@@ -2855,13 +2955,15 @@ allow_pipelines = true
         worker = _worker(store, queue, target=target, clock=clock)
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _structured_definition(),
-                input_value={
-                    "prompt": "private structured prompt",
-                    "limit": 0,
-                },
-                queue_metadata={"tenant": "safe"},
+                request=TaskSubmissionRequest(
+                    input_value={
+                        "prompt": "private structured prompt",
+                        "limit": 0,
+                    },
+                    queue_metadata={"tenant": "safe"},
+                ),
             )
         idle = await worker.process_once()
         depth = await queue.depth("default")
@@ -2897,12 +2999,14 @@ allow_pipelines = true
         client = _client(store, queue, target=target, clock=clock)
         worker = _worker(store, queue, target=target, clock=clock)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _structured_definition(retry=TaskRetryPolicy(max_attempts=2)),
-            input_value={
-                "prompt": "private structured prompt",
-                "limit": 2,
-            },
+            request=TaskSubmissionRequest(
+                input_value={
+                    "prompt": "private structured prompt",
+                    "limit": 2,
+                }
+            ),
         )
         retry = await worker.process_once()
         completed = await worker.process_once()
@@ -2974,12 +3078,14 @@ allow_pipelines = true
         client = _client(store, queue, target=target, clock=clock)
         worker = _worker(store, queue, target=target, clock=clock)
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _structured_definition(retry=TaskRetryPolicy(max_attempts=2)),
-            input_value={
-                "prompt": "private invalid prompt",
-                "limit": 1,
-            },
+            request=TaskSubmissionRequest(
+                input_value={
+                    "prompt": "private invalid prompt",
+                    "limit": 1,
+                }
+            ),
         )
         result = await worker.process_once()
         output = await client.output(submission.run.run_id)
@@ -4331,9 +4437,9 @@ allow_pipelines = true
             retry=TaskRetryPolicy(max_attempts=1),
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             definition,
-            input_value="private prompt",
+            request=TaskSubmissionRequest(input_value="private prompt"),
         )
         processed = await worker.process_once()
         output = await client.output(submission.run.run_id)
@@ -4354,28 +4460,34 @@ allow_pipelines = true
         definition: TaskDefinition,
         *,
         input_value: object,
-    ) -> TaskQueueSubmission:
+    ) -> TaskSubmissionWrite:
         await store.register_definition(
             definition,
             definition_hash="queue-worker-e2e",
         )
-        return await queue.enqueue_run(
-            TaskExecutionRequest(
-                definition_id="queue-worker-e2e",
-                input_summary={"privacy": REDACTED_MARKER},
-                input_payload=TaskExecutionPayload(
-                    input_value=PrivacySanitizer(
-                        definition.privacy,
-                        encryption_provider=StaticEncryptionProvider(),
-                        raw_storage_allowed=True,
-                    ).sanitize_with_action(
-                        PrivacyAction.ENCRYPT,
-                        input_value,
+        return await persist_submission_fixture(
+            queue,
+            prepared_submission_fixture(
+                queue,
+                TaskExecutionRequest(
+                    definition_id="queue-worker-e2e",
+                    input_summary={"privacy": REDACTED_MARKER},
+                    input_payload=TaskExecutionPayload(
+                        input_value=freeze_snapshot_value(
+                            PrivacySanitizer(
+                                definition.privacy,
+                                encryption_provider=StaticEncryptionProvider(),
+                                raw_storage_allowed=True,
+                            ).sanitize_with_action(
+                                PrivacyAction.ENCRYPT,
+                                input_value,
+                            )
+                        ),
                     ),
+                    queue=definition.run.queue,
                 ),
-                queue=definition.run.queue,
+                queue_name=definition.run.queue or "default",
             ),
-            queue_name=definition.run.queue or "default",
         )
 
 
@@ -4384,6 +4496,7 @@ def _client(
     queue: InMemoryTaskQueue,
     *,
     target: TaskTargetRunner,
+    owner_scope: str = "default",
     artifact_store: LocalArtifactStore | None = None,
     file_converters: Mapping[str, FileConverter] | None = None,
     execution_roots: tuple[Path, ...] = (),
@@ -4391,8 +4504,9 @@ def _client(
 ) -> TaskClient:
     return TaskClient(
         store,
+        owner_scope=owner_scope,
         target=target,
-        queue=cast(TaskQueue, queue),
+        queue=queue,
         hmac_provider=StaticHmacProvider(),
         encryption_provider=StaticEncryptionProvider(),
         raw_storage_allowed=True,

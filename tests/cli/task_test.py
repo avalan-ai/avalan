@@ -62,6 +62,11 @@ from avalan.task.converters import (
 )
 from avalan.task.converters.pdf_image import pdf_image_converter_capability
 from avalan.task.stores import TASK_PGSQL_HEAD_REVISION, InMemoryTaskStore
+from avalan.task.submission import (
+    TaskSubmissionOutcome,
+    TaskSubmissionRequest,
+    TaskSubmissionResult,
+)
 from avalan.task.targets import AgentTaskTargetRunner
 
 FIXTURE_ROOT = Path(__file__).resolve().parents[1] / "task" / "fixtures"
@@ -163,19 +168,17 @@ class _FakeTaskClient:
         self.input_value = input_value
         return self.run_result
 
-    async def enqueue(
+    async def submit(
         self,
         definition: object,
         *,
-        input_value: object = None,
-        queue_name: str | None = None,
-        queue_metadata: object | None = None,
+        request: TaskSubmissionRequest,
     ) -> object:
         if self.enqueue_error is not None:
             raise self.enqueue_error
-        self.input_value = input_value
-        self.queue_name = queue_name
-        self.queue_metadata = queue_metadata
+        self.input_value = request.input_value
+        self.queue_name = request.queue_name
+        self.queue_metadata = request.queue_metadata
         return self.enqueue_result
 
     async def wait(
@@ -3209,6 +3212,51 @@ class CliTaskCommandShellTestCase(TestCase):
             {"cli_queue": "priority-documents"},
         )
         self.assertIn("Task enqueued: run-queued", console.export_text())
+
+    def test_enqueue_reports_uncertain_outcome_without_retry(self) -> None:
+        for outcome in (
+            TaskSubmissionOutcome.UNKNOWN,
+            TaskSubmissionOutcome.NOT_COMMITTED,
+        ):
+            with self.subTest(outcome=outcome):
+                console = Console(record=True, width=160)
+                client = _FakeTaskClient(
+                    enqueue_result=TaskSubmissionResult(
+                        submission_id="private-stable-id",
+                        outcome=outcome,
+                    )
+                )
+                with TemporaryDirectory() as tmpdir:
+                    definition = Path(tmpdir) / "queued.task.toml"
+                    _write_queued_definition(definition)
+                    with patch.object(
+                        task_cmds,
+                        "_task_cli_client_context",
+                        return_value=_FakeTaskClientContext(client),
+                    ):
+                        result = task_cmds.task_enqueue(
+                            Namespace(
+                                definition=str(definition),
+                                task_input="Ada",
+                                task_input_json=None,
+                                task_input_fields=(),
+                                task_files=(),
+                                store_dsn="postgresql://db/tasks",
+                                store_schema=None,
+                                wait=False,
+                                wait_timeout=None,
+                                poll_interval=1.0,
+                                ephemeral=False,
+                                queue="default",
+                            ),
+                            console,
+                            self.theme,
+                        )
+                self.assertFalse(result)
+                self.assertIn(
+                    f"task.submission_{outcome.value}", console.export_text()
+                )
+                self.assertNotIn("private-stable-id", console.export_text())
 
     def test_enqueue_passes_pipeline_tool_context_to_client_factory(
         self,

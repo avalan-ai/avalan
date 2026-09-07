@@ -4,7 +4,7 @@ from ..interaction import (
     CreateInteractionCommand,
     PortableContinuation,
 )
-from ..pgsql import PgsqlAtomicSuspensionParticipant
+from ..pgsql import PgsqlAtomicSuspensionParticipant, PgsqlUnitOfWork
 from ..types import (
     assert_int as _assert_int,
 )
@@ -13,18 +13,6 @@ from ..types import (
 )
 from ..types import (
     assert_non_negative_int as _assert_non_negative_int,
-)
-from .artifact import (
-    TaskArtifactProvenance,
-    TaskArtifactPurpose,
-    TaskArtifactRecord,
-    TaskArtifactRef,
-    TaskArtifactRetention,
-    TaskArtifactState,
-)
-from .idempotency import (
-    TaskIdempotencyIdentity,
-    TaskIdempotencyReservationResult,
 )
 from .settlement import (
     TaskDurableResumeCancellation,
@@ -36,7 +24,6 @@ from .store import (
     TaskAttempt,
     TaskAttemptSegment,
     TaskClaim,
-    TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
     TaskSnapshotMetadata,
@@ -48,7 +35,15 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Protocol
+from typing import TYPE_CHECKING, AsyncContextManager, Protocol
+
+if TYPE_CHECKING:
+    from .store import TaskStore
+    from .submission import (
+        PreparedTaskSubmission,
+        TaskSubmissionResult,
+        TaskSubmissionWrite,
+    )
 
 
 class TaskQueueError(RuntimeError):
@@ -69,34 +64,6 @@ class TaskQueueItemState(StrEnum):
     SUSPENDED = "suspended"
     DONE = "done"
     DEAD = "dead"
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class TaskQueueArtifact:
-    ref: TaskArtifactRef
-    purpose: TaskArtifactPurpose = TaskArtifactPurpose.INPUT
-    state: TaskArtifactState = TaskArtifactState.READY
-    provenance: TaskArtifactProvenance = field(
-        default_factory=TaskArtifactProvenance
-    )
-    retention: TaskArtifactRetention = field(
-        default_factory=TaskArtifactRetention
-    )
-    metadata: TaskSnapshotMetadata = field(
-        default_factory=empty_snapshot_metadata
-    )
-
-    def __post_init__(self) -> None:
-        assert isinstance(self.ref, TaskArtifactRef)
-        assert isinstance(self.purpose, TaskArtifactPurpose)
-        assert self.state == TaskArtifactState.READY
-        assert isinstance(self.provenance, TaskArtifactProvenance)
-        assert isinstance(self.retention, TaskArtifactRetention)
-        object.__setattr__(
-            self,
-            "metadata",
-            freeze_snapshot_metadata(self.metadata),
-        )
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -211,31 +178,6 @@ class TaskQueueHealth:
         if self.oldest_available_at is not None:
             _assert_datetime(self.oldest_available_at, "oldest_available_at")
         _assert_non_negative_int(self.expired_claims, "expired_claims")
-
-
-@dataclass(frozen=True, slots=True, kw_only=True)
-class TaskQueueSubmission:
-    run: TaskRun
-    created: bool
-    queue_item: TaskQueueItem | None = None
-    idempotency: TaskIdempotencyReservationResult | None = None
-    artifacts: tuple[TaskArtifactRecord, ...] = ()
-
-    def __post_init__(self) -> None:
-        assert isinstance(self.run, TaskRun)
-        assert isinstance(self.created, bool)
-        if self.queue_item is not None:
-            assert isinstance(self.queue_item, TaskQueueItem)
-            assert self.queue_item.run_id == self.run.run_id
-        if self.idempotency is not None:
-            assert isinstance(
-                self.idempotency, TaskIdempotencyReservationResult
-            )
-            assert self.idempotency.reservation.run_id == self.run.run_id
-        assert isinstance(self.artifacts, tuple)
-        for artifact in self.artifacts:
-            assert isinstance(artifact, TaskArtifactRecord)
-            assert artifact.run_id == self.run.run_id
 
 
 @dataclass(frozen=True, slots=True, kw_only=True)
@@ -604,19 +546,24 @@ class TaskQueueAbandonment:
 
 
 class TaskQueue(Protocol):
-    async def enqueue_run(
+    def validate_submission_store(self, store: "TaskStore") -> None: ...
+
+    async def preflight_submission(self) -> None: ...
+
+    def submission_transaction(
         self,
-        request: TaskExecutionRequest,
+    ) -> AsyncContextManager[PgsqlUnitOfWork]: ...
+
+    async def submit_prepared(
+        self,
+        prepared: "PreparedTaskSubmission",
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission: ...
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> "TaskSubmissionWrite": ...
+
+    async def reconcile_submission(
+        self, prepared: "PreparedTaskSubmission"
+    ) -> "TaskSubmissionResult": ...
 
     async def enqueue(
         self,

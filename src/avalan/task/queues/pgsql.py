@@ -1,4 +1,5 @@
 from ...pgsql import (
+    TASK_PGSQL_HEAD_REVISION,
     PgsqlDatabase,
     PgsqlFailureCategory,
     PgsqlOperationError,
@@ -24,7 +25,6 @@ from ..idempotency import (
 from ..queue import (
     TaskDurableSuspensionCoordinator,
     TaskQueueAbandonment,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueConflictError,
@@ -36,7 +36,6 @@ from ..queue import (
     TaskQueueNotFoundError,
     TaskQueueReentry,
     TaskQueueRetry,
-    TaskQueueSubmission,
     TaskQueueSuspension,
 )
 from ..state import (
@@ -49,10 +48,10 @@ from ..store import (
     TaskAttempt,
     TaskClaim,
     TaskExecutionContext,
-    TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
     TaskSnapshotMetadata,
+    TaskStore,
     TaskStoreConflictError,
     freeze_snapshot_metadata,
 )
@@ -82,14 +81,27 @@ from ..stores.pgsql import (
     _result_to_payload,
     _run_from_row,
 )
+from ..submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionArtifact,
+    TaskSubmissionOutcome,
+    TaskSubmissionResult,
+    TaskSubmissionWrite,
+)
+from .submission import (
+    TaskSubmissionEvidence,
+    insert_task_submission,
+    read_task_submission,
+)
 
 from asyncio import CancelledError
-from collections.abc import Awaitable, Callable, Mapping
-from dataclasses import replace
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from hashlib import sha256
 from inspect import isawaitable
 from json import dumps, loads
-from typing import cast
+from typing import NoReturn, cast
 from uuid import uuid4
 
 
@@ -141,172 +153,265 @@ class PgsqlTaskQueue:
         await self.aclose()
         return None
 
-    async def enqueue_run(
-        self,
-        request: TaskExecutionRequest,
-        *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
-        assert isinstance(request, TaskExecutionRequest)
-        _assert_non_empty_string(queue_name, "queue_name")
-        _assert_int(priority, "priority")
-        if available_at is not None:
-            assert isinstance(available_at, datetime)
-        if idempotency is not None:
-            assert isinstance(idempotency, TaskIdempotencyIdentity)
-        if idempotency_expires_at is not None:
-            assert isinstance(idempotency_expires_at, datetime)
-        assert isinstance(artifacts, tuple)
-        for artifact in artifacts:
-            assert isinstance(artifact, TaskQueueArtifact)
-        safe_run_metadata = freeze_snapshot_metadata(run_metadata)
-        safe_queue_metadata = freeze_snapshot_metadata(queue_metadata)
-        queued_request = _queued_request(request, queue_name)
+    def validate_submission_store(self, store: TaskStore) -> None:
+        assert isinstance(store, PgsqlTaskStore)
+        assert store.database is self._database
 
-        async def execute(unit: PgsqlUnitOfWork) -> object:
-            if (
-                await _fetch_definition_row(
-                    unit,
-                    queued_request.definition_id,
-                )
-                is None
-            ):
-                raise TaskQueueNotFoundError("task definition was not found")
-            if idempotency is not None:
-                existing = await _active_idempotency_reservation(
-                    unit,
-                    idempotency,
-                    now=self._now(),
-                )
-                if existing is not None:
-                    row = await _fetch_run_row(unit, existing.run_id)
-                    if row is None:
-                        raise TaskQueueConflictError(
-                            "idempotency reservation target was not found"
-                        )
-                    run = _run_from_row(row)
-                    return TaskQueueSubmission(
-                        run=run,
-                        created=False,
-                        queue_item=await _queue_item_for_run(
-                            unit,
-                            run.run_id,
-                            run_state=run.state,
-                        ),
-                        idempotency=TaskIdempotencyReservationResult(
-                            reservation=existing,
-                            created=False,
-                        ),
-                        artifacts=await _artifacts_for_run(unit, run.run_id),
+    async def preflight_submission(self) -> None:
+        """Check storage compatibility using read-only preparation queries."""
+        async with self.submission_transaction() as unit:
+            await self._assert_submission_unit(unit)
+
+    @asynccontextmanager
+    async def submission_transaction(self) -> AsyncIterator[PgsqlUnitOfWork]:
+        """Supply one transaction whose lifetime belongs to the caller."""
+        async with self._database.connection() as connection:
+            async with connection.transaction():
+                async with connection.cursor() as cursor:
+                    yield PgsqlUnitOfWork(
+                        connection=connection,
+                        cursor=cursor,
+                        database=self._database,
                     )
 
-            run_id = self._new_id()
-            now = self._now()
-            await unit.cursor.execute(
-                _INSERT_RUN_SQL,
-                (
-                    run_id,
-                    queued_request.definition_id,
-                    TaskRunState.CREATED.value,
-                    queue_name,
-                    _json(_request_to_payload(queued_request)),
-                    _json(safe_run_metadata),
-                    now,
-                    now,
-                ),
-            )
-            run_row = await unit.cursor.fetchone()
-            if run_row is None:
-                raise TaskQueueConflictError("task run already exists")
+    async def _assert_submission_unit(self, unit: PgsqlUnitOfWork) -> None:
+        assert isinstance(unit, PgsqlUnitOfWork)
+        assert unit.database is self._database
+        await unit.cursor.execute(
+            'SELECT "version_num" FROM "avalan_task_alembic_version"'
+        )
+        rows = await unit.cursor.fetchall()
+        assert (
+            len(rows) == 1
+            and rows[0]["version_num"] == TASK_PGSQL_HEAD_REVISION
+        ), "task submission requires the current database schema"
 
-            artifact_records = []
-            for artifact in artifacts:
-                artifact_records.append(
-                    await _insert_submission_artifact(
+    def _assert_prepared(self, prepared: PreparedTaskSubmission) -> None:
+        assert isinstance(prepared, PreparedTaskSubmission)
+        assert prepared._participant is self
+
+    async def submit_prepared(
+        self,
+        prepared: PreparedTaskSubmission,
+        *,
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        """Write in the caller transaction without acknowledging commit."""
+        try:
+            self._assert_prepared(prepared)
+            unit = unit_of_work
+            await self._assert_submission_unit(unit)
+            fingerprint = _submission_fingerprint(prepared)
+            existing_submission = await read_task_submission(
+                unit, prepared, fingerprint=fingerprint
+            )
+            if existing_submission is not None:
+                return await self._submission_write(unit, existing_submission)
+            queued_request = prepared.execution
+            queue_name = queued_request.queue
+            assert queue_name is not None
+            priority = prepared.priority
+            available_at = prepared.available_at
+            idempotency = prepared.idempotency
+            idempotency_expires_at = prepared.idempotency_expires_at
+            artifacts = prepared.artifacts
+            safe_run_metadata = prepared.run_metadata
+            safe_queue_metadata = prepared.queue_metadata
+
+            async def write_run() -> TaskSubmissionWrite:
+                if (
+                    await _fetch_definition_row(
                         unit,
+                        queued_request.definition_id,
+                    )
+                    is None
+                ):
+                    raise TaskQueueNotFoundError(
+                        "task definition was not found"
+                    )
+                if idempotency is not None:
+                    existing = await _active_idempotency_reservation(
+                        unit,
+                        idempotency,
+                        now=self._now(),
+                    )
+                    if existing is not None:
+                        row = await _fetch_run_row(unit, existing.run_id)
+                        if row is None:
+                            raise TaskQueueConflictError(
+                                "idempotency reservation target was not found"
+                            )
+                        run = _run_from_row(row)
+                        return TaskSubmissionWrite(
+                            submission_id=prepared.submission_id,
+                            run=run,
+                            created=False,
+                            queue_item=await _queue_item_for_run(
+                                unit,
+                                run.run_id,
+                                run_state=run.state,
+                            ),
+                            idempotency=TaskIdempotencyReservationResult(
+                                reservation=existing,
+                                created=False,
+                            ),
+                            artifacts=await _artifacts_for_run(
+                                unit, run.run_id
+                            ),
+                        )
+
+                run_id = prepared.run_id
+                now = self._now()
+                await unit.cursor.execute(
+                    _INSERT_RUN_SQL,
+                    (
+                        run_id,
+                        queued_request.definition_id,
+                        TaskRunState.CREATED.value,
+                        queue_name,
+                        _json(_request_to_payload(queued_request)),
+                        _json(safe_run_metadata),
+                        now,
+                        now,
+                    ),
+                )
+                run_row = await unit.cursor.fetchone()
+                if run_row is None:
+                    raise TaskQueueConflictError("task run already exists")
+
+                artifact_records = []
+                for artifact in artifacts:
+                    artifact_records.append(
+                        await _insert_submission_artifact(
+                            unit,
+                            run_id=run_id,
+                            artifact=artifact,
+                            now=now,
+                        )
+                    )
+
+                reservation_result = None
+                if idempotency is not None:
+                    reservation_result = await _reserve_idempotency(
+                        unit,
+                        identity=idempotency,
                         run_id=run_id,
-                        artifact=artifact,
+                        expires_at=idempotency_expires_at,
                         now=now,
                     )
-                )
+                    if not reservation_result.created:
+                        raise TaskQueueConflictError(
+                            "idempotency key is already reserved"
+                        )
 
-            reservation_result = None
-            if idempotency is not None:
-                reservation_result = await _reserve_idempotency(
+                validated = await _transition_run(
                     unit,
-                    identity=idempotency,
                     run_id=run_id,
-                    expires_at=idempotency_expires_at,
+                    from_state=TaskRunState.CREATED,
+                    to_state=TaskRunState.VALIDATED,
+                    reason="validated",
+                    transition_id=self._new_id(),
                     now=now,
                 )
-                if not reservation_result.created:
-                    raise TaskQueueConflictError(
-                        "idempotency key is already reserved"
-                    )
-
-            validated = await _transition_run(
-                unit,
-                run_id=run_id,
-                from_state=TaskRunState.CREATED,
-                to_state=TaskRunState.VALIDATED,
-                reason="validated",
-                transition_id=self._new_id(),
-                now=now,
-            )
-            queued = await _transition_run(
-                unit,
-                run_id=run_id,
-                from_state=validated.state,
-                to_state=TaskRunState.QUEUED,
-                reason="queued",
-                transition_id=self._new_id(),
-                now=now,
-            )
-            queue_item_id = self._new_id()
-            await unit.cursor.execute(
-                _INSERT_QUEUE_ITEM_SQL,
-                (
-                    queue_item_id,
-                    run_id,
-                    queue_name,
-                    TaskQueueItemState.AVAILABLE.value,
-                    priority,
-                    available_at or now,
-                    0,
-                    _json(safe_queue_metadata),
-                    now,
-                    now,
-                ),
-            )
-            queue_row = await unit.cursor.fetchone()
-            if queue_row is None:
-                raise TaskQueueConflictError(
-                    "task run already has an active queue job"
+                queued = await _transition_run(
+                    unit,
+                    run_id=run_id,
+                    from_state=validated.state,
+                    to_state=TaskRunState.QUEUED,
+                    reason="queued",
+                    transition_id=self._new_id(),
+                    now=now,
                 )
-            return TaskQueueSubmission(
-                run=queued,
-                created=True,
-                queue_item=_queue_item_from_row(
-                    queue_row,
-                    run_state=queued.state,
-                ),
-                idempotency=reservation_result,
-                artifacts=tuple(artifact_records),
-            )
+                queue_item_id = self._new_id()
+                await unit.cursor.execute(
+                    _INSERT_QUEUE_ITEM_SQL,
+                    (
+                        queue_item_id,
+                        run_id,
+                        queue_name,
+                        TaskQueueItemState.AVAILABLE.value,
+                        priority,
+                        available_at or now,
+                        0,
+                        _json(safe_queue_metadata),
+                        now,
+                        now,
+                    ),
+                )
+                queue_row = await unit.cursor.fetchone()
+                if queue_row is None:
+                    raise TaskQueueConflictError(
+                        "task run already has an active queue job"
+                    )
+                return TaskSubmissionWrite(
+                    submission_id=prepared.submission_id,
+                    run=queued,
+                    created=True,
+                    queue_item=_queue_item_from_row(
+                        queue_row,
+                        run_state=queued.state,
+                    ),
+                    idempotency=reservation_result,
+                    artifacts=tuple(artifact_records),
+                )
 
-        return cast(
-            TaskQueueSubmission,
-            await self._transaction(
-                operation="task_queue_enqueue_run",
-                callback=execute,
+            write = await write_run()
+            await insert_task_submission(
+                unit,
+                TaskSubmissionEvidence(
+                    owner_scope=prepared.owner_scope,
+                    submission_id=prepared.submission_id,
+                    run_id=write.run.run_id,
+                    definition_id=prepared.execution.definition_id,
+                    fingerprint=fingerprint,
+                    created=write.created,
+                ),
+            )
+            return write
+        except BaseException as error:
+            _raise_queue_failure(error, operation="task_queue_submit_prepared")
+
+    async def _submission_write(
+        self, unit: PgsqlUnitOfWork, evidence: TaskSubmissionEvidence
+    ) -> TaskSubmissionWrite:
+        row = await _fetch_run_row(unit, evidence.run_id)
+        assert row is not None, "submission run was not found"
+        run = _run_from_row(row)
+        assert run.definition_id == evidence.definition_id
+        return TaskSubmissionWrite(
+            submission_id=evidence.submission_id,
+            run=run,
+            created=evidence.created,
+            queue_item=await _queue_item_for_run(
+                unit, run.run_id, run_state=run.state
             ),
+            artifacts=await _artifacts_for_run(unit, run.run_id),
+        )
+
+    async def reconcile_submission(
+        self, prepared: PreparedTaskSubmission
+    ) -> TaskSubmissionResult:
+        """Reconcile in a fresh transaction after waiting out prior writers."""
+        self._assert_prepared(prepared)
+        async with self.submission_transaction() as unit:
+            await self._assert_submission_unit(unit)
+            evidence = await read_task_submission(
+                unit, prepared, fingerprint=_submission_fingerprint(prepared)
+            )
+            write = (
+                await self._submission_write(unit, evidence)
+                if evidence
+                else None
+            )
+        return TaskSubmissionResult(
+            submission_id=prepared.submission_id,
+            outcome=(
+                TaskSubmissionOutcome.COMMITTED
+                if write
+                else TaskSubmissionOutcome.NOT_COMMITTED
+            ),
+            write=write,
+            prepared=prepared,
         )
 
     async def enqueue(
@@ -999,29 +1104,8 @@ class PgsqlTaskQueue:
                                 cursor=cursor,
                             )
                         )
-        except TaskQueueError:
-            raise
-        except AssertionError:
-            raise
-        except (KeyboardInterrupt, SystemExit, CancelledError):
-            raise
-        except PgsqlOperationError as error:
-            if error.failure.category == PgsqlFailureCategory.UNIQUE_CONFLICT:
-                raise TaskQueueConflictError(str(error)) from None
-            raise TaskQueueError(str(error)) from None
         except BaseException as error:
-            failure = classify_pgsql_error(error, operation=operation)
-            if failure.category == PgsqlFailureCategory.UNIQUE_CONFLICT:
-                raise TaskQueueConflictError(
-                    "PostgreSQL operation failed: "
-                    f"category={failure.category.value}, "
-                    f"code={failure.code}, retryable={failure.retryable}"
-                ) from None
-            raise TaskQueueError(
-                "PostgreSQL operation failed: "
-                f"category={failure.category.value}, "
-                f"code={failure.code}, retryable={failure.retryable}"
-            ) from None
+            _raise_queue_failure(error, operation=operation)
 
     def _new_id(self) -> str:
         value = self._id_factory()
@@ -1761,17 +1845,6 @@ async def _artifacts_for_run(
     )
 
 
-def _queued_request(
-    request: TaskExecutionRequest,
-    queue_name: str,
-) -> TaskExecutionRequest:
-    if request.queue is None:
-        return replace(request, queue=queue_name)
-    if request.queue != queue_name:
-        raise TaskQueueConflictError("task run targets a different queue")
-    return request
-
-
 async def _active_idempotency_reservation(
     unit: PgsqlUnitOfWork,
     identity: TaskIdempotencyIdentity,
@@ -1844,7 +1917,7 @@ async def _insert_submission_artifact(
     unit: PgsqlUnitOfWork,
     *,
     run_id: str,
-    artifact: TaskQueueArtifact,
+    artifact: TaskSubmissionArtifact,
     now: datetime,
 ) -> TaskArtifactRecord:
     await unit.cursor.execute(
@@ -2021,3 +2094,75 @@ def _uuid_id() -> str:
 
 def _utc_now() -> datetime:
     return datetime.now(UTC)
+
+
+def _submission_fingerprint(prepared: PreparedTaskSubmission) -> str:
+    """Bind recovery identity to the immutable persistence plan."""
+    payload = {
+        "submission_id": prepared.submission_id,
+        "run_id": prepared.run_id,
+        "owner_scope": prepared.owner_scope,
+        "occurrence_id": prepared.occurrence_id,
+        "execution_deployment_id": prepared.execution_deployment_id,
+        "execution": _request_to_payload(prepared.execution),
+        "priority": prepared.priority,
+        "available_at": (
+            prepared.available_at.isoformat()
+            if prepared.available_at
+            else None
+        ),
+        "idempotency": (
+            prepared.idempotency.as_dict() if prepared.idempotency else None
+        ),
+        "idempotency_expires_at": (
+            prepared.idempotency_expires_at.isoformat()
+            if prepared.idempotency_expires_at
+            else None
+        ),
+        "artifacts": tuple(
+            {
+                "ref": _artifact_ref_to_payload(artifact.ref),
+                "purpose": artifact.purpose.value,
+                "state": artifact.state.value,
+                "provenance": _artifact_provenance_to_payload(
+                    artifact.provenance
+                ),
+                "retention": _artifact_retention_to_payload(
+                    artifact.retention
+                ),
+                "metadata": artifact.metadata,
+            }
+            for artifact in prepared.artifacts
+        ),
+        "run_metadata": prepared.run_metadata,
+        "queue_metadata": prepared.queue_metadata,
+    }
+    return sha256(_json(payload).encode("utf-8")).hexdigest()
+
+
+def _raise_queue_failure(error: BaseException, *, operation: str) -> NoReturn:
+    """Project driver failures without leaking input or backend details."""
+    if isinstance(
+        error,
+        (
+            TaskQueueError,
+            AssertionError,
+            KeyboardInterrupt,
+            SystemExit,
+            CancelledError,
+        ),
+    ):
+        raise error
+    failure = (
+        error.failure
+        if isinstance(error, PgsqlOperationError)
+        else classify_pgsql_error(error, operation=operation)
+    )
+    message = (
+        "PostgreSQL operation failed: "
+        f"category={failure.category.value}, "
+        f"code={failure.code}, retryable={failure.retryable}"
+    )
+    if failure.category == PgsqlFailureCategory.UNIQUE_CONFLICT:
+        raise TaskQueueConflictError(message) from None
+    raise TaskQueueError(message) from None

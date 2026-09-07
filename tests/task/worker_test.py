@@ -24,6 +24,8 @@ from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, TestCase, main
 from unittest.mock import AsyncMock, patch
 
+from task_submission_helpers import SubmissionQueueFixture
+
 from avalan.agent.continuation import DurableAgentContinuationClaimLease
 from avalan.container import (
     ContainerOutputDecisionType,
@@ -68,6 +70,7 @@ from avalan.interaction import (
     create_input_request,
 )
 from avalan.interaction.error import InputErrorCode, InputValidationError
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.skill import (
     SkillDiagnosticCode,
     SkillDiagnosticInfo,
@@ -111,7 +114,6 @@ from avalan.task import (
     TaskProviderReferenceKind,
     TaskProviderStructuredOutputError,
     TaskQueueAbandonment,
-    TaskQueueArtifact,
     TaskQueueClaim,
     TaskQueueCompletion,
     TaskQueueConflictError,
@@ -121,13 +123,13 @@ from avalan.task import (
     TaskQueueItemState,
     TaskQueueReentry,
     TaskQueueRetry,
-    TaskQueueSubmission,
     TaskQueueSuspension,
     TaskRetryPolicy,
     TaskRun,
     TaskRunPolicy,
     TaskRunState,
     TaskStoreConflictError,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -153,7 +155,6 @@ from avalan.task.context import (
     TaskEventListenerRegistration,
 )
 from avalan.task.error import classify_task_error
-from avalan.task.idempotency import TaskIdempotencyIdentity
 from avalan.task.resume import (
     TaskResumeClaimLeaseManager,
     task_resume_result_digest,
@@ -175,6 +176,7 @@ from avalan.task.skills import (
     task_definition_with_skills_identity,
 )
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import PreparedTaskSubmission
 from avalan.task.worker import (
     TaskWorkerError,
     TaskWorkerProcessResult,
@@ -1089,7 +1091,7 @@ class StaticEncryptionProvider:
         return value[len(prefix) :]
 
 
-class FakeQueue:
+class FakeQueue(SubmissionQueueFixture):
     def __init__(self, store: InMemoryTaskStore, now: datetime) -> None:
         self.store = store
         self.now = now
@@ -1106,20 +1108,13 @@ class FakeQueue:
         self.durable_commit_active = False
         self.suspend_claim_calls = 0
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
-        raise AssertionError("enqueue_run should not be used")
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        raise AssertionError("submit_prepared should not be used")
 
     async def enqueue(
         self,

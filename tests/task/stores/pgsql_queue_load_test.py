@@ -10,6 +10,10 @@ from pgsql_harness import (
     task_pgsql_psycopg_dsn,
 )
 from pytest import importorskip
+from task_submission_helpers import (
+    persist_submission_fixture,
+    prepared_submission_fixture,
+)
 
 from avalan.pgsql import PsycopgAsyncDatabase, PsycopgPoolSettings
 from avalan.task import (
@@ -88,22 +92,26 @@ class PgsqlQueueLoadTest(IsolatedAsyncioTestCase):
         )
         for index in range(self.profile.run_count):
             queue_name = queue_names[index % len(queue_names)]
-            await self.queue.enqueue_run(
-                TaskExecutionRequest(
-                    definition_id=definition_hash,
-                    input_summary={"run": index},
-                    queue=queue_name,
-                    metadata={"source": "load"},
+            await persist_submission_fixture(
+                self.queue,
+                prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(
+                        definition_id=definition_hash,
+                        input_summary={"run": index},
+                        queue=queue_name,
+                        metadata={"source": "load"},
+                    ),
+                    queue_name=queue_name,
+                    priority=index % 3,
                 ),
-                queue_name=queue_name,
-                priority=index % 3,
             )
 
         depths_before = tuple(
-            await self.queue.depth(queue_name) for queue_name in queue_names
+            [await self.queue.depth(queue_name) for queue_name in queue_names]
         )
         health_before = tuple(
-            await self.queue.health(queue_name) for queue_name in queue_names
+            [await self.queue.health(queue_name) for queue_name in queue_names]
         )
         started_at = monotonic()
         claimed = await _claim_all(
@@ -113,10 +121,10 @@ class PgsqlQueueLoadTest(IsolatedAsyncioTestCase):
         )
         elapsed_seconds = monotonic() - started_at
         claimed_depths = tuple(
-            await self.queue.depth(queue_name) for queue_name in queue_names
+            [await self.queue.depth(queue_name) for queue_name in queue_names]
         )
         claimed_health = tuple(
-            await self.queue.health(queue_name) for queue_name in queue_names
+            [await self.queue.health(queue_name) for queue_name in queue_names]
         )
         stale_token_commits = await _stale_token_commits(self.queue, claimed)
         attempt_count = 0

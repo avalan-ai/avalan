@@ -8,8 +8,10 @@ from typing import BinaryIO, cast
 from unittest import IsolatedAsyncioTestCase, main
 
 from async_helpers import run_async
+from task_submission_helpers import SubmissionQueueFixture
 
 from avalan.event import Event, EventType
+from avalan.pgsql import PgsqlUnitOfWork
 from avalan.task import (
     ENCRYPTED_MARKER,
     REDACTED_MARKER,
@@ -49,14 +51,14 @@ from avalan.task import (
     TaskPrivacyPolicy,
     TaskProviderReferenceKind,
     TaskQueue,
-    TaskQueueArtifact,
     TaskQueueItem,
     TaskQueueItemState,
-    TaskQueueSubmission,
     TaskRemoteUrlPolicy,
     TaskRun,
     TaskRunPolicy,
     TaskRunState,
+    TaskSubmissionArtifact,
+    TaskSubmissionWrite,
     TaskTargetContext,
     TaskTargetOutcome,
     TaskTargetRunner,
@@ -73,6 +75,11 @@ from avalan.task import (
 from avalan.task.materialization import TaskRemoteUrlResponse
 from avalan.task.runner import TaskExecutableInputFileEntry
 from avalan.task.stores import InMemoryTaskStore
+from avalan.task.submission import (
+    PreparedTaskSubmission,
+    TaskSubmissionOutcome,
+    TaskSubmissionRequest,
+)
 from avalan.task.targets import AgentTaskTargetRunner
 
 _AsyncTaskDefinitionLoader = TaskDefinitionLoader
@@ -434,30 +441,33 @@ def _remote_response(
     )
 
 
-class RecordingQueue:
+class RecordingQueue(SubmissionQueueFixture):
     def __init__(self, store: InMemoryTaskStore) -> None:
         self.store = store
         self.requests: list[TaskExecutionRequest] = []
-        self.artifacts: tuple[TaskQueueArtifact, ...] = ()
+        self.artifacts: tuple[TaskSubmissionArtifact, ...] = ()
         self.idempotency: object = None
         self.queue_metadata: object = None
         self.priority = 0
         self.available_at: datetime | None = None
         self.now = datetime(2026, 1, 1, tzinfo=UTC)
 
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         _ = idempotency_expires_at
         self.requests.append(request)
         self.artifacts = artifacts
@@ -507,28 +517,34 @@ class RecordingQueue:
             run_state=queued.state,
             metadata=queue_metadata or {},
         )
-        return TaskQueueSubmission(
-            run=queued,
-            created=True,
-            queue_item=item,
-            artifacts=tuple(records),
+        return self.record_submission_write(
+            TaskSubmissionWrite(
+                submission_id=prepared.submission_id,
+                run=queued,
+                created=True,
+                queue_item=item,
+                artifacts=tuple(records),
+            )
         )
 
 
 class FailingQueue(RecordingQueue):
-    async def enqueue_run(
+    async def submit_prepared(
         self,
-        request: TaskExecutionRequest,
+        prepared: PreparedTaskSubmission,
         *,
-        queue_name: str,
-        priority: int = 0,
-        available_at: datetime | None = None,
-        idempotency: TaskIdempotencyIdentity | None = None,
-        idempotency_expires_at: datetime | None = None,
-        artifacts: tuple[TaskQueueArtifact, ...] = (),
-        run_metadata: Mapping[str, object] | None = None,
-        queue_metadata: Mapping[str, object] | None = None,
-    ) -> TaskQueueSubmission:
+        unit_of_work: PgsqlUnitOfWork,
+    ) -> TaskSubmissionWrite:
+        request = prepared.execution
+        queue_name = request.queue
+        assert queue_name is not None
+        priority = prepared.priority
+        available_at = prepared.available_at
+        idempotency = prepared.idempotency
+        idempotency_expires_at = prepared.idempotency_expires_at
+        artifacts = prepared.artifacts
+        run_metadata = prepared.run_metadata
+        queue_metadata = prepared.queue_metadata
         _ = (
             request,
             queue_name,
@@ -1419,7 +1435,10 @@ ref = "agents/reviewer.toml"
         with self.assertRaises(TaskClientUnsupportedOperationError) as run:
             await client.run(definition, input_value="private prompt")
         with self.assertRaises(TaskClientUnsupportedOperationError) as enqueue:
-            await client.enqueue(definition, input_value="private prompt")
+            await client.submit(
+                definition,
+                request=TaskSubmissionRequest(input_value="private prompt"),
+            )
         direct_client = TaskClient(
             store,
             target=RejectingTarget(),
@@ -1427,15 +1446,15 @@ ref = "agents/reviewer.toml"
             hmac_provider=StaticHmacProvider(),
         )
         with self.assertRaises(TaskClientUnsupportedOperationError) as direct:
-            await direct_client.enqueue(
+            await direct_client.submit(
                 _definition(),
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
 
         self.assertEqual(run.exception.code, "task.queue_unsupported")
         self.assertEqual(run.exception.operation, "run")
-        self.assertEqual(enqueue.exception.operation, "enqueue")
-        self.assertEqual(direct.exception.operation, "enqueue")
+        self.assertEqual(enqueue.exception.operation, "submit")
+        self.assertEqual(direct.exception.operation, "submit")
         self.assertNotIn("private-queue", str(run.exception))
 
     async def test_enqueue_uses_default_definition_hash(self) -> None:
@@ -1450,14 +1469,14 @@ ref = "agents/reviewer.toml"
             raw_storage_allowed=True,
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(
                 run=TaskRunPolicy.queued(
                     "documents",
                     idempotency=IdempotencyMode.NONE,
                 )
             ),
-            input_value="private prompt",
+            request=TaskSubmissionRequest(input_value="private prompt"),
         )
 
         self.assertEqual(len(submission.run.definition_id), 64)
@@ -1524,9 +1543,9 @@ ref = "agents/reviewer.toml"
                 raw_storage_allowed=True,
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 referenced,
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
             record = await store.get_definition(submission.run.definition_id)
 
@@ -1570,7 +1589,10 @@ ref = "agents/reviewer.toml"
         )
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(definition, input_value="private prompt")
+            await client.submit(
+                definition,
+                request=TaskSubmissionRequest(input_value="private prompt"),
+            )
 
         self.assertEqual(queue.requests, [])
         self.assertEqual(
@@ -1618,7 +1640,7 @@ ref = "agents/reviewer.toml"
         )
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _definition(
                     run=TaskRunPolicy.queued(
                         "documents",
@@ -1626,7 +1648,7 @@ ref = "agents/reviewer.toml"
                     ),
                     privacy=TaskPrivacyPolicy(),
                 ),
-                input_value="private prompt",
+                request=TaskSubmissionRequest(input_value="private prompt"),
             )
 
         self.assertEqual(queue.requests, [])
@@ -1773,10 +1795,11 @@ ref = "agents/reviewer.toml"
             )
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             definition,
-            input_value="private prompt",
-            queue_name="priority-documents",
+            request=TaskSubmissionRequest(
+                input_value="private prompt", queue_name="priority-documents"
+            ),
         )
 
         self.assertEqual(queue.requests[0].queue, "priority-documents")
@@ -1789,10 +1812,11 @@ ref = "agents/reviewer.toml"
         assert queue_item is not None
         self.assertEqual(queue_item.queue_name, "priority-documents")
         with self.assertRaises(AssertionError):
-            await client.enqueue(
+            await client.submit(
                 definition,
-                input_value="private prompt",
-                queue_name=" ",
+                request=TaskSubmissionRequest(
+                    input_value="private prompt", queue_name=" "
+                ),
             )
 
     async def test_enqueue_sanitizes_sensitive_queue_metadata(self) -> None:
@@ -1806,6 +1830,7 @@ ref = "agents/reviewer.toml"
             encryption_provider=StaticEncryptionProvider(),
             raw_storage_allowed=True,
             definition_hash=lambda task: "client-queue-safe-metadata-hash",
+            owner_scope="private-owner",
         )
 
         queue_metadata = cast(
@@ -1829,7 +1854,7 @@ ref = "agents/reviewer.toml"
             },
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(
                 input_contract=TaskInputContract.object(
                     schema={
@@ -1849,10 +1874,11 @@ ref = "agents/reviewer.toml"
                     idempotency=IdempotencyMode.INPUT_HASH,
                 ),
             ),
-            input_value={"prompt": ["private prompt"]},
-            idempotency_key="private-window",
-            owner_scope="private-owner",
-            queue_metadata=queue_metadata,
+            request=TaskSubmissionRequest(
+                input_value={"prompt": ["private prompt"]},
+                idempotency_key="private-window",
+                queue_metadata=queue_metadata,
+            ),
         )
 
         redacted = {"privacy": REDACTED_MARKER}
@@ -1906,21 +1932,23 @@ ref = "agents/reviewer.toml"
             metadata={"filename": "private-ref.pdf"},
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(
                 run=TaskRunPolicy.queued(
                     "documents",
                     idempotency=IdempotencyMode.NONE,
                 )
             ),
-            input_value="private prompt",
-            files=(
-                TaskInputFile(
-                    logical_path="private-report.pdf",
-                    artifact_ref=ref,
-                    media_type="application/pdf",
-                    size_bytes=42,
-                    metadata={"name": "private-report.pdf"},
+            request=TaskSubmissionRequest(
+                input_value="private prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="private-report.pdf",
+                        artifact_ref=ref,
+                        media_type="application/pdf",
+                        size_bytes=42,
+                        metadata={"name": "private-report.pdf"},
+                    ),
                 ),
             ),
         )
@@ -1960,10 +1988,12 @@ ref = "agents/reviewer.toml"
         )
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _definition(run=TaskRunPolicy.queued("documents")),
-                input_value="private prompt",
-                files=(TaskInputFile(logical_path="private-report.pdf"),),
+                request=TaskSubmissionRequest(
+                    input_value="private prompt",
+                    files=(TaskInputFile(logical_path="private-report.pdf"),),
+                ),
             )
 
         self.assertEqual(queue.requests, [])
@@ -1996,14 +2026,16 @@ ref = "agents/reviewer.toml"
         ).provider_reference
         assert provider_reference is not None
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(run=TaskRunPolicy.queued("documents")),
-            input_value="private prompt",
-            files=(
-                TaskInputFile(
-                    logical_path="provider:openai:provider_file_id",
-                    provider_reference=provider_reference,
-                    media_type="application/pdf",
+            request=TaskSubmissionRequest(
+                input_value="private prompt",
+                files=(
+                    TaskInputFile(
+                        logical_path="provider:openai:provider_file_id",
+                        provider_reference=provider_reference,
+                        media_type="application/pdf",
+                    ),
                 ),
             ),
         )
@@ -2036,14 +2068,16 @@ ref = "agents/reviewer.toml"
         assert provider_reference is not None
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _definition(run=TaskRunPolicy.queued("documents")),
-                input_value="private prompt",
-                files=(
-                    TaskInputFile(
-                        logical_path="provider:openai:provider_file_id",
-                        provider_reference=provider_reference,
-                        media_type="text/plain",
+                request=TaskSubmissionRequest(
+                    input_value="private prompt",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:provider_file_id",
+                            provider_reference=provider_reference,
+                            media_type="text/plain",
+                        ),
                     ),
                 ),
             )
@@ -2079,13 +2113,15 @@ ref = "agents/reviewer.toml"
         assert provider_reference is not None
 
         with self.assertRaises(TaskValidationError) as error:
-            await client.enqueue(
+            await client.submit(
                 _definition(run=TaskRunPolicy.queued("documents")),
-                input_value="private prompt",
-                files=(
-                    TaskInputFile(
-                        logical_path="provider:openai:handle",
-                        provider_reference=provider_reference,
+                request=TaskSubmissionRequest(
+                    input_value="private prompt",
+                    files=(
+                        TaskInputFile(
+                            logical_path="provider:openai:handle",
+                            provider_reference=provider_reference,
+                        ),
                     ),
                 ),
             )
@@ -2117,6 +2153,7 @@ ref = "agents/reviewer.toml"
                 definition_hash=lambda task: "client-queue-hash",
                 execution_roots=(root,),
                 sleep=_no_sleep,
+                owner_scope="customer-123",
             )
             available_at = datetime(2026, 1, 1, 12, tzinfo=UTC)
             definition = _definition(
@@ -2126,20 +2163,21 @@ ref = "agents/reviewer.toml"
                 run=TaskRunPolicy.queued("documents", priority=7),
             )
 
-            submission = await client.enqueue(
+            submission = await client.submit(
                 definition,
-                input_value=TaskFileDescriptor.local_path(
-                    "private.txt",
-                    mime_type="text/plain",
-                    role="evidence",
-                    size_bytes=input_path.stat().st_size,
-                    metadata={"filename": "private.txt"},
+                request=TaskSubmissionRequest(
+                    input_value=TaskFileDescriptor.local_path(
+                        "private.txt",
+                        mime_type="text/plain",
+                        role="evidence",
+                        size_bytes=input_path.stat().st_size,
+                        metadata={"filename": "private.txt"},
+                    ),
+                    available_at=available_at,
+                    idempotency_key="private-idempotency-key",
+                    idempotency_expires_at=available_at + timedelta(days=1),
+                    queue_metadata={"tenant": "safe"},
                 ),
-                available_at=available_at,
-                idempotency_key="private-idempotency-key",
-                idempotency_expires_at=available_at + timedelta(days=1),
-                owner_scope="customer-123",
-                queue_metadata={"tenant": "safe"},
             )
             await store.transition_run(
                 submission.run.run_id,
@@ -2227,15 +2265,17 @@ ref = "agents/reviewer.toml"
             remote_url_resolver=FakeRemoteResolver(),
         )
 
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(
                 input_contract=TaskInputContract.file(),
                 run=TaskRunPolicy.queued("documents"),
             ),
-            input_value=TaskClient.remote_url_file(
-                "https://example.test/private.txt",
-                mime_type="text/plain",
-                size_bytes=len(b"private queue body"),
+            request=TaskSubmissionRequest(
+                input_value=TaskClient.remote_url_file(
+                    "https://example.test/private.txt",
+                    mime_type="text/plain",
+                    size_bytes=len(b"private queue body"),
+                )
             ),
         )
 
@@ -2283,17 +2323,18 @@ ref = "agents/reviewer.toml"
                 execution_roots=(root,),
             )
 
-            with self.assertRaises(RuntimeError) as error:
-                await client.enqueue(
-                    _definition(
-                        input_contract=TaskInputContract.file(),
-                        run=TaskRunPolicy.queued("documents"),
-                    ),
+            result = await client.submit(
+                _definition(
+                    input_contract=TaskInputContract.file(),
+                    run=TaskRunPolicy.queued("documents"),
+                ),
+                request=TaskSubmissionRequest(
                     input_value=TaskFileDescriptor.local_path(
                         "private.txt",
                         mime_type="text/plain",
-                    ),
-                )
+                    )
+                ),
+            )
 
         self.assertEqual(len(artifact_store.puts), 1)
         self.assertEqual(len(artifact_store.deleted), 1)
@@ -2301,7 +2342,8 @@ ref = "agents/reviewer.toml"
             artifact_store.deleted[0].artifact_id,
             "artifact-1",
         )
-        self.assertNotIn("private.txt", str(error.exception))
+        self.assertEqual(result.outcome, TaskSubmissionOutcome.NOT_COMMITTED)
+        self.assertNotIn("private.txt", repr(result))
 
     async def test_enqueue_deletes_materialized_file_when_idempotency_fails(
         self,
@@ -2328,7 +2370,7 @@ ref = "agents/reviewer.toml"
             )
 
             with self.assertRaises(TaskIdempotencyError) as error:
-                await client.enqueue(
+                await client.submit(
                     _definition(
                         input_contract=TaskInputContract.file(),
                         run=TaskRunPolicy(
@@ -2338,9 +2380,11 @@ ref = "agents/reviewer.toml"
                             idempotency_key_path="input.request_id",
                         ),
                     ),
-                    input_value=TaskFileDescriptor.local_path(
-                        "private.txt",
-                        mime_type="text/plain",
+                    request=TaskSubmissionRequest(
+                        input_value=TaskFileDescriptor.local_path(
+                            "private.txt",
+                            mime_type="text/plain",
+                        )
                     ),
                 )
 
@@ -2365,9 +2409,9 @@ ref = "agents/reviewer.toml"
             raw_storage_allowed=True,
             definition_hash=lambda task: "client-cancel-hash",
         )
-        submission = await client.enqueue(
+        submission = await client.submit(
             _definition(run=TaskRunPolicy.queued("documents")),
-            input_value="private prompt",
+            request=TaskSubmissionRequest(input_value="private prompt"),
         )
 
         cancelled = await client.cancel(submission.run.run_id)
