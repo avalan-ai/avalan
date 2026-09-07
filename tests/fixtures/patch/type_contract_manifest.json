@@ -1122,7 +1122,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "00f52d010a0a9ba6e067588484c9b1b485c8ec2f01b218fd5161464f16992888"
+      "source_sha256": "14d523df404f2b537be9d86bb95164df8ddcb5c50ec8970aac4d005784447a3b"
     },
     {
       "id": "PATCH-TS-067",
@@ -1923,7 +1923,7 @@
         "CliStreamSnapshotBuilder.snapshot",
         "CliStreamSnapshotBuilder._build_stats"
       ],
-      "source_sha256": "7b5f9536f7674538df28fa224179e23157fef1df6737a8c3b9eba8bab2c85475"
+      "source_sha256": "696dfc005d9f160c8c668769a4eeba24a65f93bfeb07467877a32a0472f2d3fa"
     },
     {
       "id": "PATCH-TS-144",
@@ -1944,7 +1944,7 @@
         "_BasicActiveInlineCompactionSpinner",
         "_basic_active_inline_compaction_renderable"
       ],
-      "source_sha256": "4363ac35ea52fe22cf8a7773d8b86447e7f16349c2aee31a219e50da54cae55d"
+      "source_sha256": "96a99e82f99f592f622d27f3e6016a09ff7d5e9e59177c2f98c3206cb369039d"
     },
     {
       "id": "PATCH-TS-145",
@@ -2083,7 +2083,7 @@
         "BasicStreamPresenterTestCase.test_inline_compaction_non_spinner_renderable",
         "BasicStreamPresenterTestCase.test_live_activity_frame_uses_inline_compaction_spinner"
       ],
-      "source_sha256": "ce8fe30196b5c473718b5e572f873f4ba6268c76a9565aac7b8c54ca1f43bc42"
+      "source_sha256": "9d1d25482dce014643f7aa6ee4ba3347145c438639716b4a9bdc1a69f844320f"
     },
     {
       "id": "PATCH-TS-149",
@@ -2351,7 +2351,7 @@
         "DisplayReducerTestCase.test_apply_event_inline_compaction_lifecycle_is_noop",
         "DisplayReducerTestCase.test_inline_compaction_rejects_invalid_lifecycle_numbers"
       ],
-      "source_sha256": "9fd8288684bef5d6c6fc90377ea2ed57bde284f2b21b70f7fa3f82a1eb1a9999"
+      "source_sha256": "80f44227aaeac7a9ecdadc10683407a8c54815a264528e4eb6d5e9e6b99e4ccc"
     },
     {
       "id": "PATCH-TS-172",
@@ -2400,7 +2400,115 @@
         "module"
       ],
       "source_sha256": "bf036fb9cbbeef58bf282f8ea2f663f551e1df84973500a45d238d47531582db"
+    },
+    {
+      "id": "PATCH-TS-177",
+      "path": "src/avalan/trigger/__init__.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "eb009aa45098cd6de7c158ba82ff5e2b0c057af89c99b15f30f5f568b118b149"
+    },
+    {
+      "id": "PATCH-TS-178",
+      "path": "src/avalan/trigger/canonical.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "2fa6e06747457d13f91e2ef1e01baa53cac0378c08a1194406a51e786752443c"
+    },
+    {
+      "id": "PATCH-TS-179",
+      "path": "src/avalan/trigger/definition.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "fbb438f8790604dba0486eee1e6d79ab4d6166908ffb56fbbfc1ccaadc7f7586"
+    },
+    {
+      "id": "PATCH-TS-180",
+      "path": "src/avalan/trigger/dialect.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "87488b4cd4651530216dfb21b37ecac8c8f11513afd1ebcbcb4a0cb265e16d4d"
+    },
+    {
+      "id": "PATCH-TS-181",
+      "path": "src/avalan/trigger/error.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "214aa78cb47d88c7f6ca08b0561d85052b7254def1bc5a10d7f9c5a665266266"
+    },
+    {
+      "id": "PATCH-TS-182",
+      "path": "src/avalan/trigger/loader.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d5136bf7bcf010599ed5a1ff646e51ab4ae850b1ef4227f18937396377acd2bc"
+    },
+    {
+      "id": "PATCH-TS-183",
+      "path": "src/avalan/trigger/schedule.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "16f5cecb2c39ff5ed5fea0e82ddfbeaf8a900d29794f93569a108ff094afb989"
+    },
+    {
+      "id": "PATCH-TS-184",
+      "path": "tests/trigger/canonical_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "731a2ce3249c78d993b3d5c196d1697920b448bc5702bd8f2145ecf1a604d9ff"
+    },
+    {
+      "id": "PATCH-TS-185",
+      "path": "tests/trigger/definition_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "effb83a13fbb949e071c385e5b9e4058def5d3f21b2b3ddb4ed6ef11cc5b8fb5"
+    },
+    {
+      "id": "PATCH-TS-186",
+      "path": "tests/trigger/loader_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ba2368f447b42844815779b60aad242b45625bd8d12b112f2a1854e85e45c8d0"
+    },
+    {
+      "id": "PATCH-TS-187",
+      "path": "tests/trigger/schedule_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0fa040b04aeba72a9069ffca6eebfd536216cc548eb907c3eaac8850adc33f66"
+    },
+    {
+      "id": "PATCH-TS-188",
+      "path": "tests/trigger/__init__.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
     }
   ],
-  "manifest_sha256": "a389014f8ac2fbf102dbe02c850d49eaf32b907ce1b0c5a0c1b75a9834188ffc"
+  "manifest_sha256": "247ba4452d469ded45ba5698d55ee69cbba456dbd640c47d83162359f1ad3f4b"
 }

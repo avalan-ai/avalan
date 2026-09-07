@@ -338,3 +338,41 @@ Phase 1, not evidence that a loader already rejects them. Phase 0 tests check
 TOML parseability, complete inventory, policy combinations and existing task loading;
 Phase 1 must run every case through its actual loader and task validation.
 Reference time for registration cases is 2026-09-07T00:00:00.000000Z.
+
+## Phase 1 implementation boundary
+
+The pure SDK now provides `avalan.trigger` definition/error types,
+`trigger.loader.parse_configuration(source)`, and `TriggerLoader.load/loads`.
+`TriggerLoader` requires explicit trusted roots and an async host task validator
+`(resolved_task_path, configuration) -> None`. The host must check queue mode,
+input schema (including binding-aware placeholders), execution target capability
+and its configured privacy/file policies. Parsing alone establishes no execution
+authority. The contract corpus tests exercise actual task loading/input validation
+and the supported strict Flow runner through this hook; activation, durable file
+materialization and deployment sealing are still later-phase responsibilities.
+
+`trigger.schedule.next_occurrence` is strict after its cursor;
+`latest_due` is inclusive and bounded below by `first_undecided`.
+`resolve_anchor` resolves an omitted interval anchor from an explicit reference
+for preview; callers must pass the persisted anchor when calculating registered
+intervals. `validate_registration_time` checks new supplied starts separately,
+so unchanged reapplication is not incorrectly rejected after firing.
+`preview` returns UTC instants, local timestamps/offsets, timezone, effective
+anchor and an assumed-anchor flag. Its reference is an exclusive cursor and
+its candidate budget is shared across the complete preview.
+
+The optional `trigger` extra pins `croniter==6.2.4`. The wrapper owns strict
+grammar, literal-wildcard semantics, DOM/DOW OR splitting, fold-0/gap handling,
+UTC ordering and bounded search; native croniter behavior is insufficient.
+`SearchLimits` implements the contract's search-year/candidate bounds. Expression
+text is capped at 1024 characters before grammar expansion. Missing/mismatched
+parser versions raise a safe capability diagnostic. `schedule_provenance(zone)`
+reports the parser version and the selected system zone-file digest, or the
+tzdata package version when ZoneInfo falls back to it.
+
+`trigger.canonical.canonical_configuration` and `configuration_hash` require
+host-resolved task and deployment identity strings. They exclude operational
+state, names and source paths; they do not themselves prove deployment closure.
+Core imports and interval/at calculation do not import croniter, PostgreSQL or
+metrics SDKs. No trigger store, scheduler service, apply/admission implementation,
+CLI command or task-submission replacement is included in this phase.
