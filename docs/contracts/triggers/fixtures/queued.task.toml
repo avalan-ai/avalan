@@ -1,0 +1,16 @@
+[task]
+name = "trigger-contract"
+version = "1"
+[input]
+type = "object"
+schema = { type = "object", additionalProperties = false, required = ["scheduled", "occurrence", "revision"], properties = { scheduled = { type = "string" }, occurrence = { type = "string" }, revision = { type = "integer" } } }
+[output]
+type = "text"
+[execution]
+type = "agent"
+ref = "agent.toml"
+[run]
+mode = "queue"
+queue = "default"
+[privacy]
+input = "hash"

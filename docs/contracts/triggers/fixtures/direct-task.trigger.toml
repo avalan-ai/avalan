@@ -1,0 +1,14 @@
+[trigger]
+schema_version = 1
+name = "contract-trigger"
+
+[task]
+ref = "direct.task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[schedule]
+type = "cron"
+expression = "0 9 * * MON-FRI"
+timezone = "America/New_York"
