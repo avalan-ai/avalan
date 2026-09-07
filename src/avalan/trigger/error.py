@@ -13,6 +13,16 @@ class TriggerErrorCode(StrEnum):
     PAST_SCHEDULE = "trigger.past_schedule"
     QUEUE_REQUIRED = "trigger.queue_required"
     CAPABILITY_UNAVAILABLE = "trigger.capability_unavailable"
+    DEPLOYMENT_MISMATCH = "trigger.deployment_mismatch"
+    ARTIFACT_NOT_DURABLE = "trigger.artifact_not_durable"
+    PROVIDER_REFERENCE_EXPIRED = "trigger.provider_reference_expired"
+    CONFLICT = "trigger.conflict"
+    STORE_INCOMPATIBLE = "trigger.store_incompatible"
+    SCHEMA_MISMATCH = "trigger.schema_mismatch"
+    ADMISSION_RETRYABLE = "trigger.admission_retryable"
+    ADMISSION_EXHAUSTED = "trigger.admission_exhausted"
+    COMMIT_UNKNOWN = "trigger.commit_unknown"
+    SHUTDOWN_TIMEOUT = "trigger.shutdown_timeout"
 
 
 class TriggerError(ValueError):

@@ -4,6 +4,7 @@ from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase, main
+from unittest.mock import Mock
 
 from avalan.task import (
     ArtifactStoreNotFoundError,
@@ -26,6 +27,7 @@ from avalan.task import (
     UsageTotals,
 )
 from avalan.task.artifacts import LocalArtifactStore
+from avalan.task.store import TaskStore
 from avalan.task.stores import InMemoryTaskStore
 
 
@@ -656,54 +658,67 @@ class TaskRetentionServiceTest(IsolatedAsyncioTestCase):
     async def test_sweep_expired_handles_bytes_lost_after_transition(
         self,
     ) -> None:
-        with TemporaryDirectory() as tmp:
-            task_store = await self._task_store(
-                lambda: datetime(2026, 1, 1, tzinfo=UTC)
-            )
-            run = await task_store.create_run(
-                TaskExecutionRequest(definition_id="hash-a")
-            )
-
-            class VanishingArtifactStore(LocalArtifactStore):
-                async def delete(self, ref: TaskArtifactRef) -> None:
-                    Path(tmp, ref.storage_key).unlink()
-                    raise ArtifactStoreNotFoundError(
-                        "artifact was removed concurrently"
+        for custom_store in (False, True):
+            with self.subTest(custom_store=custom_store):
+                with TemporaryDirectory() as tmp:
+                    task_store = await self._task_store(
+                        lambda: datetime(2026, 1, 1, tzinfo=UTC)
+                    )
+                    run = await task_store.create_run(
+                        TaskExecutionRequest(definition_id="hash-a")
                     )
 
-            artifact_store = VanishingArtifactStore(
-                tmp,
-                raw_storage_allowed=True,
-            )
-            ref = await artifact_store.put(
-                b"private output",
-                artifact_id="output-1",
-            )
-            await task_store.append_artifact(
-                run.run_id,
-                ref=ref,
-                purpose=TaskArtifactPurpose.OUTPUT,
-                retention=TaskArtifactRetention(delete_after_days=1),
-            )
-            service = TaskRetentionService(
-                task_store,
-                {"local": artifact_store},
-            )
+                    class VanishingArtifactStore(LocalArtifactStore):
+                        async def delete(self, ref: TaskArtifactRef) -> None:
+                            record = await task_store.get_artifact(
+                                ref.artifact_id
+                            )
+                            assert record.state == TaskArtifactState.DELETED
+                            Path(tmp, ref.storage_key).unlink()
+                            raise ArtifactStoreNotFoundError(
+                                "artifact was removed concurrently"
+                            )
 
-            sweep = await service.sweep_expired(
-                now=datetime(2026, 1, 3, tzinfo=UTC),
-            )
+                    artifact_store = VanishingArtifactStore(
+                        tmp,
+                        raw_storage_allowed=True,
+                    )
+                    ref = await artifact_store.put(
+                        b"private output",
+                        artifact_id="output-1",
+                    )
+                    await task_store.append_artifact(
+                        run.run_id,
+                        ref=ref,
+                        purpose=TaskArtifactPurpose.OUTPUT,
+                        retention=TaskArtifactRetention(delete_after_days=1),
+                    )
+                    # Custom stores retain direct backend deletion;
+                    # built-in stores settle deletion through shared ownership.
+                    selected = (
+                        Mock(spec=TaskStore, wraps=task_store)
+                        if custom_store
+                        else task_store
+                    )
+                    service = TaskRetentionService(
+                        selected,
+                        {"local": artifact_store},
+                    )
 
-            self.assertEqual(len(sweep.results), 1)
-            self.assertEqual(
-                sweep.results[0].action,
-                TaskRetentionAction.DELETED,
-            )
-            self.assertFalse(Path(tmp, ref.storage_key).exists())
-            self.assertEqual(
-                (await task_store.get_artifact(ref.artifact_id)).state,
-                TaskArtifactState.DELETED,
-            )
+                    sweep = await service.sweep_expired(
+                        now=datetime(2026, 1, 3, tzinfo=UTC),
+                    )
+
+                    self.assertEqual(len(sweep.results), 1)
+                    self.assertEqual(
+                        sweep.results[0].action,
+                        TaskRetentionAction.DELETED,
+                    )
+                    self.assertFalse(Path(tmp, ref.storage_key).exists())
+                    self.assertEqual(
+                        (await task_store.get_artifact(ref.artifact_id)).state,
+                        TaskArtifactState.DELETED,
+                    )
 
     async def test_invalid_inputs_fail_fast(self) -> None:
         task_store = await self._task_store(
@@ -732,6 +747,37 @@ class TaskRetentionServiceTest(IsolatedAsyncioTestCase):
             await service.sweep_expired(
                 purposes=cast(Collection[TaskArtifactPurpose], ()),
             )
+
+    async def test_custom_store_retains_its_direct_backend_cleanup_contract(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as root:
+            tasks = await self._task_store(
+                lambda: datetime(2026, 1, 1, tzinfo=UTC)
+            )
+            run = await tasks.create_run(
+                TaskExecutionRequest(definition_id="hash-a")
+            )
+            backend = LocalArtifactStore(root, raw_storage_allowed=True)
+            ref = await backend.put(
+                b"expired", artifact_id="custom-store-artifact"
+            )
+            await tasks.append_artifact(
+                run.run_id,
+                ref=ref,
+                purpose=TaskArtifactPurpose.OUTPUT,
+                retention=TaskArtifactRetention(delete_after_days=1),
+            )
+            # The custom adapter owns its backend reference contract.
+            adapter = Mock(spec=TaskStore, wraps=tasks)
+            service = TaskRetentionService(adapter, {"local": backend})
+            result = await service.enforce_run(
+                run.run_id, now=datetime(2026, 1, 3, tzinfo=UTC)
+            )
+            assert len(result.results) == 1
+            assert result.results[0].action == TaskRetentionAction.DELETED
+            with self.assertRaises(ArtifactStoreNotFoundError):
+                await backend.open(ref)
 
     async def _task_store(
         self,

@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "7004313834051193176f8dab848de5296e1232e80d2652f1d4b7896a37f1f3c9",
+  "current_snapshot_sha256": "68a8c4417dc042cd6dfe6e0c5a14b71432f316a40d74d7d89a5f04b8a8dda288",
   "directives": {
     "added": 12,
     "removed": 0,
@@ -9,13 +9,13 @@
     "sha256": "91a453248b24d38cad550f07070a4212efc579ca56602c48554ea1c5f6c996d4"
   },
   "report_lines": {
-    "added": 1373,
+    "added": 1448,
     "removed": 312,
-    "sha256": "17ce8d896d61de82cbe2af08ab5fb2968805872b5c58b3db9292120491fe5e93"
+    "sha256": "724d0ce6175fd4195f1e425537a2ef840e805501bce419bfcf5c90126e37867f"
   },
   "review": {
-    "reviewed_by": "trigger task submission exclusion audit",
-    "rationale": "Preserve the immutable baseline and unchanged source directive inventory. Record existing default coverage exclusions after the task submission API migration: PgsqlAtomicSuspensionParticipant, TaskClientDurableLifecycleCoordinator and Alembic Protocol stubs relocate; unchanged task settlement Protocol stubs relocate; TaskQueue replaces enqueue_run with validated preparation/transaction/reconciliation Protocol signatures (five net excluded lines), and its TYPE_CHECKING imports add three type-only excluded lines. No pragma, runtime exclusion or coverage configuration is added. Exact old/new source lines and default parser rules were audited."
+    "reviewed_by": "trigger store and ownership exclusion audit",
+    "rationale": "Preserve the immutable baseline, existing directives and default coverage policy. Task lifecycle and Alembic Protocol exclusions relocate unchanged. New ownership cleanup and task submission Protocol signatures, trigger store Protocol signatures, and TYPE_CHECKING-only task imports add 75 parser-excluded lines including default blank/end lines. Audit records exact old/new source lines; no executable runtime branch, pragma or exclusion configuration is added."
   },
-  "ledger_sha256": "4a7a32713d6b1d7746c5c45a55d7e04e5a8a9e0dd52a4a1083fa8618ea66c1d6"
+  "ledger_sha256": "dd84c3469e9c4ad6e33a94d14845ea6ccdced744c3084de6c14034aa70b050f6"
 }

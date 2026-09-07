@@ -3,7 +3,7 @@
 from asyncio import Lock
 from collections.abc import Mapping, Sequence
 from copy import deepcopy
-from datetime import datetime
+from datetime import UTC, datetime
 from json import loads
 from typing import Any, cast
 
@@ -2400,6 +2400,8 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
         self.flow_executions: dict[str, dict[str, object]] = {}
         self.usage: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
+        self.physical_objects: dict[str, dict[str, object]] = {}
+        self.physical_runs: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
         self.submissions: dict[tuple[str, str], dict[str, object]] = {}
         self.executed_queries: list[str] = []
@@ -2430,6 +2432,8 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
             flow_executions=deepcopy(self.flow_executions),
             usage=deepcopy(self.usage),
             artifacts=deepcopy(self.artifacts),
+            physical_objects=deepcopy(self.physical_objects),
+            physical_runs=deepcopy(self.physical_runs),
             idempotency=deepcopy(self.idempotency),
             submissions=deepcopy(self.submissions),
         )
@@ -2438,6 +2442,12 @@ class FullFakePgsqlDatabase(FakePgsqlDatabase):
     def restore(self, snapshot: Mapping[str, object]) -> None:
         """Restore all interaction, task-store, and queue rows."""
         super().restore(snapshot)
+        self.physical_objects = cast(
+            dict[str, dict[str, object]], snapshot["physical_objects"]
+        )
+        self.physical_runs = cast(
+            dict[str, dict[str, object]], snapshot["physical_runs"]
+        )
         self.definitions = cast(
             dict[str, dict[str, object]],
             snapshot["definitions"],
@@ -2545,6 +2555,52 @@ class FullFakeCursor:
             and self.database.fail_on_query in query
         ):
             raise RuntimeError("backend failure includes raw details")
+        if "to_regclass('avalan_task_alembic_version') AS present" in query:
+            self.row = {"present": "avalan_task_alembic_version"}
+            return
+        if "SELECT version_num FROM avalan_task_alembic_version" in query:
+            self.rows = ({"version_num": INTERACTION_PGSQL_HEAD_REVISION},)
+            return
+        if "INSERT INTO task_artifact_objects" in query:
+            identity = cast(str, params[0])
+            self.database.physical_objects.setdefault(
+                identity,
+                {
+                    "object_id": identity,
+                    "store": params[1],
+                    "storage_key": params[2],
+                    "sha256": params[3],
+                    "size_bytes": params[4],
+                    "status": "live",
+                    "cleanup_token": None,
+                    "staged_at": datetime.now(UTC),
+                    "was_staged": False,
+                },
+            )
+            return
+        if "FROM task_artifact_objects" in query:
+            self.row = next(
+                (
+                    value
+                    for value in self.database.physical_objects.values()
+                    if value["store"] == params[0]
+                    and value["storage_key"] == params[1]
+                ),
+                None,
+            )
+            return
+        if "INSERT INTO task_artifact_run_owners" in query:
+            self.database.physical_runs.setdefault(
+                cast(str, params[0]),
+                {
+                    "object_id": params[1],
+                    "released_at": None,
+                },
+            )
+            return
+        if "FROM task_artifact_run_owners" in query:
+            self.row = self.database.physical_runs.get(cast(str, params[0]))
+            return
         if 'SELECT "version_num"' in query:
             self.row = {"version_num": INTERACTION_PGSQL_HEAD_REVISION}
             self.rows = (self.row,)

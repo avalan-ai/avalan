@@ -253,7 +253,7 @@ class PgsqlArtifactStore:
             encrypted,
             purpose=TaskKeyPurpose.ARTIFACT_CONTENT,
             context=_encryption_context(
-                artifact_id=ref.artifact_id,
+                artifact_id=_physical_artifact_id(ref.storage_key),
                 store=self._store_name,
             ),
         )
@@ -330,8 +330,7 @@ class PgsqlArtifactStore:
         if ref.store != self._store_name:
             raise ArtifactStoreNotFoundError("artifact store does not match")
         _assert_storage_key(ref.storage_key)
-        if ref.storage_key != _storage_key(ref.artifact_id):
-            raise ArtifactStoreNotFoundError("artifact storage key mismatch")
+        _physical_artifact_id(ref.storage_key)
 
     def _require_policy(self) -> None:
         diagnostics = require_features(
@@ -486,8 +485,18 @@ def _storage_key(artifact_id: str) -> str:
 
 def _assert_storage_key(value: str) -> None:
     _assert_non_empty_string(value, "storage_key")
-    assert value.startswith("artifact-bytes/")
-    assert ".." not in value.split("/")
+    assert fullmatch(
+        r"artifact-bytes/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", value
+    ), "storage_key must be a canonical physical artifact key"
+
+
+def _physical_artifact_id(value: str) -> str:
+    """Derive cipher identity from the validated immutable physical key."""
+    _assert_storage_key(value)
+    identity = value[len("artifact-bytes/") :]
+    _assert_artifact_id(identity)
+    assert _storage_key(identity) == value
+    return identity
 
 
 def _assert_artifact_id(value: str) -> None:

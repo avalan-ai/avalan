@@ -7,12 +7,17 @@ from .artifact import (
     TaskArtifactState,
     artifact_retention_expired,
 )
+from .artifact_retention import can_release_run_artifact, retire_artifact_bytes
+from .artifacts.ownership_memory import MemoryArtifactOwnership
+from .artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from .store import (
     TaskSnapshotMetadata,
     TaskStore,
     TaskStoreConflictError,
     freeze_snapshot_metadata,
 )
+from .stores.memory import InMemoryTaskStore
+from .stores.pgsql import PgsqlTaskStore
 
 from collections.abc import Callable, Collection, Mapping
 from dataclasses import dataclass
@@ -95,6 +100,17 @@ class TaskRetentionService:
         for name in artifact_stores:
             _assert_non_empty_string(name, "artifact store name")
         self._store = store
+        self._ownership: (
+            PgsqlArtifactOwnership | MemoryArtifactOwnership | None
+        ) = (
+            PgsqlArtifactOwnership(store._database)
+            if isinstance(store, PgsqlTaskStore)
+            else (
+                store._artifact_ownership
+                if isinstance(store, InMemoryTaskStore)
+                else None
+            )
+        )
         self._artifact_stores = dict(artifact_stores)
         self._clock = clock or _utc_now
 
@@ -181,10 +197,15 @@ class TaskRetentionService:
             raise TaskRetentionStoreNotFoundError(
                 "artifact store is not configured for retention"
             )
+        if self._ownership is not None and not await can_release_run_artifact(
+            record, self._store, self._ownership
+        ):
+            return None
+        stat = None
         action = TaskRetentionAction.DELETED
         reason = "retention_expired"
         try:
-            await artifact_store.stat(record.ref)
+            stat = await artifact_store.stat(record.ref)
         except ArtifactStoreNotFoundError:
             action = TaskRetentionAction.LOST
             reason = "artifact_bytes_missing"
@@ -206,7 +227,13 @@ class TaskRetentionService:
             return None
         if action == TaskRetentionAction.DELETED:
             try:
-                await artifact_store.delete(record.ref)
+                if self._ownership is not None:
+                    assert stat is not None
+                    await retire_artifact_bytes(
+                        record, stat, artifact_store, self._ownership
+                    )
+                else:
+                    await artifact_store.delete(record.ref)
             except ArtifactStoreNotFoundError:
                 pass
         return TaskRetentionResult(

@@ -720,7 +720,7 @@ class PgsqlMigrationRevisionTest(TestCase):
         )
         self.assertIn('"ix_interaction_branches_scope"', schema)
 
-    def test_submission_revision_is_registered_as_schema_head(self) -> None:
+    def test_submission_revision_dispatches_statements(self) -> None:
         revision_module = import_module(
             "avalan.task.stores.pgsql_migrations.versions."
             "v20260907_0001_task_submissions"
@@ -732,7 +732,9 @@ class PgsqlMigrationRevisionTest(TestCase):
             revision_module.upgrade()
         finally:
             setattr(revision_module, "op", old_op)
-        self.assertEqual(TASK_PGSQL_HEAD_REVISION, revision_module.revision)
+        self.assertEqual(
+            revision_module.revision, "20260907_0001_task_submissions"
+        )
         self.assertEqual(
             revision_module.down_revision,
             "20260828_0001_patch_coordination",
@@ -826,6 +828,26 @@ class PgsqlMigrationRevisionTest(TestCase):
         ):
             self.assertIn(required_sql, schema)
 
+    def test_trigger_revision_is_registered_as_schema_head(self) -> None:
+        revision_module = import_module(
+            "avalan.task.stores.pgsql_migrations.versions.v20260907_0002_triggers"
+        )
+        fake_op = FakeRevisionOp()
+        old_op = getattr(revision_module, "op")
+        setattr(revision_module, "op", fake_op)
+        try:
+            revision_module.upgrade()
+        finally:
+            setattr(revision_module, "op", old_op)
+        self.assertEqual(TASK_PGSQL_HEAD_REVISION, revision_module.revision)
+        self.assertEqual(
+            revision_module.down_revision, "20260907_0001_task_submissions"
+        )
+        self.assertEqual(
+            fake_op.bind.statements,
+            list(revision_module.TASK_SCHEMA_STATEMENTS),
+        )
+
     def test_revision_downgrade_is_forward_only(self) -> None:
         for revision in (
             "v20260530_0001_task_schema",
@@ -835,6 +857,7 @@ class PgsqlMigrationRevisionTest(TestCase):
             "v20260811_0002_patch_worker_reaping",
             "v20260828_0001_patch_coordination",
             "v20260907_0001_task_submissions",
+            "v20260907_0002_triggers",
         ):
             with self.subTest(revision=revision):
                 revision_module = import_module(

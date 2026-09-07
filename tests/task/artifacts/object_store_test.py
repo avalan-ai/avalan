@@ -218,7 +218,7 @@ class FakeObjectClient:
             metadata=dict(metadata or {}),
         )
         return ObjectArtifactHead(
-            key="objects/xx/wrong" if self.wrong_complete_key else upload.key,
+            key="objects/wr/wrong" if self.wrong_complete_key else upload.key,
             size_bytes=(
                 len(content) + 1
                 if self.wrong_complete_size
@@ -601,7 +601,7 @@ class ObjectArtifactStoreTest(IsolatedAsyncioTestCase):
             store="other",
             storage_key=ref.storage_key,
         )
-        mismatched = TaskArtifactRef(
+        shared = TaskArtifactRef(
             artifact_id="artifact-2",
             store=ref.store,
             storage_key=ref.storage_key,
@@ -614,10 +614,30 @@ class ObjectArtifactStoreTest(IsolatedAsyncioTestCase):
 
         with self.assertRaises(ArtifactStoreNotFoundError):
             await store.open(wrong_store)
-        with self.assertRaises(ArtifactStoreNotFoundError):
-            await store.open(mismatched)
+        reader = await store.open(shared)
+        try:
+            self.assertEqual(reader.read(), b"private bytes")
+        finally:
+            reader.close()
         with self.assertRaises(ArtifactStoreError):
             await store.open(escaped)
+        for key in (
+            "objects/AR/artifact-1",
+            "objects/xx/artifact-1",
+            "objects/ar/artifact-1/child",
+            "objects/ar/artifact-1/",
+            "objects/a/artifact-1",
+            "objects/ar/.hidden",
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(ArtifactStoreError):
+                    await store.open(
+                        TaskArtifactRef(
+                            artifact_id="reference",
+                            store=ref.store,
+                            storage_key=key,
+                        )
+                    )
 
     async def test_content_address_failures_cleanup_uploaded_object(
         self,

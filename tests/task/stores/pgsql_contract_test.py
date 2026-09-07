@@ -15,6 +15,7 @@ from store_contract_test import (  # type: ignore[import-not-found]
     StoreContractAssertions,
 )
 
+from avalan.pgsql import TASK_PGSQL_HEAD_REVISION
 from avalan.task import (
     IdempotencyMode,
     TaskAttemptState,
@@ -43,6 +44,8 @@ class FakePgsqlTaskDatabase:
         self.events: dict[str, dict[str, object]] = {}
         self.usage: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
+        self.physical_objects: dict[str, dict[str, object]] = {}
+        self.physical_runs: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
         self.executed_queries: list[str] = []
         self.before_attempt_update: (
@@ -74,10 +77,18 @@ class FakePgsqlTaskDatabase:
             "events": deepcopy(self.events),
             "usage": deepcopy(self.usage),
             "artifacts": deepcopy(self.artifacts),
+            "physical_objects": deepcopy(self.physical_objects),
+            "physical_runs": deepcopy(self.physical_runs),
             "idempotency": deepcopy(self.idempotency),
         }
 
     def restore(self, snapshot: dict[str, object]) -> None:
+        self.physical_objects = cast(
+            dict[str, dict[str, object]], snapshot["physical_objects"]
+        )
+        self.physical_runs = cast(
+            dict[str, dict[str, object]], snapshot["physical_runs"]
+        )
         self.definitions = cast(
             dict[str, dict[str, object]], snapshot["definitions"]
         )
@@ -189,7 +200,51 @@ class FakeCursor:
     ) -> None:
         params = parameters or ()
         self.database.executed_queries.append(query)
-        if 'SELECT "run_id" FROM "task_runs"' in query:
+        if "to_regclass('avalan_task_alembic_version') AS present" in query:
+            self.row = {"present": "avalan_task_alembic_version"}
+        elif "SELECT version_num FROM avalan_task_alembic_version" in query:
+            self.rows = ({"version_num": TASK_PGSQL_HEAD_REVISION},)
+        elif "INSERT INTO task_artifact_objects" in query:
+            identity = cast(str, params[0])
+            self.database.physical_objects.setdefault(
+                identity,
+                {
+                    "object_id": identity,
+                    "store": params[1],
+                    "storage_key": params[2],
+                    "sha256": params[3],
+                    "size_bytes": params[4],
+                    "status": "live",
+                    "cleanup_token": None,
+                    "staged_at": datetime.now(UTC),
+                    "was_staged": False,
+                },
+            )
+        elif "FROM task_artifact_objects" in query:
+            self.row = next(
+                (
+                    value
+                    for value in self.database.physical_objects.values()
+                    if value["store"] == params[0]
+                    and value["storage_key"] == params[1]
+                ),
+                None,
+            )
+        elif "INSERT INTO task_artifact_run_owners" in query:
+            self.database.physical_runs.setdefault(
+                cast(str, params[0]),
+                {
+                    "object_id": params[1],
+                    "released_at": None,
+                },
+            )
+        elif "FROM task_artifact_run_owners" in query:
+            self.row = self.database.physical_runs.get(cast(str, params[0]))
+        elif "transaction_isolation" in query:
+            self.row = {"isolation": "read committed"}
+        elif "pg_advisory_xact_lock" in query:
+            self.row = None
+        elif 'SELECT "run_id" FROM "task_runs"' in query:
             run = self.database.runs.get(cast(str, params[0]))
             self.row = {"run_id": run["run_id"]} if run is not None else None
         elif 'SELECT * FROM "task_definitions"' in query:
