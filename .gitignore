@@ -17,3 +17,4 @@ dist/
 .session.vim
 .env
 .env.sh
+.worktreeinclude
