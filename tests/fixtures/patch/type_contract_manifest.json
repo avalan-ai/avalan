@@ -803,9 +803,12 @@
       "scope": "integration_hunk",
       "symbols": [
         "TASK_PGSQL_HEAD_REVISION",
-        "_TASK_PGSQL_REVISION_MODULES"
+        "_TASK_PGSQL_REVISION_MODULES",
+        "_transaction",
+        "append_artifact",
+        "execute"
       ],
-      "source_sha256": "c054fb874dddb4aa881951d13f8ea2f8d038ce62b1dc322ee01803b00aeac542"
+      "source_sha256": "52b41b2a872b2c1fd14c89871ddd3f8f8410b2a1753bbd8f919df57b00566562"
     },
     {
       "id": "PATCH-TS-034",
@@ -921,9 +924,17 @@
       "scope": "integration_hunk",
       "symbols": [
         "PgsqlUnitOfWork",
-        "TASK_PGSQL_HEAD_REVISION"
+        "TASK_PGSQL_HEAD_REVISION",
+        "__aenter__",
+        "__aexit__",
+        "__init__",
+        "__post_init__",
+        "aclose",
+        "close",
+        "connection",
+        "open"
       ],
-      "source_sha256": "19b1805ca3d136c6d2bb7e3af71847dba0a571d0e0e0f201d189238221dfad91"
+      "source_sha256": "f5190eadba92212a4cce299919590c3b64610fbed8d5c43dbff40f6e63e5b830"
     },
     {
       "id": "PATCH-TS-047",
@@ -971,7 +982,7 @@
         "CONVERSATION_PGSQL_PARSER_EXCLUSION_LINES",
         "COVERAGE_EXCLUSION_REPORT_LINE_COUNT"
       ],
-      "source_sha256": "f6aa9b5c6d5048281c323fe4417f1e754dd2cb768aeec77f79428f5c4ab4022d"
+      "source_sha256": "eff1832fbe035511d2e24507aef8f808b65a122715c8199bc1a8f84b94c0f219"
     },
     {
       "id": "PATCH-TS-052",
@@ -1130,7 +1141,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "7be87962ce89116f646381e7c831b8147723ffa5a690dd11726c4ec0ee5560e5"
+      "source_sha256": "4c4ad4884f586af3f78d7787806a18c7341bfc6d8d92885bd088fcfeddb4a9a1"
     },
     {
       "id": "PATCH-TS-067",
@@ -1193,7 +1204,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "df8959ab92e7d4b14f21ae70c8fde0398a759b9541753202ced89549732ef9b6"
+      "source_sha256": "53b3c73992480ec3d378c9caeb30d5e688a104881bd0b44c58921447a0934087"
     },
     {
       "id": "PATCH-TS-074",
@@ -2456,7 +2467,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "214aa78cb47d88c7f6ca08b0561d85052b7254def1bc5a10d7f9c5a665266266"
+      "source_sha256": "9a6264d505ff1b344376d2b27e693fb90b0316e1f5ad59168353bd415978f10f"
     },
     {
       "id": "PATCH-TS-182",
@@ -2547,7 +2558,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "6c49f05b1f7f5d7fcf7c6ff3d29606cce67945404a5fe73739bccd000f119b74"
+      "source_sha256": "5210f48b9d8a9d64ba008d890f7b452a33881872c02b4a6441bc66a2f70407ce"
     },
     {
       "id": "PATCH-TS-192",
@@ -2565,7 +2576,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "098d3eeb19de9a88549b1e1ef9335a955046b7efbe6da9d10e2491d2b08dc065"
+      "source_sha256": "b798daaccac4c228f22444e618dc0ba8586b16d7b012db06c71930674e24fa49"
     },
     {
       "id": "PATCH-TS-194",
@@ -2756,8 +2767,11 @@
       "path": "tests/task/queues/pgsql_protocol_test.py",
       "scope": "integration_hunk",
       "symbols": [
+        "__aenter__",
         "__aexit__",
+        "__call__",
         "__init__",
+        "close",
         "connection",
         "execute",
         "restore",
@@ -2785,7 +2799,7 @@
         "test_submit_prepared_rolls_back_store_outage_before_mutation",
         "test_submit_prepared_rolls_back_transition_insert_conflict"
       ],
-      "source_sha256": "18b3212a4a1385b29446dc34db9fa13f1bc78752b7ff06d36bb7ea2d7a4b65ba"
+      "source_sha256": "c1c94555308ef6f97c9d5339a5afd520d3313c5b313bd9b280e8fd75fae48450"
     },
     {
       "id": "PATCH-TS-206",
@@ -2860,13 +2874,567 @@
       "path": "tests/interaction/stores/pgsql_support.py",
       "scope": "integration_hunk",
       "symbols": [
+        "__aenter__",
+        "__aexit__",
+        "__init__",
+        "connection",
+        "cursor",
+        "execute",
+        "fetchall",
+        "fetchone",
+        "restore",
+        "snapshot",
+        "transaction"
+      ],
+      "source_sha256": "27261189b2e28bade324f213890951b3784ff4c6afdc482544d36b1e1c16f494"
+    },
+    {
+      "id": "PATCH-TS-214",
+      "path": "src/avalan/task/artifact_codec.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "bbd3677abdd07891e4590a4705977a1f76f0d232e8c6103a4a293f30dc2e9972"
+    },
+    {
+      "id": "PATCH-TS-215",
+      "path": "src/avalan/task/artifact_ownership.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "5782c6018503c0cd8bc5a6f6b36c385a7116a1753294f47381aae7d81fd9d1a6"
+    },
+    {
+      "id": "PATCH-TS-216",
+      "path": "src/avalan/task/artifact_retention.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9d0fa69ed15c15cc06daece1caaf9da9fc1d61b5102e363585cb414630c72b8c"
+    },
+    {
+      "id": "PATCH-TS-217",
+      "path": "src/avalan/task/artifact_staging.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "46f18d0db6686042bc5c701fed5ac6c48730ea391f58110ef6144cc1f164a82a"
+    },
+    {
+      "id": "PATCH-TS-218",
+      "path": "src/avalan/task/artifacts/object_store.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "71d2ddb671fbd43cff134f1d7eaaab193e83eeb893f9d57a65e3bcba267367d9"
+    },
+    {
+      "id": "PATCH-TS-219",
+      "path": "src/avalan/task/artifacts/ownership_memory.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "1afccd54f1a0aecd3d843b7c315057328404331a2dbcaa06b68875e73786952f"
+    },
+    {
+      "id": "PATCH-TS-220",
+      "path": "src/avalan/task/artifacts/ownership_pgsql.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "61430d3841d3f01f889293606805e2d2412b34b3f76fbfe44b126dd8d6fa42a5"
+    },
+    {
+      "id": "PATCH-TS-221",
+      "path": "src/avalan/task/artifacts/pgsql.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0e5bff718e9a8cb3b976799417a92bea718d4f55e47ab57af62468ccad138d44"
+    },
+    {
+      "id": "PATCH-TS-222",
+      "path": "src/avalan/task/preparation.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c7c1b72bd0e519bb52a0a641b79edb324160422e61987663d8dc8f85dabafcb1"
+    },
+    {
+      "id": "PATCH-TS-223",
+      "path": "src/avalan/task/queues/memory_submission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "4ad6a6573e0d630d42ff04abcfe3d06aaaaeb512e8d4020afa96ab35673fa0a2"
+    },
+    {
+      "id": "PATCH-TS-224",
+      "path": "src/avalan/task/retention.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "f2b81c39be37d5ca8d1d22d982e86f7b4f23cef59453273f0f10aa8f6f47ecf4"
+    },
+    {
+      "id": "PATCH-TS-225",
+      "path": "src/avalan/task/stores/memory.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "48aee869a00f86fafb8da2ffc8f6712d64d5e3f668f38f0652e50801680eb97d"
+    },
+    {
+      "id": "PATCH-TS-226",
+      "path": "src/avalan/task/stores/pgsql_migrations/versions/v20260907_0002_triggers.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "8979fea51445a8603809ab91ba2dccc2aab4129aecd0237dc10107a5c5b9c2f3"
+    },
+    {
+      "id": "PATCH-TS-227",
+      "path": "src/avalan/task/submission_participant.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "769ec35652f57f93740b7659a20f9f4b83e6b3cc64dddce54ddfb6ee24cc4014"
+    },
+    {
+      "id": "PATCH-TS-228",
+      "path": "src/avalan/trigger/admission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "36bf6b7efb5f9a26da99744b18701e6969b94a8c3e56c90e4c9f9e88339e78e2"
+    },
+    {
+      "id": "PATCH-TS-229",
+      "path": "src/avalan/trigger/apply.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9cf3664bfbfe856094cb7e68ef298aeee71c92c715e9578959e778f0f971b663"
+    },
+    {
+      "id": "PATCH-TS-230",
+      "path": "src/avalan/trigger/bindings.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ce321bf65ab4ddae3632afa4000713703b7a20929f8e46d2fdc5c9b2ff3e58f3"
+    },
+    {
+      "id": "PATCH-TS-231",
+      "path": "src/avalan/trigger/codec.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "8fac1e0f6abe4a2d4e32e2e42580383a8a896f90153801d3f97a39c8d4e1b685"
+    },
+    {
+      "id": "PATCH-TS-232",
+      "path": "src/avalan/trigger/coverage.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ac92807250caed867596bb3758b64de33f4e3a5ab36efb9a1a08c44c6d86e104"
+    },
+    {
+      "id": "PATCH-TS-233",
+      "path": "src/avalan/trigger/plan.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "58a004d736d8e5a76f802817865ff90a48f4031a4329e55bca12d26b5235e851"
+    },
+    {
+      "id": "PATCH-TS-234",
+      "path": "src/avalan/trigger/preparation.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "51160417cb070f135f84ea1ed708166a33f8e319513d2f66d055f21e387d28c4"
+    },
+    {
+      "id": "PATCH-TS-235",
+      "path": "src/avalan/trigger/records.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9e5fc503ff6fea3642a4f21a3938129d0abdb70565ec8dc479af1245a28cd098"
+    },
+    {
+      "id": "PATCH-TS-236",
+      "path": "src/avalan/trigger/registration.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b67065436788c4d2eb0d0f7c893460ef07af032674faabbe3e902af16d9c63e7"
+    },
+    {
+      "id": "PATCH-TS-237",
+      "path": "src/avalan/trigger/resources.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "88699b63518ba55430b8c1899fb9d5e5e1193e003b9236e19443113df58d9f91"
+    },
+    {
+      "id": "PATCH-TS-238",
+      "path": "src/avalan/trigger/sealed_input.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "08d4e857576d69eaedc12a47d3958cebc7aa861380359f92be873d1dfb8eb1a7"
+    },
+    {
+      "id": "PATCH-TS-239",
+      "path": "src/avalan/trigger/search.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d2f30b187a27d980d73a23a310404d2720fcde800292d3767ecb16aa187847c4"
+    },
+    {
+      "id": "PATCH-TS-240",
+      "path": "src/avalan/trigger/store.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "8516d4f2cc732a9dd4b871c8e7f58fe534c07cb16599fd01d110ec80c75c4073"
+    },
+    {
+      "id": "PATCH-TS-241",
+      "path": "src/avalan/trigger/stores/__init__.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "59096e9a231709801f2294d03dc4868c34df341493721e6b385f2413291c3d6e"
+    },
+    {
+      "id": "PATCH-TS-242",
+      "path": "src/avalan/trigger/stores/memory.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "1df729ea5ca447f1bc3f417162b553d560513f4b56a5b7323cc2a3e606c3e4b5"
+    },
+    {
+      "id": "PATCH-TS-243",
+      "path": "src/avalan/trigger/stores/memory_admission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0b8972f11cd3e001614fd85856507987b7d1de5033c8a2c44ab5abb1a13c6ead"
+    },
+    {
+      "id": "PATCH-TS-244",
+      "path": "src/avalan/trigger/stores/pgsql.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "fce83fba29403ac45c2e0ea7098b20173a60fc981115b39918fc92c4ece3d60a"
+    },
+    {
+      "id": "PATCH-TS-245",
+      "path": "src/avalan/trigger/stores/pgsql_admission.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "95e1c2095d34ba7534e7088b849c7116eab1d14a7f585ea9bdd704dc7a0e5c1f"
+    },
+    {
+      "id": "PATCH-TS-246",
+      "path": "tests/task/artifact_ownership_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "357845f9f154308a5fad4ef51047733ebcfe05cb36ebc5fbfa4b9234257d982b"
+    },
+    {
+      "id": "PATCH-TS-247",
+      "path": "tests/task/artifact_staging_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d8426895229ff88ce696959c693e42d125e34c48e61c3ac3f6d82d6c04ea9cba"
+    },
+    {
+      "id": "PATCH-TS-248",
+      "path": "tests/task/artifacts/object_store_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__init__",
+        "complete_multipart_upload",
+        "test_references_are_store_scoped_and_key_checked"
+      ],
+      "source_sha256": "0544b156434b8e94b5b476d398abfcd648077f3f9ab9797a101bebeef4af4b82"
+    },
+    {
+      "id": "PATCH-TS-249",
+      "path": "tests/task/artifacts/ownership_pgsql_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "71a7bd7f50157115fbee5ee2aba631949b80b02f3b8fd104ffbe0e1daecdc23a"
+    },
+    {
+      "id": "PATCH-TS-250",
+      "path": "tests/task/artifacts/pgsql_artifact_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__aenter__",
+        "__aexit__",
+        "__init__",
+        "connection",
+        "decrypt",
+        "test_references_cannot_cross_store_or_escape"
+      ],
+      "source_sha256": "6030c1b838906f1a53318a465dc8d7ceb1fb764eae50ebd7156f806279aad070"
+    },
+    {
+      "id": "PATCH-TS-251",
+      "path": "tests/task/preparation_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "ea0ce7a6f24822478cd9748a46d1afad5bfe3b8e34a67476073872e9536204f0"
+    },
+    {
+      "id": "PATCH-TS-252",
+      "path": "tests/task/retention_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__call__",
+        "__init__",
+        "delete",
+        "test_custom_store_retains_its_direct_backend_cleanup_contract",
+        "test_sweep_expired_handles_bytes_lost_after_transition"
+      ],
+      "source_sha256": "7268a64cbf9f4218196844b08588c5a01663440736b872b80935ecbd7429957a"
+    },
+    {
+      "id": "PATCH-TS-253",
+      "path": "tests/task/stores/pgsql_contract_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "__aenter__",
+        "__aexit__",
         "__init__",
         "execute",
         "restore",
         "snapshot"
       ],
-      "source_sha256": "88c906da1bf4099d148304acc1ab7bce6b6d21fc1a21f38c6424d8c1dd31a67a"
+      "source_sha256": "b40a08e5d4443bc0e0a39b143372d7d7cbfffcb838df42de6e29e7c6ef5c7e70"
+    },
+    {
+      "id": "PATCH-TS-254",
+      "path": "tests/trigger/admission_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "72b57c6602c81f91bf6f3b3f47cca8e8ce7ca7e8e9dddb520102d3c58690f076"
+    },
+    {
+      "id": "PATCH-TS-255",
+      "path": "tests/trigger/bindings_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "51a5b41c8d3bb54d7850bd0d4e8b50a16b68b22b76d38142ac48dada7d70798a"
+    },
+    {
+      "id": "PATCH-TS-256",
+      "path": "tests/trigger/codec_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "09e613578549a4bbde2317903e85396d138c54376eb5b052d4f6416cf7092959"
+    },
+    {
+      "id": "PATCH-TS-257",
+      "path": "tests/trigger/coverage_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "dce1ef2b7a99d334a0f1a9ce9dfdc87bb288b6d343bb24509f43928d57ada70a"
+    },
+    {
+      "id": "PATCH-TS-258",
+      "path": "tests/trigger/memory_admission_fault_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "0962df6b5d8cf24808ebf5fc614685d32475b02f270b30cf9a46acd6699c59fe"
+    },
+    {
+      "id": "PATCH-TS-259",
+      "path": "tests/trigger/memory_store_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "47a978a983af49d3adbeb6685da2ddce736ebf12bc46867df6c2529ae1ccbc15"
+    },
+    {
+      "id": "PATCH-TS-260",
+      "path": "tests/task/stores/trigger_admission_e2e_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "7eee0e27b1cd158144ed65a573669f857ac81022ffc06c15a59e7d8cd7c3eb4d"
+    },
+    {
+      "id": "PATCH-TS-261",
+      "path": "tests/trigger/pgsql_admission_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "87858547a1957a7a59488a46e22553a4de18777b2ab5e1ea72f8047d48ba1ca3"
+    },
+    {
+      "id": "PATCH-TS-262",
+      "path": "tests/trigger/pgsql_store_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "424e75ddc25ee850162179dfad8cf0c751af093041541f520cc552b14ffe273d"
+    },
+    {
+      "id": "PATCH-TS-263",
+      "path": "tests/trigger/plan_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "d46f90dab1dd1973f89f2aee9c1d2df4aef0502c46c9f1aec91d1b5ea9894f23"
+    },
+    {
+      "id": "PATCH-TS-264",
+      "path": "tests/trigger/preparation_e2e_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "3aee40299cfe12c7b83d8e0873f907f77cbf2af3866379e00e70250f80284bbb"
+    },
+    {
+      "id": "PATCH-TS-265",
+      "path": "tests/trigger/preparation_fault_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "e7967e2e72b24959852626b73d8b6bbf31ad38079c5093d08a6670452326ce4d"
+    },
+    {
+      "id": "PATCH-TS-266",
+      "path": "tests/trigger/records_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "eb0fd2dda48ea5576b7683d3705f9739e64d48321239b263d1fd11f350bdffbb"
+    },
+    {
+      "id": "PATCH-TS-267",
+      "path": "tests/trigger/registration_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "c56b7bb5f96090a1f22b9d70f1f32f34cad9218c064cf65a591bf911b0ae0c18"
+    },
+    {
+      "id": "PATCH-TS-268",
+      "path": "tests/trigger/resources_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "96a270d8808f85150321414651e7f4b2690db79de22f8a9fc92c4e028579636e"
+    },
+    {
+      "id": "PATCH-TS-269",
+      "path": "tests/trigger/schema_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "b529a748a1ac581f46378e38abddfd51997d6503819d0d139146ad8cb48a4f68"
+    },
+    {
+      "id": "PATCH-TS-270",
+      "path": "tests/trigger/sealed_input_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "9c7f81cd60d62e11536f7aa94d9a172955b3c818ecf79fb51e26d86743c371ac"
+    },
+    {
+      "id": "PATCH-TS-271",
+      "path": "tests/trigger/shared_submission_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "968ac0c0f5b40617bc5e7a917d120a95c27cda882f4115e49ea9d70c7d773173"
+    },
+    {
+      "id": "PATCH-TS-272",
+      "path": "tests/trigger/memory_history_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "dc8c430983c34d8c72e7a9594ffb945ebc5a2923d4c6b5c4e86acd81e2e3e544"
     }
   ],
-  "manifest_sha256": "fb2787f154cf4e31f3bb7b3dbb81334b25900a640dca145f533138c5e381aa54"
+  "manifest_sha256": "f87f422622492e3110fd0abadf0636f45c504890636a60a7947f9dc7c76bea27"
 }

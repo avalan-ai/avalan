@@ -686,6 +686,26 @@ class PgsqlArtifactStoreTest(IsolatedAsyncioTestCase):
             await store.open(escaped)
         with self.assertRaises(ArtifactStoreNotFoundError):
             await store.open(mismatched)
+        ref = await store.put(
+            b"shared physical bytes", artifact_id="artifact-1"
+        )
+        with await store.open(mismatched) as stream:
+            self.assertEqual(stream.read(), b"shared physical bytes")
+        for key in (
+            "artifact-bytes/artifact-1/child",
+            "artifact-bytes/artifact-1/",
+            "artifact-bytes//artifact-1",
+            "artifact-bytes/.hidden",
+        ):
+            with self.subTest(key=key):
+                with self.assertRaises(AssertionError):
+                    await store.open(
+                        TaskArtifactRef(
+                            artifact_id="reference",
+                            store=ref.store,
+                            storage_key=key,
+                        )
+                    )
 
     async def test_digest_mismatch_fails_closed(self) -> None:
         store = PgsqlArtifactStore(

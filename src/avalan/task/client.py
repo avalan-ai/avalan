@@ -41,6 +41,7 @@ from .materialization import (
     task_provider_reference_input_files_from_input,
 )
 from .observability import ObservabilitySink, TaskSanitizedEventObserver
+from .preparation import PreparedTaskInput, resolve_submission_definition
 from .privacy import (
     ENCRYPTED_MARKER,
     REDACTED_MARKER,
@@ -56,6 +57,7 @@ from .queue import (
     TaskQueueCompletion,
     TaskQueueItemState,
 )
+from .queues.memory_submission import MemoryTaskSubmissionParticipant
 from .runner import (
     DirectTaskRunner,
     TaskDirectTarget,
@@ -109,6 +111,7 @@ from .submission import (
     TaskSubmissionResult,
     TaskSubmissionSystemExit,
 )
+from .submission_participant import commit_task_submission
 from .target import (
     CallableTaskTargetRunner,
     TaskTargetRunner,
@@ -283,7 +286,7 @@ class TaskClient:
         store: TaskStore,
         *,
         target: TaskDirectTarget | TaskTargetRunner,
-        queue: TaskQueue | None = None,
+        queue: TaskQueue | MemoryTaskSubmissionParticipant | None = None,
         owner_scope: str = "default",
         execution_deployment_id: str | None = None,
         hmac_provider: HmacProvider | None = None,
@@ -650,10 +653,10 @@ class TaskClient:
         )
         try:
             try:
-                async with self._queue.submission_transaction() as unit:
-                    write = await self._queue.submit_prepared(
-                        prepared, unit_of_work=unit
-                    )
+                if isinstance(self._queue, MemoryTaskSubmissionParticipant):
+                    write = await commit_task_submission(self._queue, prepared)
+                else:
+                    write = await commit_task_submission(self._queue, prepared)
                 result = TaskSubmissionResult(
                     submission_id=prepared.submission_id,
                     outcome=TaskSubmissionOutcome.COMMITTED,
@@ -734,6 +737,7 @@ class TaskClient:
         *,
         request: TaskSubmissionRequest,
         occurrence_id: str | None = None,
+        prepared_input: PreparedTaskInput | None = None,
     ) -> PreparedTaskSubmission:
         """Validate and materialize a submission before acquiring SQL locks."""
         assert isinstance(request, TaskSubmissionRequest)
@@ -774,33 +778,7 @@ class TaskClient:
                     "Task submission storage is unavailable or incompatible."
                 ),
             ) from None
-        schema_base_path = task_definition_schema_base_path(definition)
-        definition = await self._resolve_definition_schemas(definition)
-        skill_audit_sanitizer = self._sanitizer(definition)
-        definition = await task_definition_with_skills_identity(
-            definition,
-            event_manager=task_skill_audit_event_publisher(
-                sanitizer=skill_audit_sanitizer,
-                event_observer=self._event_observer,
-                metrics_event_observer=(
-                    self._metrics_event_observer
-                    if definition.observability.metrics
-                    else None
-                ),
-                trace_event_observer=(
-                    self._trace_event_observer
-                    if definition.observability.trace
-                    else None
-                ),
-                observability_sink=(
-                    self._observability_sink
-                    if definition.observability.sinks
-                    != (ObservabilitySinkType.NOOP,)
-                    else None
-                ),
-            ),
-            schema_base_path=schema_base_path,
-        )
+        definition = await resolve_submission_definition(self, definition)
         validation = await self.validate(definition, input_value=input_value)
         validation.raise_for_issues()
         sanitizer = self._sanitizer(definition)
@@ -822,16 +800,27 @@ class TaskClient:
         )
         if file_issues:
             raise TaskValidationError(file_issues)
-        materialized_files = await materialize_task_input_files(
-            definition,
-            input_value,
-            roots=self._input_roots,
-            artifact_store=self._artifact_store,
-            hmac_provider=self._hmac_provider,
-            remote_url_policy=self._remote_url_policy,
-            remote_url_http_client=self._remote_url_http_client,
-            remote_url_resolver=self._remote_url_resolver,
-        )
+        if prepared_input is not None:
+            materialized_files = prepared_input.files_for_submission(
+                self, definition_id, input_value
+            )
+            if materialized_files:
+                assert self._artifact_store is not None
+                for file in materialized_files:
+                    stat = await self._artifact_store.stat(file.ref)
+                    assert stat.sha256 == file.ref.sha256
+                    assert stat.size_bytes == file.ref.size_bytes
+        else:
+            materialized_files = await materialize_task_input_files(
+                definition,
+                input_value,
+                roots=self._input_roots,
+                artifact_store=self._artifact_store,
+                hmac_provider=self._hmac_provider,
+                remote_url_policy=self._remote_url_policy,
+                remote_url_http_client=self._remote_url_http_client,
+                remote_url_resolver=self._remote_url_resolver,
+            )
         try:
             input_files = tuple(
                 materialized_file.as_input_file()
@@ -890,7 +879,9 @@ class TaskClient:
                 _authority=_PREPARATION_AUTHORITY,
                 _participant=self._queue,
                 temporary_artifacts=tuple(
-                    file.ref for file in materialized_files
+                    file.ref
+                    for file in materialized_files
+                    if prepared_input is None
                 ),
                 execution=TaskExecutionRequest(
                     definition_id=definition_id,
@@ -934,7 +925,7 @@ class TaskClient:
                 queue_metadata=safe_queue_metadata,
             )
         except BaseException:
-            if materialized_files:
+            if materialized_files and prepared_input is None:
                 await self._delete_materialized_files(materialized_files)
             raise
 

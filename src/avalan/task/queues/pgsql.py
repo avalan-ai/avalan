@@ -17,6 +17,8 @@ from ...types import (
     assert_positive_int as _assert_positive_int,
 )
 from ..artifact import TaskArtifactRecord
+from ..artifact_codec import _artifact_ref_to_payload
+from ..artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from ..idempotency import (
     TaskIdempotencyIdentity,
     TaskIdempotencyReservation,
@@ -69,7 +71,6 @@ from ..stores.pgsql import (
     PgsqlTaskStore,
     _artifact_from_row,
     _artifact_provenance_to_payload,
-    _artifact_ref_to_payload,
     _artifact_retention_to_payload,
     _attempt_from_row,
     _claim_to_payload,
@@ -288,6 +289,15 @@ class PgsqlTaskQueue:
                             artifact=artifact,
                             now=now,
                         )
+                    )
+
+                ownership = PgsqlArtifactOwnership(self._database)
+                for artifact in sorted(
+                    artifacts,
+                    key=lambda value: (value.ref.store, value.ref.storage_key),
+                ):
+                    await ownership.attach_submitted_run(
+                        artifact.ref, unit_of_work=unit
                     )
 
                 reservation_result = None

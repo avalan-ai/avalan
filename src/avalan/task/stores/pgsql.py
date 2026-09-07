@@ -33,6 +33,8 @@ from ..artifact import (
     is_terminal_artifact_state,
     is_valid_artifact_transition,
 )
+from ..artifact_codec import _artifact_ref_to_payload, _plain
+from ..artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from ..definition import (
     IdempotencyMode,
     ObservabilitySinkType,
@@ -168,6 +170,7 @@ _TASK_PGSQL_REVISION_MODULES = (
         "avalan.task.stores.pgsql_migrations.versions."
         "v20260907_0001_task_submissions"
     ),
+    "avalan.task.stores.pgsql_migrations.versions.v20260907_0002_triggers",
 )
 _TASK_PGSQL_ALEMBIC_LOCK = Lock()
 
@@ -3419,6 +3422,10 @@ class PgsqlTaskStore:
             row = await unit.cursor.fetchone()
             if row is None:
                 raise TaskStoreConflictError("task artifact already exists")
+            if artifact_state == TaskArtifactState.READY:
+                await PgsqlArtifactOwnership(
+                    self._database
+                ).attach_submitted_run(ref, unit_of_work=unit)
             return _artifact_from_row(row)
 
         return cast(
@@ -3710,6 +3717,7 @@ class PgsqlTaskStore:
                     async with connection.cursor() as cursor:
                         return await callback(
                             PgsqlUnitOfWork(
+                                database=self._database,
                                 connection=connection,
                                 cursor=cursor,
                             )
@@ -5777,18 +5785,6 @@ def _context_from_payload(
     )
 
 
-def _artifact_ref_to_payload(ref: TaskArtifactRef) -> dict[str, object]:
-    return {
-        "artifact_id": ref.artifact_id,
-        "media_type": ref.media_type,
-        "metadata": _plain(ref.metadata),
-        "sha256": ref.sha256,
-        "size_bytes": ref.size_bytes,
-        "storage_key": ref.storage_key,
-        "store": ref.store,
-    }
-
-
 def _artifact_ref_from_payload(
     payload: Mapping[str, object],
 ) -> TaskArtifactRef:
@@ -5909,18 +5905,6 @@ def _mapping(value: object) -> Mapping[str, object]:
         assert isinstance(loaded, Mapping)
         return loaded
     assert isinstance(value, Mapping), "row value must be a mapping"
-    return value
-
-
-def _plain(value: object) -> object:
-    if isinstance(value, Mapping):
-        return {key: _plain(item) for key, item in value.items()}
-    if isinstance(value, tuple):
-        return [_plain(item) for item in value]
-    if isinstance(value, list):
-        return [_plain(item) for item in value]
-    if isinstance(value, datetime):
-        return value.isoformat()
     return value
 
 

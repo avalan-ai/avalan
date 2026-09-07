@@ -407,7 +407,7 @@ class ObjectArtifactStore:
             cipher=self._cipher,
             encryption=encryption,
             context=_encryption_context(
-                artifact_id=ref.artifact_id,
+                artifact_id=_physical_artifact_id(ref.storage_key),
                 store=self._store_name,
             ),
             expected_size_bytes=_ref_size_or_head(ref, head),
@@ -544,8 +544,7 @@ class ObjectArtifactStore:
         if ref.store != self._store_name:
             raise ArtifactStoreNotFoundError("artifact store does not match")
         _assert_storage_key(ref.storage_key)
-        if ref.storage_key != _storage_key(ref.artifact_id):
-            raise ArtifactStoreNotFoundError("artifact storage key mismatch")
+        _physical_artifact_id(ref.storage_key)
 
     def _require_policy(self) -> None:
         if not self._policy.raw_storage_allowed:
@@ -654,10 +653,16 @@ def _storage_key(artifact_id: str) -> str:
 def _assert_storage_key(value: str) -> None:
     _assert_non_empty_string(value, "storage_key")
     if not fullmatch(
-        r"objects/[A-Za-z0-9]{1,2}/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
+        r"objects/[a-z0-9]{1,2}/[A-Za-z0-9][A-Za-z0-9_.-]{0,127}",
         value,
-    ):
-        raise ArtifactStoreError("storage_key must be a stable object token")
+    ) or value != _storage_key(value.rsplit("/", 1)[-1]):
+        raise ArtifactStoreError("storage_key must be a canonical object key")
+
+
+def _physical_artifact_id(value: str) -> str:
+    """Derive cipher identity from the validated immutable physical key."""
+    _assert_storage_key(value)
+    return value.rsplit("/", 1)[-1]
 
 
 def _assert_artifact_id(value: str) -> None:

@@ -16,6 +16,7 @@ from ..artifact import (
     is_terminal_artifact_state,
     is_valid_artifact_transition,
 )
+from ..artifacts.ownership_memory import MemoryArtifactOwnership
 from ..definition import TaskDefinition
 from ..event import SanitizedTaskEvent, TaskEventCategory, TaskEventValue
 from ..idempotency import (
@@ -94,6 +95,7 @@ class InMemoryTaskStore:
         self._artifact_ids_by_run_id: dict[str, list[str]] = {}
         self._idempotency_by_key: dict[str, TaskIdempotencyReservation] = {}
         self._lock = Lock()
+        self._artifact_ownership = MemoryArtifactOwnership(self)
 
     async def register_definition(
         self,
@@ -796,8 +798,11 @@ class InMemoryTaskStore:
                 retention=retention or TaskArtifactRetention(),
                 metadata=freeze_snapshot_metadata(metadata),
             )
-            self._artifacts[record.artifact_id] = record
-            self._artifact_ids_by_run_id[run_id].append(record.artifact_id)
+            async with self._artifact_ownership.transaction() as ownership:
+                if artifact_state == TaskArtifactState.READY:
+                    ownership.attach_submitted_run(ref)
+                self._artifacts[record.artifact_id] = record
+                self._artifact_ids_by_run_id[run_id].append(record.artifact_id)
             return record
 
     async def get_artifact(

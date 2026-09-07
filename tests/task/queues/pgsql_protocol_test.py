@@ -108,6 +108,8 @@ class FakePgsqlQueueDatabase:
         self.attempt_transitions: dict[str, dict[str, object]] = {}
         self.run_transitions: dict[str, dict[str, object]] = {}
         self.artifacts: dict[str, dict[str, object]] = {}
+        self.physical_objects: dict[str, dict[str, object]] = {}
+        self.physical_runs: dict[str, dict[str, object]] = {}
         self.idempotency: dict[str, dict[str, object]] = {}
         self.queue_items: dict[str, dict[str, object]] = {}
         self.depth_returns_none = False
@@ -148,11 +150,19 @@ class FakePgsqlQueueDatabase:
             "attempt_transitions": deepcopy(self.attempt_transitions),
             "run_transitions": deepcopy(self.run_transitions),
             "artifacts": deepcopy(self.artifacts),
+            "physical_objects": deepcopy(self.physical_objects),
+            "physical_runs": deepcopy(self.physical_runs),
             "idempotency": deepcopy(self.idempotency),
             "queue_items": deepcopy(self.queue_items),
         }
 
     def restore(self, snapshot: dict[str, object]) -> None:
+        self.physical_objects = cast(
+            dict[str, dict[str, object]], snapshot["physical_objects"]
+        )
+        self.physical_runs = cast(
+            dict[str, dict[str, object]], snapshot["physical_runs"]
+        )
         self.submissions = cast(
             dict[tuple[str, str], dict[str, object]], snapshot["submissions"]
         )
@@ -278,7 +288,47 @@ class FakeCursor:
             and self.database.fail_on_query in query
         ):
             raise RuntimeError("backend failure includes raw details")
-        if 'SELECT "version_num"' in query:
+        if "to_regclass('avalan_task_alembic_version') AS present" in query:
+            self.row = {"present": "avalan_task_alembic_version"}
+        elif "SELECT version_num FROM avalan_task_alembic_version" in query:
+            self.rows = ({"version_num": TASK_PGSQL_HEAD_REVISION},)
+        elif "INSERT INTO task_artifact_objects" in query:
+            identity = cast(str, params[0])
+            self.database.physical_objects.setdefault(
+                identity,
+                {
+                    "object_id": identity,
+                    "store": params[1],
+                    "storage_key": params[2],
+                    "sha256": params[3],
+                    "size_bytes": params[4],
+                    "status": "live",
+                    "cleanup_token": None,
+                    "staged_at": datetime.now(UTC),
+                    "was_staged": False,
+                },
+            )
+        elif "FROM task_artifact_objects" in query:
+            self.row = next(
+                (
+                    value
+                    for value in self.database.physical_objects.values()
+                    if value["store"] == params[0]
+                    and value["storage_key"] == params[1]
+                ),
+                None,
+            )
+        elif "INSERT INTO task_artifact_run_owners" in query:
+            self.database.physical_runs.setdefault(
+                cast(str, params[0]),
+                {
+                    "object_id": params[1],
+                    "released_at": None,
+                },
+            )
+        elif "FROM task_artifact_run_owners" in query:
+            self.row = self.database.physical_runs.get(cast(str, params[0]))
+        elif 'SELECT "version_num"' in query:
             self.rows = ({"version_num": TASK_PGSQL_HEAD_REVISION},)
         elif "transaction_isolation" in query:
             self.row = {"isolation": "read committed"}
