@@ -1,0 +1,18 @@
+[trigger]
+schema_version = 1
+name = "contract-trigger"
+
+[task]
+ref = "queued.task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[[input.bindings]]
+path = "/missing"
+source = "scheduled_at"
+
+[schedule]
+type = "cron"
+expression = "0 9 * * MON-FRI"
+timezone = "America/New_York"

@@ -1,0 +1,16 @@
+[trigger]
+schema_version = 1
+name = "contract-trigger"
+
+[task]
+ref = "queued.task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[schedule]
+type = "at"
+at = 2026-10-01T09:00:00-03:00
+
+[policy]
+misfire_grace_seconds = 0
