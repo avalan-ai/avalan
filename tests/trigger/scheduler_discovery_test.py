@@ -29,7 +29,7 @@ class TriggerSchedulerDiscoveryTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             scheduler = TriggerScheduler(
                 preparation,
                 settings=TriggerSchedulerSettings(poll_interval_seconds=60),

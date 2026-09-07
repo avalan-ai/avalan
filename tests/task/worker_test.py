@@ -147,6 +147,7 @@ from avalan.task import (
     completed_task_target_outcome,
     suspended_task_target_outcome,
 )
+from avalan.task import container_transport as container_transport_module
 from avalan.task import worker as worker_module
 from avalan.task.container import TaskContainerVerificationError
 from avalan.task.context import (
@@ -3878,7 +3879,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 return_value=failed_result,
             ),
@@ -3902,7 +3903,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 return_value=missing_output_result,
             ),
@@ -3935,7 +3936,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 return_value=accepted_result,
             ),
@@ -3957,7 +3958,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 return_value=accepted_result,
             ),
@@ -4016,7 +4017,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 new=delayed_lifecycle,
             ),
@@ -4067,7 +4068,7 @@ class TaskWorkerTest(IsolatedAsyncioTestCase):
         with (
             container_patches(),
             patch.object(
-                worker_module,
+                container_transport_module,
                 "run_container_managed_lifecycle",
                 new=blocked_lifecycle,
             ),

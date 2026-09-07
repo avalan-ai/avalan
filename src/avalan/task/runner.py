@@ -2308,10 +2308,13 @@ def _container_validation_issue(
 def _raise_for_container_backend_selection(
     run_plan: ContainerRunPlan,
     probe: ContainerBackendProbeResult,
+    *,
+    rootful_authorized: bool = False,
 ) -> None:
     selection = select_container_backend(
         run_plan,
         (probe,),
+        rootful_authorized=rootful_authorized,
     )
     if selection.ok:
         return

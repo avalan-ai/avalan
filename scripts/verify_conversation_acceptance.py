@@ -543,6 +543,44 @@ _TASK_SUBMISSION_PROVIDER_EVIDENCE_NODES = (
     "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_atomic_suspension_commits_every_durable_surface",
     "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once",
 )
+_TRIGGER_EXECUTION_PROVIDER_TRANSITION_PATH = (
+    "tests/fixtures/conversation/provider_transition.trigger_execution.json"
+)
+_TRIGGER_EXECUTION_PROVIDER_TRANSITION_CANONICAL_SHA256 = (
+    "9217c283a1756f925b39946fd569fb1521eefde64c353ae5855a4a19318cdece"
+)
+_TRIGGER_EXECUTION_PROVIDER_BYTE_TRANSITIONS = {
+    "src/avalan/interaction/stores/pgsql.py": (
+        295860,
+        "c8924543360a49f1fa99aa3e9fae3a135edb6fb5b7ac95186c8620c3e96200b5",
+        295906,
+        "9f7d3f66c0750e6b0687f4df4e1b424146570839af3abbbe3e2a4e8e05c236cb",
+    ),
+    "src/avalan/agent/orchestrator/response/orchestrator_response.py": (
+        241491,
+        "d0d0a12bf5f80d071324086ca5790eda28fedcf3ec53b81d15aa1a17d00d03e9",
+        241879,
+        "a0cd30d189a3e30445b516d1af5d80f0882e86240769bc8be6b70ad1c153b829",
+    ),
+    "src/avalan/task/durable_agent.py": (
+        10977,
+        "773ce8ed457bb6e0525bd8809c79cfa5288965299d8f68fa6e72bb98133017a9",
+        12105,
+        "d338e710235fbdb50b40d5f0eb2d52086f88d08f0bd11549ec719276f71b9f70",
+    ),
+    "src/avalan/task/targets/agent.py": (
+        53920,
+        "658f5ea93ca0c41c0c293251043a4b73c1e24d8da01e96f60c3271d6d0a49501",
+        57273,
+        "430ba037ca8141e76af87f0f70738ddc33d3e8cf4168e3f18f8a60296c31406b",
+    ),
+}
+_TRIGGER_EXECUTION_PROVIDER_EVIDENCE_NODES = (
+    "tests/agent/orchestrator_response_additional_test.py::OrchestratorResponseAdditionalCoverageTestCase::test_completed_operation_stops_checker_that_consumes_cancel",
+    "tests/task/stores/deployment_resume_e2e_test.py::DeploymentResumeE2ETest::test_admitted_agent_resumes_old_deployment_after_replacement",
+    "tests/task/stores/deployment_resume_e2e_test.py::DeploymentResumeE2ETest::test_modified_old_deployment_rejects_resumed_dispatch",
+    "tests/interaction/stores/conversation_atomic_pgsql_test.py::test_fresh_worker_applies_atomic_conversation_answer_once",
+)
 _PHASE15_PROVIDER_TRANSITION_PATH = (
     "tests/fixtures/conversation/provider_transition.phase15.json"
 )
@@ -2338,6 +2376,11 @@ def verify_gate_source_isolation(
             if (root / _TASK_SUBMISSION_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
+        (
+            _trigger_execution_provider_transitions(root)
+            if (root / _TRIGGER_EXECUTION_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
     )
     transition_chains: dict[
         str,
@@ -3247,6 +3290,11 @@ def _validate_phase0_provider_byte_anchors(root: Path) -> None:
         (
             _task_submission_provider_transitions(root)
             if (root / _TASK_SUBMISSION_PROVIDER_TRANSITION_PATH).is_file()
+            else {}
+        ),
+        (
+            _trigger_execution_provider_transitions(root)
+            if (root / _TRIGGER_EXECUTION_PROVIDER_TRANSITION_PATH).is_file()
             else {}
         ),
     )
@@ -4688,9 +4736,49 @@ def _task_submission_provider_transitions(
     root: Path,
 ) -> dict[str, tuple[int, str, int, str]]:
     """Validate the task API migration while preserving old anchors."""
+    return _reviewed_source_transition(
+        root,
+        path=_TASK_SUBMISSION_PROVIDER_TRANSITION_PATH,
+        expected_digest=_TASK_SUBMISSION_PROVIDER_TRANSITION_CANONICAL_SHA256,
+        byte_transitions=_TASK_SUBMISSION_PROVIDER_BYTE_TRANSITIONS,
+        evidence_nodes=_TASK_SUBMISSION_PROVIDER_EVIDENCE_NODES,
+        change="task_submission_api",
+        reviewer="task-submission-api-review",
+        label="Task submission provider transition",
+    )
+
+
+def _trigger_execution_provider_transitions(
+    root: Path,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Validate trigger integration without replacing historical anchors."""
+    return _reviewed_source_transition(
+        root,
+        path=_TRIGGER_EXECUTION_PROVIDER_TRANSITION_PATH,
+        expected_digest=_TRIGGER_EXECUTION_PROVIDER_TRANSITION_CANONICAL_SHA256,
+        byte_transitions=_TRIGGER_EXECUTION_PROVIDER_BYTE_TRANSITIONS,
+        evidence_nodes=_TRIGGER_EXECUTION_PROVIDER_EVIDENCE_NODES,
+        change="trigger_execution",
+        reviewer="trigger-execution-review",
+        label="Trigger execution provider transition",
+    )
+
+
+def _reviewed_source_transition(
+    root: Path,
+    *,
+    path: str,
+    expected_digest: str,
+    byte_transitions: dict[str, tuple[int, str, int, str]],
+    evidence_nodes: tuple[str, ...],
+    change: str,
+    reviewer: str,
+    label: str,
+) -> dict[str, tuple[int, str, int, str]]:
+    """Check the same closed byte and executable-evidence transition rules."""
     payload = _strict_mapping(
-        root / _TASK_SUBMISSION_PROVIDER_TRANSITION_PATH,
-        "Task submission provider transition",
+        root / path,
+        label,
     )
     _exact_keys(
         payload,
@@ -4705,29 +4793,24 @@ def _task_submission_provider_transitions(
             "evidence_node_ids",
             "canonical_sha256",
         },
-        "Task submission provider transition",
+        label,
     )
     if (
         type(payload.get("schema_version")) is not int
         or payload.get("schema_version") != 1
         or payload.get("feature") != _FEATURE
-        or payload.get("change") != "task_submission_api"
+        or payload.get("change") != change
         or payload.get("kind") != "reviewed_provider_source_transition"
-        or payload.get("reviewed_by") != "task-submission-api-review"
+        or payload.get("reviewed_by") != reviewer
     ):
-        raise ConversationAcceptanceError(
-            "Task submission provider transition header is invalid"
-        )
+        raise ConversationAcceptanceError(f"{label} header is invalid")
     canonical = dict(payload)
     observed_digest = canonical.pop("canonical_sha256")
     if (
         observed_digest != canonical_sha256(canonical)
-        or observed_digest
-        != _TASK_SUBMISSION_PROVIDER_TRANSITION_CANONICAL_SHA256
+        or observed_digest != expected_digest
     ):
-        raise ConversationAcceptanceError(
-            "Task submission provider transition digest is invalid"
-        )
+        raise ConversationAcceptanceError(f"{label} digest is invalid")
     _nonempty_string(payload.get("reason"), "provider transition reason")
     expected = [
         {
@@ -4742,24 +4825,21 @@ def _task_submission_provider_transitions(
             old_digest,
             new_size,
             new_digest,
-        ) in _TASK_SUBMISSION_PROVIDER_BYTE_TRANSITIONS.items()
+        ) in byte_transitions.items()
     ]
     if payload.get("transitions") != expected:
         raise ConversationAcceptanceError(
-            "Task submission provider transition differs from its independent"
-            " byte anchors"
+            f"{label} differs from its independent byte anchors"
         )
     evidence = tuple(
         _test_node(item)
         for item in _string_list(
             payload.get("evidence_node_ids"),
-            "Task submission provider transition evidence",
+            f"{label} evidence",
         )
     )
-    if evidence != _TASK_SUBMISSION_PROVIDER_EVIDENCE_NODES:
-        raise ConversationAcceptanceError(
-            "Task submission provider transition evidence is invalid"
-        )
+    if evidence != evidence_nodes:
+        raise ConversationAcceptanceError(f"{label} evidence is invalid")
     collection = run_pytest(
         root,
         ("--collect-only", "-q", *evidence),
@@ -4768,7 +4848,7 @@ def _task_submission_provider_transitions(
     )
     if collection.returncode != 0:
         raise ConversationAcceptanceError(
-            "Task submission provider transition evidence collection failed"
+            f"{label} evidence collection failed"
         )
     collected = tuple(
         line.strip()
@@ -4782,10 +4862,9 @@ def _task_submission_provider_transitions(
         for node in evidence
     ):
         raise ConversationAcceptanceError(
-            "Task submission provider transition evidence was not collected"
-            " exactly"
+            f"{label} evidence was not collected exactly"
         )
-    return dict(_TASK_SUBMISSION_PROVIDER_BYTE_TRANSITIONS)
+    return dict(byte_transitions)
 
 
 def _phase12_sha256(value: object, label: str) -> str:

@@ -44,7 +44,7 @@ class TriggerResourceTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             admission = preparation.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             store, ownership = admission.store, admission.ownership
@@ -115,7 +115,7 @@ class TriggerResourceTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             admission = preparation.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             apply = TriggerRegistrationService(preparation)
@@ -195,7 +195,7 @@ class TriggerResourceTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             admission = preparation.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
             prepared = await preparation.prepare_registration(
@@ -256,12 +256,12 @@ class TriggerResourceTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            preparation = services(root)
+            preparation = await services(root)
             service = TriggerRegistrationService(preparation)
             prepared = await preparation.prepare_registration(
                 configuration(), file_task()
             )
-            other = TriggerRegistrationService(services(root))
+            other = TriggerRegistrationService(await services(root))
             with raises(TriggerError):
                 await other.apply(prepared, expected_generation=None)
             with raises(TriggerError):

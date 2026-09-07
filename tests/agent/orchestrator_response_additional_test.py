@@ -2933,6 +2933,45 @@ class OrchestratorResponseAdditionalCoverageTestCase(IsolatedAsyncioTestCase):
             "done",
         )
 
+    async def test_completed_operation_stops_checker_that_consumes_cancel(
+        self,
+    ) -> None:
+        agent = MagicMock(spec=EngineAgent)
+        agent.engine = _DummyEngine()
+        response = _make_response(
+            Message(role=MessageRole.USER, content="hi"),
+            _empty_response(),
+            agent,
+            _dummy_operation(),
+            {},
+        )
+        entered = AsyncioEvent()
+        consumed = AsyncioEvent()
+        calls = 0
+
+        async def checker() -> None:
+            nonlocal calls
+            calls += 1
+            entered.set()
+            try:
+                await AsyncioEvent().wait()
+            except CancelledError:
+                consumed.set()
+
+        async def operation() -> str:
+            await entered.wait()
+            return "completed"
+
+        response.set_cancellation_checker(checker)
+        self.assertEqual(
+            await wait_for(
+                response._await_with_session_cancellation(operation()), 1
+            ),
+            "completed",
+        )
+        self.assertTrue(consumed.is_set())
+        self.assertEqual(calls, 1)
+
     def test_repeated_diagnostic_payload_adds_missing_signature(self):
         call = ToolCall(id="call-1", name="calc", arguments={"x": 1})
         diagnostic = ToolCallDiagnostic(

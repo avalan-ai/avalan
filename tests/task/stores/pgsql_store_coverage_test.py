@@ -4,9 +4,11 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from sys import path as sys_path
-from typing import Any, cast
+from typing import Any, TypedDict, cast
 from unittest import IsolatedAsyncioTestCase, main
 from unittest.mock import AsyncMock, patch
+
+from avalan.task.execution_codec import context_to_payload, request_to_payload
 
 sys_path.append(str(Path(__file__).parents[1]))
 
@@ -370,12 +372,37 @@ def _durable_segment_row(
     }
 
 
-def _durable_run_row(run: TaskRun) -> dict[str, object]:
+class _DurableRunRow(TypedDict):
+    run_id: str
+    definition_id: str
+    state: str
+    request: object
+    claim: object
+    last_attempt_id: str | None
+    result: object
+    metadata: dict[str, str]
+    created_at: datetime
+    updated_at: datetime
+
+
+class _DurableAttemptRow(TypedDict):
+    attempt_id: str
+    run_id: str
+    attempt_number: int
+    state: str
+    context: object
+    result: object
+    metadata: dict[str, str]
+    created_at: datetime
+    updated_at: datetime
+
+
+def _durable_run_row(run: TaskRun) -> _DurableRunRow:
     return {
         "run_id": run.run_id,
         "definition_id": run.definition_id,
         "state": run.state.value,
-        "request": pgsql_store_module._request_to_payload(run.request),
+        "request": request_to_payload(run.request),
         "claim": (
             pgsql_store_module._claim_to_payload(run.claim)
             if run.claim is not None
@@ -393,13 +420,13 @@ def _durable_run_row(run: TaskRun) -> dict[str, object]:
     }
 
 
-def _durable_attempt_row(attempt: TaskAttempt) -> dict[str, object]:
+def _durable_attempt_row(attempt: TaskAttempt) -> _DurableAttemptRow:
     return {
         "attempt_id": attempt.attempt_id,
         "run_id": attempt.run_id,
         "attempt_number": attempt.attempt_number,
         "state": attempt.state.value,
-        "context": pgsql_store_module._context_to_payload(attempt.context),
+        "context": context_to_payload(attempt.context),
         "result": (
             pgsql_store_module._result_to_payload(attempt.result)
             if attempt.result is not None

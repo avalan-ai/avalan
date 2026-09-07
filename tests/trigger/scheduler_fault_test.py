@@ -35,7 +35,7 @@ async def scheduling() -> AsyncIterator[TriggerScheduler]:
     with TemporaryDirectory() as directory:
         root = Path(directory)
         (root / "input.txt").write_text("input")
-        preparation = services(root)
+        preparation = await services(root)
         registered = await preparation.prepare_registration(
             configuration(), file_task()
         )

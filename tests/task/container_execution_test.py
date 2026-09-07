@@ -1723,7 +1723,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
             ),
         )
         with patch(
-            "avalan.task.worker.run_container_managed_lifecycle",
+            "avalan.task.container_transport.run_container_managed_lifecycle",
             rejected_lifecycle,
         ):
             with self.assertRaises(TaskValidationError) as worker_error:
@@ -2857,7 +2857,7 @@ class TaskContainerExecutionTest(IsolatedAsyncioTestCase):
         )
 
         with patch(
-            "avalan.task.worker.run_container_managed_lifecycle",
+            "avalan.task.container_transport.run_container_managed_lifecycle",
             _hanging_lifecycle,
         ):
             worker_task = create_task(worker.process_once())

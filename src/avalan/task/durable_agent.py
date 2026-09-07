@@ -39,6 +39,7 @@ from ..model.capability import (
 )
 from ..tool.context import ToolSettingsContext
 from .context import TaskTargetContext
+from .deployment import DeploymentRuntimeOption, ExecutionDeploymentError
 from .resume import (
     TaskContinuationRecordStore,
     TaskDurableResumeCoordinator,
@@ -46,7 +47,10 @@ from .resume import (
 
 from collections.abc import Callable, Sequence
 from contextlib import AsyncExitStack
+from dataclasses import asdict
 from datetime import UTC, datetime
+from hashlib import sha256
+from json import dumps
 from pathlib import Path
 from typing import Protocol, cast, final
 
@@ -266,6 +270,33 @@ class DurableAgentTaskHost:
         self._resume_coordinator = TaskDurableResumeCoordinator(
             cast(TaskContinuationRecordStore, continuation_store),
             resumer,
+        )
+
+    def execution_deployment_options(
+        self,
+        application_base: Path,
+        *,
+        loader: object,
+        disable_memory: bool,
+        uri: str | None,
+    ) -> tuple[DeploymentRuntimeOption, ...]:
+        """Match the concrete cold loader to the retained native target."""
+        runtime = self._runtime_loader
+        if (
+            runtime._allowed_roots != (application_base.resolve(strict=True),)
+            or runtime._loader is not loader
+            or runtime._disable_memory != disable_memory
+            or runtime._uri != uri
+            or runtime._tool_settings is not None
+        ):
+            raise ExecutionDeploymentError("agent.durable_loader_binding")
+        digest = sha256(
+            dumps(
+                asdict(self._policy), sort_keys=True, separators=(",", ":")
+            ).encode()
+        ).hexdigest()
+        return (
+            DeploymentRuntimeOption(name="agent.durable_policy", value=digest),
         )
 
     @property

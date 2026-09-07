@@ -30,14 +30,14 @@ class SharedSubmissionTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             registered = await service.prepare_registration(
                 configuration(), file_task()
             )
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
-            prepared = await service.client.prepare_submission(
-                file_task(),
+            prepared = await registered.task_input._client.prepare_submission(
+                registered.task_input.definition,
                 request=TaskSubmissionRequest(
                     input_value=configuration().input.value
                 ),
@@ -98,14 +98,14 @@ class SharedSubmissionTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             registered = await service.prepare_registration(
                 configuration(), file_task()
             )
             admission = service.admission
             assert isinstance(admission, MemoryTriggerAdmissionStore)
-            prepared = await service.client.prepare_submission(
-                file_task(),
+            prepared = await registered.task_input._client.prepare_submission(
+                registered.task_input.definition,
                 request=TaskSubmissionRequest(
                     input_value=configuration().input.value
                 ),
@@ -155,7 +155,7 @@ class SharedSubmissionTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             result = await service.client.submit(
                 file_task(),
                 request=TaskSubmissionRequest(

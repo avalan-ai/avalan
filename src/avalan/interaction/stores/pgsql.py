@@ -7695,7 +7695,7 @@ SELECT
     (run."claim"->>'claim_token') AS "durable_run_claim_token",
     attempt."attempt_id" AS "durable_attempt_id",
     attempt."state" AS "durable_attempt_state",
-    (attempt."context"->'claim'->>'claim_token')
+    (attempt."context"->'payload'->'claim'->>'claim_token')
         AS "durable_attempt_claim_token",
     previous."segment_id" AS "previous_segment_id",
     previous."attempt_id" AS "previous_attempt_id",
@@ -7759,7 +7759,8 @@ WHERE queue."queue_item_id" = %s
                   active."segment_id" = previous."segment_id"
                   AND active."state" = 'suspended'
                   AND active."claim" IS NULL
-                  AND (attempt."context"->'claim'->>'claim_token') = %s
+                  AND (attempt."context"->'payload'->'claim'
+                       ->>'claim_token') = %s
               )
           )
       )

@@ -65,6 +65,12 @@ from ..event import (
     TaskInteractionEventType,
     task_interaction_event_payload,
 )
+from ..execution_codec import (
+    context_from_payload,
+    context_to_payload,
+    request_from_payload,
+    request_to_payload,
+)
 from ..feature_gate import ModuleFinder, TaskFeature, require_features
 from ..idempotency import (
     TaskIdempotencyDigest,
@@ -100,7 +106,6 @@ from ..store import (
     TaskClaim,
     TaskDefinitionRecord,
     TaskExecutionContext,
-    TaskExecutionPayload,
     TaskExecutionRequest,
     TaskExecutionResult,
     TaskRun,
@@ -400,7 +405,7 @@ class PgsqlTaskStore:
                     request.definition_id,
                     TaskRunState.CREATED.value,
                     request.queue,
-                    _json(_request_to_payload(request)),
+                    _json(request_to_payload(request)),
                     _json(metadata or {}),
                     now,
                     now,
@@ -624,6 +629,8 @@ class PgsqlTaskStore:
                 attempt_id=attempt_id,
                 attempt_number=attempt_number,
                 claim=run.claim,
+                trigger=run.request.trigger,
+                deployment=run.request.deployment,
             )
             await unit.cursor.execute(
                 _INSERT_ATTEMPT_SQL,
@@ -632,7 +639,7 @@ class PgsqlTaskStore:
                     run_id,
                     attempt_number,
                     TaskAttemptState.CREATED.value,
-                    _json(_context_to_payload(context)),
+                    _json(context_to_payload(context)),
                     _json(metadata or {}),
                     now,
                     now,
@@ -4149,7 +4156,7 @@ UPDATE "task_attempts"
 SET
     "state" = %s,
     "result" = %s::jsonb,
-    "context" = JSONB_SET("context", '{claim}', 'null'::jsonb, TRUE),
+    "context" = JSONB_SET("context", '{payload,claim}', 'null'::jsonb, TRUE),
     "metadata" = "metadata" || %s::jsonb,
     "updated_at" = %s
 WHERE "attempt_id" = %s
@@ -4292,7 +4299,7 @@ RETURNING *
 _RELEASE_REENTRY_ATTEMPT_SQL = """
 UPDATE "task_attempts" a
 SET
-    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "context" = JSONB_SET(a."context", '{payload,claim}', 'null'::jsonb, TRUE),
     "metadata" = a."metadata" || %s::jsonb,
     "updated_at" = %s
 FROM "task_runs" r
@@ -4339,7 +4346,7 @@ UPDATE "task_attempts" a
 SET
     "state" = %s,
     "result" = %s::jsonb,
-    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "context" = JSONB_SET(a."context", '{payload,claim}', 'null'::jsonb, TRUE),
     "metadata" = a."metadata" || %s::jsonb,
     "updated_at" = %s
 FROM "task_runs" r
@@ -4399,7 +4406,7 @@ UPDATE "task_attempts" a
 SET
     "state" = %s,
     "result" = NULL,
-    "context" = JSONB_SET(a."context", '{claim}', 'null'::jsonb, TRUE),
+    "context" = JSONB_SET(a."context", '{payload,claim}', 'null'::jsonb, TRUE),
     "metadata" = a."metadata" || %s::jsonb,
     "updated_at" = %s
 FROM "task_runs" r
@@ -4827,44 +4834,62 @@ def _definition_record_from_row(
     )
 
 
-def _run_from_row(row: Mapping[str, object]) -> TaskRun:
+def _run_from_row(row: object) -> TaskRun:
+    values = _mapping(row)
+    run_id = values["run_id"]
+    assert isinstance(run_id, str)
+    definition_id = values["definition_id"]
+    assert isinstance(definition_id, str)
+    state = values["state"]
+    assert isinstance(state, str)
+    last_attempt_id = values.get("last_attempt_id")
+    assert last_attempt_id is None or isinstance(last_attempt_id, str)
     return TaskRun(
-        run_id=cast(str, row["run_id"]),
-        definition_id=cast(str, row["definition_id"]),
-        state=TaskRunState(cast(str, row["state"])),
-        request=_request_from_payload(_mapping(row["request"])),
-        created_at=_datetime(row["created_at"]),
-        updated_at=_datetime(row["updated_at"]),
+        run_id=run_id,
+        definition_id=definition_id,
+        state=TaskRunState(state),
+        request=request_from_payload(_mapping(values["request"])),
+        created_at=_datetime(values["created_at"]),
+        updated_at=_datetime(values["updated_at"]),
         claim=(
-            _claim_from_payload(_mapping(row["claim"]))
-            if row.get("claim") is not None
+            _claim_from_payload(_mapping(values["claim"]))
+            if values.get("claim") is not None
             else None
         ),
-        last_attempt_id=cast(str | None, row.get("last_attempt_id")),
+        last_attempt_id=last_attempt_id,
         result=(
-            _result_from_payload(_mapping(row["result"]))
-            if row.get("result") is not None
+            _result_from_payload(_mapping(values["result"]))
+            if values.get("result") is not None
             else None
         ),
-        metadata=freeze_snapshot_metadata(_mapping(row["metadata"])),
+        metadata=freeze_snapshot_metadata(_mapping(values["metadata"])),
     )
 
 
-def _attempt_from_row(row: Mapping[str, object]) -> TaskAttempt:
+def _attempt_from_row(row: object) -> TaskAttempt:
+    values = _mapping(row)
+    attempt_id = values["attempt_id"]
+    assert isinstance(attempt_id, str)
+    run_id = values["run_id"]
+    assert isinstance(run_id, str)
+    attempt_number = values["attempt_number"]
+    assert isinstance(attempt_number, int)
+    state = values["state"]
+    assert isinstance(state, str)
     return TaskAttempt(
-        attempt_id=cast(str, row["attempt_id"]),
-        run_id=cast(str, row["run_id"]),
-        attempt_number=cast(int, row["attempt_number"]),
-        state=TaskAttemptState(cast(str, row["state"])),
-        context=_context_from_payload(_mapping(row["context"])),
-        created_at=_datetime(row["created_at"]),
-        updated_at=_datetime(row["updated_at"]),
+        attempt_id=attempt_id,
+        run_id=run_id,
+        attempt_number=attempt_number,
+        state=TaskAttemptState(state),
+        context=context_from_payload(_mapping(values["context"])),
+        created_at=_datetime(values["created_at"]),
+        updated_at=_datetime(values["updated_at"]),
         result=(
-            _result_from_payload(_mapping(row["result"]))
-            if row.get("result") is not None
+            _result_from_payload(_mapping(values["result"]))
+            if values.get("result") is not None
             else None
         ),
-        metadata=freeze_snapshot_metadata(_mapping(row["metadata"])),
+        metadata=freeze_snapshot_metadata(_mapping(values["metadata"])),
     )
 
 
@@ -5618,74 +5643,6 @@ def _skills_config_from_payload(
     )
 
 
-def _request_to_payload(request: TaskExecutionRequest) -> dict[str, object]:
-    payload = {
-        "definition_id": request.definition_id,
-        "file_summaries": _plain(request.file_summaries),
-        "idempotency_key": request.idempotency_key,
-        "input_summary": _plain(request.input_summary),
-        "metadata": _plain(request.metadata),
-        "queue": request.queue,
-    }
-    if request.input_payload is not None:
-        payload["input_payload"] = _execution_payload_to_payload(
-            request.input_payload
-        )
-    return payload
-
-
-def _request_from_payload(
-    payload: Mapping[str, object],
-) -> TaskExecutionRequest:
-    file_summaries = cast(
-        tuple[TaskSnapshotValue, ...],
-        tuple(
-            freeze_snapshot_value(item)
-            for item in cast(
-                list[object],
-                payload.get("file_summaries", []),
-            )
-        ),
-    )
-    return TaskExecutionRequest(
-        definition_id=cast(str, payload["definition_id"]),
-        input_summary=freeze_snapshot_value(payload.get("input_summary")),
-        input_payload=(
-            _execution_payload_from_payload(_mapping(payload["input_payload"]))
-            if payload.get("input_payload") is not None
-            else None
-        ),
-        file_summaries=file_summaries,
-        idempotency_key=cast(str | None, payload.get("idempotency_key")),
-        queue=cast(str | None, payload.get("queue")),
-        metadata=freeze_snapshot_metadata(
-            _mapping(payload.get("metadata", {}))
-        ),
-    )
-
-
-def _execution_payload_to_payload(
-    payload: TaskExecutionPayload,
-) -> dict[str, object]:
-    return {
-        "file_values": _plain(payload.file_values),
-        "input_value": _plain(payload.input_value),
-    }
-
-
-def _execution_payload_from_payload(
-    payload: Mapping[str, object],
-) -> TaskExecutionPayload:
-    file_values = payload.get("file_values", ())
-    assert isinstance(file_values, list | tuple)
-    return TaskExecutionPayload(
-        file_values=tuple(
-            freeze_snapshot_value(value) for value in file_values
-        ),
-        input_value=freeze_snapshot_value(payload.get("input_value")),
-    )
-
-
 def _result_to_payload(
     result: TaskExecutionResult | None,
 ) -> dict[str, object]:
@@ -5749,34 +5706,6 @@ def _claim_from_payload(payload: Mapping[str, object]) -> TaskClaim:
         heartbeat_at=(
             _datetime(payload["heartbeat_at"])
             if payload.get("heartbeat_at") is not None
-            else None
-        ),
-        metadata=freeze_snapshot_metadata(
-            _mapping(payload.get("metadata", {}))
-        ),
-    )
-
-
-def _context_to_payload(context: TaskExecutionContext) -> dict[str, object]:
-    return {
-        "attempt_id": context.attempt_id,
-        "attempt_number": context.attempt_number,
-        "claim": _claim_to_payload(context.claim) if context.claim else None,
-        "metadata": _plain(context.metadata),
-        "run_id": context.run_id,
-    }
-
-
-def _context_from_payload(
-    payload: Mapping[str, object],
-) -> TaskExecutionContext:
-    return TaskExecutionContext(
-        run_id=cast(str, payload["run_id"]),
-        attempt_id=cast(str, payload["attempt_id"]),
-        attempt_number=cast(int, payload["attempt_number"]),
-        claim=(
-            _claim_from_payload(_mapping(payload["claim"]))
-            if payload.get("claim") is not None
             else None
         ),
         metadata=freeze_snapshot_metadata(

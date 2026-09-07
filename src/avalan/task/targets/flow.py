@@ -94,6 +94,12 @@ from ..definition import (
     TaskOutputType,
     TaskTargetType,
 )
+from ..deployment import DeploymentRuntimeOption, ExecutionDeploymentError
+from ..deployment_target import (
+    ExecutionDeploymentResolver,
+    ExecutionDeploymentResumeTarget,
+    ExecutionDeploymentTarget,
+)
 from ..feature_gate import TaskFeature, feature_available, feature_diagnostic
 from ..input import TaskFileConversionRequest, TaskFileDescriptor
 from ..privacy import (
@@ -104,6 +110,7 @@ from ..privacy import (
     STORED_ENVELOPE_MARKER,
     STORED_MARKER,
 )
+from ..resume import TaskDurableResumeCoordinator
 from ..skills import task_skill_settings_allow
 from ..store import TaskExecutionContext, TaskStoreNotFoundError
 from ..target import (
@@ -253,6 +260,44 @@ class FlowTaskTargetRunner(TaskTargetRunner):
         assert not isinstance(concurrency_limit, bool)
         assert concurrency_limit > 0
         self._concurrency_limit = concurrency_limit
+
+    def execution_deployment_options(
+        self, application_base: Path
+    ) -> tuple[DeploymentRuntimeOption, ...]:
+        """Require a concrete strict resolver bound to the retained root."""
+        application_base = application_base.resolve(strict=True)
+        resolver = self._strict_resolver
+        if (
+            self._ref_base is None
+            or self._ref_base.resolve(strict=True) != application_base
+            or not isinstance(resolver, ExecutionDeploymentResolver)
+            or resolver.execution_deployment_root != application_base
+        ):
+            raise ExecutionDeploymentError("flow.resolver_binding")
+        options = [
+            DeploymentRuntimeOption(
+                name="flow.concurrency_limit", value=self._concurrency_limit
+            )
+        ]
+        if self._agent_runner is not None:
+            if not isinstance(self._agent_runner, ExecutionDeploymentTarget):
+                raise ExecutionDeploymentError("flow.agent_binding")
+            options.extend(
+                self._agent_runner.execution_deployment_options(
+                    application_base
+                )
+            )
+        return tuple(sorted(options, key=lambda option: option.name))
+
+    def execution_deployment_resume_coordinator(
+        self, application_base: Path
+    ) -> TaskDurableResumeCoordinator | None:
+        self.execution_deployment_options(application_base)
+        if isinstance(self._agent_runner, ExecutionDeploymentResumeTarget):
+            return self._agent_runner.execution_deployment_resume_coordinator(
+                application_base
+            )
+        return None
 
     async def validate_definition(
         self,

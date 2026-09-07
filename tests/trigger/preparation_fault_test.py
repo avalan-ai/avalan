@@ -2,7 +2,7 @@ from .pgsql_store_test import Database
 from .preparation_e2e_test import ContextCipher, file_task, target
 from .records_test import NOW, OWNER
 
-from asyncio import CancelledError, Event, create_task
+from asyncio import CancelledError, Event, create_task, run
 from dataclasses import replace
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 from pytest import raises
 from task.artifacts.object_store_test import FakeObjectClient
+from task_deployment_helpers import configure_fixture_deployment
 
 from avalan.task.artifacts.object_store import (
     ObjectArtifactStore,
@@ -20,6 +21,7 @@ from avalan.task.artifacts.ownership_memory import MemoryArtifactOwnership
 from avalan.task.artifacts.ownership_pgsql import PgsqlArtifactOwnership
 from avalan.task.client import TaskClient
 from avalan.task.definition import TaskInputContract
+from avalan.task.deployment import ExecutionDeploymentError
 from avalan.task.input import TaskFileDescriptor, TaskProviderReferenceKind
 from avalan.task.queues.memory_submission import (
     MemoryTaskSubmissionParticipant,
@@ -43,13 +45,14 @@ from avalan.trigger.preparation import (
     TriggerPreparationFailure,
     TriggerPreparationService,
 )
+from avalan.trigger.records import OwnerScopeId
 from avalan.trigger.stores.memory import InMemoryTriggerStore
 from avalan.trigger.stores.memory_admission import MemoryTriggerAdmissionStore
 from avalan.trigger.stores.pgsql import PgsqlTriggerStore
 from avalan.trigger.stores.pgsql_admission import PgsqlTriggerAdmissionStore
 
 
-def services(root: Path) -> TriggerPreparationService:
+async def services(root: Path) -> TriggerPreparationService:
     tasks = InMemoryTaskStore(clock=lambda: NOW)
     queue = MemoryTaskSubmissionParticipant(tasks)
     cipher = ContextCipher()
@@ -72,6 +75,7 @@ def services(root: Path) -> TriggerPreparationService:
         execution_roots=(root,),
         clock=lambda: NOW,
     )
+    await configure_fixture_deployment(client, file_task(), root)
     return TriggerPreparationService(
         client,
         MemoryTriggerAdmissionStore(
@@ -100,13 +104,164 @@ def configuration() -> TriggerConfiguration:
 
 
 class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
+    async def test_admission_rejects_foreign_owner_before_preparation(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "input.txt").write_text("input")
+            service = await services(root)
+            prepared = await service.prepare_registration(
+                configuration(), file_task()
+            )
+            result = await TriggerRegistrationService(service).apply(
+                prepared, expected_generation=None
+            )
+            assert result.snapshot is not None
+            foreign = replace(
+                result.snapshot,
+                definition=replace(
+                    result.snapshot.definition,
+                    owner_scope_id=OwnerScopeId(value="another-owner"),
+                ),
+                state=replace(
+                    result.snapshot.state,
+                    owner_scope_id=OwnerScopeId(value="another-owner"),
+                ),
+            )
+            plan = plan_admission(foreign, NOW)
+            self.assertTrue(plan.admission_ids)
+            ownership = service.ownership
+            assert isinstance(ownership, MemoryArtifactOwnership)
+            before = (
+                dict(ownership._objects),
+                dict(ownership._staging),
+                set(ownership._revisions),
+                dict(ownership._runs),
+            )
+            with (
+                patch.object(
+                    service.client, "_deployment_client", AsyncMock()
+                ) as deployment,
+                patch("avalan.trigger.preparation.unseal_input") as decrypt,
+                patch(
+                    "avalan.trigger.preparation.restore_task_input",
+                    AsyncMock(),
+                ) as restore,
+                patch.object(service, "_stage", AsyncMock()) as stage,
+            ):
+                with self.assertRaises(TriggerError) as caught:
+                    await service.prepare_admission(plan)
+            self.assertEqual(
+                caught.exception.code, TriggerErrorCode.DEPLOYMENT_MISMATCH
+            )
+            self.assertEqual(caught.exception.path, "deployment")
+            deployment.assert_not_awaited()
+            decrypt.assert_not_called()
+            restore.assert_not_awaited()
+            stage.assert_not_awaited()
+            self.assertEqual(
+                before,
+                (
+                    ownership._objects,
+                    ownership._staging,
+                    ownership._revisions,
+                    ownership._runs,
+                ),
+            )
+
+    async def test_auxiliary_file_template_is_checked_before_writes(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "input.txt").write_text("input")
+            service = await services(root)
+            definition = replace(file_task(), input=TaskInputContract.object())
+            (root / "agent.toml").write_text(
+                '[agent]\nuser_template="agent.md"\n[tool]\nenable=[]'
+            )
+            await configure_fixture_deployment(
+                service.client, definition, root
+            )
+            config = replace(
+                configuration(),
+                input=TriggerInput(
+                    value={"attachment": configuration().input.value}
+                ),
+            )
+            with self.assertRaises(TriggerError) as missing:
+                await service.prepare_registration(config, definition)
+            self.assertEqual(
+                missing.exception.code, TriggerErrorCode.DEPLOYMENT_MISMATCH
+            )
+            assert isinstance(service.ownership, MemoryArtifactOwnership)
+            self.assertFalse(service.ownership._objects)
+
+    async def test_restored_files_recheck_reachable_closure(self) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "input.txt").write_text("input")
+            service = await services(root)
+            prepared = await service.prepare_registration(
+                configuration(), file_task()
+            )
+            result = await TriggerRegistrationService(service).apply(
+                prepared, expected_generation=None
+            )
+            assert result.snapshot is not None
+            client = prepared.task_input._client
+            with patch.object(
+                TaskClient,
+                "_deployment_client",
+                AsyncMock(
+                    side_effect=[client, ExecutionDeploymentError("closure")]
+                ),
+            ):
+                with self.assertRaises(TriggerError) as changed:
+                    await service.prepare_admission(
+                        plan_admission(result.snapshot, NOW)
+                    )
+            self.assertEqual(
+                changed.exception.code, TriggerErrorCode.DEPLOYMENT_MISMATCH
+            )
+
+    async def test_deployment_mismatch_preserves_committed_apply_recovery(
+        self,
+    ) -> None:
+        with TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "input.txt").write_text("input")
+            service = await services(root)
+            with self.assertRaises(TriggerError) as mismatch:
+                await service.prepare_registration(
+                    replace(configuration(), task_ref="other.toml"),
+                    file_task(),
+                )
+            self.assertEqual(
+                mismatch.exception.code, TriggerErrorCode.DEPLOYMENT_MISMATCH
+            )
+            prepared = await service.prepare_registration(
+                configuration(), file_task()
+            )
+            registration = TriggerRegistrationService(service)
+            committed = await registration.apply(
+                prepared, expected_generation=None
+            )
+            (root / "agent.toml").write_text('[agent]\ninstructions="changed"')
+            recovered = await registration.apply(
+                prepared, expected_generation=None
+            )
+            self.assertEqual(recovered.outcome, TriggerCommitOutcome.COMMITTED)
+            self.assertEqual(recovered.snapshot, committed.snapshot)
+
     async def test_schema_failure_preserves_classification_before_admission(
         self,
     ) -> None:
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             prepared = await service.prepare_registration(
                 configuration(), file_task()
             )
@@ -146,7 +301,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             backend = service.client._artifact_store
             assert isinstance(backend, ObjectArtifactStore)
             entered, release = Event(), Event()
@@ -183,7 +338,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
                 with TemporaryDirectory() as directory:
                     root = Path(directory)
                     (root / "input.txt").write_text("input")
-                    service = services(root)
+                    service = await services(root)
                     with patch(
                         "avalan.trigger.preparation.seal_input",
                         side_effect=error,
@@ -226,7 +381,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             prepared = await service.prepare_registration(
                 configuration(), file_task()
             )
@@ -274,7 +429,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             for attribute, value, code in (
                 (
                     "_execution_deployment_id",
@@ -363,7 +518,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
         with TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "input.txt").write_text("input")
-            service = services(root)
+            service = await services(root)
             backend = service.client._artifact_store
             assert isinstance(backend, ObjectArtifactStore)
             with patch.object(
@@ -425,6 +580,9 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
             scalar_task = replace(
                 file_task(), input=TaskInputContract.string()
             )
+            await configure_fixture_deployment(
+                service.client, scalar_task, Path(directory)
+            )
             with patch.object(service.client, "_artifact_store", None):
                 with patch.object(
                     service.client,
@@ -437,7 +595,7 @@ class TriggerPreparationFaultTest(IsolatedAsyncioTestCase):
 
 def test_pgsql_preparation_rejects_unpaired_task_queue() -> None:
     with TemporaryDirectory() as directory:
-        service = services(Path(directory))
+        service = run(services(Path(directory)))
         database = Database()
         admission = PgsqlTriggerAdmissionStore(
             PgsqlTriggerStore(database, OWNER), PgsqlTaskQueue(database)

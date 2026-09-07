@@ -1,21 +1,21 @@
 {
   "schema_version": 2,
   "baseline_snapshot_sha256": "111cfc4a1b6b5c85a550d458aa6906d73360c7f939b0c9e01e4dcbaa3587041c",
-  "current_snapshot_sha256": "ad207b45df0d3839287c3e2f78216a54ca6e615e1e985a6dedde7313a1a79232",
+  "current_snapshot_sha256": "50a7ba061213bd3cd8115591e79c10ec58c416450c951c0218b795748317b9b6",
   "directives": {
     "added": 12,
     "removed": 0,
     "relocated": 13,
-    "sha256": "91a453248b24d38cad550f07070a4212efc579ca56602c48554ea1c5f6c996d4"
+    "sha256": "fac9b587c571f7bc0204667ebdfb6cacc9cd072b0b173f5d99959e08f69f2981"
   },
   "report_lines": {
-    "added": 1455,
-    "removed": 312,
-    "sha256": "cd452281d45a5b0439626c6d340450cfdb8a569ecdeda731750e4b94f775191a"
+    "added": 1485,
+    "removed": 334,
+    "sha256": "d6b691e277ab8fff5ea35e622620b6b4362a97b9654d2925a62abca9f150744f"
   },
   "review": {
-    "reviewed_by": "trigger scheduler exclusion audit",
-    "rationale": "Preserve the immutable baseline, source directives and default coverage policy. Relative to the reviewed Phase 3 snapshot, the trigger store Protocol relocates and adds the discovery cursor argument plus next eligible instant signature (three parser lines); the scheduler owned-resource Protocol adds four default-ellipsis and adjacent blank lines. Total increases by seven to 2368. Exact old/new line audit is retained in Phase 4 evidence; no runtime branch, pragma or exclusion configuration is added."
+    "reviewed_by": "trigger execution exclusion audit",
+    "rationale": "Preserve the immutable baseline, source directives and default coverage policy. Phase 5 adds eight parser-excluded default-ellipsis and adjacent lines in three typed deployment capability Protocols. The six existing task inventories only relocate their unchanged excluded statements. Exact old/new source-line audit is recorded in Phase 5 evidence. No executable branch, pragma, or exclusion configuration is added."
   },
-  "ledger_sha256": "de8cff66b28d5a5e1eccea7edc90a9cd4a4f7cf37b1556722b23e8198272bcde"
+  "ledger_sha256": "a738a7f1e361f13e5f9d20e73d8badbdb0a6853c1052694546268d7a4988144e"
 }

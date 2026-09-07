@@ -3,7 +3,6 @@ from ..container import (
     ContainerAsyncBackend,
     ContainerOutputDecisionType,
     ContainerResultStatus,
-    run_container_managed_lifecycle,
 )
 from ..interaction import DurableContinuationResumeState
 from ..interaction.error import InputContractError, InputErrorCode
@@ -11,6 +10,7 @@ from ..skill import SkillRegistry, TrustedSkillSettings
 from ..types import assert_non_empty_string as _assert_non_empty_string
 from .artifact import ArtifactStore, TaskArtifactPurpose, TaskArtifactState
 from .attempt import TaskAttemptPolicy
+from .canonical import spec_hash
 from .container import (
     TaskContainerPlans,
     TaskContainerVerificationError,
@@ -23,6 +23,10 @@ from .container import (
     task_container_user_metadata,
     verify_task_container_request,
 )
+from .container_transport import (
+    ContainerInvocationOwnership,
+    run_deployment_container,
+)
 from .context import (
     TaskDurableResumeHandle,
     TaskInputFile,
@@ -32,6 +36,12 @@ from .context import (
 from .converters import FileConverter
 from .converters.registry import default_file_converters
 from .definition import ObservabilitySinkType, TaskDefinition, TaskInputType
+from .deployment import ExecutionDeploymentError
+from .deployment_catalog import (
+    ExecutionDeploymentBinding,
+    ExecutionDeploymentCatalog,
+)
+from .deployment_target import ExecutionDeploymentResumeTarget
 from .error import TaskError, classify_task_error
 from .event import TaskEventCategory, freeze_task_event_value
 from .observability import (
@@ -144,7 +154,8 @@ from asyncio import (
 )
 from collections.abc import Awaitable, Callable, Iterable, Mapping
 from contextlib import suppress
-from dataclasses import dataclass
+from contextvars import ContextVar
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import NoReturn, Protocol, TypeVar, cast
@@ -367,6 +378,7 @@ class TaskWorker:
         queue: TaskQueue,
         *,
         target: TaskQueuedTarget | TaskTargetRunner,
+        execution_deployments: ExecutionDeploymentCatalog | None = None,
         worker_id: str | None = None,
         queue_name: str = "default",
         lease_seconds: int = 300,
@@ -380,6 +392,7 @@ class TaskWorker:
         trace_event_observer: TaskSanitizedEventObserver | None = None,
         observability_sink: ObservabilitySink | None = None,
         container_backend: ContainerAsyncBackend | None = None,
+        container_rootful_authorized: bool = False,
         worker_runtime_envelope_runner: (
             TaskWorkerRuntimeEnvelopeRunner | None
         ) = None,
@@ -399,6 +412,11 @@ class TaskWorker:
         self._store = store
         self._queue = queue
         self._target = _target_runner(target)
+        self._execution_deployments = execution_deployments
+        self.container_invocations = ContainerInvocationOwnership()
+        self._deployment_binding: ContextVar[
+            ExecutionDeploymentBinding | None
+        ] = ContextVar("task_worker_deployment", default=None)
         self._worker_id = worker_id or _worker_id()
         _assert_non_empty_string(self._worker_id, "worker_id")
         _assert_non_empty_string(queue_name, "queue_name")
@@ -418,6 +436,8 @@ class TaskWorker:
         self._observability_sink = observability_sink
         if container_backend is not None:
             assert isinstance(container_backend, ContainerAsyncBackend)
+        assert isinstance(container_rootful_authorized, bool)
+        self._container_rootful_authorized = container_rootful_authorized
         self._container_backend = container_backend
         if worker_runtime_envelope_runner is not None:
             assert callable(worker_runtime_envelope_runner)
@@ -458,6 +478,52 @@ class TaskWorker:
             assert isinstance(shutdown, TaskWorkerShutdown)
         self._shutdown = shutdown
         self._clock = clock or _utc_now
+
+    @property
+    def _active_target(self) -> TaskTargetRunner:
+        binding = self._deployment_binding.get()
+        return binding.target if binding is not None else self._target
+
+    @property
+    def _active_execution_roots(self) -> tuple[str | Path, ...]:
+        binding = self._deployment_binding.get()
+        return (
+            (binding.application_root,)
+            if binding is not None
+            else self._execution_roots
+        )
+
+    async def _verify_execution_deployment(
+        self, run: TaskRun, definition: TaskDefinition
+    ) -> TaskDefinition:
+        manifest = run.request.deployment
+        if manifest is None:
+            if run.request.trigger is not None:
+                raise ExecutionDeploymentError("request.deployment")
+            return definition
+        if self._execution_deployments is None:
+            raise ExecutionDeploymentError("catalog.unavailable")
+        binding = await self._execution_deployments.resolve(
+            manifest.execution_deployment_id
+        )
+        definition = replace(
+            definition,
+            definition_base=(
+                binding.application_root / manifest.task_ref
+            ).parent,
+        )
+        if (
+            manifest != binding.manifest
+            or await spec_hash(definition) != manifest.task_hash
+        ):
+            raise ExecutionDeploymentError("task_hash")
+        if run.request.file_summaries or (
+            run.request.input_payload is not None
+            and run.request.input_payload.file_values
+        ):
+            await binding.verify(file_delivery=True)
+        self._deployment_binding.set(binding)
+        return definition
 
     async def process_once(self) -> TaskWorkerProcessResult:
         if self._shutdown_requested():
@@ -510,6 +576,7 @@ class TaskWorker:
         heartbeat_task: AsyncTask[None] | None,
         claim_lease_manager: _TaskResumeClaimLeaseBridge,
     ) -> TaskWorkerProcessResult:
+        deployment_token = self._deployment_binding.set(None)
         resume_owner = _TaskDurableResumeOwner()
         cleanup_owner = _TaskClaimCleanupOwner(
             claim_lease_manager,
@@ -524,7 +591,10 @@ class TaskWorker:
                 resume_owner=resume_owner,
             )
         finally:
-            await cleanup_owner.close()
+            try:
+                await cleanup_owner.close()
+            finally:
+                self._deployment_binding.reset(deployment_token)
 
     async def _process_claim_owned(
         self,
@@ -544,6 +614,9 @@ class TaskWorker:
                 await self._store.get_definition(claim.run.definition_id)
             ).definition
             sanitizer = self._sanitizer(definition)
+            definition = await self._verify_execution_deployment(
+                claim.run, definition
+            )
             previous_segment = await self._previous_attempt_segment(claim)
             durable_target = self._prepare_durable_resume_target(
                 definition,
@@ -856,16 +929,19 @@ class TaskWorker:
                 if definition is not None
                 else 1
             )
+            metadata = {"worker_id": self._worker_id, "reason": "setup_failed"}
+            if isinstance(error, ExecutionDeploymentError):
+                max_attempts = claim.attempt.attempt_number
+                metadata.update(
+                    error_code="deployment.mismatch", error_path=error.path
+                )
             try:
                 abandonment = await self._queue.abandon(
                     claim.queue_item.queue_item_id,
                     claim_token=claim.queue_item.claim_token or "",
                     max_attempts=max_attempts,
                     now=self._now(),
-                    metadata={
-                        "worker_id": self._worker_id,
-                        "reason": "setup_failed",
-                    },
+                    metadata=metadata,
                 )
             except (TaskQueueConflictError, TaskStoreConflictError):
                 return await self._lease_lost_result(
@@ -1092,7 +1168,11 @@ class TaskWorker:
                 sanitizer=sanitizer,
                 raw_event_observer=pipeline,
             ),
-            schema_base_path=self._definition_base,
+            schema_base_path=(
+                definition.definition_base
+                if self._deployment_binding.get() is not None
+                else self._definition_base
+            ),
         )
 
     async def _execute(
@@ -1167,7 +1247,9 @@ class TaskWorker:
         files = await self._input_files(definition, run, attempt)
         input_mounts = task_container_input_mount_manifest(
             files,
-            allowed_roots=tuple(Path(root) for root in self._execution_roots),
+            allowed_roots=tuple(
+                Path(root) for root in self._active_execution_roots
+            ),
         )
         container_result = await self._run_task_container(
             definition,
@@ -1424,7 +1506,7 @@ class TaskWorker:
                 raise TaskWorkerError(
                     "durable resume target has no admitted continuation"
                 )
-            return await self._target.run(context)
+            return await self._active_target.run(context)
         if durable_target is None:
             raise TaskWorkerError("durable resume target was not prepared")
         return await durable_target.resume(context, durable_resume)
@@ -1438,19 +1520,20 @@ class TaskWorker:
         if previous_segment is None:
             return None
         target_type = definition.execution.type
-        if isinstance(self._target, TaskDurableResumeTargetPreparer):
-            prepared = self._target.prepare_durable_resume(target_type)
+        if isinstance(self._active_target, TaskDurableResumeTargetPreparer):
+            prepared = self._active_target.prepare_durable_resume(target_type)
             if type(
                 prepared
             ) is PreparedTaskDurableResumeTarget and prepared.is_bound_to(
-                self._target, target_type
+                self._active_target, target_type
             ):
                 return prepared.runner
         elif (
-            isinstance(self._target, TaskDurableResumeTargetRunner)
-            and self._target.supports_durable_resume(target_type) is True
+            isinstance(self._active_target, TaskDurableResumeTargetRunner)
+            and self._active_target.supports_durable_resume(target_type)
+            is True
         ):
-            return self._target
+            return self._active_target
         raise _TaskDurableResumeRejected(
             "task target does not support durable resume"
         )
@@ -1659,6 +1742,17 @@ class TaskWorker:
         resume_owner: _TaskDurableResumeOwner,
     ) -> TaskDurableResumeHandle | None:
         coordinator = self._durable_resume_coordinator
+        binding = self._deployment_binding.get()
+        if binding is not None:
+            coordinator = (
+                binding.target.execution_deployment_resume_coordinator(
+                    (
+                        binding.application_root / binding.manifest.task_ref
+                    ).parent.resolve(strict=True)
+                )
+                if isinstance(binding.target, ExecutionDeploymentResumeTarget)
+                else None
+            )
         if coordinator is None:
             if previous_segment is not None:
                 raise _TaskDurableResumeRejected(
@@ -2635,11 +2729,11 @@ class TaskWorker:
             raise CancelledError()
 
     async def _validate_target(self, definition: TaskDefinition) -> None:
-        issues = await self._target.validate_definition(
+        issues = await self._active_target.validate_definition(
             definition,
             TaskValidationContext(
                 execution_roots=tuple(
-                    Path(root) for root in self._execution_roots
+                    Path(root) for root in self._active_execution_roots
                 ),
                 artifact_store=self._artifact_store,
                 task_store=self._store,
@@ -2806,11 +2900,30 @@ class TaskWorker:
                 )
             )
         probe = await self._container_backend.probe()
-        _raise_for_container_backend_selection(run_plan, probe)
+        _raise_for_container_backend_selection(
+            run_plan,
+            probe,
+            rootful_authorized=self._container_rootful_authorized,
+        )
         lifecycle_task = create_task(
-            run_container_managed_lifecycle(
+            run_deployment_container(
                 self._container_backend,
                 run_plan,
+                context=attempt.context,
+                input_value=(
+                    self._executable_input_value(definition, run)
+                    if attempt.context.trigger is not None
+                    else None
+                ),
+                file_delivery=bool(
+                    run.request.file_summaries
+                    or (
+                        run.request.input_payload is not None
+                        and run.request.input_payload.file_values
+                    )
+                ),
+                binding=self._deployment_binding.get(),
+                ownership=self.container_invocations,
                 output_contract=output_contract,
                 shutdown_requested=self._shutdown_requested(),
             )

@@ -19,6 +19,7 @@ from ...types import (
 from ..artifact import TaskArtifactRecord
 from ..artifact_codec import _artifact_ref_to_payload
 from ..artifacts.ownership_pgsql import PgsqlArtifactOwnership
+from ..execution_codec import context_to_payload, request_to_payload
 from ..idempotency import (
     TaskIdempotencyIdentity,
     TaskIdempotencyReservation,
@@ -74,11 +75,9 @@ from ..stores.pgsql import (
     _artifact_retention_to_payload,
     _attempt_from_row,
     _claim_to_payload,
-    _context_to_payload,
     _fetch_definition_row,
     _fetch_run_row,
     _idempotency_from_row,
-    _request_to_payload,
     _result_to_payload,
     _run_from_row,
 )
@@ -270,7 +269,7 @@ class PgsqlTaskQueue:
                         queued_request.definition_id,
                         TaskRunState.CREATED.value,
                         queue_name,
-                        _json(_request_to_payload(queued_request)),
+                        _json(request_to_payload(queued_request)),
                         _json(safe_run_metadata),
                         now,
                         now,
@@ -1297,7 +1296,7 @@ _REUSE_CLAIMED_SUSPENDED_ATTEMPT_SQL = """
 UPDATE "task_attempts" a
 SET "context" = jsonb_set(
         a."context",
-        '{claim}',
+        '{payload,claim}',
         %s::jsonb,
         true
     ),
@@ -1757,6 +1756,8 @@ async def _create_claimed_attempt(
         attempt_id=attempt_id,
         attempt_number=attempt_number,
         claim=run.claim,
+        trigger=run.request.trigger,
+        deployment=run.request.deployment,
     )
     await unit.cursor.execute(
         _INSERT_ATTEMPT_SQL,
@@ -1765,7 +1766,7 @@ async def _create_claimed_attempt(
             run.run_id,
             attempt_number,
             TaskAttemptState.CREATED.value,
-            _json(_context_to_payload(context)),
+            _json(context_to_payload(context)),
             _json(metadata),
             now,
             now,
@@ -2114,7 +2115,7 @@ def _submission_fingerprint(prepared: PreparedTaskSubmission) -> str:
         "owner_scope": prepared.owner_scope,
         "occurrence_id": prepared.occurrence_id,
         "execution_deployment_id": prepared.execution_deployment_id,
-        "execution": _request_to_payload(prepared.execution),
+        "execution": request_to_payload(prepared.execution),
         "priority": prepared.priority,
         "available_at": (
             prepared.available_at.isoformat()

@@ -2149,3 +2149,42 @@ def test_task_submission_transition_rejects_uncollected_evidence(
         _VERIFIER.ConversationAcceptanceError, match="evidence"
     ):
         _VERIFIER._task_submission_provider_transitions(_ROOT)
+
+
+def test_trigger_execution_transition_evidence_collects() -> None:
+    """Collect native resume and watcher evidence for this source delta."""
+    assert _VERIFIER._trigger_execution_provider_transitions(_ROOT) == (
+        _VERIFIER._TRIGGER_EXECUTION_PROVIDER_BYTE_TRANSITIONS
+    )
+
+
+@pytest.mark.parametrize(
+    "field", ["from_size", "from_sha256", "to_size", "to_sha256"]
+)
+def test_trigger_execution_transition_keeps_independent_byte_pins(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    field: str,
+) -> None:
+    """Reject a re-signed trigger record that replaces an endpoint."""
+    payload = _read("provider_transition.trigger_execution.json")
+    transitions = payload["transitions"]
+    assert isinstance(transitions, list)
+    transition = transitions[0]
+    assert isinstance(transition, dict)
+    transition[field] = 0 if field.endswith("size") else "0" * 64
+    _resign(payload, "canonical_sha256")
+    monkeypatch.setattr(
+        _VERIFIER,
+        "_TRIGGER_EXECUTION_PROVIDER_TRANSITION_CANONICAL_SHA256",
+        payload["canonical_sha256"],
+    )
+    destination = (
+        tmp_path / _VERIFIER._TRIGGER_EXECUTION_PROVIDER_TRANSITION_PATH
+    )
+    destination.parent.mkdir(parents=True)
+    _write(destination, payload)
+    with pytest.raises(
+        _VERIFIER.ConversationAcceptanceError, match="independent byte anchors"
+    ):
+        _VERIFIER._trigger_execution_provider_transitions(tmp_path)

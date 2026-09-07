@@ -1,5 +1,8 @@
 """Expose the trigger SDK without requiring optional runtime dependencies."""
 
+from ..task.provenance import (
+    TriggerInvocationContext as TriggerInvocationContext,
+)
 from .definition import AtPolicy as AtPolicy
 from .definition import AtTrigger as AtTrigger
 from .definition import BindingSource as BindingSource

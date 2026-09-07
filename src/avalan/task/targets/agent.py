@@ -42,10 +42,13 @@ from ..definition import (
     TaskTargetType,
 )
 from ..delivery import TaskFileDeliveryPlan, plan_task_file_delivery
+from ..deployment import DeploymentRuntimeOption, ExecutionDeploymentError
+from ..durable_agent import DurableAgentTaskHost
 from ..error import (
     TaskOutputParseError,
     TaskProviderStructuredOutputError,
 )
+from ..resume import TaskDurableResumeCoordinator
 from ..schema import (
     TaskSchemaResolutionError,
     canonical_schema_json,
@@ -146,7 +149,7 @@ class _AgentFileBlock:
 class AgentTaskTargetRunner(TaskTargetRunner):
     def __init__(
         self,
-        loader: AgentOrchestratorLoader,
+        loader: AgentOrchestratorLoader | OrchestratorLoader,
         *,
         agent_id: UUID | None = None,
         disable_memory: bool = False,
@@ -157,6 +160,7 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         token_counter: TokenCounter | None = None,
         tool_settings: ToolSettingsContext | None = None,
         require_shell_pipeline_opt_in: bool = False,
+        durable_host: DurableAgentTaskHost | None = None,
         durable_interaction_runtime_factory: (
             DurableInteractionRuntimeFactory | None
         ) = None,
@@ -176,12 +180,82 @@ class AgentTaskTargetRunner(TaskTargetRunner):
         self._tool_settings = tool_settings
         assert isinstance(require_shell_pipeline_opt_in, bool)
         self._require_shell_pipeline_opt_in = require_shell_pipeline_opt_in
+        if durable_host is not None:
+            assert type(durable_host) is DurableAgentTaskHost
+            assert durable_interaction_runtime_factory is None
+            durable_interaction_runtime_factory = (
+                durable_host.interaction_runtime
+            )
+        self._durable_host = durable_host
         if durable_interaction_runtime_factory is not None:
             assert callable(durable_interaction_runtime_factory)
         self._durable_interaction_runtime_factory = (
             durable_interaction_runtime_factory
         )
         self._uri = uri
+
+    def execution_deployment_options(
+        self, application_base: Path
+    ) -> tuple[DeploymentRuntimeOption, ...]:
+        """Verify the configured file resolver and seal supported overrides."""
+        application_base = application_base.resolve(strict=True)
+        if (
+            self._ref_base is None
+            or self._ref_base.resolve(strict=True) != application_base
+        ):
+            raise ExecutionDeploymentError("agent.root")
+        if self._tool_settings is not None:
+            raise ExecutionDeploymentError("agent.tool_settings_binding")
+        if self._file_delivery_resolver is not resolve_file_delivery_profile:
+            raise ExecutionDeploymentError("agent.file_delivery_binding")
+        if self._token_counter is not _estimated_token_count:
+            raise ExecutionDeploymentError("agent.token_counter_binding")
+        options = [
+            DeploymentRuntimeOption(
+                name="agent.disable_memory", value=self._disable_memory
+            ),
+            DeploymentRuntimeOption(
+                name="agent.require_shell_pipeline_opt_in",
+                value=self._require_shell_pipeline_opt_in,
+            ),
+        ]
+        if self._agent_id is not None:
+            options.append(
+                DeploymentRuntimeOption(
+                    name="agent.id", value=str(self._agent_id)
+                )
+            )
+        if self._uri is not None:
+            # Literal provider credentials are not deployment identity. The
+            # supported explicit URI form names an environment credential.
+            authority = self._uri.split("://", 1)[-1].split("/", 1)[0]
+            if "@" in authority and not authority.startswith("env:"):
+                raise ExecutionDeploymentError("agent.uri_credentials")
+            options.append(
+                DeploymentRuntimeOption(name="agent.uri", value=self._uri)
+            )
+        if self._durable_interaction_runtime_factory is not None:
+            if self._durable_host is None:
+                raise ExecutionDeploymentError("agent.durable_host_binding")
+            options.extend(
+                self._durable_host.execution_deployment_options(
+                    application_base,
+                    loader=self._loader,
+                    disable_memory=self._disable_memory,
+                    uri=self._uri,
+                )
+            )
+        return tuple(sorted(options, key=lambda option: option.name))
+
+    def execution_deployment_resume_coordinator(
+        self, application_base: Path
+    ) -> TaskDurableResumeCoordinator | None:
+        self.execution_deployment_options(application_base)
+        return (
+            self._durable_host.resume_coordinator
+            if self._durable_host
+            else None
+        )
 
     async def validate_definition(
         self,

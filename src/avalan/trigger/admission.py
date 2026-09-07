@@ -1,5 +1,6 @@
 """Validate prepared admission and reduce one authoritative decision batch."""
 
+from ..task.provenance import TriggerInvocationContext
 from ..task.state import TaskRunState, is_terminal_run_state
 from ..task.submission import PreparedTaskSubmission
 from .coverage import TriggerDecision, validate_decisions
@@ -332,6 +333,19 @@ def evaluate_admission(
                 disposition = OccurrenceDisposition.SKIPPED_OVERLAP
             else:
                 submission = prepared.submission(identity)
+                submission = replace(
+                    submission,
+                    execution=replace(
+                        submission.execution,
+                        trigger=TriggerInvocationContext(
+                            trigger_id=definition.trigger_id,
+                            trigger_revision=definition.revision,
+                            occurrence_id=identity,
+                            scheduled_at=request.scheduled_at,
+                            dispatched_at=now,
+                        ),
+                    ),
+                )
                 submissions.append(submission)
                 blocking = True
         decisions.append(

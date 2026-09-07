@@ -21,6 +21,12 @@ from typing import Any, cast
 from unittest import IsolatedAsyncioTestCase
 from unittest.mock import AsyncMock, patch
 
+from avalan.task.execution_codec import (
+    context_from_payload,
+    context_to_payload,
+    request_to_payload,
+)
+
 sys_path.append(str(Path(__file__).parent))
 
 from pgsql_support import (  # noqa: E402
@@ -845,7 +851,7 @@ def _seed_running_task(
         "run_id": run_id,
         "definition_id": "definition",
         "state": TaskRunState.RUNNING.value,
-        "request": task_pgsql._request_to_payload(execution_request),
+        "request": request_to_payload(execution_request),
         "claim": claim_payload,
         "last_attempt_id": attempt_id,
         "result": None,
@@ -858,7 +864,7 @@ def _seed_running_task(
         "run_id": run_id,
         "attempt_number": 1,
         "state": TaskAttemptState.RUNNING.value,
-        "context": task_pgsql._context_to_payload(context),
+        "context": context_to_payload(context),
         "result": None,
         "metadata": {},
         "created_at": _NOW - timedelta(seconds=30),
@@ -918,7 +924,7 @@ def _seed_resumed_running_task(
     )
     database.attempts["attempt"].update(
         state=TaskAttemptState.RUNNING.value,
-        context=task_pgsql._context_to_payload(
+        context=context_to_payload(
             TaskExecutionContext(
                 run_id=run_id,
                 attempt_id="attempt",
@@ -961,22 +967,28 @@ def _expire_reentry_claim(
 ) -> None:
     queue = database.queue_items["queue-item"]
     queue["lease_expires_at"] = expires_at
-    run_claim = dict(cast(Mapping[str, object], database.runs["run"]["claim"]))
-    run_claim["lease_expires_at"] = expires_at.isoformat()
-    database.runs["run"]["claim"] = run_claim
-    attempt_context = dict(
-        cast(Mapping[str, object], database.attempts["attempt"]["context"])
+    run_claim = task_pgsql._claim_from_payload(
+        task_pgsql._mapping(database.runs["run"]["claim"])
     )
-    attempt_claim = dict(cast(Mapping[str, object], attempt_context["claim"]))
-    attempt_claim["lease_expires_at"] = expires_at.isoformat()
-    attempt_context["claim"] = attempt_claim
-    database.attempts["attempt"]["context"] = attempt_context
+    database.runs["run"]["claim"] = task_pgsql._claim_to_payload(
+        replace(run_claim, lease_expires_at=expires_at)
+    )
+    context = context_from_payload(database.attempts["attempt"]["context"])
+    assert context.claim is not None
+    database.attempts["attempt"]["context"] = context_to_payload(
+        replace(
+            context, claim=replace(context.claim, lease_expires_at=expires_at)
+        )
+    )
     for segment in database.segments.values():
         if segment["state"] != TaskAttemptSegmentState.RUNNING.value:
             continue
-        segment_claim = dict(cast(Mapping[str, object], segment["claim"]))
-        segment_claim["lease_expires_at"] = expires_at.isoformat()
-        segment["claim"] = segment_claim
+        claim = task_pgsql._claim_from_payload(
+            task_pgsql._mapping(segment["claim"])
+        )
+        segment["claim"] = task_pgsql._claim_to_payload(
+            replace(claim, lease_expires_at=expires_at)
+        )
 
 
 async def _create_suspended_task(
@@ -1320,11 +1332,13 @@ async def _prepare_claimed_reentry(
     )
     request = interaction.record.request
     record_row = database.records[str(request.request_id)]
+    resolution_revision = record_row["state_revision"]
+    assert isinstance(resolution_revision, int)
     await task_store.requeue_suspended(
         "run",
         request_id=str(request.request_id),
         continuation_id=str(request.continuation_id),
-        resolution_revision=cast(int, record_row["state_revision"]),
+        resolution_revision=resolution_revision,
         now=_NOW + timedelta(seconds=2),
     )
     claim = TaskClaim(
@@ -1340,10 +1354,12 @@ async def _prepare_claimed_reentry(
         claim=claim_payload,
         updated_at=_NOW + timedelta(seconds=3),
     )
-    attempt_context = dict(
-        cast(Mapping[str, object], database.attempts["attempt"]["context"])
+    attempt_context = context_to_payload(
+        replace(
+            context_from_payload(database.attempts["attempt"]["context"]),
+            claim=claim,
+        )
     )
-    attempt_context["claim"] = claim_payload
     database.attempts["attempt"].update(
         context=attempt_context,
         updated_at=_NOW + timedelta(seconds=3),

@@ -1,4 +1,5 @@
 from ..types import JsonValue
+from .deployment import ExecutionDeploymentError
 from .validation import TaskValidationError, TaskValidationIssue
 
 from asyncio import CancelledError
@@ -27,6 +28,7 @@ class TaskErrorCategory(StrEnum):
 
 class TaskErrorCode(StrEnum):
     RUNNABLE_FAILED = "runnable.failed"
+    DEPLOYMENT_MISMATCH = "deployment.mismatch"
     INPUT_CONTRACT_FAILED = "input_contract.failed"
     OUTPUT_CONTRACT_FAILED = "output_contract.failed"
     OUTPUT_PARSE_FAILED = "output.parse_failed"
@@ -211,6 +213,13 @@ def classify_task_error(error: BaseException) -> TaskError:
         return TaskError.provider_structured_output()
     if isinstance(error, TaskOutputParseError):
         return TaskError.output_parse()
+    if isinstance(error, ExecutionDeploymentError):
+        return TaskError(
+            category=TaskErrorCategory.RUNNABLE,
+            code=TaskErrorCode.DEPLOYMENT_MISMATCH,
+            message="Task execution deployment could not be verified.",
+            details={"path": error.path},
+        )
     if isinstance(error, TaskValidationError):
         if _is_privacy_error(error.issues):
             return TaskError.privacy()
