@@ -1119,7 +1119,7 @@ class CliTaskOptionTestCase(TestCase):
                 "task",
                 "pgsql",
                 "migrate",
-                "--dsn",
+                "--store-dsn",
                 "postgresql://localhost/tasks",
                 "head",
             ]
@@ -1128,7 +1128,7 @@ class CliTaskOptionTestCase(TestCase):
         self.assertEqual(args.command, "task")
         self.assertEqual(args.task_command, "pgsql")
         self.assertEqual(args.task_pgsql_command, "migrate")
-        self.assertEqual(args.dsn, "postgresql://localhost/tasks")
+        self.assertEqual(args.store_dsn, "postgresql://localhost/tasks")
         self.assertEqual(args.migration_revision, "head")
 
     def test_task_shell_subcommand_arguments(self) -> None:

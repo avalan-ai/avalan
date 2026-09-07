@@ -4,27 +4,27 @@
   "exclusions": [
     {
       "path": "src/avalan/cli/__main__.py",
-      "line": 5292,
+      "line": 5338,
       "text": "    main()  # pragma: no cover"
     },
     {
       "path": "src/avalan/cli/commands/flow.py",
-      "line": 2513,
+      "line": 2512,
       "text": "    raise AssertionError(\"unsupported flow input type\")  # pragma: no cover"
     },
     {
       "path": "src/avalan/cli/commands/flow.py",
-      "line": 2559,
+      "line": 2558,
       "text": "    raise AssertionError(\"unsupported flow input type\")  # pragma: no cover"
     },
     {
       "path": "src/avalan/cli/commands/flow.py",
-      "line": 2597,
+      "line": 2596,
       "text": "    raise AssertionError(\"unsupported flow output type\")  # pragma: no cover"
     },
     {
       "path": "src/avalan/cli/commands/flow.py",
-      "line": 2676,
+      "line": 2675,
       "text": "    raise AssertionError(\"unsupported flow issue category\")  # pragma: no cover"
     },
     {
@@ -432,15 +432,15 @@
       21
     ],
     "src/avalan/cli/__main__.py": [
-      129,
-      130,
-      179,
-      180,
-      181,
-      182,
-      183,
-      184,
-      5292
+      135,
+      136,
+      185,
+      186,
+      187,
+      188,
+      189,
+      190,
+      5338
     ],
     "src/avalan/cli/commands/agent.py": [
       691,
@@ -485,10 +485,10 @@
       730
     ],
     "src/avalan/cli/commands/flow.py": [
-      2513,
-      2559,
-      2597,
-      2676
+      2512,
+      2558,
+      2596,
+      2675
     ],
     "src/avalan/cli/commands/model.py": [
       97,
@@ -1919,6 +1919,19 @@
       88,
       89
     ],
+    "src/avalan/task/encryption.py": [
+      17,
+      18,
+      19,
+      20,
+      21,
+      22,
+      23,
+      24,
+      26,
+      27,
+      28
+    ],
     "src/avalan/task/event.py": [
       251,
       252,
@@ -2878,6 +2891,11 @@
       20,
       21
     ],
+    "src/avalan/trigger/observability.py": [
+      51,
+      52,
+      53
+    ],
     "src/avalan/trigger/scheduler.py": [
       54,
       55,
@@ -2948,7 +2966,8 @@
       125,
       126,
       127,
-      128
+      128,
+      129
     ],
     "src/avalan/types.py": [
       36,
@@ -2959,5 +2978,5 @@
     ]
   },
   "coverage_configuration": "none",
-  "snapshot_sha256": "50a7ba061213bd3cd8115591e79c10ec58c416450c951c0218b795748317b9b6"
+  "snapshot_sha256": "a2e066399b87a92207371d5ef8f8bb46bbecef6625b3a72ea0081daa9512fca2"
 }

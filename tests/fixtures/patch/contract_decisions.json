@@ -1225,7 +1225,7 @@
       },
       {
         "path": "src/avalan/cli/__main__.py",
-        "source_sha256": "5945d5ece2dbe0cd7ea875af1afaaf8acbeabd0e211d64c6f2cadb26527ce4bb"
+        "source_sha256": "a74476f013076b1ae36c2196978be3dcab948b601abf94da5d3e77eaf49d8062"
       },
       {
         "path": "src/avalan/cli/_stream_presenter.py",
@@ -1249,7 +1249,7 @@
       },
       {
         "path": "src/avalan/cli/commands/flow.py",
-        "source_sha256": "4bd7d9ed4ebd70ebfc2c1f85a1993e8af4cf5cdd50bb7e53668f6d1a62cb9ede"
+        "source_sha256": "542cbd42e81d8846b915ee4db46a0ea222ecb282dec3ad0f222309f5d05449ba"
       },
       {
         "path": "src/avalan/cli/commands/memory.py",
@@ -1261,11 +1261,15 @@
       },
       {
         "path": "src/avalan/cli/commands/task.py",
-        "source_sha256": "629cd34cb73e649f6ecf5f1ab20bbcb05b72dc7a17a8729e0e91d0c34311b984"
+        "source_sha256": "776e369a9d8915ba4ec8cfdd501053bece37c99f0ae451d381b5abef27ba42be"
       },
       {
         "path": "src/avalan/cli/commands/tokenizer.py",
         "source_sha256": "17d404adc23bfa02b9482816081b25745f8b2114b5eac30e03e9829c52ab41b4"
+      },
+      {
+        "path": "src/avalan/cli/commands/trigger.py",
+        "source_sha256": "7e8d00e9b635f0824b6f5e7f60347b28ebd49dabe0da6b1945a3af2274fe0566"
       },
       {
         "path": "src/avalan/cli/display.py",
@@ -1308,6 +1312,14 @@
         "source_sha256": "59c5e8b7d19102fe4b9c8909bdda1ddeeba1b032d377af86779c28e4a7482488"
       },
       {
+        "path": "src/avalan/cli/task_privacy.py",
+        "source_sha256": "d9000a6a4b681b32044205af36d2b38dddb4ddc60f50d68e5b50d76609269070"
+      },
+      {
+        "path": "src/avalan/cli/task_store.py",
+        "source_sha256": "ec84d061a7c6b89d706bb123d00207338d21e3e98d2fc203a488a4c405451846"
+      },
+      {
         "path": "src/avalan/cli/theme/__init__.py",
         "source_sha256": "8e3ae80a9fc00b6d102c68a400c80397a4d75c0664f7d9dd3f76e37336cde3bf"
       },
@@ -1330,6 +1342,22 @@
       {
         "path": "src/avalan/cli/theme_registry.py",
         "source_sha256": "b4ebf6e0b42fb826f72ea86eef8e87e619ae9f4b6f28b2adcdf82764e5fa0d0a"
+      },
+      {
+        "path": "src/avalan/cli/trigger_host.py",
+        "source_sha256": "1843b5b15265f8533fa53f578dc7e24f7e6543ec9f16ea308535dd40d9654c36"
+      },
+      {
+        "path": "src/avalan/cli/trigger_parser.py",
+        "source_sha256": "2e631f84538abd40c0a625f6e2af281b307f0dce73388d8d76dcf42fe1e2cd02"
+      },
+      {
+        "path": "src/avalan/cli/trigger_runtime.py",
+        "source_sha256": "941b82f2e2a5963f0a8a805e6f59cc76554173aff95460a9bfca29e6d1953953"
+      },
+      {
+        "path": "src/avalan/cli/trigger_worker.py",
+        "source_sha256": "52358be5394feb6deb2d3248d89c56a69cf3e19268eb3468249f6f897a46c142"
       },
       {
         "path": "src/avalan/compat.py",
@@ -2221,7 +2249,7 @@
       },
       {
         "path": "src/avalan/patch/sandbox_commit.py",
-        "source_sha256": "037e79f4da7e44cc8c808281ab5c487131937ed997d5b7184599734f264ed8d4"
+        "source_sha256": "7bfb47763417fcee878dcbd76205664a499b99ccde46836c30bd052f75f158c2"
       },
       {
         "path": "src/avalan/patch/sandbox_wire.py",
@@ -2558,6 +2586,10 @@
       {
         "path": "src/avalan/task/durable_agent.py",
         "source_sha256": "d338e710235fbdb50b40d5f0eb2d52086f88d08f0bd11549ec719276f71b9f70"
+      },
+      {
+        "path": "src/avalan/task/encryption.py",
+        "source_sha256": "86c681f48df768e3a0ae434ad0db391a6b5664c2c3ec5ba3d1bc899b7692a797"
       },
       {
         "path": "src/avalan/task/error.py",
@@ -3372,6 +3404,10 @@
         "source_sha256": "d5136bf7bcf010599ed5a1ff646e51ab4ae850b1ef4227f18937396377acd2bc"
       },
       {
+        "path": "src/avalan/trigger/observability.py",
+        "source_sha256": "1741e0d8d308973984c466fab5bbe529c2e806532e2c9a82addeb9ba4013dc5c"
+      },
+      {
         "path": "src/avalan/trigger/plan.py",
         "source_sha256": "58a004d736d8e5a76f802817865ff90a48f4031a4329e55bca12d26b5235e851"
       },
@@ -3397,7 +3433,7 @@
       },
       {
         "path": "src/avalan/trigger/scheduler.py",
-        "source_sha256": "38c802e2bb9d7f18ac8183ab0701393a8f50b87dfa831c7dee352f8aea1c9232"
+        "source_sha256": "e4ee4897f825ac2e054e3838e9f876544b4ebfce33ec0c95da3a14d07355957d"
       },
       {
         "path": "src/avalan/trigger/scheduler_operations.py",
@@ -3405,7 +3441,7 @@
       },
       {
         "path": "src/avalan/trigger/scheduler_types.py",
-        "source_sha256": "46ca27eaf02726d036d95417a7bb8dec5236110afb064bb76f1885501f03a19a"
+        "source_sha256": "9134bce403e9e0da828222719b98e6d7927a851d0e2d8512aa8a5d12c9b916c2"
       },
       {
         "path": "src/avalan/trigger/sealed_input.py",
@@ -3421,7 +3457,7 @@
       },
       {
         "path": "src/avalan/trigger/store.py",
-        "source_sha256": "ae80e2816597751dedfcca4dddd3bbca78e74f4167048904cc8de3456ae4e73f"
+        "source_sha256": "cfba9450224187e83dade258eec89dc6fb3a8e0303a80bf645220157d67f7e48"
       },
       {
         "path": "src/avalan/trigger/stores/__init__.py",
@@ -3429,7 +3465,7 @@
       },
       {
         "path": "src/avalan/trigger/stores/memory.py",
-        "source_sha256": "b80625574d25b9bada0406e70503d8bce148e4b9e470f99085893f2d88df2476"
+        "source_sha256": "8f4bcb2bcb0f25b7564d6c6715f4eee1e4ed8e5290885943f4914abc33bb45cb"
       },
       {
         "path": "src/avalan/trigger/stores/memory_admission.py",
@@ -3437,7 +3473,7 @@
       },
       {
         "path": "src/avalan/trigger/stores/pgsql.py",
-        "source_sha256": "284f8aefc6cca6c3897dab4d0d240aba41208bb1dff5b1ba9db3119c70aa0c26"
+        "source_sha256": "c39f5d262d010a940161a1298526d308608349e6eb3eae58b85c3a2f21178d63"
       },
       {
         "path": "src/avalan/trigger/stores/pgsql_admission.py",
@@ -3455,7 +3491,7 @@
     "coverage_exclusions": [
       {
         "path": "tests/fixtures/input/coverage_exclusions_current.json",
-        "source_sha256": "37c0d4a7d79146b2baae1b24eeace41494e40c0dae2520ed961e25b925a8d4b6"
+        "source_sha256": "c0f5ff7bea3b215601cb2d05d5b6e68de9fb47859ee55d5694c248a8bd07909a"
       }
     ],
     "public_tools": [
@@ -3501,6 +3537,6 @@
       "sandbox"
     ]
   },
-  "inventory_sha256": "8175d2ece1d73eaa1a009d00fcdb9531d3b7d9248cf698df213b5dde6ebb604d",
-  "record_sha256": "0635ad8275c48548147133501eab876ad362fc542241dcfe5216716736e77d77"
+  "inventory_sha256": "d19d5e5e6028b669e9258a67297c39a09e0758a165f5bd1a78037881d4b4be50",
+  "record_sha256": "e5504663a51a45635ec01f5b72723358e2733078592bd3075b42861aa3c400f1"
 }

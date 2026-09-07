@@ -1,10 +1,16 @@
 from .. import license, name, site, version
 from ..cli import CommandAbortException, has_input
 from ..cli.commands import is_ds4_backend_selected
+from ..cli.task_store import TaskStoreConfigurationError
 from ..cli.theme_registry import (
     DEFAULT_THEME_NAME,
     SUPPORTED_THEME_NAMES,
     create_theme,
+)
+from ..cli.trigger_parser import (
+    add_deployment_arguments,
+    add_encrypted_artifact_arguments,
+    add_trigger_commands,
 )
 from ..entities import (
     AttentionImplementation,
@@ -212,7 +218,9 @@ def _task_run_json_stdout(args: Namespace) -> bool:
             and bool(getattr(args, "flow_json", False))
         )
     )
-    return task_json or flow_json
+    return (
+        task_json or flow_json or getattr(args, "command", None) == "trigger"
+    )
 
 
 def _default_hf_cache_dir() -> str:
@@ -2220,6 +2228,8 @@ class CLI:
         )
 
         # Task command
+        add_trigger_commands(command_parsers, global_parser)
+
         task_parser = command_parsers.add_parser(
             name="task",
             description="Manage intelligence tasks",
@@ -2600,6 +2610,7 @@ class CLI:
             description="Run a task queue worker",
             parents=[global_parser, task_tool_parser],
         )
+        add_deployment_arguments(task_worker_parser, required=False)
         task_worker_parser.add_argument(
             "--queue",
             type=str,
@@ -2657,6 +2668,15 @@ class CLI:
             description="Delete expired task artifact bytes",
             parents=[global_parser],
         )
+        add_encrypted_artifact_arguments(task_retention_sweep_parser)
+        task_retention_sweep_parser.add_argument(
+            "--encrypted-artifacts",
+            action="store_true",
+            help=(
+                "Use the encrypted PostgreSQL artifact backend for scheduled"
+                " runs."
+            ),
+        )
         task_retention_sweep_parser.add_argument(
             "--store-dsn",
             type=str,
@@ -2692,20 +2712,20 @@ class CLI:
         )
         task_pgsql_common_parser = ArgumentParser(add_help=False)
         task_pgsql_common_parser.add_argument(
-            "--dsn",
+            "--store-dsn",
             type=str,
             default=None,
             help=(
-                "PostgreSQL DSN. Defaults to AVALAN_TASK_PGSQL_DSN when "
+                "PostgreSQL DSN. Defaults to AVALAN_TASK_STORE_DSN when "
                 "omitted."
             ),
         )
         task_pgsql_common_parser.add_argument(
-            "--schema",
+            "--store-schema",
             type=str,
             default=None,
             help=(
-                "PostgreSQL schema. Defaults to AVALAN_TASK_PGSQL_SCHEMA "
+                "PostgreSQL schema. Defaults to AVALAN_TASK_STORE_SCHEMA "
                 "when omitted."
             ),
         )
@@ -4748,7 +4768,7 @@ class CLI:
     async def _needs_hf_token(args: Namespace) -> bool:
         """Return ``True`` if the command needs hub authentication."""
         command = args.command
-        if command == "flow":
+        if command in {"flow", "trigger"}:
             return False
         if command == "task":
             engine = await CLI._task_agent_engine_uri(args)
@@ -4825,6 +4845,8 @@ class CLI:
     @staticmethod
     def _can_use_anonymous_hub(args: Namespace) -> bool:
         command = args.command
+        if command == "trigger":
+            return True
         if command == "task":
             return (args.task_command or "validate") != "worker"
         if command != "model" or (args.model_command or "display") != "run":
@@ -4888,7 +4910,7 @@ class CLI:
             record=args.record and not args.quiet,
         )
         self._abort_console = console
-        self._abort_quiet = args.quiet
+        self._abort_quiet = args.quiet or _task_run_json_stdout(args)
         self._abort_theme = theme
 
         if args.help_full:
@@ -4931,6 +4953,20 @@ class CLI:
                 except ReasoningSummaryCapabilityError as error:
                     print(str(error), file=sys.stderr)
                     raise SystemExit(1) from error
+                except TaskStoreConfigurationError as error:
+                    console.print(
+                        dumps(
+                            {
+                                "ok": False,
+                                "code": "task.store_configuration",
+                                "path": error.field_name,
+                            }
+                        ),
+                        markup=False,
+                        highlight=False,
+                        soft_wrap=True,
+                    )
+                    raise SystemExit(1) from None
                 except InputContractError as error:
                     result = interaction_renderer.cli_input_error_result(error)
                     if result is None or result.exit_code is None:
@@ -4950,7 +4986,11 @@ class CLI:
                     KeyboardInterrupt,
                     CommandAbortException,
                 ):
-                    self._print_bye(console, theme, quiet=args.quiet)
+                    self._print_bye(
+                        console,
+                        theme,
+                        quiet=args.quiet or _task_run_json_stdout(args),
+                    )
                     raise
         finally:
             if args.parallel and "LOCAL_RANK" in environ:
@@ -5210,6 +5250,12 @@ class CLI:
                     case "validate":
                         if not flow_validate(args, console, theme):
                             raise SystemExit(1)
+            case "trigger":
+                succeeded = await _load_command(
+                    "avalan.cli.commands.trigger", "run_trigger_command"
+                )(args, console, hub, self._logger)
+                if not succeeded:
+                    raise SystemExit(1)
             case "task":
                 subcommand = args.task_command or "validate"
                 match subcommand:

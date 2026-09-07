@@ -119,8 +119,8 @@ Set these values for durable queue mode:
 
 | Variable | Purpose |
 | --- | --- |
-| `AVALAN_TASK_STORE_DSN` or `AVALAN_TASK_PGSQL_DSN` | PostgreSQL DSN for task storage, queue, events, usage, and artifact metadata. |
-| `AVALAN_TASK_STORE_SCHEMA` or `AVALAN_TASK_PGSQL_SCHEMA` | Optional schema/search path for isolated deployments. |
+| `AVALAN_TASK_STORE_DSN` | PostgreSQL DSN for task storage, queue, events, usage, and artifact metadata. |
+| `AVALAN_TASK_STORE_SCHEMA` | Optional schema/search path for isolated deployments. |
 | `AVALAN_TASK_HMAC_KEY_ID` | Identifier stored with HMAC summaries. Rotate by adding a new id and keeping old keys available for inspection windows. |
 | `AVALAN_TASK_HMAC_KEY_B64` | Base64-encoded HMAC secret for user-controlled identifiers. Do not log this value. |
 | `AVALAN_TASK_ARTIFACT_ROOT` | Local artifact byte root for file materialization and retention sweeps. Required when tasks use file inputs or output artifacts. |
@@ -534,3 +534,18 @@ Remediation:
    public task definition and SDK/CLI paths.
 5. Rotate HMAC keys only with a planned compatibility window so existing
    reservations remain inspectable until they expire.
+
+## Scheduled runs
+
+[Durable time triggers](TRIGGERS.md) use the same task store and canonical
+`--store-dsn`/`--store-schema` settings as task commands and migrations. Run the
+scheduler and task worker separately. The worker's `--deployment-root` mode
+reconstructs retained native Agent/strict Flow deployments and uses the shared
+AES-GCM PostgreSQL input backend; unsupported custom tool/security settings fail
+explicitly. Ordinary worker behavior is unchanged without that option.
+
+Use `task retention-sweep --encrypted-artifacts --raw-storage-allowed` for this
+backend, with the same operator encryption key. Retained trigger/revision/run
+ownership still guards deletion. See the trigger guide for safe control CAS,
+unknown acknowledgments, metrics, native continuation/container limitations and
+the public submission/codec replacements.

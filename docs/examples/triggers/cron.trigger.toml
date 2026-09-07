@@ -1,0 +1,28 @@
+[trigger]
+schema_version = 1
+name = "example-cron"
+
+[task]
+ref = "task.toml"
+
+[input]
+value = { scheduled = "", occurrence = "", revision = 0 }
+
+[[input.bindings]]
+path = "/scheduled"
+source = "scheduled_at"
+[[input.bindings]]
+path = "/occurrence"
+source = "occurrence_id"
+[[input.bindings]]
+path = "/revision"
+source = "trigger_revision"
+
+[schedule]
+type = "cron"
+expression = "0 9 * * MON-FRI"
+timezone = "America/New_York"
+[policy]
+misfire = "latest"
+overlap = "skip"
+misfire_grace_seconds = 3600

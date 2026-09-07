@@ -94,6 +94,7 @@ class TriggerProcessResult:
     occurrences: tuple[TriggerOccurrence, ...] = ()
     ranges: tuple[TriggerCoverageSpan, ...] = ()
     conflicts: int = 0
+    admission_retries: int = 0
     errors: tuple[TriggerSchedulerDiagnostic, ...] = ()
     unresolved: tuple[TriggerAdmissionResult, ...] = ()
     preparation_failures: tuple[TriggerPreparationFailure, ...] = ()
@@ -105,6 +106,7 @@ class TriggerProcessResult:
         # Operations run serially; the first timeout ends the invocation.
         # At most one prior completion can precede a full discovery batch.
         integer(self.conflicts, 0, 1001, "result.conflicts")
+        integer(self.admission_retries, 0, 1000, "result.admission_retries")
         integer(self.pending_operations, 0, 1000, "result.pending_operations")
         assert type(self.remaining_work) is bool
         assert isinstance(self.stop, TriggerTickStop)

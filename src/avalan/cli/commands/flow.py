@@ -98,6 +98,7 @@ from ...tool.shell import (
     normalize_shell_enabled_tools,
     should_append_shell_toolset,
 )
+from ..task_store import task_store_configuration
 from .agent import (
     _agent_container_runtime_settings,
     _agent_isolation_runtime_settings,
@@ -124,8 +125,6 @@ from .task import (
     _task_run_json_output,
     _task_run_quiet,
     _task_run_structured_output_requested,
-    _task_store_dsn,
-    _task_store_schema,
     _validate_task_run_output_path,
     _write_task_run_structured_output,
     task_cli_input,
@@ -2194,11 +2193,11 @@ def _flow_state_store_context(
     args: Namespace,
     console: Console,
 ) -> _FlowStateStoreContext | None:
-    dsn = _task_store_dsn(args)
+    dsn = task_store_configuration(args).dsn
     if dsn is None:
         _print_missing_inspection_store(console)
         return None
-    database = _task_pgsql_database(dsn, _task_store_schema(args))
+    database = _task_pgsql_database(dsn, task_store_configuration(args).schema)
     return _FlowStateStoreContext(
         store=PgsqlFlowStateStore(database),
         database=database,
