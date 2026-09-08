@@ -729,6 +729,8 @@ class TriggerScheduler:
                             )
                             self._closed_resources.add(index)
             except SchedulerOperationTimeout:
+                # Timed-out work remains owned and pending; the result below
+                # reports unsettled shutdown instead of claiming it closed.
                 pass
             except Exception:
                 tick.errors.append(
@@ -827,4 +829,6 @@ class TriggerScheduler:
                 try:
                     await pending
                 except CancelledError:
+                    # Join the waiter cancelled above. Cancellation of the
+                    # serving caller is preserved by the outer handler.
                     pass

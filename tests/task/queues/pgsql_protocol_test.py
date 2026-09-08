@@ -1806,6 +1806,50 @@ class PgsqlTaskQueueTest(IsolatedAsyncioTestCase):
         )
         self.assertEqual(len(self.database.queue_items), 2)
 
+    async def test_submit_prepared_preserves_nonoperational_interruptions(
+        self,
+    ) -> None:
+        class SubmissionInterrupted(BaseException):
+            pass
+
+        for interruption in (
+            CancelledError("private cancellation"),
+            SystemExit("private exit"),
+            KeyboardInterrupt("private interrupt"),
+            GeneratorExit("private generator"),
+            SubmissionInterrupted("private custom"),
+        ):
+            with self.subTest(kind=type(interruption).__name__):
+                before = self.database.snapshot()
+                prepared = prepared_submission_fixture(
+                    self.queue,
+                    TaskExecutionRequest(definition_id="hash-a"),
+                    queue_name="default",
+                )
+                async with self.queue.submission_transaction() as unit:
+                    connections = self.database.connection_count
+                    commits = self.database.commit_count
+                    with (
+                        patch(
+                            "avalan.task.queues.pgsql.read_task_submission",
+                            AsyncMock(side_effect=interruption),
+                        ),
+                        patch(
+                            "avalan.task.queues.pgsql._raise_queue_failure"
+                        ) as project,
+                        self.assertRaises(type(interruption)) as caught,
+                    ):
+                        await self.queue.submit_prepared(
+                            prepared, unit_of_work=unit
+                        )
+                    self.assertIs(caught.exception, interruption)
+                    project.assert_not_called()
+                    self.assertEqual(
+                        self.database.connection_count, connections
+                    )
+                    self.assertEqual(self.database.commit_count, commits)
+                    self.assertEqual(self.database.snapshot(), before)
+
     async def test_submit_prepared_rolls_back_failed_submission(self) -> None:
         self.database.fail_on_query = 'INSERT INTO "task_queue_items"'
 

@@ -377,7 +377,7 @@ class PgsqlTaskQueue:
                 ),
             )
             return write
-        except BaseException as error:
+        except Exception as error:
             _raise_queue_failure(error, operation="task_queue_submit_prepared")
 
     async def _submission_write(

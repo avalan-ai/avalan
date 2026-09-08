@@ -268,3 +268,28 @@ def test_multiline_closing_quote_runs_preserve_precision_validation(
         )
         assert isinstance(parsed.schedule, AtTrigger)
         assert parsed.schedule.at.microsecond == 123456
+
+
+@mark.parametrize(
+    "value", ["nan", "+nan", "-nan", "inf", "+inf", "-inf", "1e999"]
+)
+def test_nonfinite_application_floats_are_rejected(value: str) -> None:
+    source = (_FIXTURES / "cron.trigger.toml").read_text()
+    with raises(TriggerError) as error:
+        parse_configuration(
+            source.replace("revision = 0", "revision = " + value)
+        )
+    assert error.value.code == TriggerErrorCode.INVALID_CONFIG
+
+
+@mark.parametrize(
+    "value", ["0.0", "-0.0", "1e-300", "-1e300", "1.7976931348623157e308"]
+)
+def test_finite_application_float_boundaries_are_preserved(value: str) -> None:
+    source = (_FIXTURES / "cron.trigger.toml").read_text()
+    parsed = parse_configuration(
+        source.replace("revision = 0", "revision = " + value)
+    )
+    assert cast(dict[str, object], plain_value(parsed.input.value))[
+        "revision"
+    ] == float(value)
