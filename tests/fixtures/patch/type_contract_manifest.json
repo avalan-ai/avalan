@@ -1178,7 +1178,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "acc0b6f43f7d43d5a440092448f2fc8e6a72631c202fc4af54e4f12e7680de48"
+      "source_sha256": "ac139173e38dbcfc3c2d69c6568adc383ed06416872390c64bf63464d259da3a"
     },
     {
       "id": "PATCH-TS-067",
@@ -2528,7 +2528,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "d5136bf7bcf010599ed5a1ff646e51ab4ae850b1ef4227f18937396377acd2bc"
+      "source_sha256": "e8dd8769a5f0592328c6f0b353fb190eaa9f954d7a0a4b6f8ed9c62b9e3eb99a"
     },
     {
       "id": "PATCH-TS-183",
@@ -2537,7 +2537,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "3513dd49c717076f82025623aaa0fca5c9499d31c0958dd8e9cbc3717d62ba06"
+      "source_sha256": "97549ad4744337347a3bb4c8d84593c5236865b05d250176523bde17747d4bda"
     },
     {
       "id": "PATCH-TS-184",
@@ -2564,7 +2564,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ba2368f447b42844815779b60aad242b45625bd8d12b112f2a1854e85e45c8d0"
+      "source_sha256": "cc9beb75b04930c4963b68caedcce0f9085a8f6de674a0e0337d3c0d9a8f82b4"
     },
     {
       "id": "PATCH-TS-187",
@@ -2636,7 +2636,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "519aa848d6c80d7dc3028fe11f7bdb79c6bcb3d01d840643dbee786040a792f3"
+      "source_sha256": "9c70c91603796445278b8654cd7ea7dac85022b8246c121b18289b9a418cef12"
     },
     {
       "id": "PATCH-TS-194",
@@ -2828,6 +2828,7 @@
       "path": "tests/task/queues/pgsql_protocol_test.py",
       "scope": "integration_hunk",
       "symbols": [
+        "test_submit_prepared_preserves_nonoperational_interruptions",
         "__aenter__",
         "__aexit__",
         "__call__",
@@ -2865,7 +2866,7 @@
         "test_submit_prepared_rolls_back_store_outage_before_mutation",
         "test_submit_prepared_rolls_back_transition_insert_conflict"
       ],
-      "source_sha256": "f469967b8fa27fe382a299ecff7fe29b2f4e28ccc330ddaf1d1781769f5d9367"
+      "source_sha256": "753d4d068e45ad81cbe7602ddba08fbe21eecd831937d259f31abe3f554839f6"
     },
     {
       "id": "PATCH-TS-206",
@@ -3516,7 +3517,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "e4ee4897f825ac2e054e3838e9f876544b4ebfce33ec0c95da3a14d07355957d"
+      "source_sha256": "fed1f207d0ccb62210af8b23e78ed8a52ad8fb87a16e330325a885a61b0e9fa7"
     },
     {
       "id": "PATCH-TS-274",
@@ -4219,5 +4220,5 @@
       "source_sha256": "eb9bff89a99cacf5951e10d311974e77ea410fb05029db0cfd4a8fe701c6d7a1"
     }
   ],
-  "manifest_sha256": "2c997910159354694736428c9aeaead4ee5dedc132300ef0eea36028a8a47e14"
+  "manifest_sha256": "5e0869ef96b27973d1e7e8e8eb85273119dbd062e502e0a2b9ee319c89413d90"
 }

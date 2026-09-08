@@ -19,6 +19,7 @@ from .error import TriggerError, TriggerErrorCode
 
 from collections.abc import Awaitable, Callable
 from datetime import date, datetime, time
+from math import isfinite
 from pathlib import Path
 from re import search
 from tomllib import TOMLDecodeError, loads
@@ -218,7 +219,7 @@ def parse_configuration(source: str) -> TriggerConfiguration:
 
 def _finite_float(value: str) -> float:
     result = float(value)
-    if result in (float("inf"), float("-inf")) or result != result:
+    if not isfinite(result):
         raise ValueError("nonfinite input")
     return result
 

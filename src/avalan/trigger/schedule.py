@@ -65,7 +65,6 @@ def schedule_provenance(timezone: str = "UTC") -> ScheduleProvenance:
     """Identify the selected zone data, honoring ZoneInfo search order."""
     _parser()
     CronTrigger(expression="* * * * *", timezone=timezone)
-    zone_version = "unavailable"
     for root in TZPATH:
         source = Path(root) / timezone
         if source.is_file():
