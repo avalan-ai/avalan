@@ -8,6 +8,7 @@ from asyncio import (
     gather,
     get_running_loop,
     sleep,
+    timeout,
     to_thread,
 )
 from collections import deque
@@ -132,6 +133,19 @@ class _Operation:
         if type(count) is not int or count < 0 or count > limit:
             raise ConversationValidationError()
         return count
+
+
+async def _wait_for_worker_health(
+    worker: security.ConversationMaintenanceWorker,
+    predicate: Callable[[security.ConversationMaintenanceHealth], bool],
+) -> security.ConversationMaintenanceHealth:
+    """Wait for observable worker progress with a bounded deadline."""
+    async with timeout(5):
+        while True:
+            health = await worker.health()
+            if predicate(health):
+                return health
+            await sleep(0.001)
 
 
 def _authority(
@@ -1788,18 +1802,27 @@ async def test_hardening_operational_edges_are_bounded(
         with pytest.raises(ConversationValidationError):
             factory()
 
-    interval_worker = security.ConversationMaintenanceWorker(
-        (operation,),
-        batch_size=1,
-        interval_seconds=0.001,
-        shutdown_timeout_seconds=0.05,
-    )
-    await interval_worker.start()
-    with pytest.raises(ConversationValidationError):
+    for interval_seconds in (0.001, 0.05):
+        interval_worker = security.ConversationMaintenanceWorker(
+            (operation,),
+            batch_size=1,
+            interval_seconds=interval_seconds,
+            shutdown_timeout_seconds=0.05,
+        )
         await interval_worker.start()
-    await sleep(0.01)
-    assert (await interval_worker.health()).completed_batches > 1
-    await interval_worker.cancel()
+        try:
+            with pytest.raises(ConversationValidationError):
+                await interval_worker.start()
+            interval_health = await _wait_for_worker_health(
+                interval_worker,
+                lambda health: health.completed_batches > 1,
+            )
+            assert interval_health.completed_batches > 1
+            assert interval_health.state is (
+                security.ConversationWorkerState.RUNNING
+            )
+        finally:
+            await interval_worker.cancel()
 
     worker_barrier = Event()
 
@@ -1901,11 +1924,15 @@ async def test_hardening_operational_edges_are_bounded(
     await sleep(0)
     stop_timeout_worker._stop = cast(Event, _ResistantStop())
     timeout_gate.set()
-    await sleep(0.01)
-    assert (await stop_timeout_worker.health()).state is (
-        security.ConversationWorkerState.FAILED
-    )
-    await stop_timeout_worker.drain()
+    try:
+        timeout_health = await _wait_for_worker_health(
+            stop_timeout_worker,
+            lambda health: health.state
+            is (security.ConversationWorkerState.FAILED),
+        )
+        assert timeout_health.state is security.ConversationWorkerState.FAILED
+    finally:
+        await stop_timeout_worker.drain()
 
     outer_gate = Event()
     stop_outer_worker = security.ConversationMaintenanceWorker(
@@ -1922,19 +1949,20 @@ async def test_hardening_operational_edges_are_bounded(
     await stop_outer_worker.start()
     await sleep(0)
     stop_outer_worker._stop = cast(Event, _ResistantStop())
-    with monkeypatch.context() as context:
-        context.setattr(security, "wait", failing_wait)
-        outer_gate.set()
-        for _ in range(20):
-            if (await stop_outer_worker.health()).state is (
+    try:
+        with monkeypatch.context() as context:
+            context.setattr(security, "wait", failing_wait)
+            outer_gate.set()
+            outer_health = await _wait_for_worker_health(
+                stop_outer_worker,
+                lambda health: health.state
+                is (security.ConversationWorkerState.FAILED),
+            )
+            assert outer_health.state is (
                 security.ConversationWorkerState.FAILED
-            ):
-                break
-            await sleep(0.001)
-        assert (await stop_outer_worker.health()).state is (
-            security.ConversationWorkerState.FAILED
-        )
-    await stop_outer_worker.drain()
+            )
+    finally:
+        await stop_outer_worker.drain()
 
     async def backend() -> security.ConversationBackendHealth:
         return security.ConversationBackendHealth(

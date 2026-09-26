@@ -1016,6 +1016,7 @@
       "path": "scripts/verify_conversation_acceptance.py",
       "scope": "integration_hunk",
       "symbols": [
+        "_ACTIVE_SOURCE_SHA256_BY_PHASE",
         "_PHASE12_PROVIDER_TRANSITION_CANONICAL_SHA256",
         "_PHASE13_PROVIDER_TARGET_BYTE_ANCHORS",
         "_PHASE13_PROVIDER_TRANSITION_CANONICAL_SHA256",
@@ -1044,7 +1045,7 @@
         "_validate_phase15_provider_evidence_nodes",
         "verify_gate_source_isolation"
       ],
-      "source_sha256": "3efc9a7252dd67489c7e242cb97a7849770c08dd72bb6b941ff1427308cde053"
+      "source_sha256": "d3510dcbe2dc38f121ff9f7ac3cc4520682d0ffc0d863d0a3d9baa1976795856"
     },
     {
       "id": "PATCH-TS-053",
@@ -4218,7 +4219,16 @@
         "module"
       ],
       "source_sha256": "eb9bff89a99cacf5951e10d311974e77ea410fb05029db0cfd4a8fe701c6d7a1"
+    },
+    {
+      "id": "PATCH-TS-351",
+      "path": "tests/conversation/security_e2e_test.py",
+      "scope": "changed_python",
+      "symbols": [
+        "module"
+      ],
+      "source_sha256": "1670cd543f12eafd1709002f75400d18b79f0fd2cca79bf3aab1d05c724e2a84"
     }
   ],
-  "manifest_sha256": "84a72b41ffa218511562eb763b702db4366f7af724ca57ea1967b7e2d001c472"
+  "manifest_sha256": "c8573c2fdaa80bc29ff205bb9d2e68215b14295b78f4993020f60a8d8ddd7c31"
 }

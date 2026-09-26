@@ -1024,7 +1024,7 @@ _ACTIVE_SOURCE_SHA256_BY_PHASE = {
     },
     11: {
         "tests/conversation/security_e2e_test.py": (
-            "aca93bf163c7497de675ac296e93f612a6c59d8b768644622a9101a053ce6ebb"
+            "1670cd543f12eafd1709002f75400d18b79f0fd2cca79bf3aab1d05c724e2a84"
         ),
         "tests/conversation/server_stored_e2e_test.py": (
             "f0cfbc664524d7378bafcd4a9a38bb8748e91d5cbadf207e659a55f487380a9c"
