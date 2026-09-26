@@ -4228,7 +4228,16 @@
         "module"
       ],
       "source_sha256": "1670cd543f12eafd1709002f75400d18b79f0fd2cca79bf3aab1d05c724e2a84"
+    },
+    {
+      "id": "PATCH-TS-352",
+      "path": "tests/cli/model_test.py",
+      "scope": "integration_hunk",
+      "symbols": [
+        "CliTokenGenerationTestCase.test_render_projections_overhead_within_budget"
+      ],
+      "source_sha256": "bcf765362b376743731ff0c8a80472b18fe6dfc389c2f7bc647d0ef98ccf937c"
     }
   ],
-  "manifest_sha256": "c8573c2fdaa80bc29ff205bb9d2e68215b14295b78f4993020f60a8d8ddd7c31"
+  "manifest_sha256": "e76b3fdb8b68191ef708723068e63c468e01fbc4a6948ad2ecb5a771be4fce09"
 }

@@ -8,6 +8,7 @@ from gc import collect
 from io import StringIO
 from logging import getLogger
 from pathlib import Path
+from statistics import median
 from tempfile import NamedTemporaryFile
 from threading import Event as ThreadEvent
 from time import perf_counter
@@ -5366,7 +5367,7 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
                 )
             ]
 
-    async def test_render_projections_overhead_within_budget(self):
+    async def test_render_projections_overhead_within_budget(self) -> None:
         count = 1000
         items = (
             CanonicalStreamItem(
@@ -5410,26 +5411,41 @@ class CliTokenGenerationTestCase(IsolatedAsyncioTestCase):
         )
         budget = StreamPerformanceBudget()
 
-        async def gen():
+        async def gen() -> AsyncIterator[CanonicalStreamItem]:
             for item in items:
                 yield item
 
-        started = perf_counter()
-        observed = [
-            item
-            async for item in model_cmds._stream_render_projections(
-                gen(),
-                stream_session_id="fallback-stream",
-                run_id="fallback-run",
-                turn_id="fallback-turn",
-            )
-        ]
-        elapsed_us = (perf_counter() - started) * 1_000_000
+        async def project() -> list[StreamConsumerProjection]:
+            return [
+                item
+                async for item in model_cmds._stream_render_projections(
+                    gen(),
+                    stream_session_id="fallback-stream",
+                    run_id="fallback-run",
+                    turn_id="fallback-turn",
+                )
+            ]
 
-        self.assertEqual(len(observed), count + 3)
+        # Warm the path and exclude garbage left by earlier tests from timing.
+        await project()
+        samples: list[float] = []
+        for _ in range(5):
+            collect()
+            started = perf_counter()
+            observed = await project()
+            elapsed_us = (perf_counter() - started) * 1_000_000
+            self.assertEqual(len(observed), count + 3)
+            self.assertIs(
+                observed[-1].terminal_outcome,
+                StreamTerminalOutcome.COMPLETED,
+            )
+            samples.append(elapsed_us / len(observed))
+
+        # A single scheduling pause must not decide the steady-state budget.
         self.assertLessEqual(
-            elapsed_us / len(observed),
+            median(samples),
             budget.per_item_overhead_us,
+            f"projection overhead samples (microseconds per item): {samples}",
         )
 
     async def test_projection_display_token_uses_canonical_metadata(self):
