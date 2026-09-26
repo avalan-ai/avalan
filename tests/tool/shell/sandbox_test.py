@@ -3,6 +3,7 @@ from .image_fixtures import VALID_JPEG_BYTES, valid_png_bytes
 from asyncio import create_task, gather, sleep, wait_for
 from asyncio import run as async_run
 from collections.abc import Awaitable, Callable
+from hashlib import sha256
 from pathlib import Path
 from tempfile import TemporaryDirectory
 from typing import cast
@@ -1251,7 +1252,10 @@ class ShellSandboxToolSetTest(IsolatedAsyncioTestCase):
         self.assertIs(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(result.backend, "sandbox")
         self.assertEqual(len(result.generated_files), 1)
-        self.assertEqual(result.generated_files[0].display_path, "contact.jpg")
+        self.assertEqual(
+            result.generated_files[0].display_path,
+            f"contact-{sha256(VALID_JPEG_BYTES).hexdigest()}.jpg",
+        )
         self.assertEqual(result.generated_files[0].media_type, "image/jpeg")
         self.assertEqual(
             (

@@ -1160,7 +1160,7 @@
         "PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE",
         "OrchestratorResponseIterationTestCase.test_inline_compaction_item_emits_content_free_event"
       ],
-      "source_sha256": "db988cd728132690c454fb1943f694e696d9df1082280f44a1cb48fb3920a170"
+      "source_sha256": "bd70f46baa62cf8f7e64078c1c860fc1044b3f73dbca689e7b9183c670cc1c3b"
     },
     {
       "id": "PATCH-TS-065",
@@ -1178,7 +1178,7 @@
       "symbols": [
         "module"
       ],
-      "source_sha256": "ac139173e38dbcfc3c2d69c6568adc383ed06416872390c64bf63464d259da3a"
+      "source_sha256": "d5d5a1f1081da93e92074b3e18078341b5d0d9bf9a86cabdc677e8e5d1715122"
     },
     {
       "id": "PATCH-TS-067",
@@ -1925,7 +1925,7 @@
       "symbols": [
         "test_formatted_result_preserves_typed_tool_content_on_reduce"
       ],
-      "source_sha256": "caf96314bc3eb0f07e38aa2045325b51449126cd651233d33acc73c7c7e03677"
+      "source_sha256": "9e6c6b6a49b93c1eb11d27f4f724c9ec5fc58e7b44f3f7de687faa5f58286a7b"
     },
     {
       "id": "PATCH-TS-140",
@@ -4220,5 +4220,5 @@
       "source_sha256": "eb9bff89a99cacf5951e10d311974e77ea410fb05029db0cfd4a8fe701c6d7a1"
     }
   ],
-  "manifest_sha256": "5e0869ef96b27973d1e7e8e8eb85273119dbd062e502e0a2b9ee319c89413d90"
+  "manifest_sha256": "84a72b41ffa218511562eb763b702db4366f7af724ca57ea1967b7e2d001c472"
 }

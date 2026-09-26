@@ -1679,7 +1679,10 @@ class ShellContainerToolSetTest(IsolatedAsyncioTestCase):
         result = formatted.execution_result
         self.assertEqual(result.backend, "container")
         self.assertEqual(len(result.generated_files), 1)
-        self.assertEqual(result.generated_files[0].display_path, "contact.jpg")
+        self.assertEqual(
+            result.generated_files[0].display_path,
+            f"contact-{sha256(VALID_JPEG_BYTES).hexdigest()}.jpg",
+        )
         self.assertEqual(result.generated_files[0].media_type, "image/jpeg")
         self.assertEqual(
             (

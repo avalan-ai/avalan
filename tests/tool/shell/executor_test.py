@@ -1895,7 +1895,10 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertNotIn(str(output_directory), " ".join(result.argv))
         self.assertEqual(len(result.generated_files), 1)
         generated = result.generated_files[0]
-        self.assertEqual(generated.display_path, "GENERATED_PREFIX-0001.png")
+        self.assertEqual(
+            generated.display_path,
+            f"GENERATED_PREFIX-0001-{sha256(png).hexdigest()}.png",
+        )
         self.assertEqual(generated.media_type, "image/png")
         self.assertEqual(generated.suffix, ".png")
         self.assertEqual(generated.bytes, len(png))
@@ -2267,7 +2270,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(
             tuple(file.display_path for file in result.generated_files),
-            ("GENERATED_PREFIX-1.png",),
+            (f"GENERATED_PREFIX-1-{sha256(_png_bytes()).hexdigest()}.png",),
         )
 
     async def test_generated_output_accepts_underscore_page_number(
@@ -2283,7 +2286,7 @@ class LocalCommandExecutorTest(IsolatedAsyncioTestCase):
         self.assertEqual(len(result.generated_files), 1)
         self.assertEqual(
             result.generated_files[0].display_path,
-            "GENERATED_PREFIX_0002.png",
+            f"GENERATED_PREFIX_0002-{sha256(_png_bytes()).hexdigest()}.png",
         )
         self.assertEqual(result.generated_files[0].page, 2)
 

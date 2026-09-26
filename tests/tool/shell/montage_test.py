@@ -534,7 +534,9 @@ class MontageHostExecutionTest(IsolatedAsyncioTestCase):
         self.assertEqual(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(len(result.generated_files), 1)
         generated = result.generated_files[0]
-        self.assertEqual(generated.display_path, "contact-01-02.jpg")
+        self.assertEqual(
+            generated.display_path, f"contact-01-02-{generated.sha256}.jpg"
+        )
         self.assertEqual(generated.media_type, "image/jpeg")
         self.assertEqual((generated.width, generated.height), (16, 16))
         self.assertIsNotNone(generated.content_base64)
