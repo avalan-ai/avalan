@@ -259,7 +259,9 @@ class ShellFormattingTest(TestCase):
 
         self.assertIn("output_kind: generated_files", formatted)
         self.assertIn("\ngenerated_files:\n", formatted)
-        self.assertIn("- display_path: outputs/page-1.png", formatted)
+        self.assertIn(
+            f"- display_path: outputs/page-1-{'a' * 64}.png", formatted
+        )
         self.assertIn("  media_type: image/png", formatted)
         self.assertIn("  suffix: .png", formatted)
         self.assertIn("  bytes: 123", formatted)

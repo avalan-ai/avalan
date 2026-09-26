@@ -1,6 +1,7 @@
 from .image_fixtures import VALID_JPEG_BYTES
 
 from base64 import b64decode
+from hashlib import sha256
 from json import loads
 from pathlib import Path
 from sys import executable as sys_executable
@@ -80,7 +81,10 @@ class MontageToolManagerE2ETest(IsolatedAsyncioTestCase):
         self.assertIs(result.status, ShellExecutionStatus.COMPLETED)
         self.assertEqual(len(result.generated_files), 1)
         generated = result.generated_files[0]
-        self.assertEqual(generated.display_path, "contact-01-06.jpg")
+        self.assertEqual(
+            generated.display_path,
+            f"contact-01-06-{sha256(VALID_JPEG_BYTES).hexdigest()}.jpg",
+        )
         self.assertEqual(generated.media_type, "image/jpeg")
         self.assertEqual((generated.width, generated.height), (16, 16))
         self.assertEqual(len(outcome.content), 2)
@@ -172,11 +176,13 @@ class MontageToolManagerE2ETest(IsolatedAsyncioTestCase):
                 context=ToolCallContext(),
             )
             assert isinstance(montage, ToolCallResult)
+            assert isinstance(montage.result, ShellFormattedResult)
+            generated = montage.result.execution_result.generated_files[0]
             viewed = await manager.execute_call(
                 ToolCall(
                     id="view-montage",
                     name="shell.view_image",
-                    arguments={"path": "montage.jpg"},
+                    arguments={"path": generated.display_path},
                 ),
                 context=ToolCallContext(calls=[montage]),
             )

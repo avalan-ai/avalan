@@ -48,6 +48,7 @@ from ...types import (
 from builtins import bytes as _Bytes
 from dataclasses import InitVar, dataclass, field
 from enum import StrEnum
+from pathlib import PurePosixPath
 from typing import Literal, final
 
 ShellPathKind = Literal[
@@ -645,6 +646,8 @@ class GeneratedOutputPlan:
 @final
 @dataclass(frozen=True, kw_only=True, slots=True)
 class GeneratedFile:
+    """Describe an artifact with a content-specific display path for images."""
+
     display_path: str
     media_type: str
     suffix: str
@@ -681,6 +684,17 @@ class GeneratedFile:
         _assert_bool(self.truncated, "truncated")
         assert isinstance(self.metadata, dict), "metadata must be a dictionary"
         object.__setattr__(self, "metadata", dict(self.metadata))
+        if self.sha256 is not None and self.media_type.startswith("image/"):
+            path = PurePosixPath(self.display_path)
+            content_suffix = f"-{self.sha256}"
+            if path.name not in {"", ".."} and not path.stem.endswith(
+                content_suffix
+            ):
+                object.__setattr__(
+                    self,
+                    "display_path",
+                    str(path.with_stem(f"{path.stem}{content_suffix}")),
+                )
 
 
 @final

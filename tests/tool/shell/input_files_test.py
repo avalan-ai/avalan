@@ -1,4 +1,5 @@
 from base64 import b64encode
+from hashlib import sha256
 from inspect import isawaitable
 from pathlib import Path
 from types import SimpleNamespace
@@ -740,6 +741,146 @@ async def test_shell_input_file_filter_uses_materialized_generated_path(
             "path": "generated-files/existing/GENERATED_PREFIX-1.png"
         }
     assert image_path.read_bytes() == b"image"
+
+
+@pytest.mark.parametrize("inline", (True, False))
+async def test_generated_image_aliases_distinguish_renders_and_reuse_rerenders(
+    tmp_path: Path,
+    inline: bool,
+) -> None:
+    settings = ShellToolSettings(
+        workspace_root=str(tmp_path),
+        materialized_input_files_dir="generated-files",
+    )
+    files: list[GeneratedFile] = []
+    payloads = (b"first image", b"second image", b"first image")
+    for index, payload in enumerate(payloads):
+        metadata: dict[str, object] = {}
+        if not inline:
+            source = tmp_path / "generated-files" / str(index) / "page.png"
+            source.parent.mkdir(parents=True)
+            source.write_bytes(payload)
+            metadata[GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY] = str(
+                source
+            )
+        files.append(
+            GeneratedFile(
+                display_path="GENERATED_PREFIX-1.png",
+                media_type="image/png",
+                suffix=".png",
+                bytes=len(payload),
+                sha256=sha256(payload).hexdigest(),
+                content_base64=(
+                    b64encode(payload).decode("ascii") if inline else None
+                ),
+                metadata=metadata,
+            )
+        )
+    calls: list[ToolCall] = [
+        _generated_result(
+            generated,
+            metadata={"generated_output_display_prefix": "GENERATED_PREFIX"},
+        )
+        for generated in files
+    ]
+
+    aliases = await _shell_file_path_aliases(
+        ToolCallContext(calls=calls), settings
+    )
+
+    assert files[0].display_path != files[1].display_path
+    assert files[0].display_path == files[2].display_path
+    for generated, payload in zip(files, payloads, strict=True):
+        assert (tmp_path / aliases[generated.display_path]).read_bytes() == (
+            payload
+        )
+    assert "GENERATED_PREFIX" not in aliases
+    assert "GENERATED_PREFIX-1.png" not in aliases
+    if inline:
+        assert len(list((tmp_path / "generated-files").iterdir())) == 2
+
+
+async def test_generated_files_without_digest_reject_ambiguous_aliases(
+    tmp_path: Path,
+) -> None:
+    calls: list[ToolCall] = [
+        _generated_result(
+            GeneratedFile(
+                display_path="GENERATED_PREFIX-1.png",
+                media_type="image/png",
+                suffix=".png",
+                bytes=len(payload),
+                content_base64=b64encode(payload).decode("ascii"),
+            ),
+            metadata={"generated_output_display_prefix": "GENERATED_PREFIX"},
+        )
+        for payload in (b"first", b"second")
+    ]
+
+    aliases = await _shell_file_path_aliases(
+        ToolCallContext(calls=calls),
+        ShellToolSettings(workspace_root=str(tmp_path)),
+    )
+
+    assert aliases == {}
+
+
+@pytest.mark.parametrize(
+    "unusable", ("outside-cwd", "missing", "truncated", "invalid-base64")
+)
+async def test_generated_image_aliases_retry_after_unusable_copy(
+    tmp_path: Path,
+    unusable: str,
+) -> None:
+    pixels = b"image"
+    digest = sha256(pixels).hexdigest()
+    outside_cwd = tmp_path / "generated" / "other.png"
+    source = tmp_path / "generated" / "view" / "page.png"
+    source.parent.mkdir(parents=True)
+    source.write_bytes(pixels)
+    outside_cwd.write_bytes(pixels)
+    metadata: dict[str, object] = {
+        GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(
+            outside_cwd if unusable == "outside-cwd" else source
+        )
+    }
+    if unusable == "missing":
+        metadata[GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY] = str(
+            source.parent / "missing.png"
+        )
+    if unusable == "invalid-base64":
+        metadata = {}
+    first = GeneratedFile(
+        display_path="GENERATED_PREFIX-1.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=len(pixels),
+        sha256=digest,
+        content_base64="%" if unusable == "invalid-base64" else None,
+        truncated=unusable == "truncated",
+        metadata=metadata,
+    )
+    usable = GeneratedFile(
+        display_path="GENERATED_PREFIX-1.png",
+        media_type="image/png",
+        suffix=".png",
+        bytes=len(pixels),
+        sha256=digest,
+        metadata={GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY: str(source)},
+    )
+
+    aliases = await _shell_file_path_aliases(
+        ToolCallContext(
+            calls=[_generated_result(first), _generated_result(usable)]
+        ),
+        ShellToolSettings(
+            workspace_root=str(tmp_path),
+            materialized_input_files_dir="generated",
+            cwd="generated/view",
+        ),
+    )
+
+    assert aliases == {usable.display_path: "page.png"}
 
 
 async def test_shell_input_file_aliases_skip_unmaterializable_files(

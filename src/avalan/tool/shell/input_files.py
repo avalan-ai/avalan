@@ -394,6 +394,7 @@ async def _add_generated_file_path_aliases(
     effective_cwd: Path,
 ) -> None:
     materialized_root = materialized_root.resolve()
+    source_paths: dict[tuple[str, str | None], Path] = {}
     for execution_result, generated_file in _iter_generated_file_sources(
         calls
     ):
@@ -402,17 +403,22 @@ async def _add_generated_file_path_aliases(
         filename = _generated_file_filename(generated_file)
         if filename is None:
             continue
-        source_path = await _generated_file_source_path(
-            generated_file,
-            workspace_root=workspace_root,
-            materialized_root=materialized_root,
-            filename=filename,
-        )
+        source_key = (generated_file.display_path, generated_file.sha256)
+        source_path = source_paths.get(source_key)
+        if source_path is None:
+            source_path = await _generated_file_source_path(
+                generated_file,
+                workspace_root=workspace_root,
+                materialized_root=materialized_root,
+                filename=filename,
+            )
         if source_path is None:
             continue
         relative_path = _cwd_relative_file_path(effective_cwd, source_path)
         if relative_path is None:
             continue
+        if generated_file.sha256 is not None:
+            source_paths[source_key] = source_path
         prefix_alias = _single_generated_file_prefix_alias(execution_result)
         alias_values = (
             generated_file.display_path,

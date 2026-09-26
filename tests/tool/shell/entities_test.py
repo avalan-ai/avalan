@@ -1,5 +1,5 @@
 from copy import copy, deepcopy
-from dataclasses import FrozenInstanceError
+from dataclasses import FrozenInstanceError, replace
 from typing import cast
 from unittest import TestCase, main
 
@@ -811,6 +811,84 @@ class ShellEntitiesTest(TestCase):
         self.assertEqual(generated_file.sha256, "a" * 64)
         self.assertEqual(generated_file.content_base64, "YWJj")
         self.assertTrue(generated_file.truncated)
+
+    def test_generated_image_paths_identify_content(self) -> None:
+        first = GeneratedFile(
+            display_path="GENERATED_PREFIX-1.png",
+            media_type="image/png",
+            suffix=".png",
+            bytes=10,
+            sha256="a" * 64,
+        )
+        second = GeneratedFile(
+            display_path="GENERATED_PREFIX-1.png",
+            media_type="image/png",
+            suffix=".png",
+            bytes=10,
+            sha256="a" * 63 + "b",
+        )
+        rerender = GeneratedFile(
+            display_path="GENERATED_PREFIX-1.png",
+            media_type="image/png",
+            suffix=".png",
+            bytes=10,
+            sha256="a" * 64,
+        )
+
+        self.assertEqual(
+            first.display_path, f"GENERATED_PREFIX-1-{'a' * 64}.png"
+        )
+        self.assertNotEqual(first.display_path, second.display_path)
+        self.assertEqual(first.display_path, rerender.display_path)
+        self.assertEqual(replace(first), first)
+
+    def test_generated_image_paths_preserve_directories_and_extensions(
+        self,
+    ) -> None:
+        cases = (
+            ("page_0002.png", "image/png", ".png", "page_0002", ".png"),
+            ("outputs/page.jpg", "image/jpeg", ".jpg", "outputs/page", ".jpg"),
+            ("page.part.jpeg", "image/jpeg", ".jpeg", "page.part", ".jpeg"),
+            ("preview", "image/png", ".png", "preview", ""),
+            ("page.PNG", "image/png", ".png", "page", ".PNG"),
+        )
+        for path, media_type, suffix, stem, extension in cases:
+            with self.subTest(path=path):
+                generated = GeneratedFile(
+                    display_path=path,
+                    media_type=media_type,
+                    suffix=suffix,
+                    bytes=10,
+                    sha256="b" * 64,
+                )
+
+                self.assertEqual(
+                    generated.display_path, f"{stem}-{'b' * 64}{extension}"
+                )
+                self.assertEqual(generated.suffix, suffix)
+
+    def test_generated_paths_without_image_identity_are_unchanged(
+        self,
+    ) -> None:
+        cases = (
+            ("report.pdf", "application/pdf", ".pdf", "a" * 64),
+            ("output.png", "text/plain", ".png", "a" * 64),
+            ("page.png", "image/png", ".png", None),
+            (".", "image/png", ".png", "a" * 64),
+            ("..", "image/png", ".png", "a" * 64),
+            ("/", "image/png", ".png", "a" * 64),
+        )
+        for path, media_type, suffix, digest in cases:
+            with self.subTest(path=path):
+                generated = GeneratedFile(
+                    display_path=path,
+                    media_type=media_type,
+                    suffix=suffix,
+                    bytes=10,
+                    sha256=digest,
+                )
+
+                self.assertEqual(generated.display_path, path)
 
     def test_generated_file_is_frozen(self) -> None:
         generated_file = GeneratedFile(

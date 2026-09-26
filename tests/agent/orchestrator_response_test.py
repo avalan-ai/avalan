@@ -27,6 +27,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from uuid import uuid4
 
 from sqlalchemy import create_engine, text
+from tool.shell.image_fixtures import valid_png_bytes
 
 from avalan.agent import AgentOperation, EngineEnvironment, Specification
 from avalan.agent.engine import EngineAgent
@@ -61,6 +62,7 @@ from avalan.entities import (
     ToolExecutionStreamKind,
     ToolFormat,
     ToolManagerSettings,
+    ToolResultImage,
     TransformerEngineSettings,
 )
 from avalan.event import Event, EventPayloadKind, EventType
@@ -103,14 +105,18 @@ from avalan.tool.display import (
 from avalan.tool.manager import ToolManager
 from avalan.tool.parser import ToolCallParser
 from avalan.tool.shell.entities import (
+    GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY,
     ExecutionResult,
     GeneratedFile,
     ShellExecutionStatus,
     ShellFormattedResult,
     ShellOutputKind,
 )
+from avalan.tool.shell.formatting import format_shell_result
 from avalan.tool.shell.input_files import shell_input_file_filter
+from avalan.tool.shell.policy import ExecutionPolicy
 from avalan.tool.shell.settings import ShellToolSettings
+from avalan.tool.shell.tools.view_image import ViewImageTool
 from avalan.tool_cycles import UNLIMITED_TOOL_CYCLES
 
 PATCH_PHASE_9_TOOL_LIFECYCLE_COVERAGE: tuple[str, ...] = (
@@ -6600,6 +6606,183 @@ class OrchestratorResponseCanonicalLifecycleTestCase(IsolatedAsyncioTestCase):
         )
         validate_canonical_stream_items(response.canonical_items)
         validate_tool_lifecycle_items(response.canonical_items)
+
+    async def test_generated_images_keep_distinct_guard_signatures(
+        self,
+    ) -> None:
+        for inline in (True, False):
+            with self.subTest(inline=inline), TemporaryDirectory() as tmp_dir:
+                root = Path(tmp_dir)
+                first_pixels = valid_png_bytes(width=2, height=3)
+                second_pixels = valid_png_bytes(width=3, height=2)
+                payloads = {
+                    "first.pdf": first_pixels,
+                    "copy.pdf": first_pixels,
+                    "second.pdf": second_pixels,
+                }
+                generated: dict[str, GeneratedFile] = {}
+                for name, pixels in payloads.items():
+                    metadata: dict[str, object] = {}
+                    if not inline:
+                        source = (
+                            root
+                            / "generated-files"
+                            / name
+                            / "GENERATED_PREFIX-1.png"
+                        )
+                        source.parent.mkdir(parents=True)
+                        source.write_bytes(pixels)
+                        metadata[
+                            GENERATED_FILE_MATERIALIZED_PATH_METADATA_KEY
+                        ] = str(source)
+                    generated[name] = GeneratedFile(
+                        display_path="GENERATED_PREFIX-1.png",
+                        media_type="image/png",
+                        suffix=".png",
+                        bytes=len(pixels),
+                        sha256=sha256(pixels).hexdigest(),
+                        content_base64=(
+                            b64encode(pixels).decode("ascii")
+                            if inline
+                            else None
+                        ),
+                        metadata=metadata,
+                    )
+
+                async def pdftoppm(path: str) -> ShellFormattedResult:
+                    result = ExecutionResult(
+                        backend="local",
+                        tool_name="shell.pdftoppm",
+                        command="pdftoppm",
+                        argv=("pdftoppm", path),
+                        display_argv=("pdftoppm", path, "GENERATED_PREFIX"),
+                        cwd=tmp_dir,
+                        display_cwd=".",
+                        status=ShellExecutionStatus.COMPLETED,
+                        exit_code=0,
+                        stdout="",
+                        stderr="",
+                        stdout_media_type="application/json",
+                        output_kind=ShellOutputKind.GENERATED_FILES,
+                        generated_files=(generated[path],),
+                        metadata={
+                            "generated_output_display_prefix": (
+                                "GENERATED_PREFIX"
+                            )
+                        },
+                    )
+                    return ShellFormattedResult(
+                        format_shell_result(result), result
+                    )
+
+                settings = ShellToolSettings(
+                    workspace_root=tmp_dir,
+                    materialized_input_files_dir="generated-files",
+                    allow_media_tools=True,
+                )
+                manager = ToolManager.create_instance(
+                    available_toolsets=[
+                        ToolSet(
+                            namespace="shell",
+                            tools=[
+                                pdftoppm,
+                                ViewImageTool(
+                                    settings=settings,
+                                    policy=ExecutionPolicy(settings=settings),
+                                ),
+                            ],
+                        )
+                    ],
+                    settings=ToolManagerSettings(
+                        filters=[shell_input_file_filter(settings)]
+                    ),
+                )
+                calls = [
+                    ToolCall(
+                        id=call_id,
+                        name=f"shell.{tool_name}",
+                        arguments={"path": path},
+                    )
+                    for call_id, tool_name, path in (
+                        ("render-first", "pdftoppm", "first.pdf"),
+                        ("render-copy", "pdftoppm", "copy.pdf"),
+                        (
+                            "view-first",
+                            "view_image",
+                            generated["first.pdf"].display_path,
+                        ),
+                        ("render-second", "pdftoppm", "second.pdf"),
+                        (
+                            "view-second",
+                            "view_image",
+                            generated["second.pdf"].display_path,
+                        ),
+                        (
+                            "view-copy",
+                            "view_image",
+                            generated["copy.pdf"].display_path,
+                        ),
+                    )
+                ]
+                agent = MagicMock(spec=EngineAgent)
+                agent.engine = _DummyEngine()
+                response = _make_response(
+                    Message(role=MessageRole.USER, content="Inspect renders"),
+                    _string_response("call", async_gen=False),
+                    agent,
+                    _dummy_operation(),
+                    {},
+                    tool=manager,
+                    block_repeated_tool_calls=True,
+                )
+                history: list[ToolCall] = []
+                context = ToolCallContext(calls=history)
+                outcomes: list[ToolCallOutcome | None] = []
+
+                for call in calls:
+                    outcome = await response._execute_tool_call(
+                        call, context, confirm=False
+                    )
+                    outcomes.append(outcome)
+                    if isinstance(outcome, ToolCallResult):
+                        history.append(outcome)
+
+                self.assertTrue(
+                    all(
+                        isinstance(outcome, ToolCallResult)
+                        for outcome in outcomes[:-1]
+                    ),
+                    outcomes,
+                )
+                images = [
+                    content
+                    for entry in history
+                    if isinstance(entry, ToolCallResult)
+                    for content in entry.content
+                    if isinstance(content, ToolResultImage)
+                ]
+                self.assertEqual(
+                    [image.data for image in images],
+                    [first_pixels, second_pixels],
+                )
+                self.assertEqual(
+                    [(image.width, image.height) for image in images],
+                    [(2, 3), (3, 2)],
+                )
+                repeated = outcomes[-1]
+                self.assertIsInstance(repeated, ToolCallDiagnostic)
+                assert isinstance(repeated, ToolCallDiagnostic)
+                self.assertEqual(repeated.call_id, "view-copy")
+                self.assertEqual(
+                    repeated.code, ToolCallDiagnosticCode.REPEATED_CALL
+                )
+                self.assertEqual(repeated.stage, ToolCallDiagnosticStage.GUARD)
+                for entry in history:
+                    if isinstance(entry, ToolCallResult) and isinstance(
+                        entry.result, ShellFormattedResult
+                    ):
+                        file = entry.result.execution_result.generated_files[0]
+                        self.assertIn(file.display_path, entry.result)
 
     async def test_iteration_shell_filter_materializes_generated_alias(
         self,
