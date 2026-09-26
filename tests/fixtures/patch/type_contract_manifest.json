@@ -1925,7 +1925,7 @@
       "symbols": [
         "test_formatted_result_preserves_typed_tool_content_on_reduce"
       ],
-      "source_sha256": "caf96314bc3eb0f07e38aa2045325b51449126cd651233d33acc73c7c7e03677"
+      "source_sha256": "9e6c6b6a49b93c1eb11d27f4f724c9ec5fc58e7b44f3f7de687faa5f58286a7b"
     },
     {
       "id": "PATCH-TS-140",
@@ -4220,5 +4220,5 @@
       "source_sha256": "eb9bff89a99cacf5951e10d311974e77ea410fb05029db0cfd4a8fe701c6d7a1"
     }
   ],
-  "manifest_sha256": "5126e25cd7bcad8db0f203729f0807e8fe092039841b3e07db19f5ae9dc7714b"
+  "manifest_sha256": "84a72b41ffa218511562eb763b702db4366f7af724ca57ea1967b7e2d001c472"
 }
